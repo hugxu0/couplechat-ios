@@ -74,6 +74,8 @@ struct ChatView: View {
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .defaultScrollAnchor(.bottom)
+            // 点消息区空白处收起键盘（simultaneous 不干扰滚动手势）
+            .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
             .onChange(of: messages) {
                 guard let last = messages.last else { return }
                 withAnimation(DS.Anim.message) {
@@ -101,42 +103,59 @@ struct ChatView: View {
         return isGrouped(index) ? DS.Spacing.bubbleGapSame : DS.Spacing.bubbleGapOther
     }
 
-    // MARK: 输入栏
+    // MARK: 输入栏（Telegram 式：独立按钮 + 单层输入框，材质统一走 dsGlass）
     private var composer: some View {
-        HStack(spacing: 10) {
-            composerIcon("cat")
-            composerIcon("photo")
+        HStack(alignment: .bottom, spacing: 8) {
+            composerIcon("cat")        // 大橘互动
+            composerIcon("paperclip")  // 附件（图片/视频/文件以后都收进这里）
 
-            TextField("", text: $draft, axis: .vertical)
-                .focused($inputFocused)
-                .lineLimit(1...5)
-                .font(.system(size: 16))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(Color.white.opacity(0.9))
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.pill, style: .continuous))
+            // 单层输入框，表情按钮嵌在框内右侧
+            HStack(alignment: .bottom, spacing: 6) {
+                TextField("消息", text: $draft, axis: .vertical)
+                    .focused($inputFocused)
+                    .lineLimit(1...5)
+                    .font(.system(size: 16))
+                Button { } label: {
+                    Image(systemName: "face.smiling")
+                        .font(.system(size: 21))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                }
+                .buttonStyle(PressableStyle())
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
+            .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.bubble + 2, style: .continuous))
 
-            composerIcon("face.smiling")
-
-            // 有文字 → 发送按钮；没文字 → 语音按钮（带切换动画）
+            // 没文字 → 语音；有文字 → 变成主题色发送按钮（Telegram 的行为）
             Button {
-                sendDraft()
+                if draft.isEmpty {
+                    Haptics.medium() // 语音留待后续实现
+                } else {
+                    sendDraft()
+                }
             } label: {
-                Image(systemName: draft.isEmpty ? "mic.fill" : "arrow.up")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(DS.Palette.accent)
-                    .clipShape(Circle())
-                    .contentTransition(.symbolEffect(.replace))
+                Group {
+                    if draft.isEmpty {
+                        Image(systemName: "mic")
+                            .font(.system(size: 20))
+                            .foregroundStyle(DS.Palette.textSecondary)
+                            .frame(width: 38, height: 38)
+                            .dsGlass(in: Circle())
+                    } else {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 38, height: 38)
+                            .background(DS.Palette.accent)
+                            .clipShape(Circle())
+                    }
+                }
+                .animation(DS.Anim.springFast, value: draft.isEmpty)
             }
             .buttonStyle(PressableStyle())
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.tabBar, style: .continuous))
-        .padding(.horizontal, DS.Spacing.page)
-        .padding(.bottom, 4)
+        .padding(.vertical, 5)
     }
 
     private func composerIcon(_ name: String) -> some View {
@@ -145,8 +164,7 @@ struct ChatView: View {
                 .font(.system(size: 20))
                 .foregroundStyle(DS.Palette.accent)
                 .frame(width: 38, height: 38)
-                .background(Color.white.opacity(0.85))
-                .clipShape(Circle())
+                .dsGlass(in: Circle())
         }
         .buttonStyle(PressableStyle())
     }
