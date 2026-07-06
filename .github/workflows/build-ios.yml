@@ -1,0 +1,49 @@
+name: Build iOS IPA (unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # 不签名：SideStore/iloader 装机时用自己的 Apple ID 现场签名
+      - name: Archive (unsigned)
+        run: |
+          xcodebuild archive \
+            -project CoupleChat.xcodeproj \
+            -scheme CoupleChat \
+            -configuration Release \
+            -archivePath "$PWD/build/CoupleChat.xcarchive" \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package unsigned .ipa
+        run: |
+          mkdir -p build/Payload
+          cp -r build/CoupleChat.xcarchive/Products/Applications/CoupleChat.app build/Payload/
+          cd build
+          zip -r -y CoupleChat.ipa Payload
+
+      - name: Upload .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: couplechat-native-ipa
+          path: build/CoupleChat.ipa

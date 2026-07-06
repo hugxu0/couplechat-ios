@@ -1,0 +1,28 @@
+name: CoupleChat
+options:
+  bundleIdPrefix: com.hugxu0
+  deploymentTarget:
+    iOS: "17.0"
+
+targets:
+  CoupleChat:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    info:
+      path: Sources/App/Info.plist
+      properties:
+        CFBundleDisplayName: 悄悄话
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hugxu0.couplechat.native
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.9"
+        INFOPLIST_KEY_UIUserInterfaceStyle: Light

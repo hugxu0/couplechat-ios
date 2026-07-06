@@ -1,0 +1,11 @@
+# XcodeGen 生成的工程文件（CI 里现生成，不提交）
+*.xcodeproj
+*.xcworkspace
+
+# 构建产物
+build/
+DerivedData/
+
+# macOS / 编辑器
+.DS_Store
+Thumbs.db
