@@ -34,7 +34,7 @@ struct LoginView: View {
                         pwFocused = true
                     } label: {
                         VStack(spacing: 6) {
-                            Text(acc.username == "xu" ? "🐶" : "🐰")
+                            Text(acc.avatar ?? AccountPresentation.avatar(for: acc.username))
                                 .font(.system(size: 36))
                                 .frame(width: 72, height: 72)
                                 .background(Color.white.opacity(0.9))

@@ -32,10 +32,12 @@ username|displayName|password|avatar;username|displayName|password|avatar
 
 ## 部署建议
 
+详细步骤见 [docs/DEPLOY.md](docs/DEPLOY.md)。核心要求：
+
 1. 在 VPS 安装 Node.js 22+。
-2. 上传 `server/`，配置 `.env`。
+2. 配置 `.env`，账号必须固定为 `xu / si`。
 3. 执行 `npm ci && npm run build`。
-4. 用 pm2 启动 `npm run start`。
+4. 用 pm2 启动 `ecosystem.config.cjs`。
 5. 用 nginx 反代到 `127.0.0.1:8080`，开启 HTTPS。
 6. 定期备份 `server/.data/couplechat.sqlite` 和 `server/uploads/`。
 

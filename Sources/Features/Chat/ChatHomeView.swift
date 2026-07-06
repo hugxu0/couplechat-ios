@@ -8,6 +8,13 @@ struct ChatHomeView: View {
     @State private var showChat = false
     @State private var showAI = false
 
+    private var myName: String { store.session?.name ?? "小旭" }
+    private var myAvatar: String { AccountPresentation.avatar(for: store.session?.username ?? "xu") }
+    private var partnerName: String { store.partner?.name ?? "小偲" }
+    private var partnerAvatar: String {
+        store.partner?.avatar ?? AccountPresentation.avatar(for: store.partner?.username ?? "si")
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -31,12 +38,12 @@ struct ChatHomeView: View {
         VStack(spacing: 20) {
             // 头像区
             HStack {
-                avatarColumn(name: "小旭", mood: "要亲亲", moodColor: DS.Palette.pink, emoji: "🐶")
+                avatarColumn(name: myName, mood: "要亲亲", moodColor: DS.Palette.pink, emoji: myAvatar)
                 Spacer()
                 Text("💗")
                     .font(.system(size: 34))
                 Spacer()
-                avatarColumn(name: "小偲", mood: "在想你", moodColor: DS.Palette.textSecondary, emoji: "🐰")
+                avatarColumn(name: partnerName, mood: "在想你", moodColor: DS.Palette.textSecondary, emoji: partnerAvatar)
             }
             .padding(.horizontal, 12)
 

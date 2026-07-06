@@ -28,6 +28,16 @@ enum ChatChannel: String, CaseIterable, Identifiable {
     }
 }
 
+enum AccountPresentation {
+    static func avatar(for username: String) -> String {
+        switch username {
+        case "xu": return "🐶"
+        case "si": return "🐰"
+        default: return "💗"
+        }
+    }
+}
+
 struct ChatMessage: Identifiable, Equatable {
     let id: String
     var sender: String

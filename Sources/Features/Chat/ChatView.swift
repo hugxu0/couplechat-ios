@@ -96,7 +96,7 @@ struct ChatView: View {
                                 MessageBubble(
                                     message: msg,
                                     mine: msg.sender == store.session?.username,
-                                    peerAvatar: channel == .ai ? "🐱" : "🐰",
+                                    peerAvatar: peerAvatar,
                                     groupedWithPrevious: isGrouped(index),
                                     read: store.partnerHasRead(msg),
                                     canRetry: msg.type == "text",
@@ -150,6 +150,11 @@ struct ChatView: View {
     private func bubbleTopPadding(_ index: Int) -> CGFloat {
         guard index > 0, !showTimeSeparator(index) else { return 0 }
         return isGrouped(index) ? DS.Spacing.bubbleGapSame : DS.Spacing.bubbleGapOther
+    }
+
+    private var peerAvatar: String {
+        if channel == .ai { return "🐱" }
+        return store.partner?.avatar ?? AccountPresentation.avatar(for: store.partner?.username ?? "si")
     }
 
     // MARK: 输入栏（Telegram 式：独立按钮 + 单层输入框，材质统一走 dsGlass）
