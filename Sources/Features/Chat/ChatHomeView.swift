@@ -17,7 +17,7 @@ struct ChatHomeView: View {
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
-            .navigationTitle("聊天")
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
         }
     }

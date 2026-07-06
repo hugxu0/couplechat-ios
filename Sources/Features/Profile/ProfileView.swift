@@ -15,7 +15,7 @@ struct ProfileView: View {
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
-            .navigationTitle("我的")
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 

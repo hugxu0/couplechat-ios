@@ -26,7 +26,7 @@ struct RecordsView: View {
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
-            .navigationTitle("我们")
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 

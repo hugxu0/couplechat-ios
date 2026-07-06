@@ -21,8 +21,14 @@ enum MainTab: String, CaseIterable {
     }
 }
 
+/// 跨页面共享的 App 状态（比如「正在会话中 → 隐藏底栏」）
+final class AppState: ObservableObject {
+    @Published var chatOpen = false
+}
+
 struct RootTabView: View {
     @State private var tab: MainTab = .chat
+    @StateObject private var app = AppState()
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -39,15 +45,23 @@ struct RootTabView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            tabBar
+            // 会话中隐藏底栏，退出会话时滑回来
+            if !app.chatOpen {
+                tabBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(DS.Anim.spring, value: app.chatOpen)
+        .environmentObject(app)
     }
 
     private var tabBar: some View {
         HStack {
             ForEach(MainTab.allCases, id: \.self) { t in
                 Button {
-                    withAnimation(DS.Anim.spring) { tab = t }
+                    // 状态切换必须即时生效，不包进动画事务——
+                    // 否则快速连点时切换会被动画排队拖住、感觉「点了没反应」。
+                    tab = t
                     Haptics.selection()
                 } label: {
                     VStack(spacing: 3) {
@@ -59,11 +73,14 @@ struct RootTabView: View {
                     }
                     .foregroundStyle(tab == t ? DS.Palette.accent : DS.Palette.textSecondary)
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle()) // 整块区域可点，不只是图标文字
                 }
-                .buttonStyle(PressableStyle())
+                .buttonStyle(.plain)
+                .animation(DS.Anim.springFast, value: tab)
             }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.tabBar, style: .continuous))
         .padding(.horizontal, DS.Spacing.page)
     }

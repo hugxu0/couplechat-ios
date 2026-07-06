@@ -23,17 +23,7 @@ struct PetView: View {
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
-            .navigationTitle("大橘")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Text("Lv.4")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(DS.Palette.accent)
-                        .clipShape(Capsule())
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 

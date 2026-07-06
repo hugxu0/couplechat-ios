@@ -13,6 +13,7 @@ struct Message: Identifiable, Equatable {
 }
 
 struct ChatView: View {
+    @EnvironmentObject private var app: AppState
     @State private var messages: [Message] = [
         Message(text: "那我们看一会", mine: true, time: "02:58"),
         Message(text: "嗯嗯", mine: false, time: "02:59"),
@@ -43,6 +44,9 @@ struct ChatView: View {
                 }
             }
         }
+        // 进会话隐藏底部标签栏，退出（含侧滑返回）恢复
+        .onAppear { app.chatOpen = true }
+        .onDisappear { app.chatOpen = false }
     }
 
     // MARK: 消息列表
@@ -73,6 +77,13 @@ struct ChatView: View {
             .onChange(of: messages) {
                 guard let last = messages.last else { return }
                 withAnimation(DS.Anim.message) {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
+            }
+            // 键盘弹出时跟着滚到底，最新消息不被键盘挡住
+            .onChange(of: inputFocused) {
+                guard inputFocused, let last = messages.last else { return }
+                withAnimation(DS.Anim.ease) {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }

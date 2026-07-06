@@ -22,7 +22,7 @@ struct RemindersView: View {
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
-            .navigationTitle("提醒")
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 
