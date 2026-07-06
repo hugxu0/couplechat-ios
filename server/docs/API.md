@@ -1,6 +1,6 @@
 # CoupleChat Backend Contract
 
-Base URL 示例：`https://chat.huhuhu.top`
+Base URL 示例：`https://hoo66.top`
 
 ## REST
 
@@ -72,7 +72,7 @@ Base URL 示例：`https://chat.huhuhu.top`
 连接：
 
 ```js
-io("https://chat.huhuhu.top", {
+io("https://hoo66.top", {
   auth: { token }
 })
 ```

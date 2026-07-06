@@ -7,7 +7,7 @@ import SwiftUI
 
 @MainActor
 final class ChatStore: ObservableObject {
-    static let baseURL = URL(string: "https://chat.huhuhu.top")!
+    static let baseURL = URL(string: "https://hoo66.top")!
 
     // MARK: 对外状态
     @Published var session: Session?

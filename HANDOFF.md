@@ -2,7 +2,8 @@
 
 > 最后更新：2026-07-07
 > 仓库：https://github.com/hugxu0/couplechat-ios
-> 关联项目：网页版/后端 https://github.com/hugxu0/chat （部署在 https://chat.huhuhu.top）
+> 关联项目：网页版/旧后端 https://github.com/hugxu0/chat （部署在 https://chat.huhuhu.top）
+> 新原生后端：本仓库 `server/`（计划部署在 https://hoo66.top）
 
 ---
 
@@ -12,8 +13,8 @@
 Vue3 + Socket.IO 的 PWA（`hugxu0/chat` 仓库）。本仓库是它的 **SwiftUI 原生 iOS 重写版**，
 目标是拿到网页做不到的原生体验：液态玻璃材质、触觉反馈、流畅动效（对标 Telegram 的手感）。
 
-**关键关系：后端零改动。** 原生 App 只是 `chat.huhuhu.top` 这套服务的"第三个客户端"
-（前两个是浏览器和主屏 PWA），三端消息完全实时互通。
+旧方案是后端零改动，原生 App 作为 `chat.huhuhu.top` 的第三个客户端。当前已改为
+新原生后端路线：旧网站继续使用 `chat.huhuhu.top`，原生 App 和新后端走 `hoo66.top`。
 
 **开发环境的根本约束：没有 Mac。** 所有构建都在 GitHub Actions 的 macOS 机器上完成，
 本地（Windows）只写代码，看不到运行效果。因此每次改动的验证方式是：
@@ -63,7 +64,7 @@ couplechat-ios/
 
 ## 三、后端接口契约（对齐 `hugxu0/chat` 仓库的 `src/`）
 
-### REST（base = https://chat.huhuhu.top）
+### REST（新原生后端 base = https://hoo66.top）
 
 | 接口 | 说明 |
 |---|---|
@@ -197,5 +198,5 @@ github.com/nab138/iloader，仅这两处是正版）→ 数据线连手机 → i
 |---|---|
 | GitHub `hugxu0` | 两个仓库的 owner；gh CLI 已在开发机登录 |
 | Apple ID（gxhoo66@gmail.com） | 免费账号，iloader/SideStore 签名用；她那台用她自己的 Apple ID |
-| VPS + chat.huhuhu.top | 后端部署处（nginx + Node），HTTPS 已配好 |
+| VPS + hoo66.top | 新原生后端部署处（nginx + Node），HTTPS 需配置 |
 | 开发机 | Windows 11，装了 iloader + iTunes；本仓库在 D:\Desktop\couplechat-ios |

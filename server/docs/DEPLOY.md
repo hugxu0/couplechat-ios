@@ -1,6 +1,6 @@
 # Deploy New Backend
 
-目标：让 `chat.huhuhu.top` 指向新后端，并统一账号为稳定的 `xu / si`。
+目标：让 `hoo66.top` 指向新后端，并统一账号为稳定的 `xu / si`。旧网站继续留在 `chat.huhuhu.top`，不要覆盖。
 
 ## 重要原则
 
@@ -29,7 +29,7 @@ nano .env
 ```env
 TOKEN_SECRET=用 openssl rand -hex 32 生成
 COUPLECHAT_ACCOUNTS=xu|小旭|真实密码|🐶;si|小偲|真实密码|🐰
-PUBLIC_BASE_URL=https://chat.huhuhu.top
+PUBLIC_BASE_URL=https://hoo66.top
 ```
 
 安装并启动：
@@ -46,8 +46,8 @@ pm2 startup
 nginx：
 
 ```bash
-sudo cp deploy/nginx-chat.huhuhu.top.conf /etc/nginx/sites-available/chat.huhuhu.top
-sudo ln -sf /etc/nginx/sites-available/chat.huhuhu.top /etc/nginx/sites-enabled/chat.huhuhu.top
+sudo cp deploy/nginx-hoo66.top.conf /etc/nginx/sites-available/hoo66.top
+sudo ln -sf /etc/nginx/sites-available/hoo66.top /etc/nginx/sites-enabled/hoo66.top
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -55,14 +55,14 @@ sudo systemctl reload nginx
 如果证书还没配：
 
 ```bash
-sudo certbot --nginx -d chat.huhuhu.top
+sudo certbot --nginx -d hoo66.top
 ```
 
 ## 验证
 
 ```bash
-curl https://chat.huhuhu.top/health
-curl https://chat.huhuhu.top/api/accounts
+curl https://hoo66.top/health
+curl https://hoo66.top/api/accounts
 ```
 
 `/api/accounts` 必须返回：
