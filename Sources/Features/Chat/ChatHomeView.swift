@@ -1,17 +1,19 @@
 import SwiftUI
 
 // 聊天首页：情侣卡（头像 + 状态）、状态标签、互动按钮、最新消息预览、进入聊天。
-// 数据目前是假数据，后续接入后端后替换。
+// couple / ai 消息来自 ChatStore；状态和互动数据后续接 shared。
 
 struct ChatHomeView: View {
     @EnvironmentObject private var store: ChatStore
     @State private var showChat = false
+    @State private var showAI = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: DS.Spacing.gap) {
                     coupleCard
+                    aiCard
                 }
                 .padding(.horizontal, DS.Spacing.page)
                 .padding(.bottom, 90) // 给悬浮标签栏留位置
@@ -20,6 +22,7 @@ struct ChatHomeView: View {
             .background(DS.Palette.bgGradient.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
+            .navigationDestination(isPresented: $showAI) { ChatView(channel: .ai) }
         }
     }
 
@@ -98,6 +101,55 @@ struct ChatHomeView: View {
         }
         .padding(DS.Spacing.card)
         .dsCard()
+    }
+
+    private var aiCard: some View {
+        Button {
+            Haptics.light()
+            showAI = true
+        } label: {
+            HStack(spacing: 14) {
+                Text("🐱")
+                    .font(.system(size: 34))
+                    .frame(width: 58, height: 58)
+                    .background(Color.white.opacity(0.9))
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text("大橘")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(DS.Palette.textPrimary)
+                        if store.aiTyping {
+                            Text("正在输入")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(DS.Palette.green)
+                        }
+                    }
+                    Text(aiPreviewText)
+                        .font(.system(size: 14))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DS.Palette.textSecondary.opacity(0.6))
+            }
+            .padding(DS.Spacing.card)
+            .frame(maxWidth: .infinity)
+            .background(Color.white.opacity(DS.Surface.cardOpacity))
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+            .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+        }
+        .buttonStyle(PressableStyle())
+    }
+
+    private var aiPreviewText: String {
+        guard let last = store.messages(for: .ai).last else { return "找大橘说点悄悄话" }
+        return last.type == "text" ? last.text : "[\(last.type)]"
     }
 
     private func avatarColumn(name: String, mood: String, moodColor: Color, emoji: String) -> some View {

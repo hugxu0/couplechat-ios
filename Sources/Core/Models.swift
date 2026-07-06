@@ -1,16 +1,31 @@
 import Foundation
 
-// 数据模型：字段与服务端 src/store/messages.js 的 createMessage 一一对应。
+// 数据模型：字段与新后端 server/docs/API.md 的契约对齐。
 
 struct Account: Codable, Equatable {
     let username: String
     let name: String
+    let avatar: String?
 }
 
 struct Session: Codable {
     let token: String
     let username: String
     let name: String
+}
+
+enum ChatChannel: String, CaseIterable, Identifiable {
+    case couple
+    case ai
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .couple: return "聊天"
+        case .ai: return "大橘"
+        }
+    }
 }
 
 struct ChatMessage: Identifiable, Equatable {
@@ -39,7 +54,15 @@ struct ChatMessage: Identifiable, Equatable {
         text = dict["text"] as? String ?? ""
         url = dict["url"] as? String
         channel = dict["channel"] as? String ?? "couple"
-        ts = (dict["ts"] as? NSNumber)?.doubleValue ?? 0
+        if let value = dict["ts"] as? NSNumber {
+            ts = value.doubleValue
+        } else if let value = dict["ts"] as? Double {
+            ts = value
+        } else if let value = dict["ts"] as? Int {
+            ts = Double(value)
+        } else {
+            ts = 0
+        }
         clientId = dict["clientId"] as? String
     }
 
@@ -53,6 +76,20 @@ struct ChatMessage: Identifiable, Equatable {
         self.type = "text"
         self.text = text
         self.url = nil
+        self.channel = channel
+        self.ts = Date().timeIntervalSince1970 * 1000
+        self.pending = true
+    }
+
+    init(optimisticMedia type: String, text: String, localURL: String?, me: Session, clientId: String, channel: String) {
+        self.id = clientId
+        self.clientId = clientId
+        self.sender = me.username
+        self.senderName = me.name
+        self.kind = "user"
+        self.type = type
+        self.text = text
+        self.url = localURL
         self.channel = channel
         self.ts = Date().timeIntervalSince1970 * 1000
         self.pending = true

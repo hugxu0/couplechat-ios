@@ -1,14 +1,43 @@
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
+import UIKit
 
-// 聊天会话页：真实数据来自 ChatStore（couple 频道）。
+// 聊天会话页：真实数据来自 ChatStore，可承载 couple / ai 两个频道。
 
 struct ChatView: View {
+    let channel: ChatChannel
+
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var store: ChatStore
     @State private var draft = ""
+    @State private var selectedMedia: PhotosPickerItem?
+    @State private var mediaBusy = false
     @FocusState private var inputFocused: Bool
 
-    private var messages: [ChatMessage] { store.messages }
+    init(channel: ChatChannel = .couple) {
+        self.channel = channel
+    }
+
+    private var messages: [ChatMessage] { store.messages(for: channel) }
+    private var title: String {
+        switch channel {
+        case .couple: return store.partner?.name ?? "聊天"
+        case .ai: return "大橘"
+        }
+    }
+    private var subtitle: String {
+        switch channel {
+        case .couple: return store.partnerOnline ? "在线" : "离线"
+        case .ai: return store.aiTyping ? "正在输入" : "陪你聊天"
+        }
+    }
+    private var subtitleColor: Color {
+        switch channel {
+        case .couple: return store.partnerOnline ? DS.Palette.green : DS.Palette.textSecondary
+        case .ai: return store.aiTyping ? DS.Palette.green : DS.Palette.textSecondary
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,25 +45,29 @@ struct ChatView: View {
             composer
         }
         .background(DS.Palette.bgGradient.ignoresSafeArea())
-        .navigationTitle(store.partner?.name ?? "聊天")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 1) {
-                    Text(store.partner?.name ?? "聊天")
+                    Text(title)
                         .font(.system(size: 17, weight: .semibold))
-                    Text(store.partnerOnline ? "在线" : "离线")
+                    Text(subtitle)
                         .font(.system(size: 11))
-                        .foregroundStyle(store.partnerOnline ? DS.Palette.green : DS.Palette.textSecondary)
+                        .foregroundStyle(subtitleColor)
                 }
             }
         }
         // 进会话隐藏底部标签栏，退出（含侧滑返回）恢复
         .onAppear {
             app.chatOpen = true
-            store.markRead()
+            store.markRead(channel)
         }
         .onDisappear { app.chatOpen = false }
+        .onChange(of: selectedMedia) {
+            guard let selectedMedia else { return }
+            sendMedia(selectedMedia)
+        }
     }
 
     // MARK: 消息列表
@@ -59,15 +92,17 @@ struct ChatView: View {
                                 MessageBubble(
                                     message: msg,
                                     mine: msg.sender == store.session?.username,
+                                    peerAvatar: channel == .ai ? "🐱" : "🐰",
                                     groupedWithPrevious: isGrouped(index),
                                     read: store.partnerHasRead(msg),
+                                    canRetry: msg.type == "text",
                                     onRetry: { store.resend(msg) })
                                 .padding(.top, bubbleTopPadding(index))
                             }
                         }
                         .id(msg.id)
                         .onAppear {
-                            if index == 0 { store.loadOlder() } // 滚到最早一条 → 翻更早历史
+                            if index == 0 { store.loadOlder(channel) } // 滚到最早一条 → 翻更早历史
                         }
                     }
                 }
@@ -116,8 +151,10 @@ struct ChatView: View {
     // MARK: 输入栏（Telegram 式：独立按钮 + 单层输入框，材质统一走 dsGlass）
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            composerIcon("cat")        // 大橘互动
-            composerIcon("paperclip")  // 附件（图片/视频/文件以后都收进这里）
+            if channel == .couple {
+                composerIcon("cat")    // 大橘互动入口后续可改成跳转 AI 频道
+            }
+            mediaPicker
 
             // 单层输入框，表情按钮嵌在框内右侧
             HStack(alignment: .bottom, spacing: 6) {
@@ -179,23 +216,106 @@ struct ChatView: View {
         .buttonStyle(PressableStyle())
     }
 
+    private var mediaPicker: some View {
+        PhotosPicker(
+            selection: $selectedMedia,
+            matching: .any(of: [.images, .videos]),
+            photoLibrary: .shared()) {
+                Image(systemName: mediaBusy ? "hourglass" : "paperclip")
+                    .font(.system(size: 20))
+                    .foregroundStyle(mediaBusy ? DS.Palette.textSecondary : DS.Palette.accent)
+                    .frame(width: 38, height: 38)
+                    .dsGlass(in: Circle())
+            }
+            .buttonStyle(PressableStyle())
+            .disabled(mediaBusy)
+    }
+
     private func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         Haptics.light()
         draft = ""
         withAnimation(DS.Anim.message) {
-            store.sendText(text)
+            store.sendText(text, channel: channel)
         }
     }
+
+    private func sendMedia(_ item: PhotosPickerItem) {
+        mediaBusy = true
+        Task {
+            defer {
+                Task { @MainActor in
+                    mediaBusy = false
+                    selectedMedia = nil
+                }
+            }
+
+            guard let prepared = try? await prepareMedia(item) else {
+                await MainActor.run { Haptics.medium() }
+                return
+            }
+
+            await MainActor.run {
+                Haptics.light()
+                withAnimation(DS.Anim.message) {
+                    store.sendMedia(
+                        data: prepared.data,
+                        mimeType: prepared.mimeType,
+                        preferredType: prepared.messageType,
+                        localPreviewURL: nil,
+                        channel: channel)
+                }
+            }
+        }
+    }
+
+    private func prepareMedia(_ item: PhotosPickerItem) async throws -> PreparedMedia {
+        let contentTypes = item.supportedContentTypes
+        let isVideo = contentTypes.contains { $0.conforms(to: .movie) }
+        guard let data = try await item.loadTransferable(type: Data.self) else {
+            throw NSError(domain: "media", code: 1)
+        }
+
+        if isVideo {
+            let mimeType = contentTypes.contains(.quickTimeMovie) ? "video/quicktime" : "video/mp4"
+            return PreparedMedia(data: data, mimeType: mimeType, messageType: "video")
+        }
+
+        if contentTypes.contains(.png) {
+            return PreparedMedia(data: data, mimeType: "image/png", messageType: "image")
+        }
+        if contentTypes.contains(.gif) {
+            return PreparedMedia(data: data, mimeType: "image/gif", messageType: "image")
+        }
+        if contentTypes.contains(.webP) {
+            return PreparedMedia(data: data, mimeType: "image/webp", messageType: "image")
+        }
+        if contentTypes.contains(.jpeg) {
+            return PreparedMedia(data: data, mimeType: "image/jpeg", messageType: "image")
+        }
+
+        guard let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.86) else {
+            throw NSError(domain: "media", code: 2)
+        }
+        return PreparedMedia(data: jpeg, mimeType: "image/jpeg", messageType: "image")
+    }
+}
+
+private struct PreparedMedia {
+    let data: Data
+    let mimeType: String
+    let messageType: String
 }
 
 // MARK: - 消息气泡
 struct MessageBubble: View {
     let message: ChatMessage
     let mine: Bool
+    let peerAvatar: String
     let groupedWithPrevious: Bool
     let read: Bool
+    let canRetry: Bool
     var onRetry: () -> Void = {}
 
     var body: some View {
@@ -203,7 +323,7 @@ struct MessageBubble: View {
             if mine { Spacer(minLength: 60) }
 
             if !mine {
-                avatar("🐰")
+                avatar(peerAvatar)
                     .opacity(groupedWithPrevious ? 0 : 1) // 同组连续消息只在第一条显示头像
             }
 
@@ -228,14 +348,10 @@ struct MessageBubble: View {
     @ViewBuilder
     private var bubbleContent: some View {
         switch message.type {
-        case "image", "sticker", "video":
-            // 媒体消息占位：附件功能接通后换成真图
-            Text(message.type == "video" ? "[视频]" : "[图片]")
-                .font(.system(size: 15))
-                .foregroundStyle(DS.Palette.textSecondary)
-                .padding(.horizontal, 15).padding(.vertical, 10)
-                .background(DS.Palette.bubbleOther)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+        case "image", "sticker":
+            imageBubble
+        case "video":
+            videoBubble
         default:
             Text(message.text)
                 .font(.system(size: 16))
@@ -249,11 +365,84 @@ struct MessageBubble: View {
         }
     }
 
+    private var imageBubble: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous)
+                .fill(mine ? DS.Palette.accent.opacity(0.18) : Color.white.opacity(0.92))
+
+            if let url = mediaURL {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        ProgressView()
+                            .tint(DS.Palette.accent)
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        mediaFallback("photo", text: "图片加载失败")
+                    @unknown default:
+                        mediaFallback("photo", text: "图片")
+                    }
+                }
+            } else {
+                mediaFallback("photo", text: message.pending ? "上传中" : "图片")
+            }
+        }
+        .frame(width: 210, height: 156)
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+        .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
+        .opacity(message.pending ? 0.72 : 1)
+    }
+
+    private var videoBubble: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous)
+                .fill(mine ? DS.Palette.accent : DS.Palette.bubbleOther)
+
+            VStack(spacing: 8) {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 38))
+                    .foregroundStyle(mine ? .white : DS.Palette.accent)
+                Text(message.pending ? "视频上传中" : "视频")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
+            }
+        }
+        .frame(width: 210, height: 128)
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+        .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
+        .opacity(message.pending ? 0.72 : 1)
+    }
+
+    @ViewBuilder
+    private func mediaFallback(_ systemName: String, text: String) -> some View {
+        VStack(spacing: 7) {
+            Image(systemName: systemName)
+                .font(.system(size: 28))
+            Text(text)
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundStyle(DS.Palette.textSecondary)
+    }
+
+    private var mediaURL: URL? {
+        guard let url = message.url else { return nil }
+        return URL(string: url)
+    }
+
     /// 我方消息状态：发送中 → 钟；失败 → 红叹号可点重发；送达 → 单勾；已读 → 主题色双勾
     @ViewBuilder
     private var statusIndicator: some View {
         if message.failed {
-            Button(action: onRetry) {
+            if canRetry {
+                Button(action: onRetry) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.red)
+                }
+            } else {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 16))
                     .foregroundStyle(.red)
