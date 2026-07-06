@@ -121,9 +121,11 @@ struct ChatView: View {
             }
             .buttonStyle(PressableStyle())
         }
-        .padding(.horizontal, DS.Spacing.page)
+        .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.white.opacity(DS.Surface.tabBarOpacity))
+        .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.tabBar, style: .continuous))
+        .padding(.horizontal, DS.Spacing.page)
+        .padding(.bottom, 4)
     }
 
     private func composerIcon(_ name: String) -> some View {

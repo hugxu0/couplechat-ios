@@ -64,9 +64,7 @@ struct RootTabView: View {
             }
         }
         .padding(.vertical, 10)
-        .background(Color.white.opacity(DS.Surface.tabBarOpacity))
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tabBar, style: .continuous))
-        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+        .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.tabBar, style: .continuous))
         .padding(.horizontal, DS.Spacing.page)
     }
 }
