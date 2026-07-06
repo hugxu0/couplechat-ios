@@ -27,12 +27,16 @@ struct ChatView: View {
         }
     }
     private var subtitle: String {
+        if !store.connected {
+            return store.lastConnectionError ?? "未连接"
+        }
         switch channel {
         case .couple: return store.partnerOnline ? "在线" : "离线"
         case .ai: return store.aiTyping ? "正在输入" : "陪你聊天"
         }
     }
     private var subtitleColor: Color {
+        if !store.connected { return .red }
         switch channel {
         case .couple: return store.partnerOnline ? DS.Palette.green : DS.Palette.textSecondary
         case .ai: return store.aiTyping ? DS.Palette.green : DS.Palette.textSecondary

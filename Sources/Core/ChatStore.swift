@@ -18,6 +18,7 @@ final class ChatStore: ObservableObject {
     @Published private(set) var readStates: [String: [String: Double]] = [:]
     @Published var aiTyping = false
     @Published var sharedState: [String: Any] = [:]
+    @Published var lastConnectionError: String?
 
     /// 兼容旧 UI：默认仍然表示 couple 频道。
     var messages: [ChatMessage] { messages(for: .couple) }
@@ -68,6 +69,7 @@ final class ChatStore: ObservableObject {
         connected = false
         partnerOnline = false
         aiTyping = false
+        lastConnectionError = nil
     }
 
     func fetchAccounts() async -> [Account] {
@@ -107,6 +109,7 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.connected = true
+                self.lastConnectionError = nil
                 self.reportAway(false)
                 self.syncHistory(.couple)
                 self.syncHistory(.ai)
@@ -116,9 +119,11 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in self?.connected = false }
         }
         s.on(clientEvent: .error) { [weak self] data, _ in
-            if let msg = data.first as? String, msg.contains("unauthorized") {
-                Task { @MainActor in self?.logout() }
-            }
+            Task { @MainActor in self?.handleSocketError(data) }
+        }
+
+        s.on("connect_error") { [weak self] data, _ in
+            Task { @MainActor in self?.handleSocketError(data) }
         }
 
         s.on("message:new") { [weak self] data, _ in
@@ -177,6 +182,21 @@ final class ChatStore: ObservableObject {
             guard let update = data.first as? [String: Any],
                   let key = update["key"] as? String else { return }
             Task { @MainActor in self?.sharedState[key] = update }
+        }
+    }
+
+    private func handleSocketError(_ data: [Any]) {
+        let message = data.compactMap { item -> String? in
+            if let text = item as? String { return text }
+            if let error = item as? Error { return error.localizedDescription }
+            if let dict = item as? [String: Any] { return dict.values.map { "\($0)" }.joined(separator: " ") }
+            return "\(item)"
+        }.joined(separator: " ")
+
+        lastConnectionError = message.isEmpty ? "连接失败" : message
+        connected = false
+        if message.lowercased().contains("unauthorized") {
+            logout()
         }
     }
 
@@ -271,6 +291,16 @@ final class ChatStore: ObservableObject {
         let optimistic = ChatMessage(optimisticText: text, me: session, clientId: clientId, channel: channel.rawValue)
         updateMessages(channel) { $0.append(optimistic) }
 
+        guard connected else {
+            updateMessages(channel) { list in
+                guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
+                list[i].pending = false
+                list[i].failed = true
+            }
+            lastConnectionError = "Socket 未连接"
+            return
+        }
+
         let payload: [String: Any] = [
             "type": "text",
             "text": text,
@@ -313,6 +343,16 @@ final class ChatStore: ObservableObject {
             clientId: clientId,
             channel: channel.rawValue)
         updateMessages(channel) { $0.append(optimistic) }
+
+        guard connected else {
+            updateMessages(channel) { list in
+                guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
+                list[i].pending = false
+                list[i].failed = true
+            }
+            lastConnectionError = "Socket 未连接"
+            return
+        }
 
         Task {
             do {
