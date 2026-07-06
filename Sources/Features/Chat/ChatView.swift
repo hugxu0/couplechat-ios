@@ -1,32 +1,14 @@
 import SwiftUI
 
-// 聊天会话页：消息列表 + 输入栏。
-// 消息发送目前只是本地追加（假数据），重点是先把气泡样式、
-// 入场动画、滚动行为这些「手感」打磨出来。
-
-struct Message: Identifiable, Equatable {
-    let id = UUID()
-    let text: String
-    let mine: Bool
-    let time: String
-    var showTime: Bool = false // 是否在这条消息上方显示时间分隔
-}
+// 聊天会话页：真实数据来自 ChatStore（couple 频道）。
 
 struct ChatView: View {
     @EnvironmentObject private var app: AppState
-    @State private var messages: [Message] = [
-        Message(text: "那我们看一会", mine: true, time: "02:58"),
-        Message(text: "嗯嗯", mine: false, time: "02:59"),
-        Message(text: "开始了宝宝", mine: true, time: "03:00", showTime: true),
-        Message(text: "嗯嗯", mine: false, time: "03:06", showTime: true),
-        Message(text: "看一会睡觉了", mine: false, time: "03:06"),
-        Message(text: "心跳好快", mine: false, time: "03:07"),
-        Message(text: "好", mine: true, time: "03:08"),
-        Message(text: "晚安老公", mine: false, time: "03:18", showTime: true),
-        Message(text: "晚安老婆", mine: true, time: "03:18"),
-    ]
+    @EnvironmentObject private var store: ChatStore
     @State private var draft = ""
     @FocusState private var inputFocused: Bool
+
+    private var messages: [ChatMessage] { store.messages }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,18 +16,24 @@ struct ChatView: View {
             composer
         }
         .background(DS.Palette.bgGradient.ignoresSafeArea())
-        .navigationTitle("小偲")
+        .navigationTitle(store.partner?.name ?? "聊天")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { } label: {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(DS.Palette.textPrimary)
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 1) {
+                    Text(store.partner?.name ?? "聊天")
+                        .font(.system(size: 17, weight: .semibold))
+                    Text(store.partnerOnline ? "在线" : "离线")
+                        .font(.system(size: 11))
+                        .foregroundStyle(store.partnerOnline ? DS.Palette.green : DS.Palette.textSecondary)
                 }
             }
         }
         // 进会话隐藏底部标签栏，退出（含侧滑返回）恢复
-        .onAppear { app.chatOpen = true }
+        .onAppear {
+            app.chatOpen = true
+            store.markRead()
+        }
         .onDisappear { app.chatOpen = false }
     }
 
@@ -56,16 +44,31 @@ struct ChatView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
                         VStack(spacing: 0) {
-                            if msg.showTime {
-                                Text(msg.time)
+                            if showTimeSeparator(index) {
+                                Text(msg.timeString)
                                     .font(.system(size: 13))
                                     .foregroundStyle(DS.Palette.textSecondary)
                                     .padding(.vertical, 14)
                             }
-                            MessageBubble(message: msg, groupedWithPrevious: isGrouped(index))
+                            if msg.kind == "system" {
+                                Text(msg.text)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(DS.Palette.textSecondary)
+                                    .padding(.vertical, 8)
+                            } else {
+                                MessageBubble(
+                                    message: msg,
+                                    mine: msg.sender == store.session?.username,
+                                    groupedWithPrevious: isGrouped(index),
+                                    read: store.partnerHasRead(msg),
+                                    onRetry: { store.resend(msg) })
                                 .padding(.top, bubbleTopPadding(index))
+                            }
                         }
                         .id(msg.id)
+                        .onAppear {
+                            if index == 0 { store.loadOlder() } // 滚到最早一条 → 翻更早历史
+                        }
                     }
                 }
                 .padding(.horizontal, DS.Spacing.page)
@@ -92,14 +95,21 @@ struct ChatView: View {
         }
     }
 
-    /// 跟上一条是同一个人 → 算同组（气泡间距更小、圆角贴合）
+    /// 与上一条间隔超过 8 分钟才显示时间分隔（贴近网页版行为）
+    private func showTimeSeparator(_ index: Int) -> Bool {
+        guard index > 0 else { return true }
+        return messages[index].ts - messages[index - 1].ts > 8 * 60 * 1000
+    }
+
+    /// 跟上一条是同一个人 → 算同组（气泡间距更小、头像只显示一次）
     private func isGrouped(_ index: Int) -> Bool {
-        guard index > 0 else { return false }
-        return messages[index - 1].mine == messages[index].mine && !messages[index].showTime
+        guard index > 0, !showTimeSeparator(index) else { return false }
+        return messages[index - 1].sender == messages[index].sender
+            && messages[index - 1].kind != "system"
     }
 
     private func bubbleTopPadding(_ index: Int) -> CGFloat {
-        guard index > 0, !messages[index].showTime else { return 0 }
+        guard index > 0, !showTimeSeparator(index) else { return 0 }
         return isGrouped(index) ? DS.Spacing.bubbleGapSame : DS.Spacing.bubbleGapOther
     }
 
@@ -175,45 +185,88 @@ struct ChatView: View {
         Haptics.light()
         draft = ""
         withAnimation(DS.Anim.message) {
-            messages.append(Message(text: text, mine: true, time: "现在"))
+            store.sendText(text)
         }
     }
 }
 
 // MARK: - 消息气泡
 struct MessageBubble: View {
-    let message: Message
+    let message: ChatMessage
+    let mine: Bool
     let groupedWithPrevious: Bool
+    let read: Bool
+    var onRetry: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            if message.mine { Spacer(minLength: 60) }
+            if mine { Spacer(minLength: 60) }
 
-            if !message.mine {
+            if !mine {
                 avatar("🐰")
                     .opacity(groupedWithPrevious ? 0 : 1) // 同组连续消息只在第一条显示头像
             }
 
-            Text(message.text)
-                .font(.system(size: 16))
-                .foregroundStyle(message.mine ? .white : DS.Palette.textPrimary)
-                .padding(.horizontal, 15)
-                .padding(.vertical, 10)
-                .background(message.mine ? AnyShapeStyle(DS.Palette.accent) : AnyShapeStyle(DS.Palette.bubbleOther))
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
-                .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
+            HStack(alignment: .bottom, spacing: 5) {
+                bubbleContent
+                if mine { statusIndicator }
+            }
 
-            if message.mine {
+            if mine {
                 avatar("🐶")
                     .opacity(groupedWithPrevious ? 0 : 1)
             }
 
-            if !message.mine { Spacer(minLength: 60) }
+            if !mine { Spacer(minLength: 60) }
         }
         .transition(.asymmetric(
-            insertion: .scale(scale: 0.85, anchor: message.mine ? .bottomTrailing : .bottomLeading)
+            insertion: .scale(scale: 0.85, anchor: mine ? .bottomTrailing : .bottomLeading)
                 .combined(with: .opacity),
             removal: .opacity))
+    }
+
+    @ViewBuilder
+    private var bubbleContent: some View {
+        switch message.type {
+        case "image", "sticker", "video":
+            // 媒体消息占位：附件功能接通后换成真图
+            Text(message.type == "video" ? "[视频]" : "[图片]")
+                .font(.system(size: 15))
+                .foregroundStyle(DS.Palette.textSecondary)
+                .padding(.horizontal, 15).padding(.vertical, 10)
+                .background(DS.Palette.bubbleOther)
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+        default:
+            Text(message.text)
+                .font(.system(size: 16))
+                .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
+                .padding(.horizontal, 15)
+                .padding(.vertical, 10)
+                .background(mine ? AnyShapeStyle(DS.Palette.accent) : AnyShapeStyle(DS.Palette.bubbleOther))
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+                .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
+                .opacity(message.pending ? 0.7 : 1)
+        }
+    }
+
+    /// 我方消息状态：发送中 → 钟；失败 → 红叹号可点重发；送达 → 单勾；已读 → 主题色双勾
+    @ViewBuilder
+    private var statusIndicator: some View {
+        if message.failed {
+            Button(action: onRetry) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.red)
+            }
+        } else if message.pending {
+            Image(systemName: "clock")
+                .font(.system(size: 11))
+                .foregroundStyle(DS.Palette.textSecondary)
+        } else {
+            Image(systemName: read ? "checkmark.circle.fill" : "checkmark.circle")
+                .font(.system(size: 13))
+                .foregroundStyle(read ? DS.Palette.accent : DS.Palette.textSecondary)
+        }
     }
 
     private func avatar(_ emoji: String) -> some View {

@@ -4,12 +4,20 @@ options:
   deploymentTarget:
     iOS: "17.0"
 
+packages:
+  SocketIO:
+    url: https://github.com/socketio/socket.io-client-swift
+    from: 16.1.0
+
 targets:
   CoupleChat:
     type: application
     platform: iOS
     sources:
       - Sources
+    dependencies:
+      - package: SocketIO
+        product: SocketIO
     info:
       path: Sources/App/Info.plist
       properties:

@@ -4,6 +4,7 @@ import SwiftUI
 // 数据目前是假数据，后续接入后端后替换。
 
 struct ChatHomeView: View {
+    @EnvironmentObject private var store: ChatStore
     @State private var showChat = false
 
     var body: some View {
@@ -63,18 +64,21 @@ struct ChatHomeView: View {
 
             Divider().opacity(0.5)
 
-            // 最新消息预览
+            // 最新消息预览（真数据：最近三条）
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("最新消息").font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(DS.Palette.pink)
                     Spacer()
-                    Text("03:18").font(.system(size: 13))
+                    Text(store.messages.last?.timeString ?? "")
+                        .font(.system(size: 13))
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
-                previewBubble("好", mine: true)
-                previewBubble("晚安老公", mine: false)
-                previewBubble("晚安老婆", mine: true)
+                ForEach(store.messages.suffix(3)) { m in
+                    previewBubble(
+                        m.type == "text" ? m.text : "[\(m.type == "image" ? "图片" : m.type == "video" ? "视频" : "表情")]",
+                        mine: m.sender == store.session?.username)
+                }
             }
 
             // 进入聊天
