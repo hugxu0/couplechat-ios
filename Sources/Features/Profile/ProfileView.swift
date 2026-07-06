@@ -1,8 +1,10 @@
 import SwiftUI
 
-// 我的页：头像信息 + 设置项列表。占位版。
+// 我的页：头像信息 + 设置项列表。
 
 struct ProfileView: View {
+    @EnvironmentObject private var store: ChatStore
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -21,17 +23,17 @@ struct ProfileView: View {
 
     private var header: some View {
         VStack(spacing: 10) {
-            Text("🐶")
+            Text(AccountPresentation.avatar(for: store.session?.username ?? "xu"))
                 .font(.system(size: 48))
                 .frame(width: 96, height: 96)
                 .background(Color.white.opacity(0.9))
                 .clipShape(Circle())
-            Text("小旭")
+            Text(store.session?.name ?? "未登录")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(DS.Palette.textPrimary)
-            Text("要亲亲")
+            Text(store.connected ? "已连接 hoo66.top" : (store.lastConnectionError ?? "未连接"))
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(DS.Palette.pink)
+                .foregroundStyle(store.connected ? DS.Palette.pink : .red)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 26)
@@ -47,6 +49,26 @@ struct ProfileView: View {
             row(icon: "bell.badge", title: "通知设置")
             divider
             row(icon: "info.circle", title: "关于")
+            divider
+            Button {
+                Haptics.medium()
+                store.logout()
+            } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.red)
+                        .frame(width: 28)
+                    Text("退出登录")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.red)
+                    Spacer()
+                }
+                .padding(.horizontal, DS.Spacing.card)
+                .padding(.vertical, 13)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PressableStyle())
         }
         .padding(.vertical, 6)
         .dsCard()
