@@ -137,19 +137,28 @@ struct ChatView: View {
                             if index == 0 { store.loadOlder(channel) }
                         }
                     }
+                    // 底部锚点：所有"滚到底"都 scrollTo 到这里
+                    Color.clear
+                        .frame(height: 1)
+                        .id("bottomAnchor")
                 }
                 .padding(.horizontal, DS.Spacing.page)
                 .padding(.vertical, 10)
             }
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
-            .defaultScrollAnchor(.bottom)
             .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
-            .onChange(of: messages.count) {
-                guard let last = messages.last else { return }
-                withAnimation(DS.Anim.message) {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
+            .onAppear { scrollToBottom(proxy) }
+            .onChange(of: messages.count) { scrollToBottom(proxy) }
+            .onChange(of: inputFocused) { scrollToBottom(proxy, animated: true) }
+        }
+    }
+
+    /// 滚到底部锚点；延迟一帧让 LazyVStack 渲染稳定，避免 scrollTo 找不到目标
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = false) {
+        DispatchQueue.main.async {
+            withAnimation(animated ? DS.Anim.message : nil) {
+                proxy.scrollTo("bottomAnchor", anchor: .bottom)
             }
         }
     }
