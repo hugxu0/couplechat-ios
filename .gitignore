@@ -4,6 +4,7 @@
 
 # 构建产物
 build/
+build-artifacts/
 DerivedData/
 dist/
 node_modules/

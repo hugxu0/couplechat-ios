@@ -24,7 +24,18 @@ struct ChatView: View {
     @State private var scrollToMessageId: String?
     @State private var highlightedMessageId: String?
     @State private var mediaViewerMessageId: String?
+    @State private var isRecording = false
+    @State private var recordingCancelled = false
+    @State private var recordingElapsed: TimeInterval = 0
+    @State private var dragTranslation: CGFloat = 0
+    @State private var recordingPulse = false
+    @State private var recordingTimer: Timer?
+    @State private var audioRecorder: AVAudioRecorder?
+    @State private var recordingURL: URL?
+    @State private var recordingStartDate: Date?
+    @State private var showMicPermissionAlert = false
     @FocusState private var inputFocused: Bool
+    private static let cancelDragThreshold: CGFloat = -70
 
     init(channel: ChatChannel = .couple) {
         self.channel = channel
@@ -148,6 +159,16 @@ struct ChatView: View {
         .onChange(of: selectedMedia) {
             guard let selectedMedia else { return }
             sendMedia(selectedMedia)
+        }
+        .alert("需要麦克风权限", isPresented: $showMicPermissionAlert) {
+            Button("去设置") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("请在系统设置中允许访问麦克风，才能发送语音消息")
         }
     }
 
@@ -304,7 +325,7 @@ struct ChatView: View {
 
         if msg.type == "text" {
             Button {
-                UIPasteboard.general.string = msg.text
+                UIPasteboard.general.string = msg.displayText
             } label: {
                 Label("复制", systemImage: "doc.on.doc")
             }
@@ -341,7 +362,7 @@ struct ChatView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(DS.Palette.accent)
                         .lineLimit(1)
-                    Text(target.text)
+                    Text(target.displayText)
                         .font(.system(size: 12))
                         .foregroundStyle(DS.Palette.textSecondary)
                         .lineLimit(1)
@@ -366,61 +387,131 @@ struct ChatView: View {
         }
     }
 
-    // MARK: 输入栏（Telegram 式：独立按钮 + 单层输入框，材质统一走 dsGlass）
+    // MARK: 输入栏（Telegram 式：附件嵌入输入框内，与表情按钮对称；麦克风按住说话）
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            if channel == .couple {
-                composerIcon("cat")    // 大橘互动入口后续可改成跳转 AI 频道
-            }
-            mediaPicker
-
-            // 单层输入框，表情按钮嵌在框内右侧
-            HStack(alignment: .bottom, spacing: 6) {
-                TextField("消息", text: $draft, axis: .vertical)
-                    .focused($inputFocused)
-                    .lineLimit(1...5)
-                    .font(.system(size: 16))
-                Button { } label: {
-                    Image(systemName: "face.smiling")
-                        .font(.system(size: 21))
-                        .foregroundStyle(DS.Palette.textSecondary)
+            if isRecording {
+                recordingBar
+            } else {
+                if channel == .couple {
+                    composerIcon("cat")    // 大橘互动入口后续可改成跳转 AI 频道
                 }
-                .buttonStyle(PressableStyle())
+                messageBox
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 8)
-            .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.bubble + 2, style: .continuous))
-
-            // 没文字 → 语音；有文字 → 变成主题色发送按钮（Telegram 的行为）
-            Button {
-                if draft.isEmpty {
-                    Haptics.medium() // 语音留待后续实现
-                } else {
-                    sendDraft()
-                }
-            } label: {
-                Group {
-                    if draft.isEmpty {
-                        Image(systemName: "mic")
-                            .font(.system(size: 20))
-                            .foregroundStyle(DS.Palette.textSecondary)
-                            .frame(width: 38, height: 38)
-                            .dsGlass(in: Circle())
-                    } else {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 38, height: 38)
-                            .background(DS.Palette.accent)
-                            .clipShape(Circle())
-                    }
-                }
-                .animation(DS.Anim.springFast, value: draft.isEmpty)
-            }
-            .buttonStyle(PressableStyle())
+            micButton
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
+    }
+
+    // 单层输入框：附件按钮嵌在左侧，表情按钮嵌在右侧，对称布局
+    private var messageBox: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            mediaPicker
+            TextField("消息", text: $draft, axis: .vertical)
+                .focused($inputFocused)
+                .lineLimit(1...5)
+                .font(.system(size: 16))
+            Button { } label: {
+                Image(systemName: "face.smiling")
+                    .font(.system(size: 21))
+                    .foregroundStyle(DS.Palette.textSecondary)
+            }
+            .buttonStyle(PressableStyle())
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 8)
+        .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.bubble + 2, style: .continuous))
+    }
+
+    // 录音中：替换输入框，展示时长 + 左滑取消提示
+    private var recordingBar: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(Color.red)
+                .frame(width: 9, height: 9)
+                .opacity(recordingPulse ? 1 : 0.3)
+                .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: recordingPulse)
+            Text(recordingTimeLabel)
+                .font(.system(size: 15, weight: .medium).monospacedDigit())
+                .foregroundStyle(DS.Palette.textPrimary)
+            Spacer(minLength: 8)
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("滑动取消")
+                    .font(.system(size: 14))
+            }
+            .foregroundStyle(recordingCancelled ? .red : DS.Palette.textSecondary)
+            .offset(x: min(0, dragTranslation * 0.4))
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 44)
+        .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.bubble + 2, style: .continuous))
+        .onAppear { recordingPulse = true }
+        .onDisappear { recordingPulse = false }
+    }
+
+    private var recordingTimeLabel: String {
+        let total = Int(recordingElapsed.rounded(.down))
+        return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+
+    // 没文字 → 按住说话；有文字 → 主题色发送按钮
+    private var micButton: some View {
+        Group {
+            if isRecording {
+                Image(systemName: recordingCancelled ? "trash.fill" : "mic.fill")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(recordingCancelled ? Color.red : DS.Palette.accent)
+                    .clipShape(Circle())
+                    .scaleEffect(recordingCancelled ? 1.12 : 1.0)
+            } else if draft.isEmpty {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(DS.Palette.accent)
+                    .clipShape(Circle())
+            } else {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(DS.Palette.accent)
+                    .clipShape(Circle())
+            }
+        }
+        .animation(DS.Anim.springFast, value: draft.isEmpty)
+        .animation(DS.Anim.springFast, value: isRecording)
+        .animation(DS.Anim.springFast, value: recordingCancelled)
+        .contentShape(Circle())
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .onChanged { value in
+                    guard draft.isEmpty else { return }
+                    if !isRecording {
+                        beginRecording()
+                    }
+                    guard isRecording else { return }
+                    dragTranslation = value.translation.width
+                    let shouldCancel = dragTranslation < Self.cancelDragThreshold
+                    if shouldCancel != recordingCancelled {
+                        recordingCancelled = shouldCancel
+                        Haptics.medium()
+                    }
+                }
+                .onEnded { _ in
+                    if !draft.isEmpty {
+                        sendDraft()
+                        return
+                    }
+                    guard isRecording else { return }
+                    finishRecording(cancelled: recordingCancelled)
+                }
+        )
     }
 
     private func composerIcon(_ name: String) -> some View {
@@ -440,13 +531,108 @@ struct ChatView: View {
             matching: .any(of: [.images, .videos]),
             photoLibrary: .shared()) {
                 Image(systemName: mediaBusy ? "hourglass" : "paperclip")
-                    .font(.system(size: 20))
-                    .foregroundStyle(mediaBusy ? DS.Palette.textSecondary : DS.Palette.accent)
-                    .frame(width: 38, height: 38)
-                    .dsGlass(in: Circle())
+                    .font(.system(size: 21))
+                    .foregroundStyle(mediaBusy ? DS.Palette.textSecondary.opacity(0.6) : DS.Palette.textSecondary)
             }
             .buttonStyle(PressableStyle())
             .disabled(mediaBusy)
+    }
+
+    // MARK: 录音（Telegram 式按住说话：抬手发送，左滑取消）
+
+    private func beginRecording() {
+        guard !isRecording else { return }
+        isRecording = true
+        recordingCancelled = false
+        dragTranslation = 0
+        recordingElapsed = 0
+        Haptics.light()
+
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted:
+            startRecorder()
+        case .denied:
+            isRecording = false
+            showMicPermissionAlert = true
+        case .undetermined:
+            Task {
+                let granted = await AVAudioApplication.requestRecordPermission()
+                await MainActor.run {
+                    guard isRecording else { return }
+                    if granted {
+                        startRecorder()
+                    } else {
+                        isRecording = false
+                        showMicPermissionAlert = true
+                    }
+                }
+            }
+        @unknown default:
+            isRecording = false
+        }
+    }
+
+    private func startRecorder() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+            try session.setActive(true)
+        } catch {
+            isRecording = false
+            return
+        }
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+        ]
+        guard let recorder = try? AVAudioRecorder(url: url, settings: settings) else {
+            isRecording = false
+            return
+        }
+        recorder.record()
+        audioRecorder = recorder
+        recordingURL = url
+        recordingStartDate = Date()
+
+        recordingTimer?.invalidate()
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+            Task { @MainActor in
+                recordingElapsed = Date().timeIntervalSince(recordingStartDate ?? Date())
+            }
+        }
+    }
+
+    private func finishRecording(cancelled: Bool) {
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        let duration = recordingElapsed
+        let url = recordingURL
+        audioRecorder?.stop()
+        audioRecorder = nil
+        recordingURL = nil
+        isRecording = false
+        recordingCancelled = false
+        dragTranslation = 0
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+
+        guard !cancelled, duration >= 1.0, let url else {
+            if let url { try? FileManager.default.removeItem(at: url) }
+            if !cancelled { Haptics.medium() }
+            return
+        }
+        Haptics.light()
+        sendVoice(url: url)
+    }
+
+    private func sendVoice(url: URL) {
+        guard let data = try? Data(contentsOf: url) else { return }
+        withAnimation(DS.Anim.message) {
+            store.sendMedia(data: data, mimeType: "audio/m4a", preferredType: "voice", localPreviewURL: url, channel: channel)
+        }
     }
 
     private func sendDraft() {
@@ -476,7 +662,7 @@ struct ChatView: View {
         case "video":
             body = "[视频]"
         default:
-            body = message.text
+            body = message.displayText
         }
         return "\(message.senderName): \(body)"
     }
@@ -631,7 +817,7 @@ private struct MessageContextPreview: View {
         case "video":
             return "[视频]"
         default:
-            return message.text
+            return message.displayText
         }
     }
 }
@@ -717,9 +903,11 @@ struct MessageBubble: View {
             imageBubble
         case "video":
             videoBubble
+        case "voice":
+            voiceBubble
         default:
             let hasReply = message.replyPreview != nil && !(message.replyPreview ?? "").isEmpty
-            Text(message.text)
+            Text(message.displayText)
                 .font(.system(size: 16))
                 .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
                 .if(!hasReply) {
@@ -810,6 +998,23 @@ struct MessageBubble: View {
         .opacity(message.pending ? 0.72 : 1)
     }
 
+    private var voiceBubble: some View {
+        Group {
+            if let url = mediaURL {
+                VoiceBubbleView(url: url, mine: mine)
+            } else {
+                mediaFallback("mic", text: message.pending ? "上传中" : "语音")
+                    .frame(width: 130, height: 20)
+            }
+        }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 10)
+        .background(mine ? AnyShapeStyle(DS.Palette.accent) : AnyShapeStyle(DS.Palette.bubbleOther))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+        .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
+        .opacity(message.pending ? 0.7 : 1)
+    }
+
     @ViewBuilder
     private func mediaFallback(_ systemName: String, text: String) -> some View {
         VStack(spacing: 7) {
@@ -858,6 +1063,120 @@ struct MessageBubble: View {
             .frame(width: 36, height: 36)
             .background(DS.Palette.bubbleOther)
             .clipShape(Circle())
+    }
+}
+
+private struct VoiceBubbleView: View {
+    let url: URL
+    let mine: Bool
+
+    @State private var player: AVAudioPlayer?
+    @State private var delegate: VoicePlaybackDelegate?
+    @State private var isPlaying = false
+    @State private var isLoading = false
+    @State private var duration: TimeInterval = 0
+    @State private var elapsed: TimeInterval = 0
+    @State private var progressTimer: Timer?
+
+    private static let barHeights: [CGFloat] = [6, 12, 18, 9, 15, 20, 8, 14, 22, 10, 16, 7, 19, 11, 17, 9, 13, 6]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isLoading ? "waveform" : (isPlaying ? "pause.fill" : "play.fill"))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(mine ? .white : DS.Palette.accent)
+                .frame(width: 28, height: 28)
+                .background(mine ? Color.white.opacity(0.22) : DS.Palette.accent.opacity(0.15))
+                .clipShape(Circle())
+
+            HStack(spacing: 2) {
+                ForEach(Array(Self.barHeights.enumerated()), id: \.offset) { index, height in
+                    Capsule()
+                        .fill(mine ? Color.white.opacity(0.7) : DS.Palette.accent.opacity(0.55))
+                        .frame(width: 2, height: height)
+                }
+            }
+            .frame(height: 22)
+
+            Text(timeLabel)
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(mine ? .white.opacity(0.85) : DS.Palette.textSecondary)
+        }
+        .frame(width: 150)
+        .contentShape(Rectangle())
+        .onTapGesture { togglePlayback() }
+        .onDisappear {
+            progressTimer?.invalidate()
+            player?.stop()
+        }
+    }
+
+    private var timeLabel: String {
+        let value = isPlaying ? max(0, duration - elapsed) : duration
+        return String(format: "%d″", max(0, Int(value.rounded())))
+    }
+
+    private func togglePlayback() {
+        guard !isLoading else { return }
+        if isPlaying {
+            player?.pause()
+            isPlaying = false
+            progressTimer?.invalidate()
+            return
+        }
+        if let player {
+            player.play()
+            isPlaying = true
+            startTimer()
+        } else {
+            loadAndPlay()
+        }
+    }
+
+    private func loadAndPlay() {
+        isLoading = true
+        Task {
+            let localURL: URL?
+            if url.isFileURL {
+                localURL = url
+            } else if let (data, _) = try? await URLSession.shared.data(from: url) {
+                let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+                try? data.write(to: tmp)
+                localURL = tmp
+            } else {
+                localURL = nil
+            }
+            await MainActor.run {
+                isLoading = false
+                guard let localURL, let p = try? AVAudioPlayer(contentsOf: localURL) else { return }
+                let d = VoicePlaybackDelegate { isPlaying = false; elapsed = 0; progressTimer?.invalidate() }
+                p.delegate = d
+                p.prepareToPlay()
+                delegate = d
+                player = p
+                duration = p.duration
+                p.play()
+                isPlaying = true
+                startTimer()
+            }
+        }
+    }
+
+    private func startTimer() {
+        progressTimer?.invalidate()
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            Task { @MainActor in
+                elapsed = player?.currentTime ?? 0
+            }
+        }
+    }
+}
+
+private final class VoicePlaybackDelegate: NSObject, AVAudioPlayerDelegate {
+    private let onFinish: () -> Void
+    init(onFinish: @escaping () -> Void) { self.onFinish = onFinish }
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in onFinish() }
     }
 }
 
@@ -1287,7 +1606,7 @@ private struct ChatSearchSheet: View {
                     .font(.system(size: 12))
                     .foregroundStyle(DS.Palette.textSecondary)
             }
-            Text(highlighted(msg.text))
+            Text(highlighted(msg.displayText))
                 .font(.system(size: 15))
                 .lineLimit(3)
         }

@@ -1,16 +1,18 @@
 import SwiftUI
 
-// 记录页「我们」：在一起天数（主题渐变大卡）、见面/吵架计数、
-// 聊天统计（近10天/月度切换、点柱查看）、大橘日记、今日推荐。
-// 数据：纪念日走 shared["dates"]（两人共享），统计/日记/推荐走 REST。
+// 记录页「我们」：在一起天数（主题渐变大卡）、可自由增删的纪念日/倒数日卡片网格、
+// 聊天统计（近10天/月度切换、左右翻页看更早、点柱查看）、大橘日记、今日推荐。
+// 数据：纪念日走 shared["dates"]/shared["anniversaries"]（两人共享），
+// 聊天统计聚合自本地缓存的完整聊天记录，日记/推荐走 REST。
 
 struct RecordsView: View {
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
 
-    @State private var stats: StatsResponse?
     @State private var daily: DailyContent?
     @State private var showDateEditor = false
+    @State private var editingAnniversary: AnniversaryEntry?
+    @State private var showAddAnniversary = false
     @State private var recommendBusy = false
     @State private var recommendSent = false
 
@@ -19,8 +21,8 @@ struct RecordsView: View {
             ScrollView {
                 VStack(spacing: DS.Spacing.gap) {
                     heroCard
-                    counterRow
-                    ChatStatsCard(stats: stats)
+                    anniversaryGrid
+                    ChatStatsCard()
                     diaryCard
                     recommendCard
                 }
@@ -36,16 +38,21 @@ struct RecordsView: View {
                 DateEditorSheet()
                     .presentationDetents([.medium])
             }
+            .sheet(item: $editingAnniversary) { entry in
+                AnniversaryEditorSheet(entry: entry)
+                    .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showAddAnniversary) {
+                AnniversaryEditorSheet(entry: nil)
+                    .presentationDetents([.medium, .large])
+            }
         }
     }
 
     private func reload() async {
-        async let s = store.fetchStats()
-        async let d = store.fetchDaily()
-        let (newStats, newDaily) = await (s, d)
+        guard let newDaily = await store.fetchDaily() else { return }
         withAnimation(DS.Anim.ease) {
-            if let newStats { stats = newStats }
-            if let newDaily { daily = newDaily }
+            daily = newDaily
         }
     }
 
@@ -98,41 +105,34 @@ struct RecordsView: View {
         .buttonStyle(PressableStyle())
     }
 
-    // MARK: - 见面 / 吵架计数
-    private var counterRow: some View {
-        HStack(spacing: DS.Spacing.gap) {
-            counterCard(
-                icon: "figure.2.arms.open",
-                title: "距离上次见面",
-                days: CoupleDates.daysSince(store.coupleDates.lastMeet),
-                resetLabel: "今天见面啦",
-                onReset: { resetDate(\.lastMeet) })
-            counterCard(
-                icon: "cloud.sun",
-                title: "距离上次吵架",
-                days: CoupleDates.daysSince(store.coupleDates.lastFight),
-                resetLabel: "记一下",
-                onReset: { resetDate(\.lastFight) })
+    // MARK: - 自由添加的纪念日 / 倒数日
+    private var anniversaryGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.Spacing.gap) {
+            ForEach(store.anniversaries) { entry in
+                anniversaryCard(entry)
+            }
+            addAnniversaryTile
         }
     }
 
-    private func counterCard(icon: String, title: String, days: Int?, resetLabel: String, onReset: @escaping () -> Void) -> some View {
+    private func anniversaryCard(_ entry: AnniversaryEntry) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: icon)
+                Image(systemName: entry.icon)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(theme.accent.color)
-                Text(title)
+                Text(entry.title)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(DS.Palette.textSecondary)
+                    .lineLimit(1)
             }
-            if let days {
+            if let days = entry.days {
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text("\(days)")
                         .font(.system(size: 38, weight: .heavy, design: .rounded))
                         .foregroundStyle(DS.Palette.textPrimary)
                         .contentTransition(.numericText())
-                    Text("天")
+                    Text(entry.direction == .up ? "天" : "天后")
                         .font(.system(size: 13))
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
@@ -142,29 +142,61 @@ struct RecordsView: View {
                     .foregroundStyle(DS.Palette.textSecondary.opacity(0.6))
                     .padding(.vertical, 5)
             }
-            Button {
-                Haptics.medium()
-                withAnimation(DS.Anim.spring) { onReset() }
-            } label: {
-                Text(resetLabel)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.accent.color)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(theme.accent.color.opacity(0.12))
-                    .clipShape(Capsule())
+            if entry.direction == .up {
+                Button {
+                    Haptics.medium()
+                    withAnimation(DS.Anim.spring) { markToday(entry) }
+                } label: {
+                    Text("标记今天")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.accent.color)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(theme.accent.color.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(PressableStyle())
+            } else {
+                Spacer(minLength: 5)
             }
-            .buttonStyle(PressableStyle())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.Spacing.card)
         .dsCard(radius: DS.Radius.tile + 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Haptics.light()
+            editingAnniversary = entry
+        }
     }
 
-    private func resetDate(_ keyPath: WritableKeyPath<CoupleDates, String?>) {
-        var dates = store.coupleDates
-        dates[keyPath: keyPath] = Self.today()
-        store.saveCoupleDates(dates)
+    private var addAnniversaryTile: some View {
+        Button {
+            Haptics.light()
+            showAddAnniversary = true
+        } label: {
+            VStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: 22, weight: .semibold))
+                Text("添加纪念日")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundStyle(DS.Palette.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 110)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.tile + 4, style: .continuous)
+                    .strokeBorder(DS.Palette.textSecondary.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+            )
+        }
+        .buttonStyle(PressableStyle())
+    }
+
+    private func markToday(_ entry: AnniversaryEntry) {
+        var items = store.anniversaries
+        guard let idx = items.firstIndex(where: { $0.id == entry.id }) else { return }
+        items[idx].date = Self.today()
+        store.saveAnniversaries(items)
     }
 
     static func today() -> String {
@@ -304,35 +336,89 @@ struct RecordsView: View {
     }
 }
 
-// MARK: - 聊天统计卡（近10天 / 月度）
+// MARK: - 聊天统计卡（近10天 / 月度，数据来自本地聊天缓存，支持左右翻页看更早）
 
 private struct ChatStatsCard: View {
-    let stats: StatsResponse?
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
 
     private enum Mode: String, CaseIterable { case days = "近 10 天", months = "月度" }
     @State private var mode: Mode = .days
     @State private var selectedIndex: Int?
+    @State private var buckets = ChatStore.LocalStatsBuckets(days: [], months: [])
+    @State private var dayPage = 0
+    @State private var monthPage = 0
+    @State private var followLatestDay = true
+    @State private var followLatestMonth = true
+
+    private static let dayPageSize = 10
+    private static let monthPageSize = 12
+
+    private var dayPages: [[DayStat]] { Self.chunk(buckets.days, size: Self.dayPageSize) }
+    private var monthPages: [[MonthStat]] { Self.chunk(buckets.months, size: Self.monthPageSize) }
+
+    private static func chunk<T>(_ items: [T], size: Int) -> [[T]] {
+        guard !items.isEmpty else { return [[]] }
+        var pages: [[T]] = []
+        var idx = 0
+        while idx < items.count {
+            let end = min(idx + size, items.count)
+            pages.append(Array(items[idx..<end]))
+            idx = end
+        }
+        return pages
+    }
+
+    private var dayPageBinding: Binding<Int> {
+        Binding(
+            get: { dayPage },
+            set: { newValue in
+                dayPage = newValue
+                followLatestDay = newValue == dayPages.count - 1
+            })
+    }
+
+    private var monthPageBinding: Binding<Int> {
+        Binding(
+            get: { monthPage },
+            set: { newValue in
+                monthPage = newValue
+                followLatestMonth = newValue == monthPages.count - 1
+            })
+    }
+
+    private var globalSelectedDayIndex: Int {
+        let localCount = dayPages.indices.contains(dayPage) ? dayPages[dayPage].count : 0
+        return dayPage * Self.dayPageSize + (selectedIndex ?? localCount - 1)
+    }
+
+    private var globalSelectedMonthIndex: Int {
+        let localCount = monthPages.indices.contains(monthPage) ? monthPages[monthPage].count : 0
+        return monthPage * Self.monthPageSize + (selectedIndex ?? localCount - 1)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
             picker
-            if let stats {
-                chart(stats)
-                legendRow(stats)
-            } else {
-                HStack {
-                    Spacer()
-                    ProgressView().padding(.vertical, 40)
-                    Spacer()
-                }
-            }
+            chart
+            legendRow
         }
         .padding(DS.Spacing.card)
         .dsCard()
         .onChange(of: mode) { selectedIndex = nil }
+        .onAppear {
+            refreshBuckets()
+        }
+        .onChange(of: store.messagesByChannel) { _, _ in
+            refreshBuckets()
+        }
+    }
+
+    private func refreshBuckets() {
+        buckets = store.localStats(for: .couple)
+        if followLatestDay { dayPage = max(0, dayPages.count - 1) }
+        if followLatestMonth { monthPage = max(0, monthPages.count - 1) }
     }
 
     private var header: some View {
@@ -341,37 +427,35 @@ private struct ChatStatsCard: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(DS.Palette.textPrimary)
             Spacer()
-            if let stats {
-                let (label, total, delta) = headline(stats)
-                Text(label)
-                    .font(.system(size: 12))
-                    .foregroundStyle(DS.Palette.textSecondary)
-                Text("\(total)")
-                    .font(.system(size: 26, weight: .heavy, design: .rounded))
-                    .foregroundStyle(DS.Palette.textPrimary)
-                    .contentTransition(.numericText())
-                if let delta, delta != 0 {
-                    Text(delta > 0 ? "↑\(delta)" : "↓\(-delta)")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(delta > 0 ? DS.Palette.green : DS.Palette.pink)
-                }
+            let (label, total, delta) = headline()
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(DS.Palette.textSecondary)
+            Text("\(total)")
+                .font(.system(size: 26, weight: .heavy, design: .rounded))
+                .foregroundStyle(DS.Palette.textPrimary)
+                .contentTransition(.numericText())
+            if let delta, delta != 0 {
+                Text(delta > 0 ? "↑\(delta)" : "↓\(-delta)")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(delta > 0 ? DS.Palette.green : DS.Palette.pink)
             }
         }
     }
 
-    /// 头部数字：选中了柱就显示选中项，否则显示最新一项（今天/本月）+ 环比
-    private func headline(_ stats: StatsResponse) -> (String, Int, Int?) {
+    /// 头部数字：选中了柱就显示选中项，否则显示当前页最新一项（今天/本月）+ 环比（跨页也按整体序列对比）
+    private func headline() -> (String, Int, Int?) {
         switch mode {
         case .days:
-            let items = stats.days
-            let idx = selectedIndex ?? items.count - 1
+            let items = buckets.days
+            let idx = globalSelectedDayIndex
             guard items.indices.contains(idx) else { return ("", 0, nil) }
             let delta = idx > 0 ? items[idx].total - items[idx - 1].total : nil
             let label = idx == items.count - 1 ? "今天" : String(items[idx].date.suffix(5))
             return (label, items[idx].total, delta)
         case .months:
-            let items = stats.months
-            let idx = selectedIndex ?? items.count - 1
+            let items = buckets.months
+            let idx = globalSelectedMonthIndex
             guard items.indices.contains(idx) else { return ("", 0, nil) }
             let delta = idx > 0 ? items[idx].total - items[idx - 1].total : nil
             let label = idx == items.count - 1 ? "本月" : String(items[idx].month.suffix(2)) + "月"
@@ -400,17 +484,39 @@ private struct ChatStatsCard: View {
         }
     }
 
-    // MARK: 双色柱状图
+    // MARK: 双色柱状图（左右滑动翻页看更早的日子/月份，页数由本地聊天记录的实际时长决定，没有上限）
     @ViewBuilder
-    private func chart(_ stats: StatsResponse) -> some View {
-        let bars: [(label: String, counts: [String: Int])] = mode == .days
-            ? stats.days.map { (label: String($0.weekday), counts: $0.counts) }
-            : stats.months.map { (label: String(Int($0.month.suffix(2)) ?? 0) + "月", counts: $0.counts) }
-        let maxTotal = max(bars.map { $0.counts.values.reduce(0, +) }.max() ?? 1, 1)
+    private var chart: some View {
         let me = store.session?.username ?? "xu"
         let partner = store.partner?.username ?? (me == "xu" ? "si" : "xu")
 
-        HStack(alignment: .bottom, spacing: mode == .days ? 8 : 6) {
+        switch mode {
+        case .days:
+            TabView(selection: dayPageBinding) {
+                ForEach(Array(dayPages.enumerated()), id: \.offset) { pageIndex, page in
+                    let bars: [(label: String, counts: [String: Int])] = page.map { (label: $0.weekday, counts: $0.counts) }
+                    barsView(bars, me: me, partner: partner)
+                        .tag(pageIndex)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: 140)
+        case .months:
+            TabView(selection: monthPageBinding) {
+                ForEach(Array(monthPages.enumerated()), id: \.offset) { pageIndex, page in
+                    let bars: [(label: String, counts: [String: Int])] = page.map { (label: String(Int($0.month.suffix(2)) ?? 0) + "月", counts: $0.counts) }
+                    barsView(bars, me: me, partner: partner)
+                        .tag(pageIndex)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: 140)
+        }
+    }
+
+    private func barsView(_ bars: [(label: String, counts: [String: Int])], me: String, partner: String) -> some View {
+        let maxTotal = max(bars.map { $0.counts.values.reduce(0, +) }.max() ?? 1, 1)
+        return HStack(alignment: .bottom, spacing: mode == .days ? 8 : 6) {
             ForEach(Array(bars.enumerated()), id: \.offset) { index, bar in
                 let mine = Double(bar.counts[me] ?? 0)
                 let hers = Double(bar.counts[partner] ?? 0)
@@ -419,9 +525,9 @@ private struct ChatStatsCard: View {
                     GeometryReader { geo in
                         VStack(spacing: 0) {
                             Spacer(minLength: 0)
-                            Capsule().fill(DS.Palette.member(partner))
+                            Rectangle().fill(DS.Palette.member(partner))
                                 .frame(height: geo.size.height * hers / Double(maxTotal))
-                            Capsule().fill(DS.Palette.member(me))
+                            Rectangle().fill(DS.Palette.member(me))
                                 .frame(height: geo.size.height * mine / Double(maxTotal))
                         }
                     }
@@ -447,19 +553,20 @@ private struct ChatStatsCard: View {
                 }
             }
         }
+        .padding(.horizontal, 2)
     }
 
     // MARK: 图例（选中项的双方条数）
     @ViewBuilder
-    private func legendRow(_ stats: StatsResponse) -> some View {
+    private var legendRow: some View {
         let counts: [String: Int] = {
             switch mode {
             case .days:
-                let idx = selectedIndex ?? stats.days.count - 1
-                return stats.days.indices.contains(idx) ? stats.days[idx].counts : [:]
+                let idx = globalSelectedDayIndex
+                return buckets.days.indices.contains(idx) ? buckets.days[idx].counts : [:]
             case .months:
-                let idx = selectedIndex ?? stats.months.count - 1
-                return stats.months.indices.contains(idx) ? stats.months[idx].counts : [:]
+                let idx = globalSelectedMonthIndex
+                return buckets.months.indices.contains(idx) ? buckets.months[idx].counts : [:]
             }
         }()
         let me = store.session
@@ -490,7 +597,7 @@ private struct ChatStatsCard: View {
     }
 }
 
-// MARK: - 纪念日编辑
+// MARK: - 「在一起」纪念日编辑（其余纪念日走下方的 AnniversaryEditorSheet）
 
 struct DateEditorSheet: View {
     @EnvironmentObject private var store: ChatStore
@@ -498,11 +605,7 @@ struct DateEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var together = Date()
-    @State private var lastMeet = Date()
-    @State private var lastFight = Date()
     @State private var hasTogether = false
-    @State private var hasMeet = false
-    @State private var hasFight = false
 
     var body: some View {
         NavigationStack {
@@ -511,18 +614,6 @@ struct DateEditorSheet: View {
                     Toggle("已设置", isOn: $hasTogether.animation())
                     if hasTogether {
                         DatePicker("纪念日", selection: $together, in: ...Date(), displayedComponents: .date)
-                    }
-                }
-                Section("上次见面") {
-                    Toggle("已设置", isOn: $hasMeet.animation())
-                    if hasMeet {
-                        DatePicker("日期", selection: $lastMeet, in: ...Date(), displayedComponents: .date)
-                    }
-                }
-                Section("上次吵架") {
-                    Toggle("已设置", isOn: $hasFight.animation())
-                    if hasFight {
-                        DatePicker("日期", selection: $lastFight, in: ...Date(), displayedComponents: .date)
                     }
                 }
             }
@@ -557,21 +648,136 @@ struct DateEditorSheet: View {
             together = d
             hasTogether = true
         }
-        if let m = dates.lastMeet, let d = Self.formatter.date(from: m) {
-            lastMeet = d
-            hasMeet = true
+    }
+
+    private func save() {
+        Haptics.medium()
+        var dates = store.coupleDates
+        dates.together = hasTogether ? Self.formatter.string(from: together) : nil
+        store.saveCoupleDates(dates)
+    }
+}
+
+// MARK: - 自由添加的纪念日 / 倒数日编辑
+
+struct AnniversaryEditorSheet: View {
+    let entry: AnniversaryEntry?
+
+    @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var title = ""
+    @State private var date = Date()
+    @State private var direction: AnniversaryEntry.Direction = .up
+    @State private var icon = Self.iconOptions.first!
+
+    private static let iconOptions = [
+        "heart.fill", "gift.fill", "airplane", "birthday.cake.fill",
+        "figure.2.arms.open", "moon.stars.fill", "cloud.sun", "message.fill",
+    ]
+
+    private static let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        return f
+    }()
+
+    private var isEditing: Bool { entry != nil }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("名称") {
+                    TextField("比如：纪念日 / 生日 / 旅行倒数", text: $title)
+                }
+                Section("类型") {
+                    Picker("类型", selection: $direction) {
+                        Text("累计天数").tag(AnniversaryEntry.Direction.up)
+                        Text("倒数纪念日").tag(AnniversaryEntry.Direction.down)
+                    }
+                    .pickerStyle(.segmented)
+                    DatePicker("日期", selection: $date, displayedComponents: .date)
+                }
+                Section("图标") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 12) {
+                        ForEach(Self.iconOptions, id: \.self) { name in
+                            Button {
+                                Haptics.selection()
+                                icon = name
+                            } label: {
+                                Image(systemName: name)
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(icon == name ? .white : theme.accent.color)
+                                    .frame(width: 44, height: 44)
+                                    .background(icon == name ? AnyShapeStyle(theme.accent.color) : AnyShapeStyle(theme.accent.color.opacity(0.12)))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(PressableStyle())
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+                if isEditing {
+                    Section {
+                        Button(role: .destructive) {
+                            Haptics.medium()
+                            deleteEntry()
+                            dismiss()
+                        } label: {
+                            Text("删除纪念日")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            }
+            .navigationTitle(isEditing ? "编辑纪念日" : "添加纪念日")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        save()
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .onAppear(perform: load)
         }
-        if let f = dates.lastFight, let d = Self.formatter.date(from: f) {
-            lastFight = d
-            hasFight = true
+    }
+
+    private func load() {
+        guard let entry else { return }
+        title = entry.title
+        direction = entry.direction
+        icon = entry.icon
+        if let d = Self.formatter.date(from: entry.date) {
+            date = d
         }
     }
 
     private func save() {
         Haptics.medium()
-        store.saveCoupleDates(CoupleDates(
-            together: hasTogether ? Self.formatter.string(from: together) : nil,
-            lastMeet: hasMeet ? Self.formatter.string(from: lastMeet) : nil,
-            lastFight: hasFight ? Self.formatter.string(from: lastFight) : nil))
+        var items = store.anniversaries
+        let dateString = Self.formatter.string(from: date)
+        let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
+        if let entry, let idx = items.firstIndex(where: { $0.id == entry.id }) {
+            items[idx] = AnniversaryEntry(id: entry.id, title: trimmedTitle, date: dateString, direction: direction, icon: icon)
+        } else {
+            items.append(AnniversaryEntry(title: trimmedTitle, date: dateString, direction: direction, icon: icon))
+        }
+        store.saveAnniversaries(items)
+    }
+
+    private func deleteEntry() {
+        guard let entry else { return }
+        var items = store.anniversaries
+        items.removeAll { $0.id == entry.id }
+        store.saveAnniversaries(items)
     }
 }

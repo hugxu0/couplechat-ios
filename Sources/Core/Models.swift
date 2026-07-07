@@ -109,6 +109,62 @@ struct CoupleDates: Equatable {
         let days = Calendar.current.dateComponents([.day], from: date, to: Date()).day ?? 0
         return max(0, days)
     }
+
+    /// 倒数纪念日：目标日期减今天，已过去的日子记 0
+    static func daysUntil(_ dateString: String?) -> Int? {
+        guard let dateString, !dateString.isEmpty else { return nil }
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        guard let date = f.date(from: dateString) else { return nil }
+        let days = Calendar.current.dateComponents([.day], from: Date(), to: date).day ?? 0
+        return max(0, days)
+    }
+}
+
+/// 自由添加的纪念日 / 倒数日（存在 shared["anniversaries"]，两人共享可编辑）
+struct AnniversaryEntry: Identifiable, Equatable {
+    enum Direction: String, Equatable, Hashable {
+        case up    // 距今已经过去多少天
+        case down  // 距离未来还有多少天
+    }
+
+    var id: String
+    var title: String
+    var date: String       // "yyyy-MM-dd"
+    var direction: Direction
+    var icon: String       // SF Symbol 名称
+
+    var days: Int? {
+        switch direction {
+        case .up: return CoupleDates.daysSince(date)
+        case .down: return CoupleDates.daysUntil(date)
+        }
+    }
+
+    init(id: String = UUID().uuidString, title: String, date: String, direction: Direction, icon: String) {
+        self.id = id
+        self.title = title
+        self.date = date
+        self.direction = direction
+        self.icon = icon
+    }
+
+    init?(dict: [String: Any]) {
+        guard let id = dict["id"] as? String,
+              let title = dict["title"] as? String,
+              let date = dict["date"] as? String,
+              let icon = dict["icon"] as? String else { return nil }
+        self.id = id
+        self.title = title
+        self.date = date
+        self.icon = icon
+        self.direction = Direction(rawValue: dict["direction"] as? String ?? "") ?? .up
+    }
+
+    var asDict: [String: Any] {
+        ["id": id, "title": title, "date": date, "direction": direction.rawValue, "icon": icon]
+    }
 }
 
 enum AccountPresentation {

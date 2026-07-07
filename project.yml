@@ -26,6 +26,7 @@ targets:
         CFBundleVersion: "1"
         UILaunchScreen: {}
         NSPhotoLibraryAddUsageDescription: 保存聊天图片和视频到相册
+        NSMicrophoneUsageDescription: 用于录制语音消息
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false

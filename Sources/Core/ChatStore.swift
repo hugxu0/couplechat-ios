@@ -496,7 +496,7 @@ final class ChatStore: ObservableObject {
         let clientId = "tmp-" + UUID().uuidString
         let optimistic = ChatMessage(
             optimisticMedia: preferredType,
-            text: preferredType == "video" ? "[视频]" : "[图片]",
+            text: Self.mediaPlaceholderText(for: preferredType),
             localURL: localPreviewURL?.absoluteString,
             me: session,
             clientId: clientId,
@@ -524,7 +524,7 @@ final class ChatStore: ObservableObject {
                 }
                 let payload: [String: Any] = [
                     "type": type,
-                    "text": type == "video" ? "[视频]" : "[图片]",
+                    "text": Self.mediaPlaceholderText(for: type),
                     "url": uploaded.url,
                     "channel": channel.rawValue,
                     "clientId": clientId,
@@ -565,9 +565,24 @@ final class ChatStore: ObservableObject {
         return try JSONDecoder().decode(UploadResponse.self, from: responseData)
     }
 
+    private static func mediaPlaceholderText(for type: String) -> String {
+        switch type {
+        case "video": return "[视频]"
+        case "voice": return "[语音]"
+        default: return "[图片]"
+        }
+    }
+
     private func multipartBody(data: Data, mimeType: String, boundary: String) -> Data {
         var body = Data()
-        let filename = "media.\(mimeType.contains("video") ? "mp4" : "jpg")"
+        let filename: String
+        if mimeType.contains("video") {
+            filename = "media.mp4"
+        } else if mimeType.contains("audio") {
+            filename = "media.m4a"
+        } else {
+            filename = "media.jpg"
+        }
         body.append("--\(boundary)\r\n")
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
         body.append("Content-Type: \(mimeType)\r\n\r\n")
@@ -754,6 +769,107 @@ final class ChatStore: ObservableObject {
         if let m = dates.lastMeet { value["lastMeet"] = m }
         if let f = dates.lastFight { value["lastFight"] = f }
         setShared("dates", value: value)
+    }
+
+    /// 自由添加的纪念日列表；旧版本仅有 lastMeet/lastFight 时，回退合成两张卡片展示，
+    /// 一旦用户编辑/新增/删除过任意一条，才真正落到 "anniversaries" 上成为唯一数据源。
+    var anniversaries: [AnniversaryEntry] {
+        if let raw = sharedValue("anniversaries")?["items"] as? [[String: Any]] {
+            return raw.compactMap { AnniversaryEntry(dict: $0) }
+        }
+        var legacy: [AnniversaryEntry] = []
+        let dates = coupleDates
+        if let m = dates.lastMeet {
+            legacy.append(AnniversaryEntry(id: "legacy-meet", title: "距离上次见面", date: m, direction: .up, icon: "figure.2.arms.open"))
+        }
+        if let f = dates.lastFight {
+            legacy.append(AnniversaryEntry(id: "legacy-fight", title: "距离上次吵架", date: f, direction: .up, icon: "cloud.sun"))
+        }
+        return legacy
+    }
+
+    func saveAnniversaries(_ items: [AnniversaryEntry]) {
+        setShared("anniversaries", value: ["items": items.map { $0.asDict }])
+    }
+
+    // MARK: 聊天时光统计（本地缓存聚合，无需服务端）
+
+    struct LocalStatsBuckets {
+        let days: [DayStat]
+        let months: [MonthStat]
+    }
+
+    private static let statsDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        return f
+    }()
+
+    private static let statsMonthFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        return f
+    }()
+
+    private static var shanghaiCalendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        return cal
+    }()
+
+    private static let weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"]
+
+    /// 从本地已缓存的完整聊天记录聚合出逐日/逐月的双方消息数，取代原先的服务端 /api/stats。
+    func localStats(for channel: ChatChannel = .couple) -> LocalStatsBuckets {
+        let cal = Self.shanghaiCalendar
+        let now = Date()
+        let today = cal.startOfDay(for: now)
+
+        let userMessages = messages(for: channel).filter { $0.kind == "user" && $0.sender != "ai" }
+
+        var dayCounts: [String: [String: Int]] = [:]
+        var earliestDay = today
+        var monthCounts: [String: [String: Int]] = [:]
+        var earliestMonth = today
+
+        for message in userMessages {
+            let date = message.date
+            let dayStart = cal.startOfDay(for: date)
+            let dayKey = Self.statsDayFormatter.string(from: date)
+            dayCounts[dayKey, default: [:]][message.sender, default: 0] += 1
+            if dayStart < earliestDay { earliestDay = dayStart }
+
+            let monthKey = Self.statsMonthFormatter.string(from: date)
+            monthCounts[monthKey, default: [:]][message.sender, default: 0] += 1
+            if let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: date)),
+               monthStart < earliestMonth {
+                earliestMonth = monthStart
+            }
+        }
+
+        var days: [DayStat] = []
+        var cursor = earliestDay
+        while cursor <= today {
+            let key = Self.statsDayFormatter.string(from: cursor)
+            let weekday = cal.isDate(cursor, inSameDayAs: today) ? "今" : Self.weekdayLabels[cal.component(.weekday, from: cursor) - 1]
+            days.append(DayStat(date: key, weekday: weekday, counts: dayCounts[key] ?? [:]))
+            guard let next = cal.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+
+        var months: [MonthStat] = []
+        var monthCursor = cal.date(from: cal.dateComponents([.year, .month], from: earliestMonth)) ?? earliestMonth
+        let thisMonthStart = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
+        while monthCursor <= thisMonthStart {
+            let key = Self.statsMonthFormatter.string(from: monthCursor)
+            months.append(MonthStat(month: key, counts: monthCounts[key] ?? [:]))
+            guard let next = cal.date(byAdding: .month, value: 1, to: monthCursor) else { break }
+            monthCursor = next
+        }
+
+        return LocalStatsBuckets(days: days, months: months)
     }
 
     // MARK: REST（统计 / 每日内容 / Bark）

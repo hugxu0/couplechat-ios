@@ -154,7 +154,7 @@ struct ProfileView: View {
     // MARK: - 设置项
     private var settingsCard: some View {
         VStack(spacing: 0) {
-            settingRow(icon: "calendar.badge.plus", title: "日期设置", subtitle: "在一起 / 见面 / 吵架") {
+            settingRow(icon: "calendar.badge.plus", title: "日期设置", subtitle: "在一起的纪念日") {
                 showDateEditor = true
             }
             divider
