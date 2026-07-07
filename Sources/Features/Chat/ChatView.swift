@@ -53,13 +53,16 @@ struct ChatView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 0) {
-                messageList(in: geometry)
-                replyBar
-                composer
-            }
-            .padding(.bottom, keyboard.bottomInset)
-            .animation(keyboard.animation, value: keyboard.bottomInset)
+            messageList(in: geometry)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
+                        replyBar
+                        composer
+                        Color.clear
+                            .frame(height: keyboard.bottomInset)
+                    }
+                    .animation(keyboard.animation, value: keyboard.bottomInset)
+                }
         }
         .background(
             ZStack {
