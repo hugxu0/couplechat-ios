@@ -105,56 +105,61 @@ struct ChatView: View {
     // MARK: 消息列表
     private var messageList: some View {
         ScrollViewReader { proxy in
-            List {
-                ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
-                    VStack(spacing: 0) {
-                        if showTimeSeparator(index) {
-                            Text(msg.timeString)
-                                .font(.system(size: 13))
-                                .foregroundStyle(DS.Palette.textSecondary)
-                                .padding(.vertical, 14)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
+                        VStack(spacing: 0) {
+                            if showTimeSeparator(index) {
+                                Text(msg.timeString)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(DS.Palette.textSecondary)
+                                    .padding(.vertical, 14)
+                            }
+                            if msg.kind == "system" {
+                                Text(msg.text)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(DS.Palette.textSecondary)
+                                    .padding(.vertical, 8)
+                            } else {
+                                MessageBubble(
+                                    message: msg,
+                                    mine: msg.sender == store.session?.username,
+                                    peerAvatar: peerAvatar,
+                                    groupedWithPrevious: isGrouped(index),
+                                    read: store.partnerHasRead(msg),
+                                    canRetry: msg.type == "text",
+                                    onRetry: { store.resend(msg) })
+                                .padding(.top, bubbleTopPadding(index))
+                            }
                         }
-                        if msg.kind == "system" {
-                            Text(msg.text)
-                                .font(.system(size: 12))
-                                .foregroundStyle(DS.Palette.textSecondary)
-                                .padding(.vertical, 8)
-                        } else {
-                            MessageBubble(
-                                message: msg,
-                                mine: msg.sender == store.session?.username,
-                                peerAvatar: peerAvatar,
-                                groupedWithPrevious: isGrouped(index),
-                                read: store.partnerHasRead(msg),
-                                canRetry: msg.type == "text",
-                                onRetry: { store.resend(msg) })
-                            .padding(.top, bubbleTopPadding(index))
+                        .id(msg.id)
+                        .onAppear {
+                            if index == 0 { store.loadOlder(channel) }
                         }
                     }
-                    .id(msg.id)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 0, leading: DS.Spacing.page,
-                                              bottom: 0, trailing: DS.Spacing.page))
-                    .listRowBackground(Color.clear)
-                    .onAppear {
-                        if index == 0 { store.loadOlder(channel) }
-                    }
+                    // 底部锚点：所有需要贴底的时候 scrollTo 到这里
+                    Color.clear
+                        .frame(height: 1)
+                        .id("bottomAnchor")
                 }
-                // 底部锚点
-                Color.clear
-                    .frame(height: 1)
-                    .id("bottomAnchor")
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
+                .padding(.horizontal, DS.Spacing.page)
+                .padding(.vertical, 10)
             }
-            .listStyle(.plain)
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
-            .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
+            .defaultScrollAnchor(.bottom)
+            // 点击空白处用 UIKit 标准方式收起键盘，跟系统键盘动画统一
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    UIApplication.shared.sendAction(
+                        #selector(UIResponder.resignFirstResponder),
+                        to: nil, from: nil, for: nil
+                    )
+                }
+            )
             .onAppear { scrollToBottom(proxy) }
             .onChange(of: messages.count) { scrollToBottom(proxy) }
-            // List/UITableView 自带键盘适配；这里只补一个轻量同步滚动
+            // 键盘弹/收：用系统键盘动画时长驱动 scrollTo
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
                 guard let info = note.userInfo,
                       let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double),
