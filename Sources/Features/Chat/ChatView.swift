@@ -2,6 +2,8 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
+import AVFoundation
+import AVKit
 
 // 聊天会话页：真实数据来自 ChatStore，可承载 couple / ai 两个频道。
 
@@ -21,6 +23,7 @@ struct ChatView: View {
     @State private var showMedia = false
     @State private var scrollToMessageId: String?
     @State private var highlightedMessageId: String?
+    @State private var mediaViewerMessageId: String?
     @FocusState private var inputFocused: Bool
 
     init(channel: ChatChannel = .couple) {
@@ -28,6 +31,9 @@ struct ChatView: View {
     }
 
     private var messages: [ChatMessage] { store.messages(for: channel) }
+    private var mediaMessages: [ChatMessage] {
+        messages.filter { ($0.type == "image" || $0.type == "video" || $0.type == "sticker") && !$0.pending }
+    }
     private var title: String {
         switch channel {
         case .couple: return store.partner?.name ?? "聊天"
@@ -122,6 +128,12 @@ struct ChatView: View {
             WallpaperPickerSheet(channel: channel)
                 .presentationDetents([.medium, .large])
         }
+        .fullScreenCover(isPresented: Binding(
+            get: { mediaViewerMessageId != nil },
+            set: { if !$0 { mediaViewerMessageId = nil } }
+        )) {
+            MediaPagerView(messages: mediaMessages, selectedId: $mediaViewerMessageId)
+        }
         // 搜索结果跳转到原文
         .onChange(of: scrollToMessageId) { _, _ in
             guard scrollToMessageId != nil else { return }
@@ -166,6 +178,9 @@ struct ChatView: View {
                                     canRetry: msg.type == "text",
                                     highlighted: highlightedMessageId == msg.id,
                                     onRetry: { store.resend(msg) },
+                                    onMediaTap: {
+                                        mediaViewerMessageId = msg.id
+                                    },
                                     contextMenuContent: AnyView(messageContextMenu(msg, own: own, withinTwoMin: withinTwoMin)))
                                 .padding(.top, bubbleTopPadding(index))
                             }
@@ -630,6 +645,7 @@ struct MessageBubble: View {
     let canRetry: Bool
     let highlighted: Bool
     var onRetry: () -> Void = {}
+    var onMediaTap: () -> Void = {}
     var contextMenuContent: AnyView? = nil
 
     var body: some View {
@@ -734,54 +750,63 @@ struct MessageBubble: View {
     }
 
     private var imageBubble: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous)
-                .fill(mine ? DS.Palette.accent.opacity(0.18) : DS.Palette.bubbleOther)
-
+        Group {
             if let url = mediaURL {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        ProgressView()
-                            .tint(DS.Palette.accent)
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .padding(2)
-                    case .failure:
-                        mediaFallback("photo", text: "图片加载失败")
-                    @unknown default:
-                        mediaFallback("photo", text: "图片")
-                    }
-                }
+                RemoteImageBubble(url: url)
             } else {
                 mediaFallback("photo", text: message.pending ? "上传中" : "图片")
+                    .frame(width: 180, height: 128)
+                    .background(DS.Palette.bubbleOther.opacity(0.6))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
             }
         }
-        .frame(width: 220, height: 220)
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
-        .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+        .onTapGesture {
+            guard !message.pending else { return }
+            onMediaTap()
+        }
         .opacity(message.pending ? 0.72 : 1)
     }
 
     private var videoBubble: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous)
-                .fill(mine ? DS.Palette.accent : DS.Palette.bubbleOther)
-
-            VStack(spacing: 8) {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 38))
-                    .foregroundStyle(mine ? .white : DS.Palette.accent)
-                Text(message.pending ? "视频上传中" : "视频")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
+            if let url = mediaURL {
+                VideoThumbnailView(url: url)
+                    .frame(width: 220, height: 132)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+            } else {
+                RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous)
+                    .fill(DS.Palette.bubbleOther.opacity(0.6))
+                    .frame(width: 220, height: 132)
+            }
+            Circle()
+                .fill(.black.opacity(0.42))
+                .frame(width: 52, height: 52)
+                .overlay {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .offset(x: 2)
+                }
+            if message.pending {
+                VStack(spacing: 6) {
+                    Spacer()
+                    Text("视频上传中")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.black.opacity(0.38), in: Capsule())
+                        .padding(.bottom, 8)
+                }
             }
         }
-        .frame(width: 210, height: 128)
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
-        .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
+        .frame(width: 220, height: 132)
+        .contentShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+        .onTapGesture {
+            guard !message.pending else { return }
+            onMediaTap()
+        }
         .opacity(message.pending ? 0.72 : 1)
     }
 
@@ -833,6 +858,343 @@ struct MessageBubble: View {
             .frame(width: 36, height: 36)
             .background(DS.Palette.bubbleOther)
             .clipShape(Circle())
+    }
+}
+
+private struct RemoteImageBubble: View {
+    let url: URL
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                let size = Self.fitSize(for: image.size)
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size.width, height: size.height)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+            } else if failed {
+                VStack(spacing: 7) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 28))
+                    Text("图片加载失败")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(DS.Palette.textSecondary)
+                .frame(width: 180, height: 128)
+                .background(DS.Palette.bubbleOther.opacity(0.6))
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+            } else {
+                ProgressView()
+                    .tint(DS.Palette.accent)
+                    .frame(width: 180, height: 128)
+                    .background(DS.Palette.bubbleOther.opacity(0.25))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+            }
+        }
+        .shadow(color: DS.Surface.shadow.opacity(image == nil ? 0 : 1), radius: 4, y: 2)
+        .task(id: url) {
+            await load()
+        }
+    }
+
+    private func load() async {
+        failed = false
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let loaded = UIImage(data: data) else {
+                failed = true
+                return
+            }
+            image = loaded
+        } catch {
+            failed = true
+        }
+    }
+
+    private static func fitSize(for imageSize: CGSize) -> CGSize {
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGSize(width: 220, height: 160)
+        }
+        let maxWidth: CGFloat = 238
+        let maxHeight: CGFloat = 320
+        let minSide: CGFloat = 96
+        let scale = min(maxWidth / imageSize.width, maxHeight / imageSize.height, 1)
+        var width = imageSize.width * scale
+        var height = imageSize.height * scale
+        if min(width, height) < minSide {
+            let grow = minSide / min(width, height)
+            width *= grow
+            height *= grow
+        }
+        return CGSize(width: width.rounded(), height: height.rounded())
+    }
+}
+
+private struct VideoThumbnailView: View {
+    let url: URL
+    @State private var thumbnail: UIImage?
+
+    var body: some View {
+        ZStack {
+            if let thumbnail {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                LinearGradient(
+                    colors: [.black.opacity(0.16), .black.opacity(0.34)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.white.opacity(0.78))
+            }
+        }
+        .task(id: url) {
+            await loadThumbnail()
+        }
+    }
+
+    private func loadThumbnail() async {
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 520, height: 520)
+        guard let cgImage = try? generator.copyCGImage(at: .zero, actualTime: nil) else {
+            thumbnail = nil
+            return
+        }
+        thumbnail = UIImage(cgImage: cgImage)
+    }
+}
+
+private struct MediaPagerView: View {
+    let messages: [ChatMessage]
+    @Binding var selectedId: String?
+
+    @State private var saving = false
+    @State private var toast: String?
+
+    private var selection: Binding<String> {
+        Binding(
+            get: { selectedId ?? messages.first?.id ?? "" },
+            set: { selectedId = $0 }
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            if messages.isEmpty {
+                Text("暂无媒体")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.72))
+            } else {
+                TabView(selection: selection) {
+                    ForEach(messages) { message in
+                        MediaPage(message: message)
+                            .tag(message.id)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+            }
+
+            VStack {
+                HStack(spacing: 12) {
+                    Button {
+                        selectedId = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 42, height: 42)
+                            .background(.black.opacity(0.42), in: Circle())
+                    }
+
+                    Spacer()
+
+                    Text(positionText)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.86))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.black.opacity(0.38), in: Capsule())
+
+                    Spacer()
+
+                    Button {
+                        saveCurrent()
+                    } label: {
+                        Group {
+                            if saving {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "square.and.arrow.down")
+                                    .font(.system(size: 17, weight: .semibold))
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .frame(width: 42, height: 42)
+                        .background(.black.opacity(0.42), in: Circle())
+                    }
+                    .disabled(saving || currentURL == nil)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+
+                Spacer()
+            }
+
+            if let toast {
+                VStack {
+                    Spacer()
+                    Text(toast)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(.black.opacity(0.62), in: Capsule())
+                        .padding(.bottom, 42)
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private var currentMessage: ChatMessage? {
+        guard let selectedId else { return messages.first }
+        return messages.first { $0.id == selectedId } ?? messages.first
+    }
+
+    private var currentURL: URL? {
+        guard let url = currentMessage?.url else { return nil }
+        return URL(string: url)
+    }
+
+    private var positionText: String {
+        guard let currentMessage, let index = messages.firstIndex(where: { $0.id == currentMessage.id }) else {
+            return "0/0"
+        }
+        return "\(index + 1)/\(messages.count)"
+    }
+
+    private func saveCurrent() {
+        guard let currentMessage, let url = currentURL else { return }
+        saving = true
+        Task {
+            let success: Bool
+            if currentMessage.type == "video" {
+                success = await MediaSaver.saveVideo(from: url)
+            } else {
+                success = await MediaSaver.saveImage(from: url)
+            }
+            await MainActor.run {
+                saving = false
+                showToast(success ? "已保存到相册" : "保存失败")
+            }
+        }
+    }
+
+    private func showToast(_ text: String) {
+        withAnimation(DS.Anim.ease) {
+            toast = text
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            guard toast == text else { return }
+            withAnimation(DS.Anim.ease) {
+                toast = nil
+            }
+        }
+    }
+}
+
+private struct MediaPage: View {
+    let message: ChatMessage
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                if message.type == "video", let url = mediaURL {
+                    VideoPlayer(player: AVPlayer(url: url))
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                } else if let url = mediaURL {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView()
+                                .tint(.white)
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: geometry.size.width, maxHeight: geometry.size.height)
+                        case .failure:
+                            failedView
+                        @unknown default:
+                            failedView
+                        }
+                    }
+                } else {
+                    failedView
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .contentShape(Rectangle())
+        }
+        .ignoresSafeArea()
+    }
+
+    private var mediaURL: URL? {
+        guard let url = message.url else { return nil }
+        return URL(string: url)
+    }
+
+    private var failedView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 34))
+            Text("加载失败")
+                .font(.system(size: 14, weight: .semibold))
+        }
+        .foregroundStyle(.white.opacity(0.72))
+    }
+}
+
+private enum MediaSaver {
+    static func saveImage(from url: URL) async -> Bool {
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let image = UIImage(data: data) else { return false }
+            await MainActor.run {
+                UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static func saveVideo(from url: URL) async -> Bool {
+        do {
+            let (source, _) = try await URLSession.shared.download(from: url)
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(url.pathExtension.isEmpty ? "mp4" : url.pathExtension)
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: source, to: destination)
+            await MainActor.run {
+                UISaveVideoAtPathToSavedPhotosAlbum(destination.path, nil, nil, nil)
+            }
+            return true
+        } catch {
+            return false
+        }
     }
 }
 
@@ -1033,7 +1395,20 @@ private struct MediaGallerySheet: View {
 
     @ViewBuilder
     private func mediaThumb(_ msg: ChatMessage) -> some View {
-        if let urlStr = msg.url, let url = URL(string: urlStr) {
+        if msg.type == "video", let urlStr = msg.url, let url = URL(string: urlStr) {
+            ZStack {
+                VideoThumbnailView(url: url)
+                    .aspectRatio(contentMode: .fill)
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.white)
+                    .shadow(radius: 4)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+            .clipped()
+            .onTapGesture { selectedMedia = msg }
+        } else if let urlStr = msg.url, let url = URL(string: urlStr) {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
@@ -1078,23 +1453,27 @@ private struct MediaGallerySheet: View {
         NavigationStack {
             VStack {
                 if let urlStr = msg.url, let url = URL(string: urlStr) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFit()
-                        case .failure:
-                            VStack(spacing: 12) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .font(.system(size: 40))
-                                Text("加载失败")
+                    if msg.type == "video" {
+                        VideoPlayer(player: AVPlayer(url: url))
+                    } else {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .scaledToFit()
+                            case .failure:
+                                VStack(spacing: 12) {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .font(.system(size: 40))
+                                    Text("加载失败")
+                                }
+                                .foregroundStyle(DS.Palette.textSecondary)
+                            case .empty:
+                                ProgressView()
+                            @unknown default:
+                                EmptyView()
                             }
-                            .foregroundStyle(DS.Palette.textSecondary)
-                        case .empty:
-                            ProgressView()
-                        @unknown default:
-                            EmptyView()
                         }
                     }
                 }
