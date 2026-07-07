@@ -71,6 +71,11 @@ function makeSink(io: Server): ReplySink {
         io.to(`user:${storedChannel.slice(3)}`).emit("ai:typing", value);
       }
     },
+    replying(storedChannel, value) {
+      if (storedChannel.startsWith("ai:")) {
+        io.to(`user:${storedChannel.slice(3)}`).emit("ai:replying", value);
+      }
+    },
   };
 }
 

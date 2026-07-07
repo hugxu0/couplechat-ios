@@ -41,6 +41,8 @@ export interface ReplySink {
   emit(storedChannel: string, text: string, isFirst: boolean, meta?: unknown): Promise<void>;
   // 「正在输入」气泡开关。
   typing(storedChannel: string, value: boolean): void;
+  // 「正在回复」开始时通知客户端，便于更稳地显示回复中的状态。
+  replying?(storedChannel: string, value: boolean): void;
 }
 
 export interface Trigger {
@@ -185,6 +187,7 @@ function normalizeReplies(out: string | null): string[] {
 async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
   const isPrivate = trigger.storedChannel.startsWith("ai:");
   sink.typing(trigger.storedChannel, true);
+  sink.replying?.(trigger.storedChannel, true);
   const trace = traceBegin(trigger.storedChannel, trigger.requesterName, trigger.question);
   try {
     const recent = await recentMessages(trigger.storedChannel, CONTEXT.recentCount);
@@ -319,6 +322,7 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
     console.warn("[ai] respond 失败:", error instanceof Error ? error.message : error);
   } finally {
     sink.typing(trigger.storedChannel, false);
+    sink.replying?.(trigger.storedChannel, false);
     traceFlush(trace);
   }
 }

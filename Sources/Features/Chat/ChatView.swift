@@ -80,6 +80,7 @@ struct ChatView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     replyBar
+                    aiTypingHint
                     composer
                 }
             }
@@ -383,6 +384,25 @@ struct ChatView: View {
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
             }
+            .padding(.horizontal, DS.Spacing.page)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    @ViewBuilder
+    private var aiTypingHint: some View {
+        if channel == .ai && store.aiTyping {
+            HStack(spacing: 8) {
+                Text("大橘正在回复")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DS.Palette.textSecondary)
+                ProgressView()
+                    .tint(DS.Palette.accent)
+                    .scaleEffect(0.85)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, DS.Spacing.page)
             .padding(.vertical, 8)
             .background(.ultraThinMaterial)

@@ -24,6 +24,7 @@ final class ChatStore: ObservableObject {
     }
     @Published private(set) var readStates: [String: [String: Double]] = [:]
     @Published var aiTyping = false
+    @Published var aiReplying = false
     @Published var sharedState: [String: Any] = [:]
     @Published var lastConnectionError: String?
 
@@ -94,6 +95,7 @@ final class ChatStore: ObservableObject {
         connected = false
         partnerOnline = false
         aiTyping = false
+        aiReplying = false
         lastConnectionError = nil
         ChatLocalDatabase.shared.close()
     }
@@ -163,7 +165,10 @@ final class ChatStore: ObservableObject {
                 let channel = ChatChannel(rawValue: msg.channel) ?? .couple
                 self.upsert(msg, in: channel)
                 if channel == .couple { self.markRead(.couple) }
-                if channel == .ai { self.aiTyping = false }
+                if channel == .ai {
+                    self.aiTyping = false
+                    self.aiReplying = false
+                }
             }
         }
 
@@ -207,6 +212,11 @@ final class ChatStore: ObservableObject {
         s.on("ai:typing") { [weak self] data, _ in
             let typing = (data.first as? Bool) ?? true
             Task { @MainActor in self?.aiTyping = typing }
+        }
+
+        s.on("ai:replying") { [weak self] data, _ in
+            let replying = (data.first as? Bool) ?? true
+            Task { @MainActor in self?.aiReplying = replying }
         }
 
         s.on("shared:init") { [weak self] data, _ in
