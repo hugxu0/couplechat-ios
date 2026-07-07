@@ -65,10 +65,10 @@ struct RemindersView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(tab == .reminder ? "提醒事项" : "Markdown 备忘")
+                Text(tab == .reminder ? "提醒事项" : "备忘录")
                     .font(.system(size: 30, weight: .bold))
                     .foregroundStyle(DS.Palette.textPrimary)
-                Text(scope == "shared" ? "共享\(tab == .reminder ? "提醒" : "备忘")" : (store.session?.name ?? "我的空间"))
+                Text(scope == "shared" ? "共享\(tab == .reminder ? "提醒" : "备忘录")" : (store.session?.name ?? "我的空间"))
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(DS.Palette.textSecondary)
             }
@@ -113,8 +113,10 @@ struct RemindersView: View {
 
     private func scopeButton(_ value: String, icon: String, title: String) -> some View {
         Button {
+            if scope == value { return }
             withAnimation(DS.Anim.spring) { scope = value }
             Haptics.selection()
+            loading = false
             Task { await reload() }
         } label: {
             Label(title, systemImage: icon)
@@ -130,10 +132,12 @@ struct RemindersView: View {
                 }
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())
     }
 
     private func switchButton(_ kind: PersonalItemKind, icon: String, title: String) -> some View {
         Button {
+            if tab == kind { return }
             withAnimation(DS.Anim.spring) { tab = kind }
             Haptics.selection()
         } label: {
@@ -150,6 +154,7 @@ struct RemindersView: View {
                 }
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())
     }
 
     private var summaryStrip: some View {
@@ -214,14 +219,14 @@ struct RemindersView: View {
                 .font(.system(size: 34, weight: .semibold))
                 .foregroundStyle(DS.Palette.accent)
             Text(scope == "shared"
-                 ? (tab == .reminder ? "还没有共享提醒" : "还没有共享备忘")
-                 : (tab == .reminder ? "还没有提醒" : "还没有备忘"))
+                 ? (tab == .reminder ? "还没有共享提醒" : "还没有共享备忘录")
+                 : (tab == .reminder ? "还没有提醒" : "还没有备忘录"))
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(DS.Palette.textPrimary)
             Button {
                 editorMode = .create(tab)
             } label: {
-                Label(tab == .reminder ? "添加提醒" : "写备忘", systemImage: "plus")
+                Label(tab == .reminder ? "添加提醒" : "写备忘录", systemImage: "plus")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 18)
