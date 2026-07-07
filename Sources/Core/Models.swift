@@ -132,6 +132,7 @@ struct ChatMessage: Identifiable, Equatable {
     var channel: String     // couple / ai
     var ts: Double          // 毫秒时间戳
     var clientId: String?
+    var recalledText: String? // 撤回前原文保留，用于重新编辑
 
     // 本地状态（乐观发送用，不来自服务端）
     var pending = false

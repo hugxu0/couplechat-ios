@@ -532,6 +532,22 @@ final class ChatStore: ObservableObject {
         setReadState(channel, state: state)
     }
 
+    func recallMessage(_ message: ChatMessage, channel: ChatChannel) {
+        guard let s = socket, connected else { return }
+        // 乐观本地更新：保留原文供重新编辑
+        updateMessages(channel) { list in
+            guard let i = list.firstIndex(where: { $0.id == message.id }) else { return }
+            var m = list[i]
+            m.recalledText = m.text
+            m.kind = "system"
+            m.type = "text"
+            m.url = nil
+            m.text = "你撤回了一条消息"
+            list[i] = m
+        }
+        s.emitWithAck("message:recall", ["id": message.id]).timingOut(after: 9) { _ in }
+    }
+
     private func applyRecall(id: String, byName: String?, channel: ChatChannel?) {
         let channels = channel.map { [$0] } ?? ChatChannel.allCases
         for c in channels {
@@ -539,6 +555,7 @@ final class ChatStore: ObservableObject {
                 guard let i = list.firstIndex(where: { $0.id == id }) else { return }
                 var m = list[i]
                 let mine = m.sender == session?.username
+                if m.recalledText == nil { m.recalledText = m.text }
                 m.kind = "system"
                 m.type = "text"
                 m.url = nil

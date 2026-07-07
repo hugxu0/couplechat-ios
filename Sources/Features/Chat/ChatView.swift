@@ -18,6 +18,7 @@ struct ChatView: View {
     @State private var showSearch = false
     @State private var showWallpaperPicker = false
     @State private var keyboard = KeyboardTransition.hidden
+    @State private var replyTarget: ChatMessage?
     @FocusState private var inputFocused: Bool
 
     init(channel: ChatChannel = .couple) {
@@ -52,6 +53,7 @@ struct ChatView: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 messageList(in: geometry)
+                replyBar
                 composer
             }
             .padding(.bottom, keyboard.bottomInset)
@@ -122,10 +124,7 @@ struct ChatView: View {
                                     .padding(.vertical, 14)
                             }
                             if msg.kind == "system" {
-                                Text(msg.text)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(DS.Palette.textSecondary)
-                                    .padding(.vertical, 8)
+                                systemMessage(msg)
                             } else {
                                 MessageBubble(
                                     message: msg,
@@ -136,6 +135,7 @@ struct ChatView: View {
                                     canRetry: msg.type == "text",
                                     onRetry: { store.resend(msg) })
                                 .padding(.top, bubbleTopPadding(index))
+                                .contextMenu { messageContextMenu(msg) }
                             }
                         }
                         .id(msg.id)
@@ -213,6 +213,98 @@ struct ChatView: View {
     private var peerAvatar: String {
         if channel == .ai { return "🐱" }
         return store.partner?.avatar ?? AccountPresentation.avatar(for: store.partner?.username ?? "si")
+    }
+
+    // MARK: 系统消息（撤回消息加重新编辑）
+    @ViewBuilder
+    private func systemMessage(_ msg: ChatMessage) -> some View {
+        HStack(spacing: 4) {
+            Text(msg.text)
+                .font(.system(size: 12))
+                .foregroundStyle(DS.Palette.textSecondary)
+            if msg.sender == store.session?.username,
+               let recalledText = msg.recalledText, !recalledText.isEmpty {
+                Button {
+                    draft = recalledText
+                    inputFocused = true
+                } label: {
+                    Text("重新编辑")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DS.Palette.accent)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    // MARK: 长按菜单
+    @ViewBuilder
+    private func messageContextMenu(_ msg: ChatMessage) -> some View {
+        let own = msg.sender == store.session?.username
+        let withinTwoMin = own && (Date().timeIntervalSince1970 * 1000 - msg.ts) < 120_000
+
+        if msg.type == "text" {
+            Button {
+                UIPasteboard.general.string = msg.text
+            } label: {
+                Label("复制", systemImage: "doc.on.doc")
+            }
+        }
+
+        Button {
+            replyTarget = msg
+            inputFocused = true
+        } label: {
+            Label("引用", systemImage: "arrowshape.turn.up.left")
+        }
+
+        if withinTwoMin && !msg.pending && !msg.failed {
+            Button(role: .destructive) {
+                store.recallMessage(msg, channel: channel)
+            } label: {
+                Label("撤回", systemImage: "trash")
+            }
+        }
+    }
+
+    // MARK: 回复引用条
+    @ViewBuilder
+    private var replyBar: some View {
+        if let target = replyTarget {
+            HStack(spacing: 10) {
+                Rectangle()
+                    .fill(DS.Palette.accent)
+                    .frame(width: 3, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 1.5, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(target.senderName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DS.Palette.accent)
+                        .lineLimit(1)
+                    Text(target.text)
+                        .font(.system(size: 12))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    withAnimation(DS.Anim.springFast) {
+                        replyTarget = nil
+                    }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                }
+            }
+            .padding(.horizontal, DS.Spacing.page)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
     }
 
     // MARK: 输入栏（Telegram 式：独立按钮 + 单层输入框，材质统一走 dsGlass）
@@ -303,6 +395,7 @@ struct ChatView: View {
         guard !text.isEmpty else { return }
         Haptics.light()
         draft = ""
+        replyTarget = nil
         withAnimation(DS.Anim.message) {
             store.sendText(text, channel: channel)
         }
