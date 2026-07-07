@@ -14,10 +14,14 @@ final class ChatStore: ObservableObject {
     @Published var connected = false
     @Published private(set) var messagesByChannel: [String: [ChatMessage]] = [:]
     @Published var partnerOnline = false
-    @Published var partner: Account?
+    @Published var partner: Account? {
+        didSet { scheduleCacheSave() }
+    }
     @Published private(set) var readStates: [String: [String: Double]] = [:]
     @Published var aiTyping = false
-    @Published var sharedState: [String: Any] = [:]
+    @Published var sharedState: [String: Any] = [:] {
+        didSet { scheduleCacheSave() }
+    }
     @Published var lastConnectionError: String?
 
     // 通知提醒页：收到共享提醒/备忘变更时刷新
@@ -30,6 +34,8 @@ final class ChatStore: ObservableObject {
 
     private var manager: SocketManager?
     private var socket: SocketIOClient?
+    private var cacheSaveTask: Task<Void, Never>?
+    private var restoringCache = false
 
     private struct UploadResponse: Decodable {
         let url: String
@@ -48,6 +54,7 @@ final class ChatStore: ObservableObject {
     func bootstrap() {
         guard session == nil, let saved = Keychain.loadSession() else { return }
         session = saved
+        restoreLocalCache(for: saved)
         connect()
     }
 
@@ -65,10 +72,12 @@ final class ChatStore: ObservableObject {
         let s = try JSONDecoder().decode(Session.self, from: data)
         Keychain.saveSession(s)
         session = s
+        restoreLocalCache(for: s)
         connect()
     }
 
     func logout() {
+        let username = session?.username
         Keychain.clearSession()
         session = nil
         messagesByChannel = [:]
@@ -81,6 +90,9 @@ final class ChatStore: ObservableObject {
         partnerOnline = false
         aiTyping = false
         lastConnectionError = nil
+        if let username {
+            ChatLocalCache.clear(for: username)
+        }
     }
 
     func fetchAccounts() async -> [Account] {
@@ -278,6 +290,7 @@ final class ChatStore: ObservableObject {
         transform(&list)
         next[channel.rawValue] = list
         messagesByChannel = next
+        scheduleCacheSave()
     }
 
     private func upsert(_ msg: ChatMessage, in channel: ChatChannel) {
@@ -298,6 +311,44 @@ final class ChatStore: ObservableObject {
     private func replaceMessages(_ incoming: [ChatMessage], in channel: ChatChannel) {
         updateMessages(channel) { list in
             list = incoming
+        }
+    }
+
+    // MARK: 本地缓存
+    private func restoreLocalCache(for session: Session) {
+        guard let snapshot = ChatLocalCache.load(for: session.username) else { return }
+        restoringCache = true
+        messagesByChannel = snapshot.messagesByChannel.mapValues { messages in
+            messages.sorted { $0.ts < $1.ts }
+        }
+        readStates = snapshot.readStates
+        partner = snapshot.partner
+        sharedState = ChatLocalCache.decodeSharedState(snapshot.sharedStateData)
+        restoringCache = false
+    }
+
+    private func scheduleCacheSave() {
+        guard !restoringCache, let username = session?.username else { return }
+        cacheSaveTask?.cancel()
+        let snapshot = ChatLocalCache.Snapshot(
+            username: username,
+            savedAt: Date().timeIntervalSince1970,
+            messagesByChannel: messagesByChannel.mapValues { messages in
+                Array(messages
+                    .filter { !$0.pending }
+                    .sorted { $0.ts < $1.ts }
+                    .suffix(600))
+            },
+            readStates: readStates,
+            partner: partner,
+            sharedStateData: ChatLocalCache.encodeSharedState(sharedState)
+        )
+        cacheSaveTask = Task {
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
+            await Task.detached(priority: .utility) {
+                ChatLocalCache.save(snapshot)
+            }.value
         }
     }
 
@@ -546,6 +597,7 @@ final class ChatStore: ObservableObject {
         var next = readStates
         next[channel.rawValue] = state
         readStates = next
+        scheduleCacheSave()
     }
 
     private func setReadState(_ channel: ChatChannel, user: String, ts: Double) {

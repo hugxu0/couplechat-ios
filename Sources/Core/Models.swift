@@ -121,7 +121,7 @@ enum AccountPresentation {
     }
 }
 
-struct ChatMessage: Identifiable, Equatable {
+struct ChatMessage: Identifiable, Codable, Equatable {
     let id: String
     var sender: String
     var senderName: String
@@ -160,6 +160,7 @@ struct ChatMessage: Identifiable, Equatable {
             ts = 0
         }
         clientId = dict["clientId"] as? String
+        recalledText = dict["recalledText"] as? String
         if let reply = dict["reply"] as? [String: Any] {
             replyTo = reply["id"] as? String ?? reply["replyTo"] as? String
             replyPreview = reply["preview"] as? String ?? reply["replyPreview"] as? String
