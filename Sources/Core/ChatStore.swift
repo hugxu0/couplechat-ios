@@ -342,10 +342,12 @@ final class ChatStore: ObservableObject {
     }
 
     // MARK: 发送（乐观上屏）
-    func sendText(_ text: String, channel: ChatChannel = .couple) {
+    func sendText(_ text: String, channel: ChatChannel = .couple,
+                  replyTo: String? = nil, replyPreview: String? = nil) {
         guard let session, let s = socket else { return }
         let clientId = "tmp-" + UUID().uuidString
-        let optimistic = ChatMessage(optimisticText: text, me: session, clientId: clientId, channel: channel.rawValue)
+        let optimistic = ChatMessage(optimisticText: text, me: session, clientId: clientId,
+                                     channel: channel.rawValue, replyTo: replyTo, replyPreview: replyPreview)
         updateMessages(channel) { $0.append(optimistic) }
 
         guard connected else {
@@ -358,12 +360,16 @@ final class ChatStore: ObservableObject {
             return
         }
 
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "type": "text",
             "text": text,
             "channel": channel.rawValue,
             "clientId": clientId,
         ]
+        if let replyTo {
+            payload["replyTo"] = replyTo
+            payload["replyPreview"] = replyPreview ?? ""
+        }
         s.emitWithAck("message:send", payload).timingOut(after: 15) { [weak self] data in
             Task { @MainActor in
                 guard let self else { return }
@@ -378,13 +384,14 @@ final class ChatStore: ObservableObject {
                             "id": realId, "sender": old.sender, "senderName": old.senderName,
                             "kind": old.kind, "type": old.type, "text": old.text,
                             "channel": old.channel, "ts": old.ts,
+                            "replyTo": old.replyTo as Any, "replyPreview": old.replyPreview as Any,
                         ]) ?? old
                     } else {
                         list[i].pending = false
                         list[i].failed = true
                     }
                 }
-                _ = didFindPending // 广播先到时占位已被 upsert 替换，ack 无需再处理。
+                _ = didFindPending
             }
         }
     }
@@ -487,6 +494,7 @@ final class ChatStore: ObservableObject {
                     "kind": old.kind, "type": old.type, "text": old.text,
                     "url": old.url as Any, "channel": old.channel, "ts": old.ts,
                     "clientId": clientId,
+                    "replyTo": old.replyTo as Any, "replyPreview": old.replyPreview as Any,
                 ]) ?? old
             } else {
                 list[i].pending = false

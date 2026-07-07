@@ -133,6 +133,8 @@ struct ChatMessage: Identifiable, Equatable {
     var ts: Double          // 毫秒时间戳
     var clientId: String?
     var recalledText: String? // 撤回前原文保留，用于重新编辑
+    var replyTo: String?      // 引用的消息 ID
+    var replyPreview: String? // 引用预览文本（发送者 + 内容摘要）
 
     // 本地状态（乐观发送用，不来自服务端）
     var pending = false
@@ -158,10 +160,13 @@ struct ChatMessage: Identifiable, Equatable {
             ts = 0
         }
         clientId = dict["clientId"] as? String
+        replyTo = dict["replyTo"] as? String
+        replyPreview = dict["replyPreview"] as? String
     }
 
     /// 乐观占位消息：发送瞬间先上屏，服务端确认后对号入座
-    init(optimisticText text: String, me: Session, clientId: String, channel: String) {
+    init(optimisticText text: String, me: Session, clientId: String, channel: String,
+         replyTo: String? = nil, replyPreview: String? = nil) {
         self.id = clientId
         self.clientId = clientId
         self.sender = me.username
@@ -173,6 +178,8 @@ struct ChatMessage: Identifiable, Equatable {
         self.channel = channel
         self.ts = Date().timeIntervalSince1970 * 1000
         self.pending = true
+        self.replyTo = replyTo
+        self.replyPreview = replyPreview
     }
 
     init(optimisticMedia type: String, text: String, localURL: String?, me: Session, clientId: String, channel: String) {

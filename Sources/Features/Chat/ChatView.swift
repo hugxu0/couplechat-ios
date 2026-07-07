@@ -152,18 +152,27 @@ struct ChatView: View {
                             if msg.kind == "system" {
                                 systemMessage(msg)
                             } else {
+                                let own = msg.sender == store.session?.username
+                                let withinTwoMin = own && (Date().timeIntervalSince1970 * 1000 - msg.ts) < 120_000
                                 MessageBubble(
                                     message: msg,
-                                    mine: msg.sender == store.session?.username,
+                                    mine: own,
                                     peerAvatar: peerAvatar,
                                     groupedWithPrevious: isGrouped(index),
                                     read: store.partnerHasRead(msg),
                                     canRetry: msg.type == "text",
-                                    onRetry: { store.resend(msg) })
+                                    onRetry: { store.resend(msg) },
+                                    contextMenuContent: AnyView(messageContextMenu(msg, own: own, withinTwoMin: withinTwoMin)))
                                 .padding(.top, bubbleTopPadding(index))
-                                .contextMenu { messageContextMenu(msg) }
-                            }
-                        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func `if`(_ condition: Bool, transform: (Self) -> some View) -> some View {
+        if condition { transform(self) } else { self }
+    }
+}
                         .id(msg.id)
                         .onAppear {
                             if index == 0 { store.loadOlder(channel) }
@@ -273,9 +282,7 @@ struct ChatView: View {
 
     // MARK: 长按菜单
     @ViewBuilder
-    private func messageContextMenu(_ msg: ChatMessage) -> some View {
-        let own = msg.sender == store.session?.username
-        let withinTwoMin = own && (Date().timeIntervalSince1970 * 1000 - msg.ts) < 120_000
+    private func messageContextMenu(_ msg: ChatMessage, own: Bool, withinTwoMin: Bool) -> some View {
 
         if msg.type == "text" {
             Button {
@@ -428,10 +435,13 @@ struct ChatView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         Haptics.light()
+        let target = replyTarget
         draft = ""
         replyTarget = nil
+        let replyId = target?.id
+        let replyPreview = target.map { "\($0.senderName): \($0.text)" }
         withAnimation(DS.Anim.message) {
-            store.sendText(text, channel: channel)
+            store.sendText(text, channel: channel, replyTo: replyId, replyPreview: replyPreview)
         }
     }
 
@@ -561,6 +571,7 @@ struct MessageBubble: View {
     let read: Bool
     let canRetry: Bool
     var onRetry: () -> Void = {}
+    var contextMenuContent: AnyView? = nil
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -568,11 +579,11 @@ struct MessageBubble: View {
 
             if !mine {
                 avatar(peerAvatar)
-                    .opacity(groupedWithPrevious ? 0 : 1) // 同组连续消息只在第一条显示头像
+                    .opacity(groupedWithPrevious ? 0 : 1)
             }
 
             HStack(alignment: .bottom, spacing: 5) {
-                bubbleContent
+                bubbleContentWithMenu
                 if mine { statusIndicator }
             }
 
@@ -590,23 +601,69 @@ struct MessageBubble: View {
     }
 
     @ViewBuilder
-    private var bubbleContent: some View {
-        switch message.type {
-        case "image", "sticker":
-            imageBubble
-        case "video":
-            videoBubble
-        default:
-            Text(message.text)
-                .font(.system(size: 16))
-                .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
+    private var bubbleContentWithMenu: some View {
+        let hasReply = message.replyPreview != nil && !(message.replyPreview ?? "").isEmpty
+
+        let content = Group {
+            if hasReply {
+                VStack(alignment: .leading, spacing: 3) {
+                    replyPreviewLabel
+                    messageCore
+                }
                 .padding(.horizontal, 15)
                 .padding(.vertical, 10)
                 .background(mine ? AnyShapeStyle(DS.Palette.accent) : AnyShapeStyle(DS.Palette.bubbleOther))
                 .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
                 .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
                 .opacity(message.pending ? 0.7 : 1)
+            } else {
+                messageCore
+            }
         }
+
+        if let menu = contextMenuContent {
+            content.contextMenu { menu }
+        } else {
+            content
+        }
+    }
+
+    @ViewBuilder
+    private var messageCore: some View {
+        switch message.type {
+        case "image", "sticker":
+            imageBubble
+        case "video":
+            videoBubble
+        default:
+            let hasReply = message.replyPreview != nil && !(message.replyPreview ?? "").isEmpty
+            Text(message.text)
+                .font(.system(size: 16))
+                .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
+                .if(!hasReply) {
+                    $0.padding(.horizontal, 15)
+                      .padding(.vertical, 10)
+                      .background(mine ? AnyShapeStyle(DS.Palette.accent) : AnyShapeStyle(DS.Palette.bubbleOther))
+                      .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+                      .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
+                      .opacity(message.pending ? 0.7 : 1)
+                }
+        }
+    }
+
+    private var replyPreviewLabel: some View {
+        HStack(spacing: 5) {
+            Rectangle()
+                .fill(.white.opacity(mine ? 0.45 : 0.35))
+                .frame(width: 2.5, height: 30)
+                .clipShape(RoundedRectangle(cornerRadius: 1.5, style: .continuous))
+            Text(message.replyPreview ?? "")
+                .font(.system(size: 12))
+                .foregroundStyle(mine ? .white.opacity(0.75) : DS.Palette.textSecondary)
+                .lineLimit(1)
+        }
+        .padding(.top, 2)
+        .padding(.bottom, 4)
     }
 
     private var imageBubble: some View {
