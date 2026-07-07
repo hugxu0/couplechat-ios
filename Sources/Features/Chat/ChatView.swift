@@ -36,6 +36,7 @@ struct ChatView: View {
     @State private var showMicPermissionAlert = false
     @FocusState private var inputFocused: Bool
     private static let cancelDragThreshold: CGFloat = -70
+    private static let composerButtonSize: CGFloat = 44
 
     init(channel: ChatChannel = .couple) {
         self.channel = channel
@@ -404,23 +405,25 @@ struct ChatView: View {
         .padding(.vertical, 5)
     }
 
-    // 单层输入框：附件按钮嵌在左侧，表情按钮嵌在右侧，对称布局
+    // 单层输入框：附件按钮嵌在左侧，表情按钮嵌在右侧，对称布局，整体高度与两侧圆形按钮对齐
     private var messageBox: some View {
-        HStack(alignment: .bottom, spacing: 6) {
+        HStack(alignment: .center, spacing: 8) {
             mediaPicker
             TextField("消息", text: $draft, axis: .vertical)
                 .focused($inputFocused)
                 .lineLimit(1...5)
-                .font(.system(size: 16))
+                .font(.system(size: 17))
+                .multilineTextAlignment(.leading)
             Button { } label: {
                 Image(systemName: "face.smiling")
-                    .font(.system(size: 21))
+                    .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(DS.Palette.textSecondary)
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(PressableStyle())
         }
         .padding(.horizontal, 13)
-        .padding(.vertical, 8)
+        .frame(minHeight: Self.composerButtonSize)
         .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.bubble + 2, style: .continuous))
     }
 
@@ -446,7 +449,7 @@ struct ChatView: View {
             .offset(x: min(0, dragTranslation * 0.4))
         }
         .padding(.horizontal, 16)
-        .frame(height: 44)
+        .frame(height: Self.composerButtonSize)
         .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.bubble + 2, style: .continuous))
         .onAppear { recordingPulse = true }
         .onDisappear { recordingPulse = false }
@@ -464,22 +467,22 @@ struct ChatView: View {
                 Image(systemName: recordingCancelled ? "trash.fill" : "mic.fill")
                     .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
+                    .frame(width: Self.composerButtonSize, height: Self.composerButtonSize)
                     .background(recordingCancelled ? Color.red : DS.Palette.accent)
                     .clipShape(Circle())
                     .scaleEffect(recordingCancelled ? 1.12 : 1.0)
             } else if draft.isEmpty {
                 Image(systemName: "mic.fill")
-                    .font(.system(size: 18))
+                    .font(.system(size: 19))
                     .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
+                    .frame(width: Self.composerButtonSize, height: Self.composerButtonSize)
                     .background(DS.Palette.accent)
                     .clipShape(Circle())
             } else {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
+                    .frame(width: Self.composerButtonSize, height: Self.composerButtonSize)
                     .background(DS.Palette.accent)
                     .clipShape(Circle())
             }
@@ -517,9 +520,9 @@ struct ChatView: View {
     private func composerIcon(_ name: String) -> some View {
         Button { } label: {
             Image(systemName: name)
-                .font(.system(size: 20))
+                .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(DS.Palette.accent)
-                .frame(width: 38, height: 38)
+                .frame(width: Self.composerButtonSize, height: Self.composerButtonSize)
                 .dsGlass(in: Circle())
         }
         .buttonStyle(PressableStyle())
@@ -531,8 +534,9 @@ struct ChatView: View {
             matching: .any(of: [.images, .videos]),
             photoLibrary: .shared()) {
                 Image(systemName: mediaBusy ? "hourglass" : "paperclip")
-                    .font(.system(size: 21))
+                    .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(mediaBusy ? DS.Palette.textSecondary.opacity(0.6) : DS.Palette.textSecondary)
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(PressableStyle())
             .disabled(mediaBusy)
