@@ -11,8 +11,9 @@ struct ChatHomeView: View {
     @State private var customStatusText = ""
     @State private var showNotePrompt = false
     @State private var noteText = ""
-    @State private var editingCustomStatuses = false
-    @AppStorage("chat_home_custom_statuses") private var customStatusData = ""
+    @State private var statusEditMode = false
+    @AppStorage("chat_home_statuses_v2") private var statusesJSON = ""
+    @AppStorage("chat_home_custom_statuses") private var legacyCustomStatusData = ""
 
     private var myName: String { store.session?.name ?? "小旭" }
     private var myUsername: String { store.session?.username ?? "xu" }
@@ -27,32 +28,28 @@ struct ChatHomeView: View {
         store.sharedValue("chat_statuses") as? [String: String] ?? [:]
     }
 
-    private var customStatuses: [String] {
-        get {
-            customStatusData
-                .split(separator: "\n")
-                .map { String($0) }
-                .filter { !$0.isEmpty }
+    private var storedStatuses: [StoredStatus] {
+        if !statusesJSON.isEmpty,
+           let data = statusesJSON.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([StoredStatus].self, from: data),
+           !decoded.isEmpty {
+            return decoded
         }
-        nonmutating set {
-            var seen = Set<String>()
-            let values = newValue
-                .map { String($0.prefix(8)) }
-                .filter { !$0.isEmpty }
-                .filter { seen.insert($0).inserted }
-            customStatusData = values.joined(separator: "\n")
+        return migratedDefaultStatuses()
+    }
+
+    private var statusOptions: [StatusOption] {
+        storedStatuses.enumerated().map { index, stored in
+            paletteOption(stored: stored, index: index)
         }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    mainPanel
-                }
-                .padding(.horizontal, DS.Spacing.page)
-                .padding(.top, 16)
-                .padding(.bottom, 110)
+                mainPanel
+                    .padding(.horizontal, DS.Spacing.page)
+                    .padding(.bottom, 100)
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
@@ -78,8 +75,8 @@ struct ChatHomeView: View {
     private var mainPanel: some View {
         VStack(spacing: 0) {
             coupleHeader
-                .padding(.top, 18)
-                .padding(.bottom, 14)
+                .padding(.top, DS.Spacing.card)
+                .padding(.bottom, 12)
 
             Divider().opacity(0.38)
 
@@ -89,18 +86,18 @@ struct ChatHomeView: View {
             Divider().opacity(0.38)
 
             actionStrip
-                .padding(.vertical, 13)
+                .padding(.vertical, 8)
 
             Divider().opacity(0.38)
 
             latestMessages
-                .padding(.top, 14)
-                .padding(.bottom, 14)
+                .padding(.top, 12)
+                .padding(.bottom, 12)
 
             enterChatButton
-                .padding(.bottom, 18)
+                .padding(.bottom, DS.Spacing.card)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, DS.Spacing.card)
         .frame(maxWidth: .infinity)
         .dsCard()
     }
@@ -115,7 +112,7 @@ struct ChatHomeView: View {
                 online: store.connected,
                 ring: DS.Palette.member(myUsername),
                 editable: true,
-                statusOptions: Self.statusOptions,
+                statusOptions: statusOptions,
                 onStatusPick: { setStatus($0) }
             )
             .frame(maxWidth: .infinity)
@@ -146,7 +143,7 @@ struct ChatHomeView: View {
                 online: store.partnerOnline,
                 ring: DS.Palette.member(partnerUsername),
                 editable: false,
-                statusOptions: Self.statusOptions,
+                statusOptions: statusOptions,
                 onStatusPick: { _ in }
             )
             .frame(maxWidth: .infinity)
@@ -154,116 +151,90 @@ struct ChatHomeView: View {
     }
 
     private var statusStrip: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Self.statusOptions) { status in
-                        statusButton(status)
-                    }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(statusOptions) { status in
+                    statusChip(status)
+                }
 
+                Button {
+                    customStatusText = ""
+                    showCustomStatusPrompt = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                        .frame(width: 38, height: 34)
+                        .background(DS.Palette.innerSurface, in: Capsule())
+                }
+                .buttonStyle(PressableStyle())
+
+                if statusEditMode {
                     Button {
-                        customStatusText = ""
-                        showCustomStatusPrompt = true
+                        withAnimation(DS.Anim.springFast) { statusEditMode = false }
                     } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(DS.Palette.textSecondary)
-                            .frame(width: 38, height: 34)
+                        Text("完成")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(DS.Palette.accent)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 8)
                             .background(DS.Palette.innerSurface, in: Capsule())
                     }
                     .buttonStyle(PressableStyle())
-
-                    if statusMap[myUsername] != nil {
-                        Button {
-                            clearStatus()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(DS.Palette.textSecondary)
-                                .frame(width: 34, height: 34)
-                                .background(DS.Palette.innerSurface, in: Capsule())
-                        }
-                        .buttonStyle(PressableStyle())
+                } else if statusMap[myUsername] != nil {
+                    Button {
+                        clearStatus()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(DS.Palette.textSecondary)
+                            .frame(width: 34, height: 34)
+                            .background(DS.Palette.innerSurface, in: Capsule())
                     }
-                }
-                .padding(.horizontal, 1)
-            }
-
-            if !customStatuses.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(customStatuses, id: \.self) { title in
-                            customStatusButton(title)
-                        }
-                    }
-                    .padding(.horizontal, 1)
+                    .buttonStyle(PressableStyle())
                 }
             }
+            .padding(.horizontal, 1)
         }
     }
 
-    private func statusButton(_ status: StatusOption) -> some View {
+    private func statusChip(_ status: StatusOption) -> some View {
         let selected = statusMap[myUsername] == status.title
-        return Button {
-            setStatus(status)
-        } label: {
-            Text(status.title)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(selected ? .white : status.color)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule()
-                        .fill(selected ? AnyShapeStyle(status.gradient) : AnyShapeStyle(DS.Palette.innerSurface))
-                )
-        }
-        .buttonStyle(PressableStyle())
-    }
-
-    private func customStatusButton(_ title: String) -> some View {
-        let selected = statusMap[myUsername] == title
-        return ZStack(alignment: .topTrailing) {
-            Text(title)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(selected ? .white : DS.Palette.textPrimary.opacity(0.72))
-                .padding(.horizontal, 13)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule()
-                        .fill(selected ? AnyShapeStyle(customStatusOption(title).gradient) : AnyShapeStyle(DS.Palette.innerSurface))
-                )
-                .rotationEffect(.degrees(editingCustomStatuses ? (title.hashValue.isMultiple(of: 2) ? 1.8 : -1.8) : 0))
-                .animation(editingCustomStatuses ? .easeInOut(duration: 0.11).repeatForever(autoreverses: true) : .default, value: editingCustomStatuses)
-
-            if editingCustomStatuses {
+        return HStack(spacing: 4) {
+            if statusEditMode {
                 Button {
-                    deleteCustomStatus(title)
+                    deleteStatus(id: status.id)
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .frame(width: 17, height: 17)
-                        .background(Color.red, in: Circle())
+                    Image(systemName: "minus.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
-                .offset(x: 5, y: -6)
             }
+
+            Text(status.title)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(selected && !statusEditMode ? .white : status.color)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(
+                            selected && !statusEditMode
+                                ? AnyShapeStyle(status.gradient)
+                                : AnyShapeStyle(DS.Palette.innerSurface)
+                        )
+                )
         }
         .contentShape(Capsule())
         .onTapGesture {
-            if editingCustomStatuses {
-                withAnimation(DS.Anim.springFast) { editingCustomStatuses = false }
-            } else {
-                setStatus(customStatusOption(title))
-            }
+            guard !statusEditMode else { return }
+            setStatus(status)
         }
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.35)
-                .onEnded { _ in
-                    Haptics.medium()
-                    withAnimation(DS.Anim.springFast) { editingCustomStatuses = true }
-                }
-        )
+        .onLongPressGesture(minimumDuration: 0.45) {
+            Haptics.medium()
+            withAnimation(DS.Anim.springFast) { statusEditMode = true }
+        }
     }
 
     private var actionStrip: some View {
@@ -279,10 +250,10 @@ struct ChatHomeView: View {
         return Button {
             send(action)
         } label: {
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 ZStack {
                     // 柔和渐变 + 细描边取代大块纯色，跟卡片的玻璃感统一
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [action.background.opacity(0.82), action.background.opacity(0.42)],
@@ -291,24 +262,19 @@ struct ChatHomeView: View {
                             )
                         )
                         .overlay {
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
                                 .stroke(.white.opacity(0.5), lineWidth: 1)
                         }
-                        .frame(height: 58)
+                        .frame(height: 40)
                     Text(sent ? "✓" : action.emoji)
-                        .font(.system(size: sent ? 27 : 26, weight: .bold))
+                        .font(.system(size: 22, weight: .bold))
                         .contentTransition(.numericText())
                 }
                 Text(action.title)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(DS.Palette.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
-                Text(action.subtitle)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.Palette.textSecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.68)
             }
             .frame(maxWidth: .infinity)
         }
@@ -391,14 +357,14 @@ struct ChatHomeView: View {
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 15)
+            .padding(.vertical, 13)
             .background(
                 LinearGradient(
                     colors: [DS.Palette.pink.opacity(0.92), theme.accent.colorAlt],
                     startPoint: .leading,
                     endPoint: .trailing
                 ),
-                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
             )
             .shadow(color: DS.Palette.pink.opacity(0.22), radius: 10, y: 5)
         }
@@ -475,41 +441,82 @@ struct ChatHomeView: View {
         let raw = customStatusText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
         let title = String(raw.prefix(8))
-        var stored = customStatuses
-        if !stored.contains(title) {
-            stored.append(title)
-            customStatuses = stored
+        var list = storedStatuses
+        if !list.contains(where: { $0.title == title }) {
+            list.append(StoredStatus(id: UUID().uuidString, title: title))
+            saveStatuses(list)
         }
         var next = statusMap
         next[myUsername] = title
         store.setShared("chat_statuses", value: next)
     }
 
-    private func deleteCustomStatus(_ title: String) {
+    private func deleteStatus(id: String) {
         Haptics.selection()
-        withAnimation(DS.Anim.springFast) {
-            customStatuses = customStatuses.filter { $0 != title }
-            if customStatuses.isEmpty {
-                editingCustomStatuses = false
-            }
+        let removed = storedStatuses.first(where: { $0.id == id })
+        var list = storedStatuses.filter { $0.id != id }
+        if list.isEmpty {
+            list = Self.defaultStatuses
         }
-        if statusMap[myUsername] == title {
+        saveStatuses(list)
+        if let removed, statusMap[myUsername] == removed.title {
             clearStatus()
         }
     }
 
-    private func customStatusOption(_ title: String) -> StatusOption {
-        .init(
-            id: "custom-\(title)",
-            title: title,
-            color: DS.Palette.pink,
-            gradient: LinearGradient(
-                colors: [Color(red: 1.00, green: 0.53, blue: 0.72), Color(red: 1.00, green: 0.73, blue: 0.85)],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        )
+    private func saveStatuses(_ list: [StoredStatus]) {
+        guard let data = try? JSONEncoder().encode(list),
+              let json = String(data: data, encoding: .utf8) else { return }
+        statusesJSON = json
     }
+
+    private func migratedDefaultStatuses() -> [StoredStatus] {
+        var list = Self.defaultStatuses
+        let legacy = legacyCustomStatusData
+            .split(separator: "\n")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        for title in legacy {
+            let trimmed = String(title.prefix(8))
+            guard !list.contains(where: { $0.title == trimmed }) else { continue }
+            list.append(StoredStatus(id: UUID().uuidString, title: trimmed))
+        }
+        saveStatuses(list)
+        return list
+    }
+
+    private func paletteOption(stored: StoredStatus, index: Int) -> StatusOption {
+        let palette = Self.statusPalettes[index % Self.statusPalettes.count]
+        return StatusOption(id: stored.id, title: stored.title, color: palette.color, gradient: palette.gradient)
+    }
+
+    private struct StoredStatus: Codable, Identifiable, Equatable {
+        let id: String
+        var title: String
+    }
+
+    private struct StatusPalette {
+        let color: Color
+        let gradient: LinearGradient
+    }
+
+    private static let defaultStatuses: [StoredStatus] = [
+        .init(id: "miss", title: "在想你"),
+        .init(id: "cling", title: "想贴贴"),
+        .init(id: "busy", title: "忙完找你"),
+        .init(id: "kiss", title: "要亲亲"),
+    ]
+
+    private static let statusPalettes: [StatusPalette] = [
+        .init(color: DS.Palette.pink,
+              gradient: LinearGradient(colors: [Color(red: 1.00, green: 0.44, blue: 0.62), Color(red: 1.00, green: 0.67, blue: 0.76)], startPoint: .leading, endPoint: .trailing)),
+        .init(color: Color(red: 0.82, green: 0.34, blue: 0.58),
+              gradient: LinearGradient(colors: [Color(red: 0.96, green: 0.52, blue: 0.76), Color(red: 1.00, green: 0.76, blue: 0.86)], startPoint: .leading, endPoint: .trailing)),
+        .init(color: Color(red: 0.34, green: 0.54, blue: 0.95),
+              gradient: LinearGradient(colors: [Color(red: 0.35, green: 0.58, blue: 1.00), Color(red: 0.54, green: 0.76, blue: 1.00)], startPoint: .leading, endPoint: .trailing)),
+        .init(color: Color(red: 0.82, green: 0.54, blue: 0.18),
+              gradient: LinearGradient(colors: [Color(red: 0.95, green: 0.63, blue: 0.22), Color(red: 1.00, green: 0.78, blue: 0.44)], startPoint: .leading, endPoint: .trailing)),
+    ]
 
     private static func randomNoteText() -> String {
         [
@@ -528,33 +535,21 @@ struct ChatHomeView: View {
         let gradient: LinearGradient
     }
 
-    private static let statusOptions: [StatusOption] = [
-        .init(id: "miss", title: "在想你", color: DS.Palette.pink,
-              gradient: LinearGradient(colors: [Color(red: 1.00, green: 0.44, blue: 0.62), Color(red: 1.00, green: 0.67, blue: 0.76)], startPoint: .leading, endPoint: .trailing)),
-        .init(id: "cling", title: "想贴贴", color: Color(red: 0.82, green: 0.34, blue: 0.58),
-              gradient: LinearGradient(colors: [Color(red: 0.96, green: 0.52, blue: 0.76), Color(red: 1.00, green: 0.76, blue: 0.86)], startPoint: .leading, endPoint: .trailing)),
-        .init(id: "busy", title: "忙完找你", color: Color(red: 0.34, green: 0.54, blue: 0.95),
-              gradient: LinearGradient(colors: [Color(red: 0.35, green: 0.58, blue: 1.00), Color(red: 0.54, green: 0.76, blue: 1.00)], startPoint: .leading, endPoint: .trailing)),
-        .init(id: "kiss", title: "要亲亲", color: Color(red: 0.82, green: 0.54, blue: 0.18),
-              gradient: LinearGradient(colors: [Color(red: 0.95, green: 0.63, blue: 0.22), Color(red: 1.00, green: 0.78, blue: 0.44)], startPoint: .leading, endPoint: .trailing)),
-    ]
-
     fileprivate struct QuickAction: Identifiable {
         let id: String
         let emoji: String
         let title: String
-        let subtitle: String
         let message: String
         let background: Color
         let kind: InteractionEffectKind
     }
 
     private static let actions: [QuickAction] = [
-        .init(id: "miss", emoji: "💗", title: "想你了", subtitle: "心跳波纹", message: "💗 想你了", background: Color(red: 1.00, green: 0.91, blue: 0.95), kind: .miss),
-        .init(id: "pat", emoji: "🖐️", title: "拍一拍", subtitle: "轻轻碰一下", message: "🖐️ 拍了拍你", background: Color(red: 1.00, green: 0.94, blue: 0.86), kind: .pat),
-        .init(id: "flower", emoji: "🌸", title: "送花花", subtitle: "送你一朵", message: "🌸 送你一朵花花", background: Color(red: 1.00, green: 0.91, blue: 0.94), kind: .flower),
-        .init(id: "poop", emoji: "💩", title: "扔粑粑", subtitle: "扔了个粑粑", message: "💩 扔了个粑粑", background: Color(red: 0.96, green: 0.91, blue: 0.83), kind: .poop),
-        .init(id: "note", emoji: "🪧", title: "贴条", subtitle: "贴住屏幕", message: "🪧 给你贴了一张小纸条", background: Color(red: 0.94, green: 0.95, blue: 0.97), kind: .note),
+        .init(id: "miss", emoji: "💗", title: "想你了", message: "💗 想你了", background: Color(red: 1.00, green: 0.91, blue: 0.95), kind: .miss),
+        .init(id: "pat", emoji: "🖐️", title: "拍一拍", message: "🖐️ 拍了拍你", background: Color(red: 1.00, green: 0.94, blue: 0.86), kind: .pat),
+        .init(id: "flower", emoji: "🌸", title: "送花花", message: "🌸 送你一朵花花", background: Color(red: 1.00, green: 0.91, blue: 0.94), kind: .flower),
+        .init(id: "poop", emoji: "💩", title: "扔粑粑", message: "💩 扔了个粑粑", background: Color(red: 0.96, green: 0.91, blue: 0.83), kind: .poop),
+        .init(id: "note", emoji: "🪧", title: "贴条", message: "🪧 给你贴了一张小纸条", background: Color(red: 0.94, green: 0.95, blue: 0.97), kind: .note),
     ]
 }
 
@@ -575,7 +570,7 @@ private struct CoupleAvatarColumn: View {
 
             ZStack(alignment: .bottomTrailing) {
                 AvatarIllustration(kind: image, fallback: avatar)
-                    .frame(width: 104, height: 104)
+                    .frame(width: 88, height: 88)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 4))
                     .shadow(color: ring.opacity(0.18), radius: 10, y: 5)
@@ -588,7 +583,7 @@ private struct CoupleAvatarColumn: View {
             }
 
             Text(name)
-                .font(.system(size: 21, weight: .heavy, design: .rounded))
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
                 .foregroundStyle(DS.Palette.textPrimary)
         }
     }
@@ -640,8 +635,8 @@ private struct AvatarIllustration: View {
             )
             decorativeMarks
             Text(fallback)
-                .font(.system(size: 45))
-                .offset(y: 8)
+                .font(.system(size: 38))
+                .offset(y: 6)
         }
     }
 

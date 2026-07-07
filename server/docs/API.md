@@ -37,6 +37,16 @@ Base URL 示例：`https://hoo66.top`
 { "token": "...", "username": "xu", "name": "小旭" }
 ```
 
+### `GET /api/me`
+
+鉴权：`Authorization: Bearer <token>`
+
+核实 token 是否仍有效（Socket 返回 unauthorized 时 iOS 会二次确认）。
+
+```json
+{ "username": "xu", "name": "小旭" }
+```
+
 ### `POST /api/me/push/bark`
 
 鉴权：`Authorization: Bearer <token>`
@@ -98,7 +108,10 @@ Base URL 示例：`https://hoo66.top`
 
 ### `PATCH /api/me/items/:id`
 
-鉴权：`Authorization: Bearer <token>`。只可更新当前账号自己的 item。
+鉴权：`Authorization: Bearer <token>`
+
+- `scope=personal`：仅 owner 可改
+- `scope=shared`：两人均可改
 
 ```json
 { "title": "新标题", "bodyMarkdown": "- 支持 Markdown", "dueAt": null, "isDone": true }
@@ -106,7 +119,9 @@ Base URL 示例：`https://hoo66.top`
 
 ### `DELETE /api/me/items/:id`
 
-鉴权：`Authorization: Bearer <token>`。只可删除当前账号自己的 item。
+鉴权：`Authorization: Bearer <token>`
+
+规则同 PATCH：`personal` 仅 owner；`shared` 两人均可删。
 
 ```json
 { "ok": true }
@@ -116,7 +131,15 @@ Base URL 示例：`https://hoo66.top`
 
 鉴权：`Authorization: Bearer <token>`
 
-`multipart/form-data`，字段名不限，单文件。支持 jpeg/png/gif/webp/mp4/mov，最大 50MB。
+`multipart/form-data`，字段名不限，单文件，最大 50MB。
+
+支持 MIME：
+
+| 类型 | MIME | 响应 `type` |
+|------|------|-------------|
+| 图片 | jpeg, png, gif, webp | `image` |
+| 视频 | mp4, quicktime | `video` |
+| 语音 | m4a, x-m4a, mp4, aac | `voice` |
 
 响应：
 
@@ -128,6 +151,39 @@ Base URL 示例：`https://hoo66.top`
   "size": 12345,
   "type": "image"
 }
+```
+
+静态访问：`GET /uploads/<filename>`
+
+### `GET /api/stats`
+
+鉴权：`Authorization: Bearer <token>`
+
+couple 频道近 10 天 + 近 12 月消息计数（按 username 分组）。**iOS 记录页已改成本地聚合，不再调用此接口**；接口仍保留供其他客户端使用。
+
+### `GET /api/daily`
+
+鉴权：`Authorization: Bearer <token>`
+
+大橘日记 + 今日推荐。
+
+```json
+{
+  "today": "2026-07-08",
+  "yesterday": "2026-07-07",
+  "diary": { "date": "2026-07-07", "bodyMarkdown": "..." },
+  "recommend": { "date": "2026-07-08", "title": "...", "bodyMarkdown": "..." }
+}
+```
+
+### `POST /api/daily/recommend`
+
+鉴权：`Authorization: Bearer <token>`
+
+强制重新生成今日推荐。
+
+```json
+{ "recommend": { "date": "2026-07-08", "title": "...", "bodyMarkdown": "..." } }
 ```
 
 ## Socket.IO
@@ -211,6 +267,18 @@ io("https://hoo66.top", {
 { "id": "msg_xxx", "meta": { "confirm": { "status": "confirmed", "failed": 0, ... } } }
 ```
 
+#### `message:recalled`
+
+消息被撤回后广播：
+
+```json
+{ "id": "msg_xxx", "channel": "couple", "by": "xu", "byName": "小旭" }
+```
+
+#### `ai:typing`
+
+AI 私聊频道输入中指示（仅 `ai:<username>` room，payload 为 `boolean`）。
+
 #### `read:init`
 
 ```json
@@ -225,15 +293,33 @@ io("https://hoo66.top", {
 
 #### `shared:init`
 
+连接时服务端主动推送全量 shared 状态。客户端也可 emit `shared:init` 请求刷新，Ack 为 `{ ok, state }`。
+
 ```json
 {
-  "pet:state": {
-    "value": { "mood": "happy" },
+  "dates": {
+    "value": { "togetherSince": "2020-01-01" },
     "updatedBy": "xu",
+    "updatedAt": 1710000000000
+  },
+  "anniversaries": {
+    "value": { "items": [] },
+    "updatedBy": "si",
     "updatedAt": 1710000000000
   }
 }
 ```
+
+常用 key（客户端约定，服务端只存 JSON blob）：
+
+| key | 用途 |
+|-----|------|
+| `dates` | 在一起日期 |
+| `anniversaries` | 纪念日 / 倒数日列表 |
+| `screen_note` | 贴条（首页 overlay） |
+| `chat_statuses` | 聊天首页状态 |
+| `partner_recommend` | 今日推荐分享 |
+| `pet:state` | 宠物状态（预留，iOS 尚未写入） |
 
 #### `shared:update`
 
@@ -263,12 +349,16 @@ io("https://hoo66.top", {
 
 #### `message:send`
 
+支持 `type`：`text` / `image` / `video` / `voice` / `sticker`
+
 ```json
 {
   "channel": "couple",
   "type": "text",
   "text": "hi",
-  "clientId": "tmp-xxx"
+  "clientId": "tmp-xxx",
+  "replyTo": "msg_yyy",
+  "replyPreview": "被引用的摘要"
 }
 ```
 

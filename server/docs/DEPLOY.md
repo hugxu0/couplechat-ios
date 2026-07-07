@@ -8,6 +8,7 @@
 - 生产环境账号 username 必须固定为 `xu / si`，后续不要改。
 - 旧 App token 会在新后端下失效，这是正常的；重新登录一次即可。
 - 如果要保留旧历史，需要先做 `alice -> xu`、`bob -> si` 的数据库迁移。否则新后端会从空库开始。
+- 数据层是 **PostgreSQL**，不是 SQLite。备份用 `pg_dump`，详见 `docs/POSTGRES.md`。
 
 ## 首次部署
 
@@ -24,12 +25,15 @@ cp .env.production.example .env
 nano .env
 ```
 
+安装 PostgreSQL 并建库（见 `docs/POSTGRES.md` 第一、二节）。
+
 必须修改：
 
 ```env
 TOKEN_SECRET=用 openssl rand -hex 32 生成
 COUPLECHAT_ACCOUNTS=xu|小旭|真实密码|🐶;si|小偲|真实密码|🐰
 PUBLIC_BASE_URL=https://hoo66.top
+DATABASE_URL=postgres://couplechat:强密码@localhost:5432/couplechat
 ```
 
 AI 相关（可选，不配时 ai 频道走本地兜底）：
@@ -93,18 +97,10 @@ sudo certbot --nginx -d hoo66.top
 ```bash
 curl https://hoo66.top/health
 curl https://hoo66.top/api/accounts
+npm run healthcheck
 ```
 
-`/api/accounts` 必须返回：
-
-```json
-[
-  { "username": "xu", "name": "小旭", "avatar": "🐶" },
-  { "username": "si", "name": "小偲", "avatar": "🐰" }
-]
-```
-
-检查 pm2 状态和日志：
+`/api/accounts` 必须返回 `xu, si`。检查 pm2 状态和日志：
 
 ```bash
 pm2 list                                              # 状态应为 online
@@ -133,10 +129,10 @@ pm2 restart couplechat-server
 至少备份：
 
 ```text
-server/.data/couplechat.sqlite    # 数据库（消息/记忆/提醒全在这）
-server/.data/ai_logs/             # AI 全链路 trace 日志（排查用）
-server/uploads/                   # 媒体文件
-server/.env                       # 配置（含 TOKEN_SECRET 和 AI 密钥）
+PostgreSQL 数据库（pg_dump）     # 消息 / 记忆 / 提醒 / 账号
+server/uploads/                  # 媒体文件
+server/.data/ai_logs/            # AI trace 日志（排查用）
+server/.env                      # 配置（含 TOKEN_SECRET 和 AI 密钥）
 ```
 
 简单备份命令：
@@ -144,7 +140,10 @@ server/.env                       # 配置（含 TOKEN_SECRET 和 AI 密钥）
 ```bash
 mkdir -p /opt/backups/couplechat
 cd /opt/couplechat-ios/server
-tar -czf /opt/backups/couplechat/couplechat-$(date +%F-%H%M).tar.gz .data uploads .env
+pg_dump -Fc couplechat > /opt/backups/couplechat/couplechat-$(date +%F-%H%M).dump
+tar -czf /opt/backups/couplechat/uploads-$(date +%F-%H%M).tar.gz uploads .data/ai_logs .env
 ```
 
 **部署前一定先备份**。`TOKEN_SECRET` 不能换，一换所有已登录 token 失效，用户回登录页。
+
+从旧 SQLite 迁移到 PostgreSQL 的一次性脚本见 `docs/POSTGRES.md` 第三节。
