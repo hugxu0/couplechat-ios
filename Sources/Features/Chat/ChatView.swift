@@ -17,7 +17,6 @@ struct ChatView: View {
     @State private var mediaBusy = false
     @State private var showSearch = false
     @State private var showWallpaperPicker = false
-    @State private var keyboardHeight: CGFloat = 0
     @FocusState private var inputFocused: Bool
 
     init(channel: ChatChannel = .couple) {
@@ -144,27 +143,9 @@ struct ChatView: View {
             }
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
+            .defaultScrollAnchor(.bottom)
             .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { note in
-                let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
-                let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-                keyboardHeight = frame.height
-                guard let last = messages.last else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    withAnimation(.easeOut(duration: duration)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
-                let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-                keyboardHeight = 0
-                guard let last = messages.last else { return }
-                withAnimation(.easeOut(duration: duration)) {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
-            }
-            .onChange(of: messages) {
+            .onChange(of: messages.count) {
                 guard let last = messages.last else { return }
                 withAnimation(DS.Anim.message) {
                     proxy.scrollTo(last.id, anchor: .bottom)
