@@ -170,18 +170,6 @@ struct ChatView: View {
                     }
                 }
             }
-            // 键盘完全收起后轻量补正：避免偶发的 "消息还在空中"
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidChangeFrameNotification)) { note in
-                guard let info = note.userInfo,
-                      let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) else { return }
-                let keyboardH = max(0, UIScreen.main.bounds.height - endFrame.minY)
-                guard keyboardH < 60 else { return } // 只在键盘收起或接近收起时补正
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.08)) {
-                        proxy.scrollTo("bottomAnchor", anchor: .bottom)
-                    }
-                }
-            }
         }
     }
 
