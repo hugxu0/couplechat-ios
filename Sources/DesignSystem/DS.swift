@@ -82,6 +82,8 @@ enum DS {
         static let pink = Color(red: 0.98, green: 0.35, blue: 0.55)
         /// 蓝色点缀（男生侧统计）
         static let blue = Color(red: 0.30, green: 0.55, blue: 0.95)
+        /// 紫色点缀（共享区域标识）
+        static let purple = Color(red: 0.58, green: 0.40, blue: 0.92)
         /// 成功 / 上升趋势
         static let green = Color(red: 0.15, green: 0.68, blue: 0.38)
 

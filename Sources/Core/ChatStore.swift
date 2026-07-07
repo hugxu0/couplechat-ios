@@ -20,6 +20,9 @@ final class ChatStore: ObservableObject {
     @Published var sharedState: [String: Any] = [:]
     @Published var lastConnectionError: String?
 
+    // 通知提醒页：收到共享提醒/备忘变更时刷新
+    static let personalItemChangedNotification = Notification.Name("personalItemChanged")
+
     /// 兼容旧 UI：默认仍然表示 couple 频道。
     var messages: [ChatMessage] { messages(for: .couple) }
     var readState: [String: Double] { readState(for: .couple) }
@@ -193,6 +196,29 @@ final class ChatStore: ObservableObject {
             guard let update = data.first as? [String: Any],
                   let key = update["key"] as? String else { return }
             Task { @MainActor in self?.sharedState[key] = update }
+        }
+
+        s.on("personalItem:changed") { [weak self] data, _ in
+            guard let dict = data.first as? [String: Any],
+                  let itemDict = dict["item"] as? [String: Any],
+                  let action = dict["action"] as? String else { return }
+
+            // shared items only — personal items don't need real-time sync
+            let scope = itemDict["scope"] as? String ?? "personal"
+            guard scope == "shared" else { return }
+
+            Task { @MainActor in
+                guard let self else { return }
+                // 不是自己操作的才通知刷新
+                let itemOwner = itemDict["owner"] as? String ?? ""
+                if itemOwner != self.session?.username {
+                    NotificationCenter.default.post(
+                        name: Self.personalItemChangedNotification,
+                        object: nil,
+                        userInfo: ["action": action, "item": itemDict]
+                    )
+                }
+            }
         }
     }
 
@@ -612,18 +638,21 @@ final class ChatStore: ObservableObject {
         return (try? JSONDecoder().decode(Wrapper.self, from: data))?.recommend
     }
 
-    func fetchPersonalItems(kind: PersonalItemKind? = nil) async -> [PersonalItem] {
-        var path = "api/me/items"
-        if let kind { path += "?kind=\(kind.rawValue)" }
+    func fetchPersonalItems(kind: PersonalItemKind? = nil, scope: String = "personal") async -> [PersonalItem] {
+        var components: [String] = []
+        if let kind { components.append("kind=\(kind.rawValue)") }
+        components.append("scope=\(scope)")
+        let path = "api/me/items?\(components.joined(separator: "&"))"
         guard let req = authorizedRequest(path),
               let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
         return (try? JSONDecoder().decode(PersonalItemsResponse.self, from: data))?.items ?? []
     }
 
-    func createPersonalItem(kind: PersonalItemKind, title: String, bodyMarkdown: String, dueAt: Int?) async -> PersonalItem? {
+    func createPersonalItem(kind: PersonalItemKind, scope: String = "personal", title: String, bodyMarkdown: String, dueAt: Int?) async -> PersonalItem? {
         var body: [String: Any] = [
             "kind": kind.rawValue,
+            "scope": scope,
             "title": title,
             "bodyMarkdown": bodyMarkdown,
         ]

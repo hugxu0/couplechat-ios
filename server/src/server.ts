@@ -4,6 +4,7 @@ import { config } from "./config";
 import { initDatabase } from "./db";
 import { seedAccounts } from "./auth/accounts";
 import { registerRealtime } from "./socket/realtime";
+import { setSocketIO } from "./personalItems/routes";
 import { initAi } from "./ai/aiService";
 
 async function main() {
@@ -17,6 +18,7 @@ async function main() {
       origin: true,
     },
   });
+  setSocketIO(io);
   registerRealtime(io);
 
   await app.listen({ host: config.host, port: config.port });

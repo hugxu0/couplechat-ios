@@ -75,6 +75,7 @@ struct PersonalItem: Identifiable, Codable, Equatable {
     let id: String
     let owner: String
     var kind: PersonalItemKind
+    var scope: String
     var title: String
     var bodyMarkdown: String
     var dueAt: Int?

@@ -3,6 +3,7 @@ import SwiftUI
 struct RemindersView: View {
     @EnvironmentObject private var store: ChatStore
     @State private var tab: PersonalItemKind = .reminder
+    @State private var scope = "personal"
     @State private var items: [PersonalItem] = []
     @State private var loading = false
     @State private var editorMode: EditorMode?
@@ -10,7 +11,7 @@ struct RemindersView: View {
 
     private var reminders: [PersonalItem] {
         items
-            .filter { $0.kind == .reminder }
+            .filter { $0.kind == .reminder && $0.scope == scope }
             .sorted {
                 switch ($0.dueAt, $1.dueAt) {
                 case let (a?, b?): return a < b
@@ -23,7 +24,7 @@ struct RemindersView: View {
 
     private var memos: [PersonalItem] {
         items
-            .filter { $0.kind == .memo }
+            .filter { $0.kind == .memo && $0.scope == scope }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
@@ -37,20 +38,24 @@ struct RemindersView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     header
                     tabSwitcher
+                    scopePicker
                     summaryStrip
                     itemList
                 }
                 .padding(.horizontal, DS.Spacing.page)
-                .padding(.top, 12)
-                .padding(.bottom, 96)
+                    .padding(.top, 12)
+                    .padding(.bottom, 96)
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .refreshable { await reload() }
             .task { await reload() }
+            .onReceive(NotificationCenter.default.publisher(for: ChatStore.personalItemChangedNotification)) { _ in
+                Task { await reload() }
+            }
             .sheet(item: $editorMode) { mode in
-                PersonalItemEditor(mode: mode) { title, markdown, dueAt in
+                PersonalItemEditor(mode: mode, scope: scope) { title, markdown, dueAt in
                     Task { await save(mode: mode, title: title, markdown: markdown, dueAt: dueAt) }
                 }
             }
@@ -63,7 +68,7 @@ struct RemindersView: View {
                 Text(tab == .reminder ? "提醒事项" : "Markdown 备忘")
                     .font(.system(size: 30, weight: .bold))
                     .foregroundStyle(DS.Palette.textPrimary)
-                Text(store.session?.name ?? "我的空间")
+                Text(scope == "shared" ? "共享\(tab == .reminder ? "提醒" : "备忘")" : (store.session?.name ?? "我的空间"))
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(DS.Palette.textSecondary)
             }
@@ -94,6 +99,37 @@ struct RemindersView: View {
         .padding(5)
         .background(DS.Palette.innerSurface)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var scopePicker: some View {
+        HStack(spacing: 6) {
+            scopeButton("personal", icon: "person.fill", title: "我的")
+            scopeButton("shared", icon: "person.2.fill", title: "共享")
+        }
+        .padding(5)
+        .background(DS.Palette.innerSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func scopeButton(_ value: String, icon: String, title: String) -> some View {
+        Button {
+            withAnimation(DS.Anim.spring) { scope = value }
+            Haptics.selection()
+            Task { await reload() }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(scope == value ? .white : DS.Palette.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background {
+                    if scope == value {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(value == "shared" ? DS.Palette.purple : DS.Palette.accent)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
     }
 
     private func switchButton(_ kind: PersonalItemKind, icon: String, title: String) -> some View {
@@ -177,7 +213,9 @@ struct RemindersView: View {
             Image(systemName: tab == .reminder ? "bell.slash.fill" : "text.book.closed.fill")
                 .font(.system(size: 34, weight: .semibold))
                 .foregroundStyle(DS.Palette.accent)
-            Text(tab == .reminder ? "还没有提醒" : "还没有备忘")
+            Text(scope == "shared"
+                 ? (tab == .reminder ? "还没有共享提醒" : "还没有共享备忘")
+                 : (tab == .reminder ? "还没有提醒" : "还没有备忘"))
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(DS.Palette.textPrimary)
             Button {
@@ -204,13 +242,21 @@ struct RemindersView: View {
         guard !loading else { return }
         loading = true
         errorMessage = nil
-        let fetched = await store.fetchPersonalItems()
+        let fetched = await store.fetchPersonalItems(scope: scope)
         await MainActor.run {
-            items = fetched
+            if scope == "personal" {
+                // 合并：保留已有 shared items，替换 personal items
+                let shared = items.filter { $0.scope == "shared" }
+                items = fetched + shared
+            } else {
+                // 合并：保留已有 personal items，替换 shared items
+                let personal = items.filter { $0.scope == "personal" }
+                items = personal + fetched
+            }
             loading = false
         }
         if let account = store.session?.username {
-            await ReminderNotificationScheduler.rescheduleAll(fetched, account: account)
+            await ReminderNotificationScheduler.rescheduleAll(items, account: account)
         }
     }
 
@@ -219,7 +265,7 @@ struct RemindersView: View {
         let saved: PersonalItem?
         switch mode {
         case .create(let kind):
-            saved = await store.createPersonalItem(kind: kind, title: title, bodyMarkdown: markdown, dueAt: dueAt)
+            saved = await store.createPersonalItem(kind: kind, scope: scope, title: title, bodyMarkdown: markdown, dueAt: dueAt)
         case .edit(let item):
             saved = await store.updatePersonalItem(
                 item,
@@ -317,11 +363,18 @@ private struct PersonalItemCard: View {
                 }
 
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(item.title)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(item.isDone ? DS.Palette.textSecondary : DS.Palette.textPrimary)
-                        .strikethrough(item.isDone)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 6) {
+                        Text(item.title)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(item.isDone ? DS.Palette.textSecondary : DS.Palette.textPrimary)
+                            .strikethrough(item.isDone)
+
+                        if item.scope == "shared" {
+                            Text(AccountPresentation.avatar(for: item.owner))
+                                .font(.system(size: 14))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     if item.kind == .reminder, let dueDate = item.dueDate {
                         Label(dueDate.smartLabel, systemImage: item.isOverdue ? "exclamationmark.circle.fill" : "clock.fill")
@@ -365,6 +418,7 @@ private struct PersonalItemCard: View {
 private struct PersonalItemEditor: View {
     @Environment(\.dismiss) private var dismiss
     let mode: EditorMode
+    let scope: String
     let onSave: (String, String, Int?) -> Void
 
     @State private var title: String
@@ -373,8 +427,9 @@ private struct PersonalItemEditor: View {
     @State private var dueDate: Date
     @State private var preview = false
 
-    init(mode: EditorMode, onSave: @escaping (String, String, Int?) -> Void) {
+    init(mode: EditorMode, scope: String = "personal", onSave: @escaping (String, String, Int?) -> Void) {
         self.mode = mode
+        self.scope = scope
         self.onSave = onSave
         let item = mode.item
         _title = State(initialValue: item?.title ?? "")

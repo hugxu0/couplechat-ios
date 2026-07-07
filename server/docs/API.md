@@ -53,7 +53,11 @@ Base URL 示例：`https://hoo66.top`
 
 鉴权：`Authorization: Bearer <token>`
 
-当前账号自己的提醒/备忘。可选 query：`kind=reminder` 或 `kind=memo`。
+当前账号的提醒/备忘。可选 query：
+- `kind=reminder` 或 `kind=memo`
+- `scope=personal`（默认）或 `scope=shared`
+
+`scope=shared` 返回两人共享的提醒/备忘，不区分 owner。
 
 ```json
 {
@@ -62,6 +66,7 @@ Base URL 示例：`https://hoo66.top`
       "id": "uuid",
       "owner": "xu",
       "kind": "memo",
+      "scope": "personal",
       "title": "旅行计划",
       "bodyMarkdown": "## 周末\n- 订票",
       "dueAt": null,
@@ -80,11 +85,14 @@ Base URL 示例：`https://hoo66.top`
 ```json
 {
   "kind": "reminder",
+  "scope": "shared",
   "title": "吃药",
   "bodyMarkdown": "**饭后**记得喝水",
   "dueAt": 1710000000000
 }
 ```
+
+`scope` 可选，默认 `"personal"`。`"shared"` 的 item 两人都能看到和编辑。
 
 响应：`201 { "item": { ... } }`
 
@@ -193,6 +201,19 @@ io("https://hoo66.top", {
   "updatedAt": 1710000000000
 }
 ```
+
+#### `personalItem:changed`
+
+当共享提醒/备忘被对方创建、修改或删除时，通过 `channel:couple` 广播。
+
+```json
+{
+  "action": "created",
+  "item": { "id": "uuid", "scope": "shared", ... }
+}
+```
+
+`action` 为 `"created"` / `"updated"` / `"deleted"`（删除时 `item` 只含 `{ id }`）。
 
 ### 客户端事件
 

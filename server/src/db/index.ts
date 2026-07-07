@@ -49,6 +49,7 @@ export interface PersonalItemRow {
   id: string;
   owner: string;
   kind: string;
+  scope: string;
   title: string;
   body_markdown: string;
   due_at: number | null;
@@ -216,6 +217,7 @@ function migrate() {
       id TEXT PRIMARY KEY,
       owner TEXT NOT NULL,
       kind TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'personal',
       title TEXT NOT NULL,
       body_markdown TEXT NOT NULL DEFAULT '',
       due_at INTEGER,
@@ -224,7 +226,7 @@ function migrate() {
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS personal_items_owner_kind_updated_idx
-      ON personal_items(owner, kind, updated_at DESC);
+      ON personal_items(owner, kind, scope, updated_at DESC);
     CREATE INDEX IF NOT EXISTS personal_items_owner_due_idx
       ON personal_items(owner, due_at);
 
@@ -280,4 +282,11 @@ function migrate() {
       updated_at INTEGER NOT NULL
     );
   `);
+
+  // Idempotent migration for scope column (added post-initial schema)
+  try {
+    database.run("ALTER TABLE personal_items ADD COLUMN scope TEXT NOT NULL DEFAULT 'personal'");
+  } catch {
+    // column already exists — safe to ignore
+  }
 }
