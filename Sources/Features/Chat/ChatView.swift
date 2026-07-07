@@ -17,6 +17,7 @@ struct ChatView: View {
     @State private var mediaBusy = false
     @State private var showSearch = false
     @State private var showWallpaperPicker = false
+    @State private var keyboard = KeyboardTransition.hidden
     @FocusState private var inputFocused: Bool
 
     init(channel: ChatChannel = .couple) {
@@ -48,11 +49,16 @@ struct ChatView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            messageList
-            composer
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                messageList(in: geometry)
+                composer
+            }
+            .padding(.bottom, keyboard.bottomInset)
+            .animation(keyboard.animation, value: keyboard.bottomInset)
         }
         .background(theme.wallpaper(for: channel).gradient(dark: colorScheme == .dark).ignoresSafeArea())
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -103,7 +109,7 @@ struct ChatView: View {
     }
 
     // MARK: 消息列表
-    private var messageList: some View {
+    private func messageList(in geometry: GeometryProxy) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -159,15 +165,19 @@ struct ChatView: View {
             )
             .onAppear { scrollToBottom(proxy) }
             .onChange(of: messages.count) { scrollToBottom(proxy) }
-            // 键盘弹/收：用系统键盘动画时长驱动 scrollTo
+            // 键盘弹/收：用系统键盘动画驱动底部 inset 和 scrollTo，让消息与输入栏同步。
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-                guard let info = note.userInfo,
-                      let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double),
-                      duration > 0 else { return }
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: duration)) {
-                        proxy.scrollTo("bottomAnchor", anchor: .bottom)
-                    }
+                let transition = KeyboardTransition(note: note, geometry: geometry)
+                withAnimation(transition.animation) {
+                    keyboard = transition
+                    proxy.scrollTo("bottomAnchor", anchor: .bottom)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
+                let transition = KeyboardTransition(note: note, geometry: geometry)
+                withAnimation(transition.animation) {
+                    keyboard = .hidden(with: transition.animation)
+                    proxy.scrollTo("bottomAnchor", anchor: .bottom)
                 }
             }
         }
@@ -363,6 +373,56 @@ private struct PreparedMedia {
     let data: Data
     let mimeType: String
     let messageType: String
+}
+
+private struct KeyboardTransition {
+    let bottomInset: CGFloat
+    let animation: Animation
+
+    static let hidden = KeyboardTransition(bottomInset: 0, animation: .easeOut(duration: 0.25))
+
+    static func hidden(with animation: Animation) -> KeyboardTransition {
+        KeyboardTransition(bottomInset: 0, animation: animation)
+    }
+
+    init(bottomInset: CGFloat, animation: Animation) {
+        self.bottomInset = bottomInset
+        self.animation = animation
+    }
+
+    init(note: Notification, geometry: GeometryProxy) {
+        let info = note.userInfo ?? [:]
+        let endFrame = info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect ?? .zero
+        let duration = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        let curveRaw = (info[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue
+            ?? UIView.AnimationCurve.easeInOut.rawValue
+        let curve = UIView.AnimationCurve(rawValue: curveRaw) ?? .easeInOut
+
+        self.animation = Self.animation(duration: duration, curve: curve)
+
+        let viewFrame = geometry.frame(in: .global)
+        let overlapsHorizontally = endFrame.maxX > viewFrame.minX && endFrame.minX < viewFrame.maxX
+        let safeAreaBottomY = viewFrame.maxY - geometry.safeAreaInsets.bottom
+        let inset = overlapsHorizontally ? max(0, safeAreaBottomY - endFrame.minY) : 0
+        self.bottomInset = inset.rounded(.toNearestOrAwayFromZero)
+    }
+
+    private static func animation(duration: Double, curve: UIView.AnimationCurve) -> Animation {
+        guard duration > 0 else { return .linear(duration: 0.01) }
+
+        switch curve {
+        case .easeInOut:
+            return .timingCurve(0.42, 0, 0.58, 1, duration: duration)
+        case .easeIn:
+            return .timingCurve(0.42, 0, 1, 1, duration: duration)
+        case .easeOut:
+            return .timingCurve(0, 0, 0.58, 1, duration: duration)
+        case .linear:
+            return .linear(duration: duration)
+        @unknown default:
+            return .easeOut(duration: duration)
+        }
+    }
 }
 
 // MARK: - 消息气泡
