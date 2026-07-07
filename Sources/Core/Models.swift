@@ -296,7 +296,7 @@ struct ChatMessageMeta: Codable, Equatable {
         } else {
             self.search = nil
         }
-        return hasAny ? () : nil
+        guard hasAny else { return nil }
     }
 }
 
