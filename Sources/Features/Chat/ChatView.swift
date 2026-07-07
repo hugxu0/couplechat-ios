@@ -150,19 +150,20 @@ struct ChatView: View {
             .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
             .onAppear { scrollToBottom(proxy) }
             .onChange(of: messages.count) { scrollToBottom(proxy) }
-            .onChange(of: inputFocused) {
-                // 延迟到键盘动画结束后再滚 — contentInset 还在变大时滚会被键盘盖住
-                let delay: UInt64 = 320_000_000
-                DispatchQueue.main.asyncAfter(deadline: .now() + Double(delay) / 1_000_000_000) {
-                    withAnimation(DS.Anim.message) {
-                        proxy.scrollTo("bottomAnchor", anchor: .bottom)
-                    }
+            // 键盘弹/收：用系统键盘动画的曲线和时长驱动 scrollTo，跟键盘完全同步
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+                guard let info = note.userInfo,
+                      let _ = (info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect),
+                      let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double),
+                      duration > 0 else { return }
+                withAnimation(.easeInOut(duration: duration)) {
+                    proxy.scrollTo("bottomAnchor", anchor: .bottom)
                 }
             }
         }
     }
 
-    /// 滚到底部锚点；延迟一帧让 LazyVStack 渲染稳定，避免 scrollTo 找不到目标
+    /// 滚到底部锚点；延迟一帧让 LazyVStack 渲染稳定
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = false) {
         DispatchQueue.main.async {
             withAnimation(animated ? DS.Anim.message : nil) {
