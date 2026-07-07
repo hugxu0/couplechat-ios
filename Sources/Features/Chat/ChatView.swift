@@ -162,6 +162,12 @@ struct ChatView: View {
                     }
                 }
             }
+            // 保险：键盘动画结束后无动画再贴一次底，避免偶尔没落到底
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidChangeFrameNotification)) { _ in
+                DispatchQueue.main.async {
+                    proxy.scrollTo("bottomAnchor", anchor: .bottom)
+                }
+            }
         }
     }
 
