@@ -33,6 +33,14 @@ final class ChatStore: ObservableObject {
         let type: String
     }
 
+    private struct PersonalItemsResponse: Decodable {
+        let items: [PersonalItem]
+    }
+
+    private struct PersonalItemResponse: Decodable {
+        let item: PersonalItem
+    }
+
     // MARK: 启动：钥匙串里有会话就直接连
     func bootstrap() {
         guard session == nil, let saved = Keychain.loadSession() else { return }
@@ -570,7 +578,13 @@ final class ChatStore: ObservableObject {
     // MARK: REST（统计 / 每日内容 / Bark）
     private func authorizedRequest(_ path: String, method: String = "GET") -> URLRequest? {
         guard let token = session?.token else { return nil }
-        var req = URLRequest(url: Self.baseURL.appendingPathComponent(path))
+        let url: URL
+        if let relative = URL(string: path, relativeTo: Self.baseURL) {
+            url = relative.absoluteURL
+        } else {
+            url = Self.baseURL.appendingPathComponent(path)
+        }
+        var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return req
@@ -596,6 +610,54 @@ final class ChatStore: ObservableObject {
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         struct Wrapper: Decodable { let recommend: Recommendation? }
         return (try? JSONDecoder().decode(Wrapper.self, from: data))?.recommend
+    }
+
+    func fetchPersonalItems(kind: PersonalItemKind? = nil) async -> [PersonalItem] {
+        var path = "api/me/items"
+        if let kind { path += "?kind=\(kind.rawValue)" }
+        guard let req = authorizedRequest(path),
+              let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+        return (try? JSONDecoder().decode(PersonalItemsResponse.self, from: data))?.items ?? []
+    }
+
+    func createPersonalItem(kind: PersonalItemKind, title: String, bodyMarkdown: String, dueAt: Int?) async -> PersonalItem? {
+        var body: [String: Any] = [
+            "kind": kind.rawValue,
+            "title": title,
+            "bodyMarkdown": bodyMarkdown,
+        ]
+        if let dueAt { body["dueAt"] = dueAt }
+        return await sendPersonalItemRequest(path: "api/me/items", method: "POST", body: body)
+    }
+
+    func updatePersonalItem(_ item: PersonalItem, title: String? = nil, bodyMarkdown: String? = nil, dueAt: Int? = nil, clearsDueAt: Bool = false, isDone: Bool? = nil) async -> PersonalItem? {
+        var body: [String: Any] = [:]
+        if let title { body["title"] = title }
+        if let bodyMarkdown { body["bodyMarkdown"] = bodyMarkdown }
+        if clearsDueAt {
+            body["dueAt"] = NSNull()
+        } else if let dueAt {
+            body["dueAt"] = dueAt
+        }
+        if let isDone { body["isDone"] = isDone }
+        return await sendPersonalItemRequest(path: "api/me/items/\(item.id)", method: "PATCH", body: body)
+    }
+
+    func deletePersonalItem(_ item: PersonalItem) async -> Bool {
+        guard let req = authorizedRequest("api/me/items/\(item.id)", method: "DELETE"),
+              let (_, resp) = try? await URLSession.shared.data(for: req) else { return false }
+        return (resp as? HTTPURLResponse)?.statusCode == 200
+    }
+
+    private func sendPersonalItemRequest(path: String, method: String, body: [String: Any]) async -> PersonalItem? {
+        guard var req = authorizedRequest(path, method: method) else { return nil }
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let code = (resp as? HTTPURLResponse)?.statusCode,
+              (200..<300).contains(code) else { return nil }
+        return (try? JSONDecoder().decode(PersonalItemResponse.self, from: data))?.item
     }
 
     /// 保存/清空 Bark 推送 key（barkKey 为 nil 表示关闭离线通知）

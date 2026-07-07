@@ -49,6 +49,61 @@ Base URL 示例：`https://hoo66.top`
 
 传 `null` 可清空。
 
+### `GET /api/me/items`
+
+鉴权：`Authorization: Bearer <token>`
+
+当前账号自己的提醒/备忘。可选 query：`kind=reminder` 或 `kind=memo`。
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "owner": "xu",
+      "kind": "memo",
+      "title": "旅行计划",
+      "bodyMarkdown": "## 周末\n- 订票",
+      "dueAt": null,
+      "isDone": false,
+      "createdAt": 1710000000000,
+      "updatedAt": 1710000000000
+    }
+  ]
+}
+```
+
+### `POST /api/me/items`
+
+鉴权：`Authorization: Bearer <token>`
+
+```json
+{
+  "kind": "reminder",
+  "title": "吃药",
+  "bodyMarkdown": "**饭后**记得喝水",
+  "dueAt": 1710000000000
+}
+```
+
+响应：`201 { "item": { ... } }`
+
+### `PATCH /api/me/items/:id`
+
+鉴权：`Authorization: Bearer <token>`。只可更新当前账号自己的 item。
+
+```json
+{ "title": "新标题", "bodyMarkdown": "- 支持 Markdown", "dueAt": null, "isDone": true }
+```
+
+### `DELETE /api/me/items/:id`
+
+鉴权：`Authorization: Bearer <token>`。只可删除当前账号自己的 item。
+
+```json
+{ "ok": true }
+```
+
 ### `POST /api/upload`
 
 鉴权：`Authorization: Bearer <token>`

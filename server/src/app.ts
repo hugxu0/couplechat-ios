@@ -8,6 +8,7 @@ import { config } from "./config";
 import { registerAuthRoutes } from "./auth/routes";
 import { registerUploadRoutes } from "./upload/routes";
 import { registerStatsRoutes } from "./stats/routes";
+import { registerPersonalItemRoutes } from "./personalItems/routes";
 
 export async function buildApp() {
   fs.mkdirSync(config.uploadDir, { recursive: true });
@@ -35,6 +36,7 @@ export async function buildApp() {
   await registerAuthRoutes(app);
   await registerUploadRoutes(app);
   await registerStatsRoutes(app);
+  await registerPersonalItemRoutes(app);
 
   return app;
 }

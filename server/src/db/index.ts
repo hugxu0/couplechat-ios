@@ -45,6 +45,18 @@ export interface SharedItemRow {
   updated_at: number;
 }
 
+export interface PersonalItemRow {
+  id: string;
+  owner: string;
+  kind: string;
+  title: string;
+  body_markdown: string;
+  due_at: number | null;
+  is_done: number;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface AiFactRow {
   id: string;
   subject: string;
@@ -199,6 +211,22 @@ function migrate() {
       updated_by TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS personal_items (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body_markdown TEXT NOT NULL DEFAULT '',
+      due_at INTEGER,
+      is_done INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS personal_items_owner_kind_updated_idx
+      ON personal_items(owner, kind, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS personal_items_owner_due_idx
+      ON personal_items(owner, due_at);
 
     CREATE TABLE IF NOT EXISTS uploads (
       id TEXT PRIMARY KEY,

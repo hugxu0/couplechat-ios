@@ -1,10 +1,15 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct CoupleChatApp: App {
     @StateObject private var store = ChatStore()
     @StateObject private var theme = ThemeManager.shared
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        UNUserNotificationCenter.current().delegate = AppNotificationDelegate.shared
+    }
 
     var body: some Scene {
         WindowGroup {

@@ -1,132 +1,494 @@
 import SwiftUI
 
-// 提醒页：提醒/备忘切换 + 按人分组。假数据。
-
 struct RemindersView: View {
-    @State private var section = 0   // 0 提醒 / 1 备忘
-    @State private var person = 0    // 0 小旭 / 1 小偲
-    @State private var draft = ""
-    @State private var reminders: [String] = []
+    @EnvironmentObject private var store: ChatStore
+    @State private var tab: PersonalItemKind = .reminder
+    @State private var items: [PersonalItem] = []
+    @State private var loading = false
+    @State private var editorMode: EditorMode?
+    @State private var errorMessage: String?
+
+    private var reminders: [PersonalItem] {
+        items
+            .filter { $0.kind == .reminder }
+            .sorted {
+                switch ($0.dueAt, $1.dueAt) {
+                case let (a?, b?): return a < b
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): return $0.updatedAt > $1.updatedAt
+                }
+            }
+    }
+
+    private var memos: [PersonalItem] {
+        items
+            .filter { $0.kind == .memo }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private var visibleItems: [PersonalItem] {
+        tab == .reminder ? reminders : memos
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: DS.Spacing.gap) {
-                    segmented(["提醒", "备忘"], selection: $section, accentGradient: true)
-                    segmented(["小旭", "小偲"], selection: $person, accentGradient: false)
-                        .frame(maxWidth: 280)
-                    listCard
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+                    tabSwitcher
+                    summaryStrip
+                    itemList
                 }
                 .padding(.horizontal, DS.Spacing.page)
-                .padding(.bottom, 90)
+                .padding(.top, 12)
+                .padding(.bottom, 96)
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
-        }
-    }
-
-    private func segmented(_ items: [String], selection: Binding<Int>, accentGradient: Bool) -> some View {
-        HStack(spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.offset) { i, label in
-                Button {
-                    withAnimation(DS.Anim.spring) { selection.wrappedValue = i }
-                    Haptics.selection()
-                } label: {
-                    Text(label)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(selection.wrappedValue == i
-                                         ? (accentGradient ? .white : DS.Palette.accent)
-                                         : DS.Palette.textSecondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 11)
-                        .background {
-                            if selection.wrappedValue == i {
-                                Group {
-                                    if accentGradient {
-                                        Capsule().fill(DS.Palette.accentGradient)
-                                    } else {
-                                        Capsule().fill(Color.white)
-                                    }
-                                }
-                                .matchedGeometryEffect(id: "seg", in: segNS, isSource: true)
-                            }
-                        }
+            .refreshable { await reload() }
+            .task { await reload() }
+            .sheet(item: $editorMode) { mode in
+                PersonalItemEditor(mode: mode) { title, markdown, dueAt in
+                    Task { await save(mode: mode, title: title, markdown: markdown, dueAt: dueAt) }
                 }
             }
         }
-        .padding(4)
-        .background(DS.Palette.innerSurface)
-        .clipShape(Capsule())
     }
-    @Namespace private var segNS
 
-    private var listCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(person == 0 ? "小旭" : "小偲")
-                    .font(.system(size: 20, weight: .bold))
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(tab == .reminder ? "提醒事项" : "Markdown 备忘")
+                    .font(.system(size: 30, weight: .bold))
                     .foregroundStyle(DS.Palette.textPrimary)
-                Spacer()
-                Text("\(reminders.count) 条提醒")
-                    .font(.system(size: 13))
+                Text(store.session?.name ?? "我的空间")
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(DS.Palette.textSecondary)
             }
 
-            HStack(spacing: 8) {
-                TextField("加一条提醒...", text: $draft)
-                    .font(.system(size: 15))
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Color.black.opacity(0.04))
+            Spacer()
+
+            Button {
+                Haptics.medium()
+                editorMode = .create(tab)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 46, height: 46)
+                    .background(DS.Palette.accentGradient)
+                    .clipShape(Circle())
+                    .shadow(color: DS.Palette.accent.opacity(0.24), radius: 12, y: 6)
+            }
+            .buttonStyle(PressableStyle())
+        }
+    }
+
+    private var tabSwitcher: some View {
+        HStack(spacing: 6) {
+            switchButton(.reminder, icon: "bell.badge.fill", title: "提醒")
+            switchButton(.memo, icon: "doc.text.fill", title: "备忘")
+        }
+        .padding(5)
+        .background(DS.Palette.innerSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func switchButton(_ kind: PersonalItemKind, icon: String, title: String) -> some View {
+        Button {
+            withAnimation(DS.Anim.spring) { tab = kind }
+            Haptics.selection()
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(tab == kind ? .white : DS.Palette.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background {
+                    if tab == kind {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(DS.Palette.accentGradient)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var summaryStrip: some View {
+        HStack(spacing: 10) {
+            metricTile(title: "待办", value: "\(reminders.filter { !$0.isDone }.count)", color: DS.Palette.accent)
+            metricTile(title: "今日", value: "\(reminders.filter { $0.isToday }.count)", color: DS.Palette.blue)
+            metricTile(title: "备忘", value: "\(memos.count)", color: DS.Palette.pink)
+        }
+    }
+
+    private func metricTile(title: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(value)
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(color)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.Palette.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(DS.Palette.cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: DS.Surface.shadow, radius: 10, y: 4)
+    }
+
+    @ViewBuilder
+    private var itemList: some View {
+        if loading && items.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(.top, 80)
+        } else if visibleItems.isEmpty {
+            emptyState
+        } else {
+            LazyVStack(spacing: 12) {
+                ForEach(visibleItems) { item in
+                    PersonalItemCard(item: item) {
+                        editorMode = .edit(item)
+                    } onToggleDone: {
+                        Task { await toggleDone(item) }
+                    } onDelete: {
+                        Task { await delete(item) }
+                    }
+                    .transition(.scale(scale: 0.96).combined(with: .opacity))
+                }
+            }
+            .animation(DS.Anim.spring, value: visibleItems)
+        }
+
+        if let errorMessage {
+            Text(errorMessage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DS.Palette.pink)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: tab == .reminder ? "bell.slash.fill" : "text.book.closed.fill")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(DS.Palette.accent)
+            Text(tab == .reminder ? "还没有提醒" : "还没有备忘")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(DS.Palette.textPrimary)
+            Button {
+                editorMode = .create(tab)
+            } label: {
+                Label(tab == .reminder ? "添加提醒" : "写备忘", systemImage: "plus")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .background(DS.Palette.accentGradient)
                     .clipShape(Capsule())
+            }
+            .buttonStyle(PressableStyle())
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 46)
+        .background(DS.Palette.cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+    }
 
-                Button { } label: {
-                    Text("时间").font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(DS.Palette.textSecondary)
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(Color.black.opacity(0.04))
-                        .clipShape(Capsule())
-                }
-                Button {
-                    guard !draft.isEmpty else { return }
-                    Haptics.light()
-                    withAnimation(DS.Anim.spring) {
-                        reminders.append(draft)
-                        draft = ""
+    private func reload() async {
+        guard !loading else { return }
+        loading = true
+        errorMessage = nil
+        let fetched = await store.fetchPersonalItems()
+        await MainActor.run {
+            items = fetched
+            loading = false
+        }
+        if let account = store.session?.username {
+            await ReminderNotificationScheduler.rescheduleAll(fetched, account: account)
+        }
+    }
+
+    private func save(mode: EditorMode, title: String, markdown: String, dueAt: Int?) async {
+        errorMessage = nil
+        let saved: PersonalItem?
+        switch mode {
+        case .create(let kind):
+            saved = await store.createPersonalItem(kind: kind, title: title, bodyMarkdown: markdown, dueAt: dueAt)
+        case .edit(let item):
+            saved = await store.updatePersonalItem(
+                item,
+                title: title,
+                bodyMarkdown: markdown,
+                dueAt: dueAt,
+                clearsDueAt: dueAt == nil && item.kind == .reminder,
+                isDone: item.isDone)
+        }
+
+        guard let saved else {
+            await MainActor.run { errorMessage = "保存失败，请稍后再试" }
+            return
+        }
+
+        await MainActor.run {
+            if let index = items.firstIndex(where: { $0.id == saved.id }) {
+                items[index] = saved
+            } else {
+                items.append(saved)
+            }
+            editorMode = nil
+        }
+
+        if let account = store.session?.username {
+            await ReminderNotificationScheduler.schedule(saved, account: account)
+        }
+    }
+
+    private func toggleDone(_ item: PersonalItem) async {
+        guard let updated = await store.updatePersonalItem(item, isDone: !item.isDone) else { return }
+        await MainActor.run {
+            if let index = items.firstIndex(where: { $0.id == updated.id }) {
+                items[index] = updated
+            }
+        }
+        if let account = store.session?.username {
+            await ReminderNotificationScheduler.schedule(updated, account: account)
+        }
+    }
+
+    private func delete(_ item: PersonalItem) async {
+        guard await store.deletePersonalItem(item) else { return }
+        await MainActor.run {
+            withAnimation(DS.Anim.spring) {
+                items.removeAll { $0.id == item.id }
+            }
+        }
+        if let account = store.session?.username {
+            await ReminderNotificationScheduler.cancel(item, account: account)
+        }
+    }
+}
+
+private enum EditorMode: Identifiable {
+    case create(PersonalItemKind)
+    case edit(PersonalItem)
+
+    var id: String {
+        switch self {
+        case .create(let kind): return "create-\(kind.rawValue)"
+        case .edit(let item): return "edit-\(item.id)"
+        }
+    }
+
+    var kind: PersonalItemKind {
+        switch self {
+        case .create(let kind): return kind
+        case .edit(let item): return item.kind
+        }
+    }
+
+    var item: PersonalItem? {
+        if case .edit(let item) = self { return item }
+        return nil
+    }
+}
+
+private struct PersonalItemCard: View {
+    let item: PersonalItem
+    let onEdit: () -> Void
+    let onToggleDone: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                if item.kind == .reminder {
+                    Button(action: onToggleDone) {
+                        Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(item.isDone ? DS.Palette.green : DS.Palette.accent)
                     }
-                } label: {
-                    Text("添加").font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 18).padding(.vertical, 10)
-                        .background(DS.Palette.accent)
-                        .clipShape(Capsule())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(PressableStyle())
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(item.title)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(item.isDone ? DS.Palette.textSecondary : DS.Palette.textPrimary)
+                        .strikethrough(item.isDone)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if item.kind == .reminder, let dueDate = item.dueDate {
+                        Label(dueDate.smartLabel, systemImage: item.isOverdue ? "exclamationmark.circle.fill" : "clock.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(item.isOverdue ? DS.Palette.pink : DS.Palette.textSecondary)
+                    }
+                }
+
+                Menu {
+                    Button("编辑", action: onEdit)
+                    if item.kind == .reminder {
+                        Button(item.isDone ? "标记未完成" : "标记完成", action: onToggleDone)
+                    }
+                    Button("删除", role: .destructive, action: onDelete)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                        .frame(width: 32, height: 32)
+                }
             }
 
-            if reminders.isEmpty {
-                Text("还没有提醒")
+            if !item.bodyMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                MarkdownPreview(markdown: item.bodyMarkdown)
                     .font(.system(size: 15))
-                    .foregroundStyle(DS.Palette.textSecondary)
-                    .padding(.vertical, 8)
-            } else {
-                ForEach(reminders, id: \.self) { item in
-                    HStack {
-                        Image(systemName: "bell.fill")
-                            .foregroundStyle(DS.Palette.accent)
-                        Text(item).font(.system(size: 15))
-                            .foregroundStyle(DS.Palette.textPrimary)
-                        Spacer()
-                    }
-                    .padding(.vertical, 4)
-                    .transition(.scale(scale: 0.9).combined(with: .opacity))
-                }
+                    .foregroundStyle(DS.Palette.textPrimary)
+                    .lineLimit(item.kind == .memo ? 8 : 3)
             }
         }
         .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.Palette.bubbleOther)
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+        .background(DS.Palette.cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shadow(color: DS.Surface.shadow, radius: 12, y: 5)
+        .opacity(item.isDone ? 0.68 : 1)
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onTapGesture(perform: onEdit)
+    }
+}
+
+private struct PersonalItemEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let mode: EditorMode
+    let onSave: (String, String, Int?) -> Void
+
+    @State private var title: String
+    @State private var markdown: String
+    @State private var hasDueDate: Bool
+    @State private var dueDate: Date
+    @State private var preview = false
+
+    init(mode: EditorMode, onSave: @escaping (String, String, Int?) -> Void) {
+        self.mode = mode
+        self.onSave = onSave
+        let item = mode.item
+        _title = State(initialValue: item?.title ?? "")
+        _markdown = State(initialValue: item?.bodyMarkdown ?? "")
+        _hasDueDate = State(initialValue: item?.dueAt != nil || mode.kind == .reminder)
+        _dueDate = State(initialValue: item?.dueDate ?? Date().addingTimeInterval(30 * 60))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    TextField(mode.kind == .reminder ? "提醒标题" : "备忘标题", text: $title)
+                        .font(.system(size: 24, weight: .bold))
+                        .padding(16)
+                        .background(DS.Palette.innerSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                    if mode.kind == .reminder {
+                        VStack(spacing: 12) {
+                            Toggle("通知提醒", isOn: $hasDueDate)
+                                .font(.system(size: 15, weight: .semibold))
+                            if hasDueDate {
+                                DatePicker("时间", selection: $dueDate, displayedComponents: [.date, .hourAndMinute])
+                                    .datePickerStyle(.compact)
+                            }
+                        }
+                        .padding(16)
+                        .background(DS.Palette.cardSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+
+                    HStack {
+                        Text("正文")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(DS.Palette.textPrimary)
+                        Spacer()
+                        Button(preview ? "编辑" : "预览") {
+                            preview.toggle()
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                    }
+
+                    if preview {
+                        MarkdownPreview(markdown: markdown.isEmpty ? " " : markdown)
+                            .frame(maxWidth: .infinity, minHeight: 260, alignment: .topLeading)
+                            .padding(16)
+                            .background(DS.Palette.cardSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    } else {
+                        TextEditor(text: $markdown)
+                            .font(.system(size: 16))
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 260)
+                            .padding(12)
+                            .background(DS.Palette.cardSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                }
+                .padding(DS.Spacing.page)
+            }
+            .background(DS.Palette.bgGradient.ignoresSafeArea())
+            .navigationTitle(mode.item == nil ? "新建" : "编辑")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let dueAt = mode.kind == .reminder && hasDueDate ? Int(dueDate.timeIntervalSince1970 * 1000) : nil
+                        onSave(trimmed, markdown, dueAt)
+                    }
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .font(.system(size: 16, weight: .bold))
+                }
+            }
+        }
+    }
+}
+
+private struct MarkdownPreview: View {
+    let markdown: String
+
+    var body: some View {
+        if let attributed = try? AttributedString(markdown: markdown) {
+            Text(attributed)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Text(markdown)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private extension PersonalItem {
+    var isToday: Bool {
+        guard let dueDate else { return false }
+        return Calendar.current.isDateInToday(dueDate)
+    }
+}
+
+private extension Date {
+    var smartLabel: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        if Calendar.current.isDateInToday(self) {
+            formatter.dateFormat = "今天 HH:mm"
+        } else if Calendar.current.isDateInTomorrow(self) {
+            formatter.dateFormat = "明天 HH:mm"
+        } else {
+            formatter.dateFormat = "M月d日 HH:mm"
+        }
+        return formatter.string(from: self)
     }
 }

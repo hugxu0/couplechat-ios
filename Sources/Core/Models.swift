@@ -66,6 +66,33 @@ struct DailyContent: Decodable, Equatable {
     let recommend: Recommendation?
 }
 
+enum PersonalItemKind: String, Codable, Equatable {
+    case reminder
+    case memo
+}
+
+struct PersonalItem: Identifiable, Codable, Equatable {
+    let id: String
+    let owner: String
+    var kind: PersonalItemKind
+    var title: String
+    var bodyMarkdown: String
+    var dueAt: Int?
+    var isDone: Bool
+    let createdAt: Int
+    var updatedAt: Int
+
+    var dueDate: Date? {
+        guard let dueAt else { return nil }
+        return Date(timeIntervalSince1970: Double(dueAt) / 1000)
+    }
+
+    var isOverdue: Bool {
+        guard let dueDate else { return false }
+        return !isDone && dueDate < Date()
+    }
+}
+
 /// 纪念日（存在 shared["dates"]，两人共享可编辑）
 struct CoupleDates: Equatable {
     var together: String?   // 在一起的日子 "yyyy-MM-dd"
