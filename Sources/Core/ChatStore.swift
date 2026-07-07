@@ -829,10 +829,16 @@ final class ChatStore: ObservableObject {
 
         let userMessages = messages(for: channel).filter { $0.kind == "user" && $0.sender != "ai" }
 
+        // 至少铺满最近 10 天 / 12 个月（没聊天记录的日子留空心柱），
+        // 真实聊天记录更久才继续往前翻页。
+        let minRecentDays = 10
+        let minRecentMonths = 12
+
         var dayCounts: [String: [String: Int]] = [:]
-        var earliestDay = today
+        var earliestDay = cal.date(byAdding: .day, value: -(minRecentDays - 1), to: today) ?? today
         var monthCounts: [String: [String: Int]] = [:]
-        var earliestMonth = today
+        let thisMonthStartInit = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
+        var earliestMonth = cal.date(byAdding: .month, value: -(minRecentMonths - 1), to: thisMonthStartInit) ?? thisMonthStartInit
 
         for message in userMessages {
             let date = message.date

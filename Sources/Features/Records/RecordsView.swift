@@ -1,7 +1,8 @@
 import SwiftUI
 
-// 记录页「我们」：在一起天数（主题渐变大卡）、可自由增删的纪念日/倒数日卡片网格、
-// 聊天统计（近10天/月度切换、左右翻页看更早、点柱查看）、大橘日记、今日推荐。
+// 记录页「我们」：在一起天数（主题渐变大卡）、纪念日/倒数日卡片网格（只读展示，
+// 增删改统一在「我的 → 日期设置」里做）、聊天统计（近10天/月度切换、左右翻页看更早、点柱查看）、
+// 大橘日记、今日推荐。
 // 数据：纪念日走 shared["dates"]/shared["anniversaries"]（两人共享），
 // 聊天统计聚合自本地缓存的完整聊天记录，日记/推荐走 REST。
 
@@ -11,8 +12,6 @@ struct RecordsView: View {
 
     @State private var daily: DailyContent?
     @State private var showDateEditor = false
-    @State private var editingAnniversary: AnniversaryEntry?
-    @State private var showAddAnniversary = false
     @State private var recommendBusy = false
     @State private var recommendSent = false
 
@@ -36,14 +35,6 @@ struct RecordsView: View {
             .task { await reload() }
             .sheet(isPresented: $showDateEditor) {
                 DateEditorSheet()
-                    .presentationDetents([.medium])
-            }
-            .sheet(item: $editingAnniversary) { entry in
-                AnniversaryEditorSheet(entry: entry)
-                    .presentationDetents([.medium, .large])
-            }
-            .sheet(isPresented: $showAddAnniversary) {
-                AnniversaryEditorSheet(entry: nil)
                     .presentationDetents([.medium, .large])
             }
         }
@@ -105,13 +96,15 @@ struct RecordsView: View {
         .buttonStyle(PressableStyle())
     }
 
-    // MARK: - 自由添加的纪念日 / 倒数日
+    // MARK: - 纪念日 / 倒数日（只读展示，增删改在「我的 → 日期设置」里）
+    @ViewBuilder
     private var anniversaryGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.Spacing.gap) {
-            ForEach(store.anniversaries) { entry in
-                anniversaryCard(entry)
+        if !store.anniversaries.isEmpty {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.Spacing.gap) {
+                ForEach(store.anniversaries) { entry in
+                    anniversaryCard(entry)
+                }
             }
-            addAnniversaryTile
         }
     }
 
@@ -142,68 +135,10 @@ struct RecordsView: View {
                     .foregroundStyle(DS.Palette.textSecondary.opacity(0.6))
                     .padding(.vertical, 5)
             }
-            if entry.direction == .up {
-                Button {
-                    Haptics.medium()
-                    withAnimation(DS.Anim.spring) { markToday(entry) }
-                } label: {
-                    Text("标记今天")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.accent.color)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(theme.accent.color.opacity(0.12))
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(PressableStyle())
-            } else {
-                Spacer(minLength: 5)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.Spacing.card)
         .dsCard(radius: DS.Radius.tile + 4)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            Haptics.light()
-            editingAnniversary = entry
-        }
-    }
-
-    private var addAnniversaryTile: some View {
-        Button {
-            Haptics.light()
-            showAddAnniversary = true
-        } label: {
-            VStack(spacing: 8) {
-                Image(systemName: "plus")
-                    .font(.system(size: 22, weight: .semibold))
-                Text("添加纪念日")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .foregroundStyle(DS.Palette.textSecondary)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 110)
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.Radius.tile + 4, style: .continuous)
-                    .strokeBorder(DS.Palette.textSecondary.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
-            )
-        }
-        .buttonStyle(PressableStyle())
-    }
-
-    private func markToday(_ entry: AnniversaryEntry) {
-        var items = store.anniversaries
-        guard let idx = items.firstIndex(where: { $0.id == entry.id }) else { return }
-        items[idx].date = Self.today()
-        store.saveAnniversaries(items)
-    }
-
-    static func today() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
-        return f.string(from: Date())
     }
 
     // MARK: - 大橘日记
@@ -597,7 +532,7 @@ private struct ChatStatsCard: View {
     }
 }
 
-// MARK: - 「在一起」纪念日编辑（其余纪念日走下方的 AnniversaryEditorSheet）
+// MARK: - 日期设置（「在一起」纪念日 + 自由添加的纪念日/倒数日的增删改，统一在这里管理）
 
 struct DateEditorSheet: View {
     @EnvironmentObject private var store: ChatStore
@@ -606,6 +541,8 @@ struct DateEditorSheet: View {
 
     @State private var together = Date()
     @State private var hasTogether = false
+    @State private var editingAnniversary: AnniversaryEntry?
+    @State private var showAddAnniversary = false
 
     var body: some View {
         NavigationStack {
@@ -614,6 +551,48 @@ struct DateEditorSheet: View {
                     Toggle("已设置", isOn: $hasTogether.animation())
                     if hasTogether {
                         DatePicker("纪念日", selection: $together, in: ...Date(), displayedComponents: .date)
+                    }
+                }
+                Section("纪念日 / 倒数日") {
+                    ForEach(store.anniversaries) { entry in
+                        Button {
+                            Haptics.light()
+                            editingAnniversary = entry
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: entry.icon)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(theme.accent.color)
+                                    .frame(width: 26)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.title)
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(DS.Palette.textPrimary)
+                                    Text(entry.direction == .up ? "累计天数" : "倒数纪念日")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(DS.Palette.textSecondary)
+                                }
+                                Spacer()
+                                if let days = entry.days {
+                                    Text("\(days)\(entry.direction == .up ? "天" : "天后")")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundStyle(DS.Palette.textSecondary)
+                                }
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .onDelete(perform: deleteAnniversaries)
+
+                    Button {
+                        Haptics.light()
+                        showAddAnniversary = true
+                    } label: {
+                        Label("添加纪念日", systemImage: "plus.circle.fill")
+                            .foregroundStyle(theme.accent.color)
                     }
                 }
             }
@@ -632,6 +611,14 @@ struct DateEditorSheet: View {
                 }
             }
             .onAppear(perform: load)
+            .sheet(item: $editingAnniversary) { entry in
+                AnniversaryEditorSheet(entry: entry)
+                    .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showAddAnniversary) {
+                AnniversaryEditorSheet(entry: nil)
+                    .presentationDetents([.medium, .large])
+            }
         }
     }
 
@@ -655,6 +642,12 @@ struct DateEditorSheet: View {
         var dates = store.coupleDates
         dates.together = hasTogether ? Self.formatter.string(from: together) : nil
         store.saveCoupleDates(dates)
+    }
+
+    private func deleteAnniversaries(at offsets: IndexSet) {
+        var items = store.anniversaries
+        items.remove(atOffsets: offsets)
+        store.saveAnniversaries(items)
     }
 }
 
