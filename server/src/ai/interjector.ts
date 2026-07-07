@@ -80,7 +80,7 @@ export async function maybeInterject(io: Server, channel: string): Promise<void>
   running = true;
   try {
     // 召回用「最近几条用户消息」当查询句
-    const recent = recentMessages(channel, CONTEXT_LINES);
+    const recent = await recentMessages(channel, CONTEXT_LINES);
     const recentUser = recent.filter((m) => m.kind === "user" && m.type === "text" && m.text.trim()).slice(-3);
     const query = recentUser.map((m) => (m.text || "").slice(0, 80)).join(" ").slice(0, 400);
     const [recalled, mood] = await Promise.all([

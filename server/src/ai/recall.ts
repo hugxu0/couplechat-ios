@@ -37,7 +37,7 @@ export async function recall(query: string, storedChannel: string): Promise<Reca
 
   if (!embeddingEnabled()) {
     // 无向量服务：退化为「高重要度事实兜底」，保证雷区/纪念日这类底牌仍然在场。
-    const important = listFacts({ status: "active", minImportance: MEMORY.importantFactMin, limit: MEMORY.factTopK });
+    const important = await listFacts({ status: "active", minImportance: MEMORY.importantFactMin, limit: MEMORY.factTopK });
     return {
       factsContext: important.map((f) => `- ${factLine(f)}`).join("\n"),
       episodesContext: "",
@@ -47,15 +47,15 @@ export async function recall(query: string, storedChannel: string): Promise<Reca
   const vector = await embedOne(q);
   if (!vector) return EMPTY;
 
-  const facts = listFacts({ limit: 2000 })
+  const facts = (await listFacts({ limit: 2000 }))
     .map((f) => ({ f, score: f.vector ? similarity(vector, f.vector) : 0 }))
     .filter((x) => x.score >= MEMORY.factMinScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, MEMORY.factTopK);
 
   const episodePool = [
-    ...listEpisodes("couple"),
-    ...(storedChannel.startsWith("ai:") ? listEpisodes(storedChannel) : []),
+    ...(await listEpisodes("couple")),
+    ...(storedChannel.startsWith("ai:") ? await listEpisodes(storedChannel) : []),
   ];
   const episodes = episodePool
     .map((e) => ({ e, score: e.vector ? similarity(vector, e.vector) : 0 }))

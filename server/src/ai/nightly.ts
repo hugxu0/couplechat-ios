@@ -37,11 +37,11 @@ function names(): [string, string] {
 // ─── 1. 日记 digest ──────────────────────────────────────────────────────
 
 async function generateDigest(date: string): Promise<void> {
-  if (isJobDone("digest", date)) return;
+  if (await isJobDone("digest", date)) return;
   const { start, end } = cycleBounds(date);
-  const msgs = messagesBetween("couple", start, end).filter((m) => m.kind !== "system");
+  const msgs = (await messagesBetween("couple", start, end)).filter((m) => m.kind !== "system");
   if (!msgs.length) {
-    markJobDone("digest", date);
+    await markJobDone("digest", date);
     return;
   }
   const [a, b] = names();
@@ -57,8 +57,8 @@ async function generateDigest(date: string): Promise<void> {
     gen: GEN.dailyDigest,
   });
   if (!out) return; // 失败不标记，下次补跑
-  setDoc(`digest:${date}`, out.trim());
-  markJobDone("digest", date);
+  await setDoc(`digest:${date}`, out.trim());
+  await markJobDone("digest", date);
 }
 
 // ─── 2. 事件卡片 ─────────────────────────────────────────────────────────
@@ -74,11 +74,11 @@ interface RawCard {
 
 async function generateEpisodes(storedChannel: string, date: string): Promise<void> {
   const job = `episodes:${storedChannel}`;
-  if (isJobDone(job, date)) return;
+  if (await isJobDone(job, date)) return;
   const { start, end } = cycleBounds(date);
-  const msgs = messagesBetween(storedChannel, start, end).filter((m) => m.kind !== "system");
+  const msgs = (await messagesBetween(storedChannel, start, end)).filter((m) => m.kind !== "system");
   if (!msgs.length) {
-    markJobDone(job, date);
+    await markJobDone(job, date);
     return;
   }
   const [a, b] = names();
@@ -109,7 +109,7 @@ async function generateEpisodes(storedChannel: string, date: string): Promise<vo
   const parsed = extractJson<{ cards?: RawCard[] }>(out);
   if (!parsed || !Array.isArray(parsed.cards)) return; // 失败不标记，下次补跑
 
-  deleteEpisodesByDate(storedChannel, date); // 重跑安全
+  await deleteEpisodesByDate(storedChannel, date); // 重跑安全
   for (const card of parsed.cards.slice(0, 20)) {
     if (!card?.title) continue;
     await addEpisode({
@@ -123,7 +123,7 @@ async function generateEpisodes(storedChannel: string, date: string): Promise<vo
       keywords: Array.isArray(card.keywords) ? card.keywords.join(",") : String(card.keywords ?? ""),
     });
   }
-  markJobDone(job, date);
+  await markJobDone(job, date);
 }
 
 // ─── 3. 事实收口 ─────────────────────────────────────────────────────────
@@ -149,13 +149,13 @@ function similarActiveFacts(fresh: Fact, active: Fact[]): Array<{ fact: Fact; sc
 }
 
 async function consolidateFacts(date: string): Promise<void> {
-  if (isJobDone("consolidate", date)) return;
-  const freshFacts = listFacts({ status: "fresh", limit: 40 });
+  if (await isJobDone("consolidate", date)) return;
+  const freshFacts = await listFacts({ status: "fresh", limit: 40 });
   if (!freshFacts.length) {
-    markJobDone("consolidate", date);
+    await markJobDone("consolidate", date);
     return;
   }
-  const activeFacts = listFacts({ status: "active", limit: 2000 });
+  const activeFacts = await listFacts({ status: "active", limit: 2000 });
   const categories = CATEGORIES.map((c) => `${c.key}（${c.label}）`).join("、");
   const lines = freshFacts.map((f) => {
     const sims = similarActiveFacts(f, activeFacts)
@@ -189,7 +189,7 @@ async function consolidateFacts(date: string): Promise<void> {
     if (!id || seen.has(id) || !freshFacts.some((f) => f.id === id)) continue;
     seen.add(id);
     if (v.action === "discard") {
-      deleteFact(id);
+      await deleteFact(id);
     } else if (v.action === "merge" && v.mergeWithId) {
       // 合并：更新旧事实（可带新表述），删除 fresh。
       await updateFact(String(v.mergeWithId), {
@@ -198,7 +198,7 @@ async function consolidateFacts(date: string): Promise<void> {
         subject: v.subject,
         importance: v.importance,
       });
-      deleteFact(id);
+      await deleteFact(id);
     } else {
       await updateFact(id, {
         text: v.text,
@@ -213,25 +213,25 @@ async function consolidateFacts(date: string): Promise<void> {
   for (const f of freshFacts) {
     if (!seen.has(f.id)) await updateFact(f.id, { status: "active" });
   }
-  markJobDone("consolidate", date);
+  await markJobDone("consolidate", date);
 }
 
 // ─── 4. 短期记忆重写 ─────────────────────────────────────────────────────
 
 async function rewriteShortTerm(date: string): Promise<void> {
-  if (isJobDone("short-term", date)) return;
-  const oldShort = getDoc("short-term");
+  if (await isJobDone("short-term", date)) return;
+  const oldShort = await getDoc("short-term");
   const digests: string[] = [];
   for (let i = 0; i < 3; i += 1) {
     const d = addDays(date, -i);
-    const text = getDoc(`digest:${d}`);
+    const text = await getDoc(`digest:${d}`);
     if (text) digests.push(`## ${d}\n${text.slice(0, 4000)}`);
   }
   if (!digests.length && !oldShort) {
-    markJobDone("short-term", date);
+    await markJobDone("short-term", date);
     return;
   }
-  const longFacts = listFacts({ status: "active", limit: 120 }).map((f) => `- ${factLine(f)}`).join("\n");
+  const longFacts = (await listFacts({ status: "active", limit: 120 })).map((f) => `- ${factLine(f)}`).join("\n");
 
   const out = await chat({
     profile: "task",
@@ -268,29 +268,29 @@ async function rewriteShortTerm(date: string): Promise<void> {
   if (!next) return;
   // 异常缩水保护：旧内容较长而新内容骤短 → 疑似 LLM 损坏，不覆盖。
   if (oldShort.length > 400 && next.length < Math.min(200, oldShort.length * 0.34)) return;
-  setDoc("short-term", next);
-  markJobDone("short-term", date);
+  await setDoc("short-term", next);
+  await markJobDone("short-term", date);
 }
 
 // ─── 5. 人物卡 ×2 + 关系卡 ───────────────────────────────────────────────
 
 async function refreshProfileCards(date: string): Promise<void> {
-  if (isJobDone("profiles", date)) return;
+  if (await isJobDone("profiles", date)) return;
   const list = accounts();
   if (list.length < 2) return;
   // 只喂「底牌级」素材：高重要度事实 + 全部雷区，不灌全库（防卡片写成流水账）。
   const seen = new Set<string>();
   const curated: Fact[] = [];
-  for (const f of listFacts({ status: "active", minImportance: MEMORY.importantFactMin, limit: MEMORY.importantFactLimit })) {
+  for (const f of await listFacts({ status: "active", minImportance: MEMORY.importantFactMin, limit: MEMORY.importantFactLimit })) {
     seen.add(f.id);
     curated.push(f);
   }
-  for (const f of listFacts({ status: "active", limit: 500 })) {
+  for (const f of await listFacts({ status: "active", limit: 500 })) {
     if (f.category === "boundary" && !seen.has(f.id)) curated.push(f);
   }
   const factLines = curated.map((f) => `- ${factLine(f)}`).join("\n");
-  const shortTerm = getDoc("short-term").slice(0, MEMORY.shortTermMax);
-  const recentDigest = getDoc(`digest:${date}`).slice(0, 2500);
+  const shortTerm = (await getDoc("short-term")).slice(0, MEMORY.shortTermMax);
+  const recentDigest = (await getDoc(`digest:${date}`)).slice(0, 2500);
 
   const out = await chat({
     profile: "task",
@@ -318,16 +318,16 @@ async function refreshProfileCards(date: string): Promise<void> {
   for (const a of list) {
     const text = parsed.profiles?.[a.username]?.trim();
     if (text) {
-      setDoc(`profile:${a.username}`, text.slice(0, 1500));
+      await setDoc(`profile:${a.username}`, text.slice(0, 1500));
       wrote = true;
     }
   }
   const rel = (parsed.relationship ?? parsed.profiles?.relationship ?? "").trim();
   if (rel) {
-    setDoc("relationship", rel.slice(0, 1500));
+    await setDoc("relationship", rel.slice(0, 1500));
     wrote = true;
   }
-  if (wrote) markJobDone("profiles", date);
+  if (wrote) await markJobDone("profiles", date);
 }
 
 // ─── 今日心情（懒生成，首次应答时触发）──────────────────────────────────
@@ -344,13 +344,13 @@ let moodGenerating: Promise<string> | null = null;
 
 export async function ensureDailyMood(): Promise<string> {
   const key = `mood:${cycleDate()}`;
-  const cached = getDoc(key);
+  const cached = await getDoc(key);
   if (cached) return cached;
   if (moodGenerating) return moodGenerating;
   moodGenerating = (async () => {
     let mood = "";
     if (aiEnabled()) {
-      const yesterdayDigest = getDoc(`digest:${addDays(cycleDate(), -1)}`).slice(0, 1500);
+      const yesterdayDigest = (await getDoc(`digest:${addDays(cycleDate(), -1)}`)).slice(0, 1500);
       const out = await chat({
         profile: "task",
         system: [
@@ -364,7 +364,7 @@ export async function ensureDailyMood(): Promise<string> {
       mood = (out ?? "").trim().split("\n")[0].slice(0, 60);
     }
     if (!mood) mood = MOOD_FALLBACKS[Math.floor(Math.random() * MOOD_FALLBACKS.length)];
-    setDoc(key, mood);
+    await setDoc(key, mood);
     return mood;
   })().finally(() => {
     moodGenerating = null;

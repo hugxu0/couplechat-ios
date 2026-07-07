@@ -13,8 +13,8 @@ const RECOMMEND_GEN = { maxTokens: 900, temperature: 0.85, timeoutMs: 45_000 };
 // ─── 大橘日记（昨日回顾，用户可见）─────────────────────────────────────
 
 export async function generateDiary(date: string): Promise<void> {
-  if (isJobDone("diary", date)) return;
-  const digest = getDoc(`digest:${date}`);
+  if (await isJobDone("diary", date)) return;
+  const digest = await getDoc(`digest:${date}`);
   if (!digest) return; // digest 还没生成（或当天没聊天），等下一轮
   const names = accounts().map((a) => a.name);
   const out = await chat({
@@ -32,8 +32,8 @@ export async function generateDiary(date: string): Promise<void> {
   });
   const text = out?.trim();
   if (!text) return;
-  setDoc(`diary:${date}`, text.slice(0, 1200));
-  markJobDone("diary", date);
+  await setDoc(`diary:${date}`, text.slice(0, 1200));
+  await markJobDone("diary", date);
 }
 
 // ─── 今日推荐 ────────────────────────────────────────────────────────────
@@ -44,9 +44,9 @@ export interface Recommendation {
   reason: string;
 }
 
-export function readRecommendation(date: string): Recommendation | null {
+export async function readRecommendation(date: string): Promise<Recommendation | null> {
   try {
-    const raw = getDoc(`recommend:${date}`);
+    const raw = await getDoc(`recommend:${date}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<Recommendation>;
     if (!parsed.title) return null;
@@ -63,17 +63,17 @@ export function readRecommendation(date: string): Recommendation | null {
 let recommending = false;
 
 export async function ensureRecommendation(date: string, force = false): Promise<Recommendation | null> {
-  const cached = readRecommendation(date);
+  const cached = await readRecommendation(date);
   if (cached && !force) return cached;
   if (!aiEnabled() || recommending) return cached;
   recommending = true;
   try {
-    const facts = listFacts({ status: "active", limit: 200 })
+    const facts = (await listFacts({ status: "active", limit: 200 }))
       .filter((f) => ["preference", "plan", "event", "relationship"].includes(f.category))
       .slice(0, 40)
       .map((f) => `- ${factLine(f)}`)
       .join("\n");
-    const shortTerm = getDoc("short-term").slice(0, MEMORY.shortTermMax);
+    const shortTerm = (await getDoc("short-term")).slice(0, MEMORY.shortTermMax);
     const previous = cached ? `上一个推荐是「${cached.title}」，这次换个不同的。` : "";
     const out = await chat({
       profile: "task",
@@ -98,7 +98,7 @@ export async function ensureRecommendation(date: string, force = false): Promise
       title: String(parsed.title).slice(0, 60),
       reason: String(parsed.reason ?? "").slice(0, 400),
     };
-    setDoc(`recommend:${date}`, JSON.stringify(rec));
+    await setDoc(`recommend:${date}`, JSON.stringify(rec));
     return rec;
   } finally {
     recommending = false;
@@ -107,19 +107,19 @@ export async function ensureRecommendation(date: string, force = false): Promise
 
 // ─── 读取汇总（REST 用）─────────────────────────────────────────────────
 
-export function dailyContent() {
+export async function dailyContent() {
   const today = cycleDate();
   const yesterday = addDays(today, -1);
   // 日记优先给昨天的；昨天没有就往前找最近一篇（最多 7 天）。
   let diary: { date: string; text: string } | null = null;
   for (let i = 1; i <= 7; i += 1) {
     const d = addDays(today, -i);
-    const text = getDoc(`diary:${d}`);
+    const text = await getDoc(`diary:${d}`);
     if (text) {
       diary = { date: d, text };
       break;
     }
   }
-  const recommend = readRecommendation(today);
+  const recommend = await readRecommendation(today);
   return { today, yesterday, diary, recommend };
 }

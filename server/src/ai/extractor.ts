@@ -42,22 +42,22 @@ function buildSystem(): string {
 }
 
 async function scan(): Promise<void> {
-  const cursorRaw = Number(getDoc(CURSOR_KEY));
+  const cursorRaw = Number(await getDoc(CURSOR_KEY));
   // 首次触发：游标快进到最新消息，跳过历史（历史归夜间事件卡管）。
   if (!Number.isFinite(cursorRaw) || cursorRaw <= 0) {
-    setDoc(CURSOR_KEY, String(latestTs("couple") || Date.now()));
+    await setDoc(CURSOR_KEY, String((await latestTs("couple")) || Date.now()));
     return;
   }
 
-  const increment = messagesAfter("couple", cursorRaw, 200);
+  const increment = await messagesAfter("couple", cursorRaw, 200);
   const userLines = compactLines(increment.filter((m) => m.kind === "user" && m.type === "text" && m.text.trim()));
   if (!userLines) {
-    if (increment.length) setDoc(CURSOR_KEY, String(increment[increment.length - 1].ts));
+    if (increment.length) await setDoc(CURSOR_KEY, String(increment[increment.length - 1].ts));
     return;
   }
 
   // 当日 fresh 事实喂给 LLM 做语义去重（弥补入库查重漏掉的措辞变体）。
-  const existing = listFacts({ status: "fresh", limit: 80 }).map((f) => `- ${factLine(f)}`).join("\n");
+  const existing = (await listFacts({ status: "fresh", limit: 80 })).map((f) => `- ${factLine(f)}`).join("\n");
 
   const out = await chat({
     profile: "task",
@@ -80,7 +80,7 @@ async function scan(): Promise<void> {
       status: "fresh",
     });
   }
-  setDoc(CURSOR_KEY, String(increment[increment.length - 1].ts));
+  await setDoc(CURSOR_KEY, String(increment[increment.length - 1].ts));
 }
 
 // couple 频道每条用户文本消息调一次；攒够 N 条才真正跑（互斥，静默失败）。

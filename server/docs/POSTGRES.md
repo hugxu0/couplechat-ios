@@ -1,0 +1,71 @@
+# PostgreSQL 迁移与部署
+
+后端数据层已从 SQLite（`node:sqlite`）切换到 PostgreSQL（`pg` 连接池）。
+好处：可以用任意图形化客户端（DBeaver / TablePlus / pgAdmin / DataGrip）直连服务器查看和管理数据。
+
+## 一、服务器上安装 PostgreSQL（Ubuntu/Debian）
+
+```bash
+sudo apt update && sudo apt install -y postgresql
+sudo systemctl enable --now postgresql
+```
+
+## 二、建库建用户
+
+```bash
+sudo -u postgres psql <<'SQL'
+CREATE USER couplechat WITH PASSWORD '换成强密码';
+CREATE DATABASE couplechat OWNER couplechat;
+SQL
+```
+
+## 三、迁移旧数据（一次性）
+
+在 `server/` 目录下（旧库在 `.data/couplechat.sqlite`）：
+
+```bash
+DATABASE_URL='postgres://couplechat:密码@localhost:5432/couplechat' \
+  npx tsx scripts/migrate-sqlite-to-postgres.ts
+```
+
+- 幂等：全部 `ON CONFLICT DO NOTHING`，重复跑不会写脏。
+- 可用 `SQLITE_PATH=/path/to/xx.sqlite` 指定其他源库。
+- 迁移完成后建议把 `.data/couplechat.sqlite` 备份后移走。
+
+## 四、配置服务
+
+在服务的环境（`.env` 或 systemd unit）里加：
+
+```
+DATABASE_URL=postgres://couplechat:密码@localhost:5432/couplechat
+```
+
+不设置时默认 `postgres://couplechat:couplechat@localhost:5432/couplechat`（仅限本地开发）。
+
+## 五、远程 GUI 直连（可选）
+
+PostgreSQL 默认只监听本机。**推荐做法：不开公网端口，用 SSH 隧道**——
+在 DBeaver/TablePlus 里新建连接时选 SSH Tunnel，填服务器 SSH 账号，
+数据库地址填 `localhost:5432`。这样数据库不暴露公网，安全且免配置。
+
+如果一定要公网直连：改 `postgresql.conf` 的 `listen_addresses`、
+`pg_hba.conf` 加 `hostssl` 行并强制 `scram-sha-256`，再在防火墙里只放行你的 IP。不建议。
+
+## 六、验证
+
+本仓库带一个完整冒烟测试（内嵌 PostgreSQL，不需要装任何东西）：
+
+```bash
+npx tsx scripts/smoke-postgres.ts
+```
+
+会起临时 PG → 建表 → 从 `.data/couplechat.sqlite` 全量迁移 → 跑消息分页/搜索/幂等发送/
+已读回执/shared/提醒备忘 CRUD/AI 记忆向量/统计聚合 共 15 项断言。
+
+## 实现说明
+
+- `src/db/index.ts`：`pg` Pool；`run/all/get` 变异步；SQLite 风格 `?` 占位符自动转 `$n`；
+  `int8`（BIGINT/COUNT）统一解析为 number；`Uint8Array`（embedding 向量）自动转 Buffer 走 BYTEA。
+- 时间戳保持毫秒 BIGINT，服务层类型不变。
+- 唯一的方言改写：`stats/routes.ts` 的 `strftime` → `to_char(to_timestamp(...))`。
+- 日常备份：`pg_dump -Fc couplechat > backup.dump`（比拷 SQLite 文件更安全，不怕写入中途拷坏）。

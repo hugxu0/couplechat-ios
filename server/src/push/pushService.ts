@@ -4,7 +4,7 @@ import { isAvailable } from "../socket/presence";
 import { sendBarkPush } from "./bark";
 
 export async function pushCoupleMessageToUnavailableRecipients(message: ClientMessage) {
-  const recipients = all<AccountRow>("SELECT * FROM accounts WHERE username != ?", [message.sender]);
+  const recipients = await all<AccountRow>("SELECT * FROM accounts WHERE username != ?", [message.sender]);
 
   await Promise.allSettled(
     recipients

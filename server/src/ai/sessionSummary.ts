@@ -12,9 +12,9 @@ interface Stored {
   upToTs: number;
 }
 
-function read(storedChannel: string): Stored {
+async function read(storedChannel: string): Promise<Stored> {
   try {
-    const raw = getDoc(`session-summary:${storedChannel}`);
+    const raw = await getDoc(`session-summary:${storedChannel}`);
     if (!raw) return { text: "", upToTs: 0 };
     const parsed = JSON.parse(raw) as Partial<Stored>;
     return { text: String(parsed.text ?? ""), upToTs: Number(parsed.upToTs) || 0 };
@@ -23,8 +23,8 @@ function read(storedChannel: string): Stored {
   }
 }
 
-export function summaryText(storedChannel: string): string {
-  return read(storedChannel).text.slice(0, CONTEXT.sessionSummaryMaxChars);
+export async function summaryText(storedChannel: string): Promise<string> {
+  return (await read(storedChannel)).text.slice(0, CONTEXT.sessionSummaryMaxChars);
 }
 
 const SYSTEM = [
@@ -42,9 +42,9 @@ const updating = new Set<string>();
 export async function maybeUpdate(storedChannel: string): Promise<void> {
   if (updating.has(storedChannel)) return;
   const window = CONTEXT.recentCount;
-  const rows = recentMessages(storedChannel, window + CONTEXT.sessionSummaryBacklogMax);
+  const rows = await recentMessages(storedChannel, window + CONTEXT.sessionSummaryBacklogMax);
   const outside = rows.slice(0, Math.max(0, rows.length - window)).filter((m) => m.kind !== "system");
-  const prev = read(storedChannel);
+  const prev = await read(storedChannel);
   const fresh = outside.filter((m) => m.ts > prev.upToTs);
   if (fresh.length < CONTEXT.sessionSummaryUpdateEvery) return;
 
@@ -61,7 +61,7 @@ export async function maybeUpdate(storedChannel: string): Promise<void> {
     });
     const text = out?.trim();
     if (text) {
-      setDoc(
+      await setDoc(
         `session-summary:${storedChannel}`,
         JSON.stringify({ text: text.slice(0, 1200), upToTs: fresh[fresh.length - 1].ts }),
       );

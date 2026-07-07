@@ -17,7 +17,7 @@ async function scanOnce(io: Server) {
   running = true;
   try {
     const now = Date.now();
-    const due = all<PersonalItemRow>(
+    const due = await all<PersonalItemRow>(
       `SELECT * FROM personal_items
        WHERE kind = 'reminder' AND is_done = 0
          AND due_at IS NOT NULL AND due_at > ? AND due_at <= ?`,
@@ -25,7 +25,7 @@ async function scanOnce(io: Server) {
     );
 
     for (const reminder of due) {
-      const owner = get<AccountRow>("SELECT * FROM accounts WHERE username = ?", [reminder.owner]);
+      const owner = await get<AccountRow>("SELECT * FROM accounts WHERE username = ?", [reminder.owner]);
       if (!owner?.bark_key) continue;
       const dueAt = reminder.due_at ?? 0;
       if (!dueAt) continue;

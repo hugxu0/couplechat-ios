@@ -10,7 +10,7 @@ function parse(value: string): unknown {
 }
 
 export async function getSharedState() {
-  const rows = all<SharedItemRow>("SELECT * FROM shared_items ORDER BY key ASC");
+  const rows = await all<SharedItemRow>("SELECT * FROM shared_items ORDER BY key ASC");
   return Object.fromEntries(
     rows.map((row) => [
       row.key,
@@ -25,7 +25,7 @@ export async function getSharedState() {
 
 export async function setSharedItem(user: AuthUser, key: string, value: unknown) {
   const now = Date.now();
-  run(
+  await run(
     `INSERT INTO shared_items (key, value_json, updated_by, updated_at)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET
@@ -44,5 +44,5 @@ export async function setSharedItem(user: AuthUser, key: string, value: unknown)
 }
 
 export async function deleteSharedItem(key: string) {
-  run("DELETE FROM shared_items WHERE key = ?", [key]);
+  await run("DELETE FROM shared_items WHERE key = ?", [key]);
 }

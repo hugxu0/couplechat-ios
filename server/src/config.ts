@@ -78,6 +78,8 @@ export const config = {
   appDeepLinkScheme: process.env.APP_DEEP_LINK_SCHEME ?? "couplechat://",
   dataDir: path.resolve(process.cwd(), ".data"),
   uploadDir: path.resolve(process.cwd(), "uploads"),
+  // PostgreSQL 连接串（部署时用 DATABASE_URL 覆盖）
+  databaseUrl: process.env.DATABASE_URL ?? "postgres://couplechat:couplechat@localhost:5432/couplechat",
   ai: {
     chat: providerFromEnv("AI_CHAT", aiShared),
     task: providerFromEnv("AI_TASK", aiShared),

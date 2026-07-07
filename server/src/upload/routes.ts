@@ -50,7 +50,7 @@ export async function registerUploadRoutes(app: FastifyInstance) {
     const stat = fs.statSync(fullPath);
     const url = `${config.publicBaseURL}/uploads/${filename}`;
 
-    run(
+    await run(
       `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [id, request.user.username, fullPath, url, file.mimetype, stat.size, Date.now()],

@@ -1,10 +1,14 @@
-import fs from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+// PostgreSQL 数据层：pg 连接池 + SQLite 风格 `?` 占位符自动转 `$n`，
+// 服务层的 SQL 基本原样保留。时间戳统一毫秒 BIGINT（int8 已配置解析为 number）。
+
+import { Pool, types } from "pg";
 import { config } from "../config";
 
-let sqlite: DatabaseSync | null = null;
-let dbPath = "";
+// int8（BIGINT / COUNT()）默认返回字符串——这里全是毫秒时间戳和小计数，
+// 都在 Number.MAX_SAFE_INTEGER 内，直接解析成 number，服务层不用改类型。
+types.setTypeParser(20, (value) => Number(value));
+
+let pool: Pool | null = null;
 
 export interface AccountRow {
   username: string;
@@ -101,63 +105,67 @@ export interface UploadRow {
   created_at: number;
 }
 
-function conn() {
-  if (!sqlite) throw new Error("Database is not initialized");
-  return sqlite;
+function conn(): Pool {
+  if (!pool) throw new Error("Database is not initialized");
+  return pool;
 }
 
-export function flushSync() {
-  // No-op for native node:sqlite since writes are incremental and saved immediately
+// SQLite 风格 `?` → PostgreSQL `$1..$n`（现有 SQL 里没有字面量问号，直接顺序替换）。
+function toPg(sql: string): string {
+  let index = 0;
+  return sql.replace(/\?/g, () => `$${++index}`);
+}
+
+// pg 只认 Buffer 当二进制；Uint8Array（embedding 向量）在这里统一转换。
+function normalizeParams(params: any[]): any[] {
+  return params.map((p) => {
+    if (p === undefined) return null;
+    if (p instanceof Uint8Array && !Buffer.isBuffer(p)) {
+      return Buffer.from(p.buffer, p.byteOffset, p.byteLength);
+    }
+    return p;
+  });
 }
 
 export async function initDatabase() {
-  fs.mkdirSync(config.dataDir, { recursive: true });
-  dbPath = path.join(config.dataDir, "couplechat.sqlite");
-
-  sqlite = new DatabaseSync(dbPath);
-
-  // Enable WAL mode for high concurrency performance
-  sqlite.exec("PRAGMA journal_mode = WAL;");
-  sqlite.exec("PRAGMA synchronous = NORMAL;");
-
-  migrate();
+  pool = new Pool({
+    connectionString: config.databaseUrl,
+    max: 10,
+  });
+  // 尽早失败：连不上直接抛，而不是第一条查询才炸
+  await pool.query("SELECT 1");
+  await migrate();
 }
 
-export function run(sql: string, params: any[] = []) {
-  conn().prepare(sql).run(...params);
+export async function closeDatabase() {
+  await pool?.end();
+  pool = null;
 }
 
-export function all<T extends object>(sql: string, params: any[] = []): T[] {
-  return conn().prepare(sql).all(...params) as T[];
+export async function run(sql: string, params: any[] = []): Promise<void> {
+  await conn().query(toPg(sql), normalizeParams(params));
 }
 
-export function get<T extends object>(sql: string, params: any[] = []): T | undefined {
-  return conn().prepare(sql).get(...params) as T | undefined;
+export async function all<T extends object>(sql: string, params: any[] = []): Promise<T[]> {
+  const result = await conn().query(toPg(sql), normalizeParams(params));
+  return result.rows as T[];
 }
 
-export function transaction(fn: () => void) {
-  const database = conn();
-  database.exec("BEGIN");
-  try {
-    fn();
-    database.exec("COMMIT");
-  } catch (error) {
-    database.exec("ROLLBACK");
-    throw error;
-  }
+export async function get<T extends object>(sql: string, params: any[] = []): Promise<T | undefined> {
+  const rows = await all<T>(sql, params);
+  return rows[0];
 }
 
-function migrate() {
-  const database = conn();
-  database.exec(`
+async function migrate() {
+  await conn().query(`
     CREATE TABLE IF NOT EXISTS accounts (
       username TEXT PRIMARY KEY,
       display_name TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       avatar TEXT NOT NULL DEFAULT '',
       bark_key TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -171,7 +179,7 @@ function migrate() {
       url TEXT,
       reply_json TEXT,
       meta_json TEXT,
-      ts INTEGER NOT NULL,
+      ts BIGINT NOT NULL,
       client_id TEXT
     );
 
@@ -183,8 +191,8 @@ function migrate() {
     CREATE TABLE IF NOT EXISTS read_receipts (
       channel TEXT NOT NULL,
       username TEXT NOT NULL,
-      ts INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      ts BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS read_receipts_channel_user_idx
       ON read_receipts(channel, username);
@@ -193,7 +201,7 @@ function migrate() {
       key TEXT PRIMARY KEY,
       value_json TEXT NOT NULL,
       updated_by TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at BIGINT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS personal_items (
@@ -203,10 +211,10 @@ function migrate() {
       scope TEXT NOT NULL DEFAULT 'personal',
       title TEXT NOT NULL,
       body_markdown TEXT NOT NULL DEFAULT '',
-      due_at INTEGER,
+      due_at BIGINT,
       is_done INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS personal_items_owner_kind_updated_idx
       ON personal_items(owner, kind, scope, updated_at DESC);
@@ -219,8 +227,8 @@ function migrate() {
       path TEXT NOT NULL,
       url TEXT NOT NULL,
       mime_type TEXT NOT NULL,
-      size INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
+      size BIGINT NOT NULL,
+      created_at BIGINT NOT NULL
     );
 
     -- ── AI 记忆系统 ──────────────────────────────────────────────
@@ -233,15 +241,14 @@ function migrate() {
       text TEXT NOT NULL,
       importance INTEGER NOT NULL DEFAULT 3,
       status TEXT NOT NULL DEFAULT 'fresh',
-      embedding BLOB,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      last_seen_at INTEGER NOT NULL
+      embedding BYTEA,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      last_seen_at BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS ai_facts_status_idx ON ai_facts(status);
 
     -- 事件卡片：每天把聊天按话题切成卡，独立向量化供语义召回
-    -- (取代旧后端的 knowledge_cards + chunk_embeddings 双索引)。
     CREATE TABLE IF NOT EXISTS ai_episodes (
       id TEXT PRIMARY KEY,
       channel TEXT NOT NULL,
@@ -252,24 +259,18 @@ function migrate() {
       mood TEXT,
       conclusion TEXT,
       keywords TEXT,
-      embedding BLOB,
-      created_at INTEGER NOT NULL
+      embedding BYTEA,
+      created_at BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS ai_episodes_channel_date_idx ON ai_episodes(channel, date);
 
-    -- AI 文档 KV：人物卡/关系卡/短期记忆/每日日记/心情/滚动摘要/任务完成标记，
-    -- 全部走这一张表（取代旧后端的 markdown 文件 + daily_cache 混用）。
+    -- AI 文档 KV：人物卡/关系卡/短期记忆/每日日记/心情/滚动摘要/任务完成标记
     CREATE TABLE IF NOT EXISTS ai_docs (
       key TEXT PRIMARY KEY,
       text TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at BIGINT NOT NULL
     );
-  `);
 
-  // Idempotent migration for scope column (added post-initial schema)
-  try {
-    database.exec("ALTER TABLE personal_items ADD COLUMN scope TEXT NOT NULL DEFAULT 'personal'");
-  } catch {
-    // column already exists — safe to ignore
-  }
+    ALTER TABLE personal_items ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'personal';
+  `);
 }

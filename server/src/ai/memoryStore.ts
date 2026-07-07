@@ -90,7 +90,7 @@ export function factLine(f: Fact): string {
   return `[${subjectLabel(f.subject)}] ${f.text}`;
 }
 
-export function listFacts(filter: { status?: string; minImportance?: number; limit?: number } = {}): Fact[] {
+export async function listFacts(filter: { status?: string; minImportance?: number; limit?: number } = {}): Promise<Fact[]> {
   const clauses: string[] = [];
   const params: (string | number)[] = [];
   if (filter.status) {
@@ -103,10 +103,11 @@ export function listFacts(filter: { status?: string; minImportance?: number; lim
   }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   params.push(filter.limit ?? 500);
-  return all<AiFactRow>(
+  const rows = await all<AiFactRow>(
     `SELECT * FROM ai_facts ${where} ORDER BY importance DESC, last_seen_at DESC LIMIT ?`,
     params,
-  ).map(mapFact);
+  );
+  return rows.map(mapFact);
 }
 
 export interface AddFactInput {
@@ -131,23 +132,23 @@ export async function addFact(input: AddFactInput): Promise<{ ok: boolean; dedup
   if (embeddingEnabled()) {
     vector = await embedOne(`${subjectLabel(subject)} ${text}`);
     if (vector) {
-      for (const existing of listFacts({ limit: 2000 })) {
+      for (const existing of await listFacts({ limit: 2000 })) {
         if (existing.vector && similarity(vector, existing.vector) >= MEMORY.factDupScore) {
-          run("UPDATE ai_facts SET last_seen_at = ? WHERE id = ?", [now, existing.id]);
+          await run("UPDATE ai_facts SET last_seen_at = ? WHERE id = ?", [now, existing.id]);
           return { ok: true, deduped: true };
         }
       }
     }
   } else {
     // 无 embedding 时退化为字面查重。
-    const dup = get<AiFactRow>("SELECT * FROM ai_facts WHERE text = ? AND subject = ?", [text, subject]);
+    const dup = await get<AiFactRow>("SELECT * FROM ai_facts WHERE text = ? AND subject = ?", [text, subject]);
     if (dup) {
-      run("UPDATE ai_facts SET last_seen_at = ? WHERE id = ?", [now, dup.id]);
+      await run("UPDATE ai_facts SET last_seen_at = ? WHERE id = ?", [now, dup.id]);
       return { ok: true, deduped: true };
     }
   }
 
-  run(
+  await run(
     `INSERT INTO ai_facts (id, subject, category, text, importance, status, embedding, created_at, updated_at, last_seen_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
@@ -170,7 +171,7 @@ export async function updateFact(
   id: string,
   patch: { text?: string; category?: string; subject?: string; importance?: number; status?: string },
 ) {
-  const existing = get<AiFactRow>("SELECT * FROM ai_facts WHERE id = ?", [id]);
+  const existing = await get<AiFactRow>("SELECT * FROM ai_facts WHERE id = ?", [id]);
   if (!existing) return;
   const text = patch.text?.trim() ? patch.text.trim().slice(0, MEMORY.factTextMax) : existing.text;
   // 正文变了要重算向量，否则召回还按旧语义打分。
@@ -179,7 +180,7 @@ export async function updateFact(
     const v = await embedOne(text);
     if (v) embedding = packVector(v);
   }
-  run(
+  await run(
     `UPDATE ai_facts SET subject = ?, category = ?, text = ?, importance = ?, status = ?, embedding = ?, updated_at = ?
      WHERE id = ?`,
     [
@@ -195,8 +196,8 @@ export async function updateFact(
   );
 }
 
-export function deleteFact(id: string) {
-  run("DELETE FROM ai_facts WHERE id = ?", [id]);
+export async function deleteFact(id: string) {
+  await run("DELETE FROM ai_facts WHERE id = ?", [id]);
 }
 
 // ─── 事件卡片 ────────────────────────────────────────────────────────────
@@ -236,11 +237,11 @@ function mapEpisode(row: AiEpisodeRow): Episode {
   };
 }
 
-export function listEpisodes(channel?: string): Episode[] {
-  if (channel) {
-    return all<AiEpisodeRow>("SELECT * FROM ai_episodes WHERE channel = ?", [channel]).map(mapEpisode);
-  }
-  return all<AiEpisodeRow>("SELECT * FROM ai_episodes", []).map(mapEpisode);
+export async function listEpisodes(channel?: string): Promise<Episode[]> {
+  const rows = channel
+    ? await all<AiEpisodeRow>("SELECT * FROM ai_episodes WHERE channel = ?", [channel])
+    : await all<AiEpisodeRow>("SELECT * FROM ai_episodes", []);
+  return rows.map(mapEpisode);
 }
 
 export interface AddEpisodeInput {
@@ -262,7 +263,7 @@ export async function addEpisode(input: AddEpisodeInput) {
     );
     if (v) embedding = packVector(v);
   }
-  run(
+  await run(
     `INSERT INTO ai_episodes (id, channel, date, title, summary, key_points_json, mood, conclusion, keywords, embedding, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
@@ -281,20 +282,21 @@ export async function addEpisode(input: AddEpisodeInput) {
   );
 }
 
-export function deleteEpisodesByDate(channel: string, date: string) {
-  run("DELETE FROM ai_episodes WHERE channel = ? AND date = ?", [channel, date]);
+export async function deleteEpisodesByDate(channel: string, date: string) {
+  await run("DELETE FROM ai_episodes WHERE channel = ? AND date = ?", [channel, date]);
 }
 
 // ─── 文档 KV ─────────────────────────────────────────────────────────────
 // key 约定：profile:<username> / relationship / short-term / mood:<date> /
 //           digest:<date> / session-summary:<channel> / done:<job>:<date> / cursor:<name>
 
-export function getDoc(key: string): string {
-  return get<AiDocRow>("SELECT * FROM ai_docs WHERE key = ?", [key])?.text ?? "";
+export async function getDoc(key: string): Promise<string> {
+  const row = await get<AiDocRow>("SELECT * FROM ai_docs WHERE key = ?", [key]);
+  return row?.text ?? "";
 }
 
-export function setDoc(key: string, text: string) {
-  run(
+export async function setDoc(key: string, text: string) {
+  await run(
     `INSERT INTO ai_docs (key, text, updated_at) VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at`,
     [key, text, Date.now()],
@@ -302,10 +304,10 @@ export function setDoc(key: string, text: string) {
 }
 
 // 每日任务完成标记（幂等重试的依据；每步独立标记，一步失败不拖累其他步）。
-export function isJobDone(job: string, date: string): boolean {
-  return getDoc(`done:${job}:${date}`) === "1";
+export async function isJobDone(job: string, date: string): Promise<boolean> {
+  return (await getDoc(`done:${job}:${date}`)) === "1";
 }
 
-export function markJobDone(job: string, date: string) {
-  setDoc(`done:${job}:${date}`, "1");
+export async function markJobDone(job: string, date: string) {
+  await setDoc(`done:${job}:${date}`, "1");
 }

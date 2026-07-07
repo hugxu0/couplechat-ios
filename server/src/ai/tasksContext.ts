@@ -29,12 +29,12 @@ function beijingTime(ts: number | null): string {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
 }
 
-export function tasksTextRich(): string {
+export async function tasksTextRich(): Promise<string> {
   const usernames = accounts().map((a) => a.username);
   if (usernames.length === 0) return "";
   const placeholders = usernames.map(() => "?").join(",");
 
-  const reminders = all<ReminderRow>(
+  const reminders = await all<ReminderRow>(
     `SELECT id, title, due_at, owner, scope FROM personal_items
      WHERE kind = 'reminder' AND is_done = 0
        AND (scope = 'shared' OR owner IN (${placeholders}))
@@ -43,7 +43,7 @@ export function tasksTextRich(): string {
     [...usernames, CONTEXT.taskReminderCount],
   );
 
-  const memos = all<MemoRow>(
+  const memos = await all<MemoRow>(
     `SELECT id, title, body_markdown, owner, scope FROM personal_items
      WHERE kind = 'memo' AND is_done = 0
        AND (scope = 'shared' OR owner IN (${placeholders}))
@@ -78,19 +78,21 @@ export function tasksTextRich(): string {
 }
 
 // 简短概览（不带明细），用在意图判断日志和不那么需要明细的场景。
-export function tasksContext(): string {
+export async function tasksContext(): Promise<string> {
   const usernames = accounts().map((a) => a.username);
   if (usernames.length === 0) return "";
   const placeholders = usernames.map(() => "?").join(",");
 
-  const reminders = all<{ c: number }>(
+  const reminderRows = await all<{ c: number }>(
     `SELECT COUNT(*) as c FROM personal_items WHERE kind = 'reminder' AND is_done = 0 AND (scope = 'shared' OR owner IN (${placeholders}))`,
     usernames,
-  )[0]?.c ?? 0;
-  const memos = all<{ c: number }>(
+  );
+  const memoRows = await all<{ c: number }>(
     `SELECT COUNT(*) as c FROM personal_items WHERE kind = 'memo' AND is_done = 0 AND (scope = 'shared' OR owner IN (${placeholders}))`,
     usernames,
-  )[0]?.c ?? 0;
+  );
+  const reminders = reminderRows[0]?.c ?? 0;
+  const memos = memoRows[0]?.c ?? 0;
 
   if (reminders === 0 && memos === 0) return "";
   return `未完成提醒 ${reminders} 条 / 备忘 ${memos} 条`;

@@ -91,11 +91,11 @@ function resolveScope(scope: "personal" | "shared" | undefined): PersonalItemSco
 }
 
 // 通过 text 关键词从 personal_items 里找一条（id 不可靠时退化方案）。
-function findReminderByText(ownerName: string, textKeyword: string): PersonalItem | undefined {
+async function findReminderByText(ownerName: string, textKeyword: string): Promise<PersonalItem | undefined> {
   const match = accounts().find((a) => a.username === ownerName);
   const ownerName2 = match?.name ?? ownerName;
   // 共享 + 个人都要能命中
-  const rows = all<AccountRow & { title: string }>(
+  const rows = await all<AccountRow & { title: string }>(
     `SELECT * FROM personal_items
      WHERE kind = 'reminder' AND (
        owner = ? OR scope = 'shared'
@@ -106,8 +106,8 @@ function findReminderByText(ownerName: string, textKeyword: string): PersonalIte
   return rows.length ? (rows[0] as unknown as PersonalItem) : undefined;
 }
 
-function findMemoByText(ownerName: string, textKeyword: string): PersonalItem | undefined {
-  const rows = all<{ id: string }>(
+async function findMemoByText(ownerName: string, textKeyword: string): Promise<PersonalItem | undefined> {
+  const rows = await all<{ id: string }>(
     `SELECT * FROM personal_items
      WHERE kind = 'memo' AND (
        owner = ? OR scope = 'shared'
@@ -191,7 +191,7 @@ export async function applyAction(
       }
       const keyword = String(action.text ?? "").trim();
       if (keyword) {
-        const target = findReminderByText(fakeUser.username, keyword);
+        const target = await findReminderByText(fakeUser.username, keyword);
         if (target) {
           await updatePersonalItem(fakeUser, target.id, { isDone: true });
           return { ok: true, label: describeAction(action) ?? "已完成" };
@@ -206,7 +206,7 @@ export async function applyAction(
       }
       const keyword = String(action.text ?? "").trim();
       if (keyword) {
-        const target = findReminderByText(fakeUser.username, keyword);
+        const target = await findReminderByText(fakeUser.username, keyword);
         if (target) {
           await deletePersonalItem(fakeUser, target.id);
           return { ok: true, label: describeAction(action) ?? "已删除" };
@@ -226,7 +226,7 @@ export async function applyAction(
       }
       const keyword = String(action.text ?? "").trim();
       if (keyword) {
-        const target = findMemoByText(fakeUser.username, keyword);
+        const target = await findMemoByText(fakeUser.username, keyword);
         if (target) {
           await updatePersonalItem(fakeUser, target.id, {
             title: newText.slice(0, 120),
@@ -253,8 +253,8 @@ export function parseActions(out: string | null): AiAction[] {
 }
 
 // 读出一条消息的 meta 字段，并解析。
-function getMessageMeta(messageId: string): ConfirmMeta | null {
-  const row = get<MessageRow>("SELECT * FROM messages WHERE id = ?", [messageId]);
+async function getMessageMeta(messageId: string): Promise<ConfirmMeta | null> {
+  const row = await get<MessageRow>("SELECT * FROM messages WHERE id = ?", [messageId]);
   if (!row || !row.meta_json) return null;
   try {
     return JSON.parse(row.meta_json) as ConfirmMeta;
@@ -263,8 +263,8 @@ function getMessageMeta(messageId: string): ConfirmMeta | null {
   }
 }
 
-function updateMessageMeta(messageId: string, meta: ConfirmMeta): void {
-  run("UPDATE messages SET meta_json = ? WHERE id = ?", [JSON.stringify(meta), messageId]);
+async function updateMessageMeta(messageId: string, meta: ConfirmMeta): Promise<void> {
+  await run("UPDATE messages SET meta_json = ? WHERE id = ?", [JSON.stringify(meta), messageId]);
 }
 
 // 确认/取消 AI 提议的 action（用户在 iOS 上点确认/取消）。
@@ -273,14 +273,14 @@ export async function confirmAction(
   messageId: string,
   decision: "confirm" | "cancel",
 ): Promise<{ ok: boolean }> {
-  const meta = getMessageMeta(messageId);
+  const meta = await getMessageMeta(messageId);
   if (!meta || !meta.confirm || meta.confirm.status !== "pending") {
     return { ok: false };
   }
 
   if (decision === "cancel") {
     meta.confirm.status = "cancelled";
-    updateMessageMeta(messageId, meta);
+    await updateMessageMeta(messageId, meta);
     io.emit("message:update", { id: messageId, meta });
     return { ok: true };
   }
@@ -295,7 +295,7 @@ export async function confirmAction(
   }
   meta.confirm.status = "confirmed";
   meta.confirm.failed = failed;
-  updateMessageMeta(messageId, meta);
+  await updateMessageMeta(messageId, meta);
   io.emit("message:update", { id: messageId, meta });
   return { ok: true };
 }

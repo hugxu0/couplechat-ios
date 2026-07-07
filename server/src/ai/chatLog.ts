@@ -38,30 +38,32 @@ export function latestImage(messages: LogMessage[]): LogMessage | undefined {
 }
 
 // 最近 N 条（按时间正序返回）。
-export function recentMessages(storedChannel: string, limit: number): LogMessage[] {
-  const rows = all<MessageRow>(
+export async function recentMessages(storedChannel: string, limit: number): Promise<LogMessage[]> {
+  const rows = await all<MessageRow>(
     "SELECT * FROM messages WHERE channel = ? ORDER BY ts DESC LIMIT ?",
     [storedChannel, limit],
   );
   return rows.reverse().map(mapRow);
 }
 
-export function messagesBetween(storedChannel: string, start: number, end: number): LogMessage[] {
-  return all<MessageRow>(
+export async function messagesBetween(storedChannel: string, start: number, end: number): Promise<LogMessage[]> {
+  const rows = await all<MessageRow>(
     "SELECT * FROM messages WHERE channel = ? AND ts >= ? AND ts < ? ORDER BY ts ASC",
     [storedChannel, start, end],
-  ).map(mapRow);
+  );
+  return rows.map(mapRow);
 }
 
-export function messagesAfter(storedChannel: string, ts: number, limit: number): LogMessage[] {
-  return all<MessageRow>(
+export async function messagesAfter(storedChannel: string, ts: number, limit: number): Promise<LogMessage[]> {
+  const rows = await all<MessageRow>(
     "SELECT * FROM messages WHERE channel = ? AND ts > ? ORDER BY ts ASC LIMIT ?",
     [storedChannel, ts, limit],
-  ).map(mapRow);
+  );
+  return rows.map(mapRow);
 }
 
-export function latestTs(storedChannel: string): number {
-  const rows = all<MessageRow>(
+export async function latestTs(storedChannel: string): Promise<number> {
+  const rows = await all<MessageRow>(
     "SELECT * FROM messages WHERE channel = ? ORDER BY ts DESC LIMIT 1",
     [storedChannel],
   );

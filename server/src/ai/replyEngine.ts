@@ -56,21 +56,19 @@ function sleep(ms: number) {
 
 // ─── 上下文组装 ──────────────────────────────────────────────────────────
 
-function profileCardsText(): string {
+async function profileCardsText(): Promise<string> {
   const parts: string[] = [];
   for (const a of accounts()) {
-    const text = getDoc(`profile:${a.username}`);
+    const text = await getDoc(`profile:${a.username}`);
     if (text) parts.push(`## ${a.name}\n${text}`);
   }
-  const rel = getDoc("relationship");
+  const rel = await getDoc("relationship");
   if (rel) parts.push(`## 两人关系\n${rel}`);
   return parts.join("\n\n");
 }
 
-function buildSystem(isPrivate: boolean, mood: string, plan: PlanContext): string {
+function buildSystem(isPrivate: boolean, mood: string, plan: PlanContext, cards: string, shortTerm: string): string {
   const names = accounts().map((a) => a.name);
-  const cards = profileCardsText();
-  const shortTerm = plan.needShortMemory ? getDoc("short-term").slice(0, MEMORY.shortTermMax) : "";
   return [
     personaCore(names),
     isPrivate
@@ -133,6 +131,7 @@ function buildUser(
   tasksText: string,
   searchContext: string,
   plan: PlanContext,
+  summary: string,
 ): string {
   const lines = recent
     .filter((m) => m.kind !== "system")
@@ -141,7 +140,6 @@ function buildUser(
   const n = CONTEXT.immediateCount;
   const earlier = lines.slice(0, Math.max(0, lines.length - n)).join("\n");
   const immediate = lines.slice(-n).join("\n") || "暂无最近聊天";
-  const summary = summaryText(trigger.storedChannel);
   return [
     `现在是 ${beijingDateTime(Date.now())}（北京时间）。`,
     summary ? `【前情摘要（更早对话的脉络）】\n${summary}` : "",
@@ -189,7 +187,7 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
   sink.typing(trigger.storedChannel, true);
   const trace = traceBegin(trigger.storedChannel, trigger.requesterName, trigger.question);
   try {
-    const recent = recentMessages(trigger.storedChannel, CONTEXT.recentCount);
+    const recent = await recentMessages(trigger.storedChannel, CONTEXT.recentCount);
 
     // M7：意图判断 + 独立检索词生成 并行跑（互不依赖，输入相同）。
     const [plan, retrievalPlan] = await Promise.all([
@@ -206,15 +204,18 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
       plan.retrievalQuery ||
       retrievalQuery(effective, recent);
 
-    const [recalled, mood, imageContext, searchResult] = await Promise.all([
+    const [recalled, mood, imageContext, searchResult, cards, shortTerm, summary] = await Promise.all([
       plan.needMemory || plan.needRetrieval
         ? recallSafe(query, trigger.storedChannel)
         : Promise.resolve(NO_RECALL),
       ensureDailyMood().catch(() => ""),
       describeLatestImageIfNeeded(plan, recent),
       plan.needSearch ? webSearch(query, GEN.search) : Promise.resolve<SearchResult | null>(null),
+      profileCardsText().catch(() => ""),
+      plan.needShortMemory ? getDoc("short-term").then((t) => t.slice(0, MEMORY.shortTermMax)).catch(() => "") : Promise.resolve(""),
+      summaryText(trigger.storedChannel).catch(() => ""),
     ]);
-    const tasksText = plan.needTasks ? tasksTextRich() : "";
+    const tasksText = plan.needTasks ? await tasksTextRich() : "";
     const search = searchResult?.content ?? "";
 
     // 排查 trace：检索原始得分 + 过阈值情况。
@@ -226,15 +227,15 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
       rawEpisodes: [],
     });
     traceContext(trace, {
-      profileCards: profileCardsText(),
+      profileCards: cards,
       mood,
-      shortMemory: plan.needShortMemory ? getDoc("short-term").slice(0, MEMORY.shortTermMax) : "",
+      shortMemory: shortTerm,
       factsContext: recalled.factsContext,
       episodesContext: recalled.episodesContext,
       imageContext,
       searchContext: search,
       tasksText,
-      sessionSummary: summaryText(trigger.storedChannel),
+      sessionSummary: summary,
       recentEarlier: "",
       recentImmediate: "",
     });
@@ -245,10 +246,12 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
         (retrievalPlan ? ` 检索词="${retrievalPlan.retrievalQuery.slice(0, 40)}"` : ""),
     );
 
+    const systemText = buildSystem(isPrivate, mood, plan, cards, shortTerm);
+    const userText = buildUser(effective, recent, recalled.factsContext, recalled.episodesContext, imageContext, tasksText, search, plan, summary);
     let out = await chat({
       profile: "chat",
-      system: buildSystem(isPrivate, mood, plan),
-      user: buildUser(effective, recent, recalled.factsContext, recalled.episodesContext, imageContext, tasksText, search, plan),
+      system: systemText,
+      user: userText,
       gen: GEN.reply,
     });
     let replies = normalizeReplies(out);
@@ -256,8 +259,8 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
       // 上游瞬时抖动（超时/限流）先原样重试一次；仍失败发固定兜底，绝不已读不回。
       out = await chat({
         profile: "chat",
-        system: buildSystem(isPrivate, mood, plan),
-        user: buildUser(effective, recent, recalled.factsContext, recalled.episodesContext, imageContext, tasksText, search, plan),
+        system: systemText,
+        user: userText,
         gen: GEN.reply,
       });
       replies = normalizeReplies(out);

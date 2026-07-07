@@ -75,7 +75,7 @@ export async function maybeCheck(io: Server, channel: string): Promise<void> {
   if (!aiEnabled()) return;
   if (running) return;
 
-  const recent = recentMessages(channel, MIN_WINDOW + 10);
+  const recent = await recentMessages(channel, MIN_WINDOW + 10);
   const userMsgs = recent.filter((m) => m.kind === "user" && m.type === "text" && m.text && m.text.trim());
   if (userMsgs.length < 2) return;
 

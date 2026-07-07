@@ -13,9 +13,10 @@ interface CountRow {
 }
 
 // couple 频道真人消息按北京时间自然日/自然月聚合（大橘和系统消息不计入）。
-function countsBy(format: string, sinceTs: number): CountRow[] {
+// format: "YYYY-MM-DD"（日）或 "YYYY-MM"（月），PostgreSQL to_char 格式。
+async function countsBy(format: string, sinceTs: number): Promise<CountRow[]> {
   return all<CountRow>(
-    `SELECT sender, strftime('${format}', datetime(ts / 1000, 'unixepoch', '+8 hours')) AS bucket, COUNT(*) AS c
+    `SELECT sender, to_char(to_timestamp(ts / 1000.0) AT TIME ZONE 'UTC' + interval '8 hours', '${format}') AS bucket, COUNT(*) AS c
      FROM messages
      WHERE channel = 'couple' AND kind = 'user' AND sender != 'ai' AND ts >= ?
      GROUP BY sender, bucket`,
@@ -41,7 +42,7 @@ export async function registerStatsRoutes(app: FastifyInstance) {
     const dayMs = 24 * 60 * 60 * 1000;
 
     // 近 10 个自然日
-    const daily = group(countsBy("%Y-%m-%d", now - 11 * dayMs));
+    const daily = group(await countsBy("YYYY-MM-DD", now - 11 * dayMs));
     const days: Array<{ date: string; weekday: string; counts: Record<string, number> }> = [];
     for (let i = 9; i >= 0; i -= 1) {
       const d = new Date(now + 8 * 60 * 60 * 1000 - i * dayMs);
@@ -54,7 +55,7 @@ export async function registerStatsRoutes(app: FastifyInstance) {
     }
 
     // 近 12 个自然月
-    const monthly = group(countsBy("%Y-%m", now - 370 * dayMs));
+    const monthly = group(await countsBy("YYYY-MM", now - 370 * dayMs));
     const months: Array<{ month: string; counts: Record<string, number> }> = [];
     const nowBj = new Date(now + 8 * 60 * 60 * 1000);
     for (let i = 11; i >= 0; i -= 1) {

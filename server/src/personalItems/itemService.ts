@@ -58,13 +58,13 @@ export async function listPersonalItems(
 
   if (effectiveScope === "shared") {
     const rows = kind
-      ? all<PersonalItemRow>(
+      ? await all<PersonalItemRow>(
           `SELECT * FROM personal_items
            WHERE scope = 'shared' AND kind = ?
            ORDER BY COALESCE(due_at, updated_at) ASC, updated_at DESC`,
           [kind],
         )
-      : all<PersonalItemRow>(
+      : await all<PersonalItemRow>(
           `SELECT * FROM personal_items
            WHERE scope = 'shared'
            ORDER BY kind ASC, COALESCE(due_at, updated_at) ASC, updated_at DESC`,
@@ -73,13 +73,13 @@ export async function listPersonalItems(
   }
 
   const rows = kind
-    ? all<PersonalItemRow>(
+    ? await all<PersonalItemRow>(
         `SELECT * FROM personal_items
          WHERE owner = ? AND kind = ? AND (scope = 'personal' OR scope IS NULL)
          ORDER BY COALESCE(due_at, updated_at) ASC, updated_at DESC`,
         [user.username, kind],
       )
-    : all<PersonalItemRow>(
+    : await all<PersonalItemRow>(
         `SELECT * FROM personal_items
          WHERE owner = ? AND (scope = 'personal' OR scope IS NULL)
          ORDER BY kind ASC, COALESCE(due_at, updated_at) ASC, updated_at DESC`,
@@ -92,7 +92,7 @@ export async function createPersonalItem(user: AuthUser, input: PersonalItemInpu
   const now = Date.now();
   const id = crypto.randomUUID();
   const scope = input.scope || "personal";
-  run(
+  await run(
     `INSERT INTO personal_items
       (id, owner, kind, scope, title, body_markdown, due_at, is_done, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -113,12 +113,12 @@ export async function createPersonalItem(user: AuthUser, input: PersonalItemInpu
 }
 
 export async function getPersonalItem(user: AuthUser, id: string) {
-  let row = get<PersonalItemRow>(
+  let row = await get<PersonalItemRow>(
     "SELECT * FROM personal_items WHERE owner = ? AND id = ?",
     [user.username, id],
   );
   if (!row) {
-    row = get<PersonalItemRow>(
+    row = await get<PersonalItemRow>(
       "SELECT * FROM personal_items WHERE scope = 'shared' AND id = ?",
       [id],
     );
@@ -138,7 +138,7 @@ export async function updatePersonalItem(user: AuthUser, id: string, patch: Pers
   };
 
   if (current.scope === "shared") {
-    run(
+    await run(
       `UPDATE personal_items
        SET title = ?, body_markdown = ?, due_at = ?, is_done = ?, updated_at = ?
        WHERE id = ? AND scope = 'shared'`,
@@ -152,7 +152,7 @@ export async function updatePersonalItem(user: AuthUser, id: string, patch: Pers
       ],
     );
   } else {
-    run(
+    await run(
       `UPDATE personal_items
        SET title = ?, body_markdown = ?, due_at = ?, is_done = ?, updated_at = ?
        WHERE owner = ? AND id = ?`,
@@ -174,9 +174,9 @@ export async function deletePersonalItem(user: AuthUser, id: string) {
   const current = await getPersonalItem(user, id);
   if (!current) return false;
   if (current.scope === "shared") {
-    run("DELETE FROM personal_items WHERE id = ? AND scope = 'shared'", [id]);
+    await run("DELETE FROM personal_items WHERE id = ? AND scope = 'shared'", [id]);
   } else {
-    run("DELETE FROM personal_items WHERE owner = ? AND id = ?", [user.username, id]);
+    await run("DELETE FROM personal_items WHERE owner = ? AND id = ?", [user.username, id]);
   }
   return true;
 }

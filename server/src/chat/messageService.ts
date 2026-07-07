@@ -72,7 +72,7 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
   const ts = Date.now();
 
   if (input.clientId) {
-    const existing = get<MessageRow>("SELECT * FROM messages WHERE sender = ? AND client_id = ?", [
+    const existing = await get<MessageRow>("SELECT * FROM messages WHERE sender = ? AND client_id = ?", [
       user.username,
       input.clientId,
     ]);
@@ -94,7 +94,7 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
     client_id: input.clientId ?? null,
   };
 
-  run(
+  await run(
     `INSERT INTO messages
       (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, ts, client_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -131,7 +131,7 @@ export async function createSystemMessage(channel: StoredChannel, text: string):
     ts: Date.now(),
     client_id: null,
   };
-  run(
+  await run(
     `INSERT INTO messages
       (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, ts, client_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -170,7 +170,7 @@ export async function createAiMessage(channel: StoredChannel, text: string, meta
     client_id: null,
   };
 
-  run(
+  await run(
     `INSERT INTO messages
       (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, ts, client_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -198,7 +198,7 @@ export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
   const limit = Math.min(Math.max(input.limit ?? 80, 1), 300);
 
   if (input.before) {
-    const rows = all<MessageRow>(
+    const rows = await all<MessageRow>(
       "SELECT * FROM messages WHERE channel = ? AND ts < ? ORDER BY ts DESC LIMIT ?",
       [storedChannel, input.before, limit],
     );
@@ -206,7 +206,7 @@ export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
   }
 
   if (input.since) {
-    const rows = all<MessageRow>(
+    const rows = await all<MessageRow>(
       "SELECT * FROM messages WHERE channel = ? AND ts > ? ORDER BY ts ASC LIMIT ?",
       [storedChannel, input.since, limit],
     );
@@ -215,18 +215,18 @@ export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
 
   if (input.around) {
     const half = Math.max(Math.floor(limit / 2), 1);
-    const before = all<MessageRow>(
+    const before = await all<MessageRow>(
       "SELECT * FROM messages WHERE channel = ? AND ts < ? ORDER BY ts DESC LIMIT ?",
       [storedChannel, input.around, half],
     );
-    const after = all<MessageRow>(
+    const after = await all<MessageRow>(
       "SELECT * FROM messages WHERE channel = ? AND ts > ? ORDER BY ts ASC LIMIT ?",
       [storedChannel, input.around, half],
     );
     return [...before.reverse(), ...after].map((row) => mapMessage(row, input.channel));
   }
 
-  const rows = all<MessageRow>(
+  const rows = await all<MessageRow>(
     "SELECT * FROM messages WHERE channel = ? ORDER BY ts DESC LIMIT ?",
     [storedChannel, limit],
   );
@@ -235,7 +235,7 @@ export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
 
 export async function searchMessages(user: AuthUser, channel: ClientChannel, query: string, limit = 50) {
   const storedChannel = toStoredChannel(channel, user.username);
-  const rows = all<MessageRow>(
+  const rows = await all<MessageRow>(
     "SELECT * FROM messages WHERE channel = ? AND text LIKE ? ORDER BY ts DESC LIMIT ?",
     [storedChannel, `%${query}%`, Math.min(limit, 100)],
   );
@@ -243,11 +243,11 @@ export async function searchMessages(user: AuthUser, channel: ClientChannel, que
 }
 
 export async function recallMessage(user: AuthUser, id: string) {
-  const existing = get<MessageRow>("SELECT * FROM messages WHERE id = ? AND sender = ?", [id, user.username]);
+  const existing = await get<MessageRow>("SELECT * FROM messages WHERE id = ? AND sender = ?", [id, user.username]);
   if (!existing) return null;
 
   const text = "你撤回了一条消息";
-  run(
+  await run(
     `UPDATE messages
      SET kind = 'system', type = 'text', text = ?, url = NULL, reply_json = NULL, meta_json = NULL
      WHERE id = ?`,
@@ -265,7 +265,7 @@ export async function recallMessage(user: AuthUser, id: string) {
 export async function upsertReadReceipt(user: AuthUser, channel: ClientChannel, ts: number) {
   const storedChannel = toStoredChannel(channel, user.username);
   const now = Date.now();
-  run(
+  await run(
     `INSERT INTO read_receipts (channel, username, ts, updated_at)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(channel, username) DO UPDATE SET ts = excluded.ts, updated_at = excluded.updated_at`,
@@ -275,6 +275,6 @@ export async function upsertReadReceipt(user: AuthUser, channel: ClientChannel, 
 
 export async function getReadReceipts(user: AuthUser, channel: ClientChannel) {
   const storedChannel = toStoredChannel(channel, user.username);
-  const rows = all<ReadReceiptRow>("SELECT * FROM read_receipts WHERE channel = ?", [storedChannel]);
+  const rows = await all<ReadReceiptRow>("SELECT * FROM read_receipts WHERE channel = ?", [storedChannel]);
   return Object.fromEntries(rows.map((row) => [row.username, row.ts]));
 }
