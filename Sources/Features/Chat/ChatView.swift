@@ -34,6 +34,7 @@ struct ChatView: View {
     @State private var recordingURL: URL?
     @State private var recordingStartDate: Date?
     @State private var showMicPermissionAlert = false
+    @State private var showAIChat = false
     @FocusState private var inputFocused: Bool
     private static let cancelDragThreshold: CGFloat = -70
     private static let composerButtonSize: CGFloat = 44
@@ -170,6 +171,9 @@ struct ChatView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("请在系统设置中允许访问麦克风，才能发送语音消息")
+        }
+        .navigationDestination(isPresented: $showAIChat) {
+            ChatView(channel: .ai)
         }
     }
 
@@ -395,7 +399,10 @@ struct ChatView: View {
                 recordingBar
             } else {
                 if channel == .couple {
-                    composerIcon("cat")    // 大橘互动入口后续可改成跳转 AI 频道
+                    composerIcon("cat") {
+                        Haptics.light()
+                        showAIChat = true
+                    }
                 }
                 messageBox
             }
@@ -517,8 +524,8 @@ struct ChatView: View {
         )
     }
 
-    private func composerIcon(_ name: String) -> some View {
-        Button { } label: {
+    private func composerIcon(_ name: String, action: @escaping () -> Void = {}) -> some View {
+        Button(action: action) {
             Image(systemName: name)
                 .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(DS.Palette.accent)
