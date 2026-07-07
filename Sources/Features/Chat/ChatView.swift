@@ -150,7 +150,15 @@ struct ChatView: View {
             .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
             .onAppear { scrollToBottom(proxy) }
             .onChange(of: messages.count) { scrollToBottom(proxy) }
-            .onChange(of: inputFocused) { scrollToBottom(proxy, animated: true) }
+            .onChange(of: inputFocused) {
+                // 延迟到键盘动画结束后再滚 — contentInset 还在变大时滚会被键盘盖住
+                let delay: UInt64 = 320_000_000
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(delay) / 1_000_000_000) {
+                    withAnimation(DS.Anim.message) {
+                        proxy.scrollTo("bottomAnchor", anchor: .bottom)
+                    }
+                }
+            }
         }
     }
 
