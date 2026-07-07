@@ -36,6 +36,7 @@ final class ChatStore: ObservableObject {
     private var socket: SocketIOClient?
     private var cacheSaveTask: Task<Void, Never>?
     private var restoringCache = false
+    private var backfillingChannels = Set<String>()
 
     private struct UploadResponse: Decodable {
         let url: String
@@ -336,8 +337,7 @@ final class ChatStore: ObservableObject {
             messagesByChannel: messagesByChannel.mapValues { messages in
                 Array(messages
                     .filter { !$0.pending }
-                    .sorted { $0.ts < $1.ts }
-                    .suffix(600))
+                    .sorted { $0.ts < $1.ts })
             },
             readStates: readStates,
             partner: partner,
@@ -371,8 +371,43 @@ final class ChatStore: ObservableObject {
                     self.replaceMessages(incoming, in: channel)
                 }
                 if channel == .couple { self.markRead(.couple) }
+                self.backfillAllHistory(channel)
             }
         }
+    }
+
+    private func backfillAllHistory(_ channel: ChatChannel) {
+        guard !backfillingChannels.contains(channel.rawValue) else { return }
+        backfillingChannels.insert(channel.rawValue)
+        fetchOlderHistoryPage(channel)
+    }
+
+    private func fetchOlderHistoryPage(_ channel: ChatChannel) {
+        guard let s = socket, connected, let first = messages(for: channel).first else {
+            backfillingChannels.remove(channel.rawValue)
+            return
+        }
+        s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": first.ts, "limit": 300])
+            .timingOut(after: 9) { [weak self] data in
+                guard let dict = data.first as? [String: Any],
+                      let list = dict["list"] as? [[String: Any]] else {
+                    Task { @MainActor in self?.backfillingChannels.remove(channel.rawValue) }
+                    return
+                }
+                let older = list.compactMap { ChatMessage(dict: $0) }
+                Task { @MainActor in
+                    guard let self else { return }
+                    guard !older.isEmpty else {
+                        self.backfillingChannels.remove(channel.rawValue)
+                        return
+                    }
+                    self.updateMessages(channel) { current in
+                        let known = Set(current.map(\.id))
+                        current.insert(contentsOf: older.filter { !known.contains($0.id) }, at: 0)
+                    }
+                    self.fetchOlderHistoryPage(channel)
+                }
+            }
     }
 
     func loadOlder(_ channel: ChatChannel = .couple) {
@@ -645,21 +680,47 @@ final class ChatStore: ObservableObject {
 
     // MARK: 搜索聊天记录（服务端 messages:search）
     func searchMessages(_ query: String, channel: ChatChannel) async -> [ChatMessage] {
-        guard let s = socket, connected, !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return [] }
+        let local = localSearchMessages(q, channel: channel)
+        guard let s = socket, connected else { return local }
+
         return await withCheckedContinuation { continuation in
             s.emitWithAck("messages:search", [
                 "channel": channel.rawValue,
-                "query": query,
+                "query": q,
                 "limit": 50,
             ]).timingOut(after: 9) { data in
                 guard let dict = data.first as? [String: Any],
                       let list = dict["list"] as? [[String: Any]] else {
-                    continuation.resume(returning: [])
+                    continuation.resume(returning: local)
                     return
                 }
-                continuation.resume(returning: list.compactMap { ChatMessage(dict: $0) })
+                let remote = list.compactMap { ChatMessage(dict: $0) }
+                continuation.resume(returning: Self.mergeSearchResults(remote, local))
             }
         }
+    }
+
+    private func localSearchMessages(_ query: String, channel: ChatChannel) -> [ChatMessage] {
+        messages(for: channel)
+            .filter {
+                $0.kind == "user"
+                    && ($0.text.localizedCaseInsensitiveContains(query)
+                        || ($0.replyPreview?.localizedCaseInsensitiveContains(query) ?? false))
+            }
+            .sorted { $0.ts > $1.ts }
+    }
+
+    nonisolated private static func mergeSearchResults(_ first: [ChatMessage], _ second: [ChatMessage]) -> [ChatMessage] {
+        var seen = Set<String>()
+        return (first + second)
+            .filter { message in
+                guard !seen.contains(message.id) else { return false }
+                seen.insert(message.id)
+                return true
+            }
+            .sorted { $0.ts > $1.ts }
     }
 
     // MARK: shared 键值（纪念日等两人共享状态）
