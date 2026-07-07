@@ -1,5 +1,7 @@
 // 一次性迁移：.data/couplechat.sqlite → PostgreSQL。
 // 幂等：全部 INSERT ... ON CONFLICT DO NOTHING，重复跑不会产生脏数据。
+// 流式分页读取（LIMIT/OFFSET），单批只处理少量行——目标机器可能只有几百 MB 内存，
+// 一次性 `.all()` 整表读进内存（几十万条消息）会被系统 OOM 杀掉。
 //
 // 用法（在 server/ 目录下）：
 //   DATABASE_URL=postgres://couplechat:xxx@localhost:5432/couplechat npx tsx scripts/migrate-sqlite-to-postgres.ts
@@ -16,53 +18,66 @@ const sqlitePath = process.env.SQLITE_PATH ?? path.resolve(process.cwd(), ".data
 interface TableSpec {
   name: string;
   columns: string[];
-  // BLOB 列名（需要保持 Buffer 原样传给 pg）
-  blobColumns?: string[];
+  // 单批读取+写入的行数；大表（messages/ai_episodes 带 embedding blob）用小批次控内存。
+  batchSize?: number;
 }
 
 const TABLES: TableSpec[] = [
   { name: "accounts", columns: ["username", "display_name", "password_hash", "avatar", "bark_key", "created_at", "updated_at"] },
-  { name: "messages", columns: ["id", "channel", "sender", "sender_name", "kind", "type", "text", "url", "reply_json", "meta_json", "ts", "client_id"] },
+  { name: "messages", columns: ["id", "channel", "sender", "sender_name", "kind", "type", "text", "url", "reply_json", "meta_json", "ts", "client_id"], batchSize: 200 },
   { name: "read_receipts", columns: ["channel", "username", "ts", "updated_at"] },
   { name: "shared_items", columns: ["key", "value_json", "updated_by", "updated_at"] },
   { name: "personal_items", columns: ["id", "owner", "kind", "scope", "title", "body_markdown", "due_at", "is_done", "created_at", "updated_at"] },
   { name: "uploads", columns: ["id", "owner", "path", "url", "mime_type", "size", "created_at"] },
-  { name: "ai_facts", columns: ["id", "subject", "category", "text", "importance", "status", "embedding", "created_at", "updated_at", "last_seen_at"], blobColumns: ["embedding"] },
-  { name: "ai_episodes", columns: ["id", "channel", "date", "title", "summary", "key_points_json", "mood", "conclusion", "keywords", "embedding", "created_at"], blobColumns: ["embedding"] },
+  { name: "ai_facts", columns: ["id", "subject", "category", "text", "importance", "status", "embedding", "created_at", "updated_at", "last_seen_at"], batchSize: 100 },
+  { name: "ai_episodes", columns: ["id", "channel", "date", "title", "summary", "key_points_json", "mood", "conclusion", "keywords", "embedding", "created_at"], batchSize: 100 },
   { name: "ai_docs", columns: ["key", "text", "updated_at"] },
 ];
 
-const BATCH = 500;
+const DEFAULT_BATCH = 500;
+
+function tableExists(sqlite: DatabaseSync, name: string): boolean {
+  const row = sqlite
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(name);
+  return Boolean(row);
+}
 
 async function migrateTable(sqlite: DatabaseSync, spec: TableSpec): Promise<number> {
-  let rows: Record<string, unknown>[];
-  try {
-    rows = sqlite.prepare(`SELECT ${spec.columns.map((c) => `"${c}"`).join(", ")} FROM "${spec.name}"`).all() as Record<string, unknown>[];
-  } catch (error) {
-    console.warn(`  跳过 ${spec.name}（源表不存在或读取失败）: ${error instanceof Error ? error.message : error}`);
+  if (!tableExists(sqlite, spec.name)) {
+    console.log(`  跳过 ${spec.name}（源表不存在）`);
     return 0;
   }
-  if (!rows.length) {
+
+  const total = (sqlite.prepare(`SELECT COUNT(*) AS c FROM "${spec.name}"`).get() as { c: number }).c;
+  if (!total) {
     console.log(`  ${spec.name}: 0 行`);
     return 0;
   }
 
+  const batchSize = spec.batchSize ?? DEFAULT_BATCH;
   const cols = spec.columns;
-  for (let offset = 0; offset < rows.length; offset += BATCH) {
-    const chunk = rows.slice(offset, offset + BATCH);
-    // 多行 VALUES 拼一条 INSERT，占位符由 db 层统一转 $n
-    const placeholders = chunk
-      .map((_, r) => `(${cols.map(() => "?").join(", ")})`)
-      .join(", ");
+  const colList = cols.map((c) => `"${c}"`).join(", ");
+  const selectStmt = sqlite.prepare(`SELECT ${colList} FROM "${spec.name}" LIMIT ? OFFSET ?`);
+  const placeholderRow = `(${cols.map(() => "?").join(", ")})`;
+
+  let migrated = 0;
+  for (let offset = 0; offset < total; offset += batchSize) {
+    // 每批独立从 SQLite 分页读取，用完立刻丢弃引用——不在内存里囤整张表。
+    const chunk = selectStmt.all(batchSize, offset) as Record<string, unknown>[];
+    if (!chunk.length) break;
+
+    const placeholders = chunk.map(() => placeholderRow).join(", ");
     const params = chunk.flatMap((row) => cols.map((c) => row[c] ?? null));
     await run(
       `INSERT INTO ${spec.name} (${cols.join(", ")}) VALUES ${placeholders} ON CONFLICT DO NOTHING`,
       params,
     );
-    process.stdout.write(`\r  ${spec.name}: ${Math.min(offset + BATCH, rows.length)}/${rows.length}`);
+    migrated += chunk.length;
+    process.stdout.write(`\r  ${spec.name}: ${Math.min(migrated, total)}/${total}`);
   }
   process.stdout.write("\n");
-  return rows.length;
+  return migrated;
 }
 
 async function main() {
