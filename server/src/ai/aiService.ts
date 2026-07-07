@@ -7,7 +7,8 @@ import { toStoredChannel, type StoredChannel } from "../types";
 import { createAiMessage } from "../chat/messageService";
 import { pushCoupleMessageToUnavailableRecipients } from "../push/pushService";
 import { config } from "../config";
-import { aiEnabled } from "./provider";
+import { aiEnabled, describeImage } from "./provider";
+import { GEN } from "./params";
 import { loadAccounts } from "./memoryStore";
 import { queueRespond, type ReplySink } from "./replyEngine";
 import { onCoupleUserMessage } from "./extractor";
@@ -77,7 +78,8 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
   if (message.kind !== "user") return;
   const storedChannel = toStoredChannel(message.channel, user.username);
   const isText = message.type === "text" && message.text.trim().length > 0;
-  if (!isText) return;
+  const isImage = message.type === "image" && Boolean(message.url);
+  if (!isText && !isImage) return;
   const sink = makeSink(io);
 
   // 滚动摘要由「收到真人消息」驱动（阈值不够会早退，近乎零成本）。
@@ -86,6 +88,7 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
   }
 
   if (storedChannel === "couple") {
+    if (!isText) return; // couple 频道暂不处理图片，只认文字召唤
     if (!aiEnabled()) return; // couple 频道未配置模型时不插话
     onCoupleUserMessage(); // 攒够 N 条触发一次事实提取
     if (isTriggered(message.text)) {
@@ -97,18 +100,31 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
     return;
   }
 
-  // ai 私聊：每条文本都答，不需要召唤。
+  // ai 私聊：每条文本 / 图片都答，不需要召唤。
   if (!aiEnabled()) {
     void (async () => {
       sink.typing(storedChannel, true);
       await new Promise((resolve) => setTimeout(resolve, 550));
-      await sink.emit(storedChannel, fallbackReply(message.text.trim()), true);
+      await sink.emit(storedChannel, fallbackReply(isText ? message.text.trim() : ""), true);
       sink.typing(storedChannel, false);
     })().catch(() => {});
     return;
   }
-  queueRespond(
-    { storedChannel, question: message.text.trim(), requesterName: user.name },
-    sink,
-  );
+
+  if (isText) {
+    queueRespond(
+      { storedChannel, question: message.text.trim(), requesterName: user.name },
+      sink,
+    );
+    return;
+  }
+
+  // 图片：先识图拿一段简短描述，再把描述当问题喂给正常的回复流程（没配置识图/识图失败也不卡住，走兜底措辞）。
+  void (async () => {
+    const description = message.url ? await describeImage(message.url, GEN.describeImage) : null;
+    const question = description
+      ? `[用户发来一张图片，内容大致是：${description}]`
+      : "[用户发来一张图片，你暂时看不清楚，自然地回应一下，不用提「看不清」这件事]";
+    queueRespond({ storedChannel, question, requesterName: user.name }, sink);
+  })().catch(() => {});
 }

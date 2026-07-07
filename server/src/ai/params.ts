@@ -26,6 +26,10 @@ export const GEN = {
   profileCards: { maxTokens: 1600, temperature: 0.4, timeoutMs: 90_000 },
   // 今日心情一句话。
   dailyMood: { maxTokens: 200, temperature: 0.9, timeoutMs: 20_000 },
+  // 图片识图：只需要一段简短描述，喂给后面的回复流程当上下文。
+  // MiMo 是推理模型，大部分 token 会先花在看不见的 reasoning_content 上，
+  // maxTokens 给太小会在思考阶段就被截断，content 永远是空的。
+  describeImage: { maxTokens: 1500, temperature: 0.4, timeoutMs: 40_000 },
 } satisfies Record<string, GenProfile>;
 
 export const MEMORY = {
