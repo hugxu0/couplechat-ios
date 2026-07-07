@@ -1,0 +1,166 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Build configuration'
+        type: choice
+        options: [debug, release]
+        default: debug
+      export_method:
+        description: 'Export method'
+        type: choice
+        options: [development, ad-hoc, app-store]
+        default: ad-hoc
+
+env:
+  SCHEME: CoupleChat
+  PROJECT: CoupleChat.xcodeproj
+  ARCHIVE_PATH: ${{ github.workspace }}/build/CoupleChat.xcarchive
+  EXPORT_DIR: ${{ github.workspace }}/build/IPA
+
+jobs:
+  build:
+    name: Build & Export IPA
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.app
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # ============================================================
+      #  WSL / Windows 开发环境常见问题：URLSession / SocketIO
+      #  在 macOS 构建时会触发 App 内网络请求，证书不受信任。
+      #  将这些域名加入 ATS 例外可避免构建时 ITMS-90338 等 warning。
+      # ============================================================
+      - name: Patch ATS exceptions
+        run: |
+          PROJ="${{ runner.temp }}/patch_ats.py"
+          cat > "$PROJ" << 'PYEOF'
+          import plistlib, sys, pathlib
+
+          plist_path = pathlib.Path("Sources/App/Info.plist")
+          if not plist_path.exists():
+              plist = {}
+          else:
+              with open(plist_path, "rb") as f:
+                  plist = plistlib.load(f)
+
+          ats = plist.setdefault("NSAppTransportSecurity", {})
+          domains = ats.setdefault("NSExceptionDomains", {})
+
+          for host in ["hoo66.top", "localhost"]:
+              domains[host] = {
+                  "NSExceptionAllowsInsecureHTTPLoads": True,
+                  "NSIncludesSubdomains": True,
+                  "NSTemporaryExceptionAllowsInsecureHTTPLoads": True,
+              }
+
+          plist_path.parent.mkdir(parents=True, exist_ok=True)
+          with open(plist_path, "wb") as f:
+              plistlib.dump(plist, f)
+          print("✅ ATS exceptions patched for hoo66.top, localhost")
+          PYEOF
+          python3 "$PROJ"
+
+      # ============================================================
+      #  自动签名（推荐）
+      #
+      #  在仓库 Settings → Secrets and variables → Actions 里设置：
+      #    APPLE_TEAM_ID        你的 Team ID（developer.apple.com → Membership）
+      #    APPLE_ID             你的 Apple ID 邮箱
+      #    APPLE_APP_PASSWORD   App 专用密码（appleid.apple.com 生成）
+      #
+      #  如果没有设置以上 secret，构建会跳过签名（只能生成 .app 不能出 IPA）。
+      #  要生成可安装的 IPA，必须配置这三个 secret。
+      # ============================================================
+      - name: Setup code signing (automatic)
+        id: sign
+        run: |
+          if [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_PASSWORD" ]; then
+            echo "SIGNING_STYLE=automatic" >> "$GITHUB_OUTPUT"
+            echo "AUTH_FLAG=-allowProvisioningUpdates -authenticationKeyPath /dev/null -authenticationKeyID \"\" -authenticationKeyIssuerID \"\"" >> "$GITHUB_OUTPUT"
+            echo "TEAM_FLAG=DEVELOPMENT_TEAM=$APPLE_TEAM_ID" >> "$GITHUB_OUTPUT"
+
+            # 写入临时 keychain 供 xcodebuild 鉴权
+            security unlock-keychain -p "" login.keychain 2>/dev/null || true
+            security default-keychain -s login.keychain
+          else
+            echo "⚠️ 未配置 APPLE_TEAM_ID / APPLE_ID / APPLE_APP_PASSWORD → 跳过签名，只生成 .app"
+            echo "SIGNING_STYLE=manual" >> "$GITHUB_OUTPUT"
+            echo "AUTH_FLAG=" >> "$GITHUB_OUTPUT"
+            echo "TEAM_FLAG=CODE_SIGNING_ALLOWED=NO" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+
+      - name: Resolve Swift package dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT" \
+            -scheme "$SCHEME"
+
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration ${{ inputs.configuration == 'release' && 'Release' || 'Debug' }} \
+            -archivePath "$ARCHIVE_PATH" \
+            -destination 'generic/platform=iOS' \
+            ${{ steps.sign.outputs.TEAM_FLAG }} \
+            ${{ steps.sign.outputs.AUTH_FLAG }} \
+            | tee xcodebuild_archive.log
+
+      - name: Generate ExportOptions.plist
+        if: steps.sign.outputs.SIGNING_STYLE == 'automatic'
+        run: |
+          /usr/libexec/PlistBuddy -c "Add method string ${{ inputs.export_method }}" ExportOptions.plist 2>/dev/null || \
+          plutil -create xml1 ExportOptions.plist && /usr/libexec/PlistBuddy -c "Add method string ${{ inputs.export_method }}" ExportOptions.plist
+          /usr/libexec/PlistBuddy -c "Add teamID string $APPLE_TEAM_ID" ExportOptions.plist
+          /usr/libexec/PlistBuddy -c "Add signingStyle string automatic" ExportOptions.plist
+          /usr/libexec/PlistBuddy -c "Add compileBitcode bool false" ExportOptions.plist
+          /usr/libexec/PlistBuddy -c "Add manageAppVersionAndBuildNumber bool false" ExportOptions.plist
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Export IPA
+        if: steps.sign.outputs.SIGNING_STYLE == 'automatic'
+        run: |
+          mkdir -p "$EXPORT_DIR"
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_DIR" \
+            -exportOptionsPlist ExportOptions.plist \
+            ${{ steps.sign.outputs.AUTH_FLAG }} \
+            | tee xcodebuild_export.log
+
+      - name: Upload IPA artifact
+        if: steps.sign.outputs.SIGNING_STYLE == 'automatic'
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoupleChat-${{ inputs.configuration }}-${{ github.run_number }}
+          path: ${{ env.EXPORT_DIR }}/*.ipa
+          retention-days: 30
+
+      - name: Upload .app artifact (unsigned)
+        if: steps.sign.outputs.SIGNING_STYLE != 'automatic'
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoupleChat-unsigned-${{ github.run_number }}
+          path: ${{ env.ARCHIVE_PATH }}/Products/Applications/CoupleChat.app
+          retention-days: 7

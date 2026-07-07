@@ -109,22 +109,13 @@ struct ChatView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button {
-                        showSearch = true
-                    } label: {
-                        Label("搜索聊天记录", systemImage: "magnifyingglass")
-                    }
-                    Button {
-                        showMedia = true
-                    } label: {
-                        Label("媒体内容", systemImage: "photo.on.rectangle")
-                    }
-                    Button {
-                        showWallpaperPicker = true
-                    } label: {
-                        Label("更换壁纸", systemImage: "photo.on.rectangle.angled")
-                    }
+                NavigationLink {
+                    ChatDetailSettingsView(
+                        channel: channel,
+                        partnerName: title,
+                        partnerAvatar: peerAvatar,
+                        partnerOnline: store.partnerOnline
+                    )
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 16, weight: .semibold))
@@ -1585,7 +1576,7 @@ private enum MediaSaver {
 
 // MARK: - 搜索聊天记录
 
-private struct ChatSearchSheet: View {
+struct ChatSearchSheet: View {
     let channel: ChatChannel
     @Binding var scrollToMessageId: String?
 
@@ -1720,7 +1711,7 @@ private struct ChatSearchSheet: View {
 
 // MARK: - 媒体内容浏览
 
-private struct MediaGallerySheet: View {
+struct MediaGallerySheet: View {
     let channel: ChatChannel
 
     @EnvironmentObject private var store: ChatStore
@@ -1890,7 +1881,7 @@ private struct MediaGallerySheet: View {
 
 // MARK: - 更换壁纸
 
-private struct WallpaperPickerSheet: View {
+struct WallpaperPickerSheet: View {
     let channel: ChatChannel
 
     @EnvironmentObject private var theme: ThemeManager

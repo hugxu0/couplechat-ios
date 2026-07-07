@@ -587,6 +587,27 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: 头像上传
+
+    /// 上传用户头像。接入真实 API 后替换函数体。
+    /// 当前返回 true 模拟上传成功，方便前端先验证 UI 交互流。
+    func uploadAvatar(_ image: UIImage) async -> Bool {
+        // TODO: 实现真实上传 —— 将 UIImage 转为 JPEG/PNG Data，
+        // 通过 multipart/form-data 发送到服务端，token 认证方式与 uploadMedia 相同。
+        //
+        // 示例骨架：
+        // guard let data = image.jpegData(compressionQuality: 0.85) else { return false }
+        // let boundary = "Boundary-\(UUID().uuidString)"
+        // var req = URLRequest(url: Self.baseURL.appendingPathComponent("api/avatar"))
+        // req.httpMethod = "POST"
+        // req.setValue("Bearer \(session?.token ?? "")", forHTTPHeaderField: "Authorization")
+        // req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        // req.httpBody = multipartBody(data: data, mimeType: "image/jpeg", boundary: boundary)
+        // let (_, resp) = try await URLSession.shared.data(for: req)
+        // return (resp as? HTTPURLResponse)?.statusCode == 200
+        return true
+    }
+
     private func uploadMedia(data: Data, mimeType: String) async throws -> UploadResponse {
         guard let token = session?.token else {
             throw NSError(domain: "upload", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])

@@ -102,23 +102,25 @@ struct ChatHomeView: View {
         VStack(spacing: 0) {
             coupleHeader
                 .padding(.top, 14)
-                .padding(.bottom, 10)
+                .padding(.bottom, 24)
 
-            Divider().opacity(0.38)
+            Divider().opacity(0.28)
 
             statusStrip
-                .padding(.vertical, 10)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
 
-            Divider().opacity(0.38)
+            Divider().opacity(0.28)
 
             actionStrip
-                .padding(.vertical, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
 
-            Divider().opacity(0.38)
+            Divider().opacity(0.28)
 
             latestMessages
-                .padding(.top, 10)
-                .padding(.bottom, 10)
+                .padding(.top, 24)
+                .padding(.bottom, 12)
 
             enterChatButton
                 .padding(.bottom, 16)
@@ -149,14 +151,22 @@ struct ChatHomeView: View {
             VStack(spacing: 8) {
                 HStack(spacing: 9) {
                     Rectangle()
-                        .fill(DS.Palette.pink.opacity(0.38))
-                        .frame(width: 28, height: 2)
+                        .fill(Color.clear)
+                        .frame(width: 28, height: 1.5)
+                        .overlay(
+                            Rectangle()
+                                .stroke(DS.Palette.pink.opacity(0.22), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                        )
                     Text("💗")
                         .font(.system(size: 25))
-                        .shadow(color: DS.Palette.pink.opacity(0.24), radius: 6, y: 2)
+                        .shadow(color: DS.Palette.pink.opacity(0.18), radius: 4, y: 1)
                     Rectangle()
-                        .fill(DS.Palette.pink.opacity(0.38))
-                        .frame(width: 28, height: 2)
+                        .fill(Color.clear)
+                        .frame(width: 28, height: 1.5)
+                        .overlay(
+                            Rectangle()
+                                .stroke(DS.Palette.pink.opacity(0.22), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                        )
                 }
                 Text(store.partnerOnline ? "都在线" : "等 TA 出现")
                     .font(.system(size: 11, weight: .semibold))
@@ -243,16 +253,20 @@ struct ChatHomeView: View {
 
             Text(status.title)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(selected && !statusEditMode ? .white : status.color)
+                .foregroundStyle(selected && !statusEditMode ? status.color : status.color)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
                 .background(
                     Capsule()
                         .fill(
                             selected && !statusEditMode
-                                ? AnyShapeStyle(status.gradient)
+                                ? AnyShapeStyle(status.color.opacity(0.18))
                                 : AnyShapeStyle(DS.Palette.innerSurface)
                         )
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(selected && !statusEditMode ? status.color.opacity(0.28) : Color.clear, lineWidth: 1)
                 )
         }
         .contentShape(Capsule())
@@ -354,8 +368,8 @@ struct ChatHomeView: View {
                 .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundStyle(mine ? DS.Palette.textPrimary : DS.Palette.textPrimary)
                 .lineLimit(2)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 9)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
                 .background(mine ? DS.Palette.pink.opacity(0.14) : DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
 
             if mine {
@@ -389,13 +403,13 @@ struct ChatHomeView: View {
             .padding(.vertical, 13)
             .background(
                 LinearGradient(
-                    colors: [DS.Palette.pink.opacity(0.92), theme.accent.colorAlt],
+                    colors: [Color(red: 0.98, green: 0.55, blue: 0.62), Color(red: 0.99, green: 0.72, blue: 0.52)],
                     startPoint: .leading,
                     endPoint: .trailing
                 ),
                 in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
             )
-            .shadow(color: DS.Palette.pink.opacity(0.22), radius: 10, y: 5)
+            .shadow(color: Color(red: 0.98, green: 0.55, blue: 0.62).opacity(0.18), radius: 10, y: 5)
         }
         .buttonStyle(PressableStyle())
     }
@@ -557,14 +571,14 @@ struct ChatHomeView: View {
     ]
 
     private static let statusPalettes: [StatusPalette] = [
-        .init(color: DS.Palette.pink,
-              gradient: LinearGradient(colors: [Color(red: 1.00, green: 0.44, blue: 0.62), Color(red: 1.00, green: 0.67, blue: 0.76)], startPoint: .leading, endPoint: .trailing)),
-        .init(color: Color(red: 0.82, green: 0.34, blue: 0.58),
-              gradient: LinearGradient(colors: [Color(red: 0.96, green: 0.52, blue: 0.76), Color(red: 1.00, green: 0.76, blue: 0.86)], startPoint: .leading, endPoint: .trailing)),
-        .init(color: Color(red: 0.34, green: 0.54, blue: 0.95),
-              gradient: LinearGradient(colors: [Color(red: 0.35, green: 0.58, blue: 1.00), Color(red: 0.54, green: 0.76, blue: 1.00)], startPoint: .leading, endPoint: .trailing)),
-        .init(color: Color(red: 0.82, green: 0.54, blue: 0.18),
-              gradient: LinearGradient(colors: [Color(red: 0.95, green: 0.63, blue: 0.22), Color(red: 1.00, green: 0.78, blue: 0.44)], startPoint: .leading, endPoint: .trailing)),
+        .init(color: Color(red: 0.78, green: 0.28, blue: 0.46),
+              gradient: LinearGradient(colors: [Color(red: 1.00, green: 0.55, blue: 0.68), Color(red: 1.00, green: 0.74, blue: 0.82)], startPoint: .leading, endPoint: .trailing)),
+        .init(color: Color(red: 0.72, green: 0.30, blue: 0.48),
+              gradient: LinearGradient(colors: [Color(red: 0.96, green: 0.56, blue: 0.78), Color(red: 1.00, green: 0.80, blue: 0.90)], startPoint: .leading, endPoint: .trailing)),
+        .init(color: Color(red: 0.38, green: 0.56, blue: 0.82),
+              gradient: LinearGradient(colors: [Color(red: 0.52, green: 0.68, blue: 0.95), Color(red: 0.72, green: 0.84, blue: 1.00)], startPoint: .leading, endPoint: .trailing)),
+        .init(color: Color(red: 0.82, green: 0.54, blue: 0.26),
+              gradient: LinearGradient(colors: [Color(red: 0.98, green: 0.72, blue: 0.42), Color(red: 1.00, green: 0.84, blue: 0.60)], startPoint: .leading, endPoint: .trailing)),
     ]
 
     private static func randomNoteText() -> String {
