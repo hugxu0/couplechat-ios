@@ -17,6 +17,7 @@ struct ChatView: View {
     @State private var mediaBusy = false
     @State private var showSearch = false
     @State private var showWallpaperPicker = false
+    @State private var keyboardHeight: CGFloat = 0
     @FocusState private var inputFocused: Bool
 
     init(channel: ChatChannel = .couple) {
@@ -134,7 +135,7 @@ struct ChatView: View {
                         }
                         .id(msg.id)
                         .onAppear {
-                            if index == 0 { store.loadOlder(channel) } // 滚到最早一条 → 翻更早历史
+                            if index == 0 { store.loadOlder(channel) }
                         }
                     }
                 }
@@ -143,19 +144,29 @@ struct ChatView: View {
             }
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
-            .defaultScrollAnchor(.bottom)
-            // 点消息区空白处收起键盘（simultaneous 不干扰滚动手势）
             .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
-            .onChange(of: messages) {
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { note in
+                let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
+                let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+                keyboardHeight = frame.height
                 guard let last = messages.last else { return }
-                withAnimation(DS.Anim.message) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    withAnimation(.easeOut(duration: duration)) {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
+                let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+                keyboardHeight = 0
+                guard let last = messages.last else { return }
+                withAnimation(.easeOut(duration: duration)) {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
-            // 键盘弹出时跟着滚到底，最新消息不被键盘挡住
-            .onChange(of: inputFocused) {
-                guard inputFocused, let last = messages.last else { return }
-                withAnimation(DS.Anim.ease) {
+            .onChange(of: messages) {
+                guard let last = messages.last else { return }
+                withAnimation(DS.Anim.message) {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
