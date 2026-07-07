@@ -56,7 +56,7 @@ struct RemindersView: View {
             }
         }
         .padding(4)
-        .background(Color.white.opacity(0.6))
+        .background(DS.Palette.innerSurface)
         .clipShape(Capsule())
     }
     @Namespace private var segNS
@@ -125,7 +125,7 @@ struct RemindersView: View {
         }
         .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.92))
+        .background(DS.Palette.bubbleOther)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
         .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
     }

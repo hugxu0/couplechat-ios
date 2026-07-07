@@ -37,7 +37,7 @@ struct LoginView: View {
                             Text(acc.avatar ?? AccountPresentation.avatar(for: acc.username))
                                 .font(.system(size: 36))
                                 .frame(width: 72, height: 72)
-                                .background(Color.white.opacity(0.9))
+                                .background(DS.Palette.bubbleOther)
                                 .clipShape(Circle())
                                 .overlay {
                                     Circle().strokeBorder(
@@ -60,7 +60,7 @@ struct LoginView: View {
                     .font(.system(size: 16))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                    .background(Color.white.opacity(0.9))
+                    .background(DS.Palette.bubbleOther)
                     .clipShape(Capsule())
                     .onSubmit(submit)
 

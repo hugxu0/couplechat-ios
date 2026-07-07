@@ -45,6 +45,39 @@ export interface SharedItemRow {
   updated_at: number;
 }
 
+export interface AiFactRow {
+  id: string;
+  subject: string;
+  category: string;
+  text: string;
+  importance: number;
+  status: string;
+  embedding: Uint8Array | null;
+  created_at: number;
+  updated_at: number;
+  last_seen_at: number;
+}
+
+export interface AiEpisodeRow {
+  id: string;
+  channel: string;
+  date: string;
+  title: string;
+  summary: string;
+  key_points_json: string | null;
+  mood: string | null;
+  conclusion: string | null;
+  keywords: string | null;
+  embedding: Uint8Array | null;
+  created_at: number;
+}
+
+export interface AiDocRow {
+  key: string;
+  text: string;
+  updated_at: number;
+}
+
 export interface UploadRow {
   id: string;
   owner: string;
@@ -175,6 +208,48 @@ function migrate() {
       mime_type TEXT NOT NULL,
       size INTEGER NOT NULL,
       created_at INTEGER NOT NULL
+    );
+
+    -- ── AI 记忆系统 ──────────────────────────────────────────────
+    -- 长期事实库：一行 = 一条稳定事实，随行携带归一化 embedding，
+    -- 问答时按话题向量召回。status: fresh（白天新提取）→ active（夜间收口转正）。
+    CREATE TABLE IF NOT EXISTS ai_facts (
+      id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      category TEXT NOT NULL,
+      text TEXT NOT NULL,
+      importance INTEGER NOT NULL DEFAULT 3,
+      status TEXT NOT NULL DEFAULT 'fresh',
+      embedding BLOB,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ai_facts_status_idx ON ai_facts(status);
+
+    -- 事件卡片：每天把聊天按话题切成卡，独立向量化供语义召回
+    -- （取代旧后端的 knowledge_cards + chunk_embeddings 双索引）。
+    CREATE TABLE IF NOT EXISTS ai_episodes (
+      id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
+      date TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      key_points_json TEXT,
+      mood TEXT,
+      conclusion TEXT,
+      keywords TEXT,
+      embedding BLOB,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ai_episodes_channel_date_idx ON ai_episodes(channel, date);
+
+    -- AI 文档 KV：人物卡/关系卡/短期记忆/每日日记/心情/滚动摘要/任务完成标记，
+    -- 全部走这一张表（取代旧后端的 markdown 文件 + daily_cache 混用）。
+    CREATE TABLE IF NOT EXISTS ai_docs (
+      key TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
     );
   `);
 }

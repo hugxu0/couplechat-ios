@@ -29,6 +29,8 @@ final class AppState: ObservableObject {
 struct RootTabView: View {
     @State private var tab: MainTab = .chat
     @StateObject private var app = AppState()
+    // 订阅主题变化：主题色一改，标签栏和全部子页立即重绘
+    @EnvironmentObject private var theme: ThemeManager
 
     var body: some View {
         ZStack(alignment: .bottom) {

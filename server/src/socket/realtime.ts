@@ -3,7 +3,6 @@ import { z } from "zod";
 import { verifyToken } from "../auth/token";
 import type { AuthUser, ClientChannel } from "../types";
 import {
-  createAiMessage,
   createMessage,
   fetchMessages,
   getReadReceipts,
@@ -11,7 +10,7 @@ import {
   searchMessages,
   upsertReadReceipt,
 } from "../chat/messageService";
-import { generateAiReply } from "../ai/aiService";
+import { handleUserMessage } from "../ai/aiService";
 import { getSharedState, setSharedItem } from "../shared/sharedService";
 import {
   broadcastPresence,
@@ -69,10 +68,6 @@ function userFrom(socket: Socket): AuthUser {
 
 function roomFor(channel: ClientChannel, user: AuthUser) {
   return channel === "ai" ? `user:${user.username}` : "channel:couple";
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function safeAck(fn: () => Promise<unknown>, ack?: Ack) {
@@ -145,16 +140,9 @@ export function registerRealtime(io: Server) {
 
         if (input.channel === "couple") {
           void pushCoupleMessageToUnavailableRecipients(message);
-        } else if (input.channel === "ai") {
-          void (async () => {
-            io.to(roomFor("ai", user)).emit("ai:typing", true);
-            await wait(550);
-            const replyText = await generateAiReply(user, message);
-            const reply = await createAiMessage(user, replyText);
-            io.to(roomFor("ai", user)).emit("ai:typing", false);
-            io.to(roomFor("ai", user)).emit("message:new", reply);
-          })();
         }
+        // AI 流水线（couple 召唤应答 / ai 私聊应答 / 记忆提取 / 滚动摘要）
+        handleUserMessage(io, user, message);
 
         return { ok: true, id: message.id };
       }, ack),

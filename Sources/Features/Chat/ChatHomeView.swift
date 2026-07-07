@@ -119,7 +119,7 @@ struct ChatHomeView: View {
                 Text("🐱")
                     .font(.system(size: 34))
                     .frame(width: 58, height: 58)
-                    .background(Color.white.opacity(0.9))
+                    .background(DS.Palette.bubbleOther)
                     .clipShape(Circle())
 
                 VStack(alignment: .leading, spacing: 5) {
@@ -147,7 +147,7 @@ struct ChatHomeView: View {
             }
             .padding(DS.Spacing.card)
             .frame(maxWidth: .infinity)
-            .background(Color.white.opacity(DS.Surface.cardOpacity))
+            .background(DS.Palette.cardSurface)
             .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
             .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
         }
@@ -167,7 +167,7 @@ struct ChatHomeView: View {
             Text(emoji)
                 .font(.system(size: 44))
                 .frame(width: 92, height: 92)
-                .background(Color.white.opacity(0.8))
+                .background(DS.Palette.innerSurface)
                 .clipShape(Circle())
             Text(name)
                 .font(.system(size: 20, weight: .bold))
@@ -184,7 +184,7 @@ struct ChatHomeView: View {
                 .foregroundStyle(color)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 9)
-                .background(Color.white.opacity(0.85))
+                .background(DS.Palette.innerSurface)
                 .clipShape(Capsule())
         }
         .buttonStyle(PressableStyle())
@@ -205,7 +205,7 @@ struct ChatHomeView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .background(Color.white.opacity(0.85))
+            .background(DS.Palette.innerSurface)
             .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
         }
         .buttonStyle(PressableStyle())

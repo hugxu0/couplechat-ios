@@ -60,7 +60,7 @@ struct PetView: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
-                .background(Color.white.opacity(0.7))
+                .background(DS.Palette.innerSurface)
                 .clipShape(Capsule())
 
                 Label("亲密 239", systemImage: "heart.fill")
@@ -127,7 +127,7 @@ struct PetView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
-            .background(Color.white.opacity(0.85))
+            .background(DS.Palette.innerSurface)
             .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
         }
         .buttonStyle(PressableStyle())

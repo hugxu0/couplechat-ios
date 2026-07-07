@@ -7,6 +7,7 @@ import Fastify from "fastify";
 import { config } from "./config";
 import { registerAuthRoutes } from "./auth/routes";
 import { registerUploadRoutes } from "./upload/routes";
+import { registerStatsRoutes } from "./stats/routes";
 
 export async function buildApp() {
   fs.mkdirSync(config.uploadDir, { recursive: true });
@@ -33,6 +34,7 @@ export async function buildApp() {
 
   await registerAuthRoutes(app);
   await registerUploadRoutes(app);
+  await registerStatsRoutes(app);
 
   return app;
 }

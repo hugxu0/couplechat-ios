@@ -30,6 +30,12 @@ export async function registerAuthRoutes(app: FastifyInstance) {
     };
   });
 
+  // 客户端用来核实 token 是否仍有效（socket 报 unauthorized 时的二次确认）。
+  app.get("/api/me", { preHandler: requireAuth }, async (request) => ({
+    username: request.user!.username,
+    name: request.user!.name,
+  }));
+
   app.post("/api/me/push/bark", { preHandler: requireAuth }, async (request, reply) => {
     const parsed = barkBody.safeParse(request.body);
     if (!parsed.success || !request.user) return reply.code(400).send({ error: "invalid_request" });

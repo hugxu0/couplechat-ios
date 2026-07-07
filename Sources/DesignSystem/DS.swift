@@ -1,9 +1,10 @@
 import SwiftUI
+import UIKit
 
 // =============================================================
 // 设计系统（Design Tokens）
 // 全 App 的圆角、颜色、透明度、间距、动画曲线都只从这里取值。
-// 想整体换风格（比如以后上液态玻璃、改圆角大小），只改这个文件。
+// 主题色跟随 ThemeManager；明暗色用 UIColor 动态提供者自动适配深色模式。
 // =============================================================
 
 enum DS {
@@ -24,41 +25,74 @@ enum DS {
 
     // MARK: - 颜色
     enum Palette {
-        /// 主题色：橙（自己的气泡、强调按钮）
-        static let accent = Color(red: 1.00, green: 0.45, blue: 0.20)
-        /// 主题渐变（进入聊天按钮等）
-        static let accentGradient = LinearGradient(
-            colors: [Color(red: 1.00, green: 0.45, blue: 0.20), Color(red: 1.00, green: 0.30, blue: 0.30)],
-            startPoint: .leading, endPoint: .trailing)
+        /// 主题色（跟随「我的 → 外观」选择）
+        static var accent: Color { ThemeManager.shared.accent.color }
+        /// 主题渐变
+        static var accentGradient: LinearGradient {
+            LinearGradient(
+                colors: [ThemeManager.shared.accent.color, ThemeManager.shared.accent.colorAlt],
+                startPoint: .leading, endPoint: .trailing)
+        }
+
+        /// 明暗自适应颜色的便捷构造
+        private static func adaptive(light: UIColor, dark: UIColor) -> Color {
+            Color(UIColor { $0.userInterfaceStyle == .dark ? dark : light })
+        }
+
         /// 对方气泡底色
-        static let bubbleOther = Color.white
-        /// 页面背景的柔和多彩渐变（对应现在网页版那个粉紫黄的底）
-        static let bgGradient = LinearGradient(
-            stops: [
-                .init(color: Color(red: 1.00, green: 0.93, blue: 0.93), location: 0.0),
-                .init(color: Color(red: 0.95, green: 0.91, blue: 0.98), location: 0.35),
-                .init(color: Color(red: 1.00, green: 0.97, blue: 0.88), location: 0.7),
-                .init(color: Color(red: 0.93, green: 0.95, blue: 1.00), location: 1.0),
-            ],
-            startPoint: .topLeading, endPoint: .bottomTrailing)
+        static let bubbleOther = adaptive(
+            light: .white,
+            dark: UIColor(white: 0.16, alpha: 1))
+        /// 页面背景的柔和多彩渐变（深色模式换成深夜色）
+        static var bgGradient: LinearGradient {
+            LinearGradient(
+                stops: [
+                    .init(color: adaptive(light: UIColor(red: 1.00, green: 0.93, blue: 0.93, alpha: 1),
+                                          dark: UIColor(red: 0.09, green: 0.08, blue: 0.12, alpha: 1)), location: 0.0),
+                    .init(color: adaptive(light: UIColor(red: 0.95, green: 0.91, blue: 0.98, alpha: 1),
+                                          dark: UIColor(red: 0.11, green: 0.09, blue: 0.16, alpha: 1)), location: 0.35),
+                    .init(color: adaptive(light: UIColor(red: 1.00, green: 0.97, blue: 0.88, alpha: 1),
+                                          dark: UIColor(red: 0.10, green: 0.10, blue: 0.13, alpha: 1)), location: 0.7),
+                    .init(color: adaptive(light: UIColor(red: 0.93, green: 0.95, blue: 1.00, alpha: 1),
+                                          dark: UIColor(red: 0.07, green: 0.09, blue: 0.14, alpha: 1)), location: 1.0),
+                ],
+                startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
         /// 主要文字
-        static let textPrimary = Color(red: 0.20, green: 0.16, blue: 0.15)
+        static let textPrimary = adaptive(
+            light: UIColor(red: 0.20, green: 0.16, blue: 0.15, alpha: 1),
+            dark: UIColor(white: 0.93, alpha: 1))
         /// 次要文字（时间戳、副标题）
-        static let textSecondary = Color(red: 0.55, green: 0.50, blue: 0.48)
+        static let textSecondary = adaptive(
+            light: UIColor(red: 0.55, green: 0.50, blue: 0.48, alpha: 1),
+            dark: UIColor(white: 0.62, alpha: 1))
+        /// 卡片表面（白/深灰 半透明）
+        static let cardSurface = adaptive(
+            light: UIColor(white: 1, alpha: 0.72),
+            dark: UIColor(white: 0.13, alpha: 0.78))
+        /// 卡片内的次级表面（按钮底、图表槽）
+        static let innerSurface = adaptive(
+            light: UIColor(white: 1, alpha: 0.65),
+            dark: UIColor(white: 0.22, alpha: 0.6))
+        /// 悬浮控件底（标签栏、输入栏的非玻璃回退）
+        static let floatSurface = adaptive(
+            light: UIColor(white: 1, alpha: 0.80),
+            dark: UIColor(white: 0.14, alpha: 0.86))
         /// 粉色点缀（心形、女生侧标签）
         static let pink = Color(red: 0.98, green: 0.35, blue: 0.55)
         /// 蓝色点缀（男生侧统计）
         static let blue = Color(red: 0.30, green: 0.55, blue: 0.95)
         /// 成功 / 上升趋势
         static let green = Color(red: 0.15, green: 0.68, blue: 0.38)
+
+        /// 成员专属色：小旭蓝、小偲粉（统计图/图例用）
+        static func member(_ username: String) -> Color {
+            username == "xu" ? blue : pink
+        }
     }
 
-    // MARK: - 表面材质（卡片底色 = 白 + 透明度，后期换玻璃只改这里）
+    // MARK: - 表面材质
     enum Surface {
-        /// 卡片背景透明度
-        static let cardOpacity: Double = 0.72
-        /// 标签栏背景透明度
-        static let tabBarOpacity: Double = 0.80
         /// 卡片阴影
         static let shadow = Color.black.opacity(0.06)
         static let shadowRadius: CGFloat = 14
@@ -91,12 +125,12 @@ enum DS {
 // 通用修饰符：卡片 / 按压回弹
 // =============================================================
 
-/// 统一卡片样式：白色半透明底 + 大圆角 + 轻阴影
+/// 统一卡片样式：半透明底 + 大圆角 + 轻阴影（深色模式自动换深底）
 struct CardStyle: ViewModifier {
     var radius: CGFloat = DS.Radius.card
     func body(content: Content) -> some View {
         content
-            .background(Color.white.opacity(DS.Surface.cardOpacity))
+            .background(DS.Palette.cardSurface)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
     }
@@ -117,14 +151,14 @@ extension View {
     }
 
     /// 悬浮控制层的统一材质：iOS 26 用系统液态玻璃（真折射、感知背后内容），
-    /// 老系统退回白色半透明。标签栏、输入栏等「浮在内容上的控件」都用这个。
+    /// 老系统退回半透明底。标签栏、输入栏等「浮在内容上的控件」都用这个。
     @ViewBuilder
     func dsGlass<S: Shape>(in shape: S) -> some View {
         if #available(iOS 26.0, *) {
             self.glassEffect(.regular, in: shape)
         } else {
             self
-                .background(Color.white.opacity(DS.Surface.tabBarOpacity))
+                .background(DS.Palette.floatSurface)
                 .clipShape(shape)
                 .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
         }

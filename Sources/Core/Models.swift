@@ -28,6 +28,61 @@ enum ChatChannel: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - 统计 / 每日内容（对应 GET /api/stats、GET /api/daily）
+
+struct DayStat: Decodable, Equatable {
+    let date: String        // "2026-07-07"
+    let weekday: String     // "一" ... "今"
+    let counts: [String: Int]
+
+    var total: Int { counts.values.reduce(0, +) }
+}
+
+struct MonthStat: Decodable, Equatable {
+    let month: String       // "2026-07"
+    let counts: [String: Int]
+
+    var total: Int { counts.values.reduce(0, +) }
+}
+
+struct StatsResponse: Decodable, Equatable {
+    let days: [DayStat]
+    let months: [MonthStat]
+}
+
+struct DiaryEntry: Decodable, Equatable {
+    let date: String
+    let text: String
+}
+
+struct Recommendation: Decodable, Equatable {
+    let category: String
+    let title: String
+    let reason: String
+}
+
+struct DailyContent: Decodable, Equatable {
+    let diary: DiaryEntry?
+    let recommend: Recommendation?
+}
+
+/// 纪念日（存在 shared["dates"]，两人共享可编辑）
+struct CoupleDates: Equatable {
+    var together: String?   // 在一起的日子 "yyyy-MM-dd"
+    var lastMeet: String?   // 上次见面
+    var lastFight: String?  // 上次吵架
+
+    static func daysSince(_ dateString: String?) -> Int? {
+        guard let dateString, !dateString.isEmpty else { return nil }
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        guard let date = f.date(from: dateString) else { return nil }
+        let days = Calendar.current.dateComponents([.day], from: date, to: Date()).day ?? 0
+        return max(0, days)
+    }
+}
+
 enum AccountPresentation {
     static func avatar(for username: String) -> String {
         switch username {

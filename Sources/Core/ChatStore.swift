@@ -92,10 +92,13 @@ final class ChatStore: ObservableObject {
     private func connect() {
         guard let session else { return }
         resolvePartner()
+        // token 同时走 connectParams(query) 和 auth payload：
+        // query 参数在每次自动重连时都会带上，避免重连握手丢 token 被服务端判 unauthorized。
         let m = SocketManager(socketURL: Self.baseURL, config: [
             .compress,
             .reconnects(true),
             .reconnectWaitMax(5),
+            .connectParams(["token": session.token]),
         ])
         manager = m
         let s = m.defaultSocket
@@ -195,8 +198,28 @@ final class ChatStore: ObservableObject {
 
         lastConnectionError = message.isEmpty ? "连接失败" : message
         connected = false
+        // Socket 层 unauthorized 不直接登出：可能只是重连握手异常。
+        // 先用 REST 验证 token 是否真失效，确认失效才清 session。
         if message.lowercased().contains("unauthorized") {
-            logout()
+            verifySessionOrLogout()
+        }
+    }
+
+    /// 用 REST /api/me 核实 token；仅在服务端明确返回 401 时登出。
+    /// 网络错误或服务端 5xx 都不登出，保留 session 等待下次重连。
+    private var verifyingSession = false
+    private func verifySessionOrLogout() {
+        guard !verifyingSession, let token = session?.token else { return }
+        verifyingSession = true
+        Task {
+            defer { verifyingSession = false }
+            var req = URLRequest(url: Self.baseURL.appendingPathComponent("api/me"))
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            guard let (_, resp) = try? await URLSession.shared.data(for: req),
+                  let http = resp as? HTTPURLResponse else { return }
+            if http.statusCode == 401 {
+                logout()
+            }
         }
     }
 
@@ -495,10 +518,104 @@ final class ChatStore: ObservableObject {
         socket?.emit("away", away)
     }
 
+    // MARK: 搜索聊天记录（服务端 messages:search）
+    func searchMessages(_ query: String, channel: ChatChannel) async -> [ChatMessage] {
+        guard let s = socket, connected, !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        return await withCheckedContinuation { continuation in
+            s.emitWithAck("messages:search", [
+                "channel": channel.rawValue,
+                "query": query,
+                "limit": 50,
+            ]).timingOut(after: 9) { data in
+                guard let dict = data.first as? [String: Any],
+                      let list = dict["list"] as? [[String: Any]] else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                continuation.resume(returning: list.compactMap { ChatMessage(dict: $0) })
+            }
+        }
+    }
+
+    // MARK: shared 键值（纪念日等两人共享状态）
+    func setShared(_ key: String, value: [String: Any]) {
+        guard let s = socket, connected else { return }
+        // 乐观更新本地，服务端广播 shared:update 后自然对齐
+        sharedState[key] = ["key": key, "value": value]
+        s.emit("shared:set", ["key": key, "value": value])
+    }
+
+    /// 读某个 shared key 的 value（兼容 shared:init 和 shared:update 两种包装）
+    func sharedValue(_ key: String) -> [String: Any]? {
+        guard let entry = sharedState[key] as? [String: Any] else { return nil }
+        return entry["value"] as? [String: Any]
+    }
+
+    var coupleDates: CoupleDates {
+        let v = sharedValue("dates")
+        return CoupleDates(
+            together: v?["together"] as? String,
+            lastMeet: v?["lastMeet"] as? String,
+            lastFight: v?["lastFight"] as? String)
+    }
+
+    func saveCoupleDates(_ dates: CoupleDates) {
+        var value: [String: Any] = [:]
+        if let t = dates.together { value["together"] = t }
+        if let m = dates.lastMeet { value["lastMeet"] = m }
+        if let f = dates.lastFight { value["lastFight"] = f }
+        setShared("dates", value: value)
+    }
+
+    // MARK: REST（统计 / 每日内容 / Bark）
+    private func authorizedRequest(_ path: String, method: String = "GET") -> URLRequest? {
+        guard let token = session?.token else { return nil }
+        var req = URLRequest(url: Self.baseURL.appendingPathComponent(path))
+        req.httpMethod = method
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return req
+    }
+
+    func fetchStats() async -> StatsResponse? {
+        guard let req = authorizedRequest("api/stats"),
+              let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return try? JSONDecoder().decode(StatsResponse.self, from: data)
+    }
+
+    func fetchDaily() async -> DailyContent? {
+        guard let req = authorizedRequest("api/daily"),
+              let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return try? JSONDecoder().decode(DailyContent.self, from: data)
+    }
+
+    func regenerateRecommendation() async -> Recommendation? {
+        guard let req = authorizedRequest("api/daily/recommend", method: "POST"),
+              let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        struct Wrapper: Decodable { let recommend: Recommendation? }
+        return (try? JSONDecoder().decode(Wrapper.self, from: data))?.recommend
+    }
+
+    /// 保存/清空 Bark 推送 key（barkKey 为 nil 表示关闭离线通知）
+    func saveBarkKey(_ barkKey: String?) async -> Bool {
+        guard var req = authorizedRequest("api/me/push/bark", method: "POST") else { return false }
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = ["barkKey": barkKey ?? NSNull()]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let (_, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return false }
+        return true
+    }
+
     func recoverOnForeground() {
         guard let s = socket else { return }
         reportAway(false)
-        guard connected else { s.connect(); return }
+        guard connected else {
+            s.connect(withPayload: ["token": session?.token ?? ""])
+            return
+        }
         s.emitWithAck("health").timingOut(after: 2.5) { [weak self] data in
             Task { @MainActor in
                 guard let self else { return }

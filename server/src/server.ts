@@ -4,10 +4,12 @@ import { config } from "./config";
 import { initDatabase } from "./db";
 import { seedAccounts } from "./auth/accounts";
 import { registerRealtime } from "./socket/realtime";
+import { initAi } from "./ai/aiService";
 
 async function main() {
   await initDatabase();
   await seedAccounts();
+  await initAi();
 
   const app = await buildApp();
   const io = new Server(app.server, {

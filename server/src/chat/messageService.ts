@@ -138,8 +138,7 @@ export async function createSystemMessage(channel: StoredChannel, text: string):
   return mapMessage(row);
 }
 
-export async function createAiMessage(user: AuthUser, text: string): Promise<ClientMessage> {
-  const channel = toStoredChannel("ai", user.username);
+export async function createAiMessage(channel: StoredChannel, text: string): Promise<ClientMessage> {
   const row: MessageRow = {
     id: `ai_${nanoid(16)}`,
     channel,
@@ -175,7 +174,7 @@ export async function createAiMessage(user: AuthUser, text: string): Promise<Cli
     ],
   );
 
-  return mapMessage(row, "ai");
+  return mapMessage(row);
 }
 
 export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {

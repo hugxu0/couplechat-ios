@@ -93,7 +93,11 @@ couplechat-ios/
 | `server/src/auth/*` | 账号种子、密码哈希、token、REST 登录 |
 | `server/src/upload/routes.ts` | 图片/视频上传 |
 | `server/src/shared/sharedService.ts` | shared 键值状态 |
-| `server/src/ai/aiService.ts` | 当前为本地兜底回复，后续接真实模型 |
+| `server/src/ai/aiService.ts` | AI 门面：入口分流、回复广播（未配模型时本地兜底） |
+| `server/src/ai/replyEngine.ts` | 应答引擎：一轮 LLM 直出 1~3 条回复，逐条拟人发出 |
+| `server/src/ai/memoryStore.ts` | 记忆存取：事实库 / 事件卡 / 文档 KV |
+| `server/src/ai/nightly.ts` | 每日维护管线：日记→事件卡→事实收口→短期记忆→人物卡 |
+| `server/src/ai/params.ts` | AI 调参中心（token/温度/阈值/节奏） |
 | `server/src/push/*` | Bark 推送基础能力 |
 
 ---
@@ -131,6 +135,22 @@ APP_DEEP_LINK_SCHEME=couplechat://
 `TOKEN_SECRET` 必须长期固定。它一变，所有已登录 token 都会失效，用户会回到登录页。
 
 首次成功启动并创建账号后，可以从服务器 `.env` 删除明文 `COUPLECHAT_ACCOUNTS`，已有账号不会被覆盖。
+
+### AI（大橘）环境变量
+
+不配置时 ai 频道走本地兜底回复。完整说明见 `server/.env.example`。
+
+```env
+AI_BASE_URL=https://api.deepseek.com/v1   # OpenAI 兼容口填到 /v1
+AI_API_KEY=sk-xxx
+AI_MODEL=deepseek-chat                    # claude- 开头自动走 Anthropic 原生协议
+AI_TRIGGER_ALIASES=@大橘                   # couple 频道召唤词；ai 私聊每条都答
+EMBEDDING_BASE_URL=https://api.voyageai.com/v1  # 可选；不配则召回退化
+EMBEDDING_API_KEY=pa-xxx
+EMBEDDING_MODEL=voyage-3.5-lite
+```
+
+`AI_CHAT_*` / `AI_TASK_*` 可分别覆盖对话模型和后台任务模型。
 
 ### 部署
 
@@ -173,6 +193,10 @@ curl https://hoo66.top/api/accounts
 |---|---|
 | `GET /health` | 健康检查 |
 | `GET /api/accounts` | 返回 `[{username,name,avatar}]` |
+| `GET /api/me` | Bearer token 有效性核实（socket unauthorized 时的二次确认） |
+| `GET /api/stats` | 聊天统计：近 10 天 + 近 12 月，按 username 分组计数 |
+| `GET /api/daily` | 大橘日记（最近一篇）+ 今日推荐 |
+| `POST /api/daily/recommend` | 「换一个」强制重新生成今日推荐 |
 | `POST /api/login` | `{username,password}` -> `{token,username,name}` |
 | `POST /api/upload` | multipart 单文件上传，Bearer token |
 | `POST /api/me/push/bark` | 保存/清空 Bark key |
@@ -222,7 +246,13 @@ ai
 - 我的页显示连接状态，并有“退出登录”
 - couple 频道文字收发
 - ai 频道入口和会话页
-- AI 当前有后端本地兜底回复
+- 后端 AI 系统（大橘）：应答引擎 + 记忆系统（事实库/事件卡/短期记忆/人物卡/每日维护），配好 `AI_*` 即生效；未配置时本地兜底
+- 重连不再丢登录：token 走 connectParams 每次重连自带；unauthorized 先 REST 核实再登出
+- 主题引擎：5 主题色 + 深浅模式（跟随系统/浅/深），全局 token 自适配（`Theme.swift` + `DS.swift`）
+- 聊天壁纸：8 款预设渐变，couple/ai 独立设置，本机持久化
+- 聊天搜索：会话页右上菜单 → 搜索（走 `messages:search`，关键词高亮）
+- 记录页：在一起天数（shared["dates"] 两人共享可编辑）、见面/吵架计数一键重置、真实聊天统计（日/月切换、点柱查看）、大橘日记、今日推荐（换一个/发给对方）
+- 我的页：身份卡（连接状态圆点）、外观设置、日期设置、Bark 离线通知配置页
 - 图片/视频选择、上传、发送
 - 图片气泡 `AsyncImage` 预览
 - 视频气泡卡片展示
@@ -236,19 +266,44 @@ ai
 
 未完成：
 
-- `shared` 接到提醒/状态/宠物页面
-- 真实 AI 模型接入
-- Bark key 的 App 内配置页
+- `shared` 接到提醒/宠物页面（宠物/提醒页仍是占位数据）
+- 生产环境配置 `AI_*` / `EMBEDDING_*` 密钥（代码已就绪）
+- AI 扩展点（旧版有、新版暂缓）：联网搜索、识图、主动插话、吵架调停、提醒/备忘 action 确认卡
 - Bark 通知点击 URL Scheme 打开指定页面
 - 长按菜单：复制/回复/撤回
 - 消息回复 UI
-- 搜索 UI / 按日期跳转 UI
+- 搜索结果点击跳转到消息位置（当前只展示结果列表）
 - 视频播放预览
+- 自定义相册壁纸（当前为预设渐变）
 - 语音消息
 - 大橘 3D 模型
 - 深色模式
 
 ---
+
+## 五点五、后端 AI 架构（大橘）
+
+从旧仓库 `hugxu0/chat` 移植并重构，核心精简：
+
+- **一轮出回复**：旧版 plan + retrievalQuery + ask 三轮 LLM 合并为一轮；
+  检索词直接用「当前问题 + 最近几条用户消息」拼接。
+- **两档模型**：`chat`（对话）/ `task`（后台），替代旧版 15 个 profile。
+- **三张表**：`ai_facts`（长期事实+embedding）、`ai_episodes`（事件卡+embedding）、
+  `ai_docs`（人物卡/短期记忆/日记/心情/摘要/游标，全 KV），不再有 markdown 文件。
+- **缓存友好**：人设+人物卡+短期记忆+心情放 system（一天内不变，Claude 系可吃提示词缓存），
+  每次变化的放 user。
+
+运行时链路：
+
+```text
+收到真人消息 → aiService.handleUserMessage
+  ├─ couple：滚动摘要 tick + 每 8 条触发事实提取；含 @大橘 → 排队应答
+  └─ ai 私聊：滚动摘要 tick + 每条都排队应答
+应答 = 静默召回(facts+episodes 向量检索) + 上下文组装 → 1 轮 LLM → 1~3 条逐条发出
+每日 06:00（北京）→ nightly 管线：日记 → 事件卡 → 事实收口 → 短期记忆重写 → 人物卡 → 心情
+```
+
+每步有独立完成标记（`ai_docs` 里 `done:<step>:<date>`），失败互不拖累、重启自动补跑。
 
 ## 六、ChatStore 可靠性设计
 
