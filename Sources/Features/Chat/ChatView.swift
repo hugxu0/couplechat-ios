@@ -1136,7 +1136,7 @@ private struct WallpaperPickerSheet: View {
 
     private var customTile: some View {
         let isCustom = theme.hasCustomWallpaper(for: channel)
-        PhotosPicker(selection: $customPickerItem, matching: .images) {
+        return PhotosPicker(selection: $customPickerItem, matching: .images) {
             VStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(isCustom ? AnyShapeStyle(DS.Palette.accent.opacity(0.12)) : AnyShapeStyle(Color.gray.opacity(0.1)))
