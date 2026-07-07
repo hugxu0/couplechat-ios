@@ -125,6 +125,14 @@ struct ChatView: View {
                     } label: {
                         Label("更换壁纸", systemImage: "photo.on.rectangle.angled")
                     }
+                    if channel == .couple {
+                        Button {
+                            Haptics.light()
+                            showAIChat = true
+                        } label: {
+                            Label("私聊大橘", systemImage: "cat.fill")
+                        }
+                    }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 16, weight: .semibold))
@@ -400,8 +408,7 @@ struct ChatView: View {
             } else {
                 if channel == .couple {
                     composerIcon("cat") {
-                        Haptics.light()
-                        showAIChat = true
+                        summonDaju()
                     }
                 }
                 messageBox
@@ -644,6 +651,15 @@ struct ChatView: View {
         withAnimation(DS.Anim.message) {
             store.sendMedia(data: data, mimeType: "audio/m4a", preferredType: "voice", localPreviewURL: url, channel: channel)
         }
+    }
+
+    /// 猫猫按钮：在公共聊天里召唤大橘（服务端识别 @大橘 触发词才会插话），不跳转私聊
+    private func summonDaju() {
+        Haptics.light()
+        if !draft.contains("@大橘") {
+            draft = draft.isEmpty ? "@大橘 " : "@大橘 " + draft
+        }
+        inputFocused = true
     }
 
     private func sendDraft() {
