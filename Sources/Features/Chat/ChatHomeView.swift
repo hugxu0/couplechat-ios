@@ -7,6 +7,10 @@ struct ChatHomeView: View {
     @EnvironmentObject private var theme: ThemeManager
     @State private var showChat = false
     @State private var sentAction: String?
+    @State private var showCustomStatusPrompt = false
+    @State private var customStatusText = ""
+    @State private var showNotePrompt = false
+    @State private var noteText = ""
 
     private var myName: String { store.session?.name ?? "小旭" }
     private var myUsername: String { store.session?.username ?? "xu" }
@@ -25,54 +29,59 @@ struct ChatHomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    pageTitle
                     mainPanel
                 }
                 .padding(.horizontal, DS.Spacing.page)
-                .padding(.top, 26)
+                .padding(.top, 56)
                 .padding(.bottom, 110)
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
+            .alert("自定义状态", isPresented: $showCustomStatusPrompt) {
+                TextField("比如：想被抱抱", text: $customStatusText)
+                Button("保存") { setCustomStatus() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("会显示在你的头像上方，尽量短一点。")
+            }
+            .alert("贴一张小纸条", isPresented: $showNotePrompt) {
+                TextField("写一句想贴给 TA 的话", text: $noteText)
+                Button("贴上去") { sendNote() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("对方会被贴条挡住屏幕，需要手动撕掉。")
+            }
         }
-    }
-
-    private var pageTitle: some View {
-        Text("聊天")
-            .font(.system(size: 28, weight: .bold, design: .rounded))
-            .foregroundStyle(DS.Palette.textPrimary)
-            .padding(.top, 4)
-            .padding(.horizontal, 4)
     }
 
     private var mainPanel: some View {
         VStack(spacing: 0) {
             coupleHeader
-                .padding(.top, 24)
-                .padding(.bottom, 18)
+                .padding(.top, 18)
+                .padding(.bottom, 14)
 
             Divider().opacity(0.38)
 
             statusStrip
-                .padding(.vertical, 16)
+                .padding(.vertical, 12)
 
             Divider().opacity(0.38)
 
             actionStrip
-                .padding(.vertical, 18)
+                .padding(.vertical, 13)
 
             Divider().opacity(0.38)
 
             latestMessages
-                .padding(.top, 18)
-                .padding(.bottom, 18)
+                .padding(.top, 14)
+                .padding(.bottom, 14)
 
             enterChatButton
                 .padding(.bottom, 18)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 32, style: .continuous)
@@ -104,19 +113,19 @@ struct ChatHomeView: View {
                 HStack(spacing: 9) {
                     Rectangle()
                         .fill(DS.Palette.pink.opacity(0.38))
-                        .frame(width: 32, height: 2)
+                        .frame(width: 28, height: 2)
                     Text("💗")
-                        .font(.system(size: 29))
+                        .font(.system(size: 25))
                         .shadow(color: DS.Palette.pink.opacity(0.24), radius: 6, y: 2)
                     Rectangle()
                         .fill(DS.Palette.pink.opacity(0.38))
-                        .frame(width: 32, height: 2)
+                        .frame(width: 28, height: 2)
                 }
                 Text(store.partnerOnline ? "都在线" : "等 TA 出现")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(DS.Palette.textSecondary)
             }
-            .frame(width: 78)
+            .frame(width: 70)
 
             CoupleAvatarColumn(
                 name: partnerName,
@@ -135,17 +144,17 @@ struct ChatHomeView: View {
 
     private var statusStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 9) {
+            HStack(spacing: 8) {
                 ForEach(Self.statusOptions) { status in
                     let selected = statusMap[myUsername] == status.title
                     Button {
                         setStatus(status)
                     } label: {
                         Text(status.title)
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundStyle(selected ? .white : status.color)
-                            .padding(.horizontal, 15)
-                            .padding(.vertical, 10)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 8)
                             .background(
                                 Capsule()
                                     .fill(selected ? AnyShapeStyle(status.gradient) : AnyShapeStyle(DS.Palette.innerSurface))
@@ -155,15 +164,29 @@ struct ChatHomeView: View {
                 }
 
                 Button {
-                    clearStatus()
+                    customStatusText = statusMap[myUsername] ?? ""
+                    showCustomStatusPrompt = true
                 } label: {
-                    Image(systemName: statusMap[myUsername] == nil ? "plus" : "xmark")
-                        .font(.system(size: 16, weight: .bold))
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(DS.Palette.textSecondary)
-                        .frame(width: 44, height: 40)
+                        .frame(width: 38, height: 34)
                         .background(DS.Palette.innerSurface, in: Capsule())
                 }
                 .buttonStyle(PressableStyle())
+
+                if statusMap[myUsername] != nil {
+                    Button {
+                        clearStatus()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(DS.Palette.textSecondary)
+                            .frame(width: 34, height: 34)
+                            .background(DS.Palette.innerSurface, in: Capsule())
+                    }
+                    .buttonStyle(PressableStyle())
+                }
             }
             .padding(.horizontal, 1)
         }
@@ -182,25 +205,25 @@ struct ChatHomeView: View {
         return Button {
             send(action)
         } label: {
-            VStack(spacing: 7) {
+            VStack(spacing: 6) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .fill(action.background)
-                        .frame(height: 74)
+                        .frame(height: 58)
                     Text(sent ? "✓" : action.emoji)
-                        .font(.system(size: sent ? 30 : 29, weight: .bold))
+                        .font(.system(size: sent ? 27 : 26, weight: .bold))
                         .contentTransition(.numericText())
                 }
                 Text(action.title)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(DS.Palette.textPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.78)
+                    .minimumScaleFactor(0.72)
                 Text(action.subtitle)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(DS.Palette.textSecondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                    .minimumScaleFactor(0.68)
             }
             .frame(maxWidth: .infinity)
         }
@@ -212,19 +235,19 @@ struct ChatHomeView: View {
         VStack(alignment: .leading, spacing: 13) {
             HStack {
                 Text("最新消息")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundStyle(DS.Palette.textSecondary)
                 Spacer()
                 if let last = store.messages.last {
                     Text(last.timeString)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
             }
 
             if store.messages.isEmpty {
                 Text("还没有消息，进去说第一句吧")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(DS.Palette.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 14)
@@ -248,7 +271,7 @@ struct ChatHomeView: View {
             }
 
             Text(preview(message))
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundStyle(mine ? DS.Palette.textPrimary : DS.Palette.textPrimary)
                 .lineLimit(2)
                 .padding(.horizontal, 13)
@@ -265,8 +288,8 @@ struct ChatHomeView: View {
 
     private func latestAvatar(for message: ChatMessage) -> some View {
         Text(message.sender == store.session?.username ? myAvatar : partnerAvatar)
-            .font(.system(size: 23))
-            .frame(width: 34, height: 34)
+            .font(.system(size: 21))
+            .frame(width: 31, height: 31)
             .background(.white.opacity(0.7), in: Circle())
     }
 
@@ -277,13 +300,13 @@ struct ChatHomeView: View {
         } label: {
             HStack(spacing: 8) {
                 Text("进入聊天")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
                 Image(systemName: "arrow.right")
                     .font(.system(size: 15, weight: .heavy))
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 17)
+            .padding(.vertical, 15)
             .background(
                 LinearGradient(
                     colors: [DS.Palette.pink.opacity(0.92), theme.accent.colorAlt],
@@ -302,19 +325,42 @@ struct ChatHomeView: View {
         case "image", "sticker": return "[图片]"
         case "video": return "[视频]"
         case "voice": return "[语音]"
-        default: return message.text
+        default: return message.displayText
         }
     }
 
     private func send(_ action: QuickAction) {
         Haptics.medium()
-        store.sendText(action.message, channel: .couple)
+        if action.kind == .note {
+            noteText = ""
+            showNotePrompt = true
+            return
+        }
+        let text = InteractionPayload.encode(kind: action.kind, text: action.message)
+        store.sendText(text, channel: .couple)
         withAnimation(DS.Anim.springFast) { sentAction = action.id }
         Task {
             try? await Task.sleep(nanoseconds: 1_300_000_000)
             await MainActor.run {
                 withAnimation(DS.Anim.ease) {
                     if sentAction == action.id { sentAction = nil }
+                }
+            }
+        }
+    }
+
+    private func sendNote() {
+        let raw = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = raw.isEmpty ? Self.randomNoteText() : String(raw.prefix(36))
+        let message = "🪧 \(body)"
+        store.sendText(InteractionPayload.encode(kind: .note, text: message), channel: .couple)
+        withAnimation(DS.Anim.springFast) { sentAction = "note" }
+        noteText = ""
+        Task {
+            try? await Task.sleep(nanoseconds: 1_300_000_000)
+            await MainActor.run {
+                withAnimation(DS.Anim.ease) {
+                    if sentAction == "note" { sentAction = nil }
                 }
             }
         }
@@ -332,6 +378,24 @@ struct ChatHomeView: View {
         var next = statusMap
         next.removeValue(forKey: myUsername)
         store.setShared("chat_statuses", value: next)
+    }
+
+    private func setCustomStatus() {
+        let raw = customStatusText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return }
+        var next = statusMap
+        next[myUsername] = String(raw.prefix(8))
+        store.setShared("chat_statuses", value: next)
+    }
+
+    private static func randomNoteText() -> String {
+        [
+            "先别划走，想你一下",
+            "今天也要被我惦记",
+            "看到这里就亲亲",
+            "把坏心情撕掉",
+            "给你贴一朵小开心",
+        ].randomElement() ?? "想你一下"
     }
 
     fileprivate struct StatusOption: Identifiable {
@@ -359,14 +423,15 @@ struct ChatHomeView: View {
         let subtitle: String
         let message: String
         let background: Color
+        let kind: InteractionEffectKind
     }
 
     private static let actions: [QuickAction] = [
-        .init(id: "miss", emoji: "💗", title: "想你了", subtitle: "心跳波纹", message: "💗 想你了", background: Color(red: 1.00, green: 0.91, blue: 0.95)),
-        .init(id: "pat", emoji: "🖐️", title: "拍一拍", subtitle: "轻轻碰一下", message: "🖐️ 拍了拍你", background: Color(red: 1.00, green: 0.94, blue: 0.86)),
-        .init(id: "flower", emoji: "🌸", title: "送花花", subtitle: "送你一朵", message: "🌸 送你一朵花花", background: Color(red: 1.00, green: 0.91, blue: 0.94)),
-        .init(id: "poop", emoji: "💩", title: "扔粑粑", subtitle: "坏笑一下", message: "💩 扔了一个坏坏的小粑粑", background: Color(red: 0.96, green: 0.91, blue: 0.83)),
-        .init(id: "note", emoji: "🪧", title: "贴条", subtitle: "贴张便利贴", message: "🪧 给你贴了一张小纸条", background: Color(red: 0.94, green: 0.95, blue: 0.97)),
+        .init(id: "miss", emoji: "💗", title: "想你了", subtitle: "心跳波纹", message: "💗 想你了", background: Color(red: 1.00, green: 0.91, blue: 0.95), kind: .miss),
+        .init(id: "pat", emoji: "🖐️", title: "拍一拍", subtitle: "轻轻碰一下", message: "🖐️ 拍了拍你", background: Color(red: 1.00, green: 0.94, blue: 0.86), kind: .pat),
+        .init(id: "flower", emoji: "🌸", title: "送花花", subtitle: "送你一朵", message: "🌸 送你一朵花花", background: Color(red: 1.00, green: 0.91, blue: 0.94), kind: .flower),
+        .init(id: "poop", emoji: "💩", title: "扔粑粑", subtitle: "坏笑一下", message: "💩 扔了个坏笑", background: Color(red: 0.96, green: 0.91, blue: 0.83), kind: .poop),
+        .init(id: "note", emoji: "🪧", title: "贴条", subtitle: "贴住屏幕", message: "🪧 给你贴了一张小纸条", background: Color(red: 0.94, green: 0.95, blue: 0.97), kind: .note),
     ]
 }
 
@@ -387,20 +452,20 @@ private struct CoupleAvatarColumn: View {
 
             ZStack(alignment: .bottomTrailing) {
                 AvatarIllustration(kind: image, fallback: avatar)
-                    .frame(width: 118, height: 118)
+                    .frame(width: 104, height: 104)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 4))
                     .shadow(color: ring.opacity(0.18), radius: 10, y: 5)
 
                 Circle()
                     .fill(online ? DS.Palette.green : DS.Palette.textSecondary.opacity(0.55))
-                    .frame(width: 18, height: 18)
+                    .frame(width: 16, height: 16)
                     .overlay(Circle().stroke(DS.Palette.cardSurface, lineWidth: 4))
                     .offset(x: -9, y: -10)
             }
 
             Text(name)
-                .font(.system(size: 23, weight: .heavy, design: .rounded))
+                .font(.system(size: 21, weight: .heavy, design: .rounded))
                 .foregroundStyle(DS.Palette.textPrimary)
         }
     }
@@ -416,18 +481,18 @@ private struct CoupleAvatarColumn: View {
                 }
             } label: {
                 Text(status ?? "加状态")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.pink)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 7)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                     .background(.white.opacity(0.64), in: Capsule())
             }
         } else {
             Text(status ?? "想贴贴")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.textPrimary.opacity(0.62))
-                .padding(.horizontal, 13)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
                 .background(.white.opacity(0.54), in: Capsule())
         }
     }
@@ -451,7 +516,7 @@ private struct AvatarIllustration: View {
             )
             decorativeMarks
             Text(fallback)
-                .font(.system(size: 50))
+                .font(.system(size: 45))
                 .offset(y: 8)
         }
     }

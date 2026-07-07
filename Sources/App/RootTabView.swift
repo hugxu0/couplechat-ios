@@ -29,8 +29,12 @@ final class AppState: ObservableObject {
 struct RootTabView: View {
     @State private var tab: MainTab = .chat
     @StateObject private var app = AppState()
+    @EnvironmentObject private var store: ChatStore
     // 订阅主题变化：主题色一改，标签栏和全部子页立即重绘
     @EnvironmentObject private var theme: ThemeManager
+    @State private var lastSeenEffectMessageId: String?
+    @State private var activeEffect: InteractionPayload?
+    @State private var activeEffectSender = ""
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -52,9 +56,43 @@ struct RootTabView: View {
                 tabBar
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+
+            if let activeEffect {
+                IncomingInteractionOverlay(
+                    payload: activeEffect,
+                    senderName: activeEffectSender,
+                    onDismiss: {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            self.activeEffect = nil
+                        }
+                    }
+                )
+                .allowsHitTesting(activeEffect.kind == .note)
+                .zIndex(10)
+            }
         }
         .animation(DS.Anim.spring, value: app.chatOpen)
+        .onAppear {
+            lastSeenEffectMessageId = store.messages.last?.id
+        }
+        .onChange(of: store.messages.last?.id) {
+            handleIncomingInteraction()
+        }
         .environmentObject(app)
+    }
+
+    private func handleIncomingInteraction() {
+        guard let message = store.messages.last else { return }
+        guard message.id != lastSeenEffectMessageId else { return }
+        lastSeenEffectMessageId = message.id
+        guard message.channel == ChatChannel.couple.rawValue,
+              message.sender != store.session?.username,
+              Date().timeIntervalSince1970 * 1000 - message.ts < 20_000,
+              let payload = message.interactionPayload else { return }
+        activeEffectSender = message.senderName.isEmpty ? "TA" : message.senderName
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            activeEffect = payload
+        }
     }
 
     private var tabBar: some View {
