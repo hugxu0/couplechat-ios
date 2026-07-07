@@ -51,7 +51,7 @@ struct ChatHomeView: View {
                     mainPanel
                 }
                 .padding(.horizontal, DS.Spacing.page)
-                .padding(.top, 56)
+                .padding(.top, 16)
                 .padding(.bottom, 110)
             }
             .scrollIndicators(.hidden)
@@ -102,15 +102,7 @@ struct ChatHomeView: View {
         }
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .fill(DS.Palette.cardSurface)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 32, style: .continuous)
-                        .stroke(.white.opacity(0.55), lineWidth: 1)
-                }
-        )
-        .shadow(color: DS.Surface.shadow, radius: 18, y: 8)
+        .dsCard()
     }
 
     private var coupleHeader: some View {
@@ -289,8 +281,19 @@ struct ChatHomeView: View {
         } label: {
             VStack(spacing: 6) {
                 ZStack {
+                    // 柔和渐变 + 细描边取代大块纯色，跟卡片的玻璃感统一
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(action.background)
+                        .fill(
+                            LinearGradient(
+                                colors: [action.background.opacity(0.82), action.background.opacity(0.42)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(.white.opacity(0.5), lineWidth: 1)
+                        }
                         .frame(height: 58)
                     Text(sent ? "✓" : action.emoji)
                         .font(.system(size: sent ? 27 : 26, weight: .bold))
@@ -629,8 +632,9 @@ private struct AvatarIllustration: View {
 
     var body: some View {
         ZStack {
+            // 半透明柔光底，透出卡片玻璃感，避免大块纯白
             LinearGradient(
-                colors: [Color.white, Color(red: 1.0, green: 0.95, blue: 0.97)],
+                colors: [Color.white.opacity(0.75), Color(red: 1.0, green: 0.95, blue: 0.97).opacity(0.6)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )

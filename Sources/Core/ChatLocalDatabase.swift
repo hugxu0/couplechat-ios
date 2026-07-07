@@ -95,6 +95,9 @@ final class ChatLocalDatabase {
     // MARK: - Message Operations
     
     func insertMessage(_ msg: ChatMessage) {
+        // 乐观占位/发送失败的消息不落库：它们的 id 是临时的 tmp-xxx，
+        // 重启后既发不出去也删不掉，只会在列表里留下幽灵消息。
+        guard !msg.pending, !msg.failed, !msg.id.hasPrefix("tmp-") else { return }
         let sql = """
         INSERT OR REPLACE INTO messages 
         (id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson)

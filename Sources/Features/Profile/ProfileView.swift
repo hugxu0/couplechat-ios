@@ -15,7 +15,6 @@ struct ProfileView: View {
             ScrollView {
                 VStack(spacing: DS.Spacing.gap) {
                     header
-                    appearanceCard
                     settingsCard
                     logoutCard
                 }
@@ -85,75 +84,16 @@ struct ProfileView: View {
         .dsCard()
     }
 
-    // MARK: - 外观
-    private var appearanceCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("外观")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DS.Palette.textSecondary)
-
-            // 主题色
-            VStack(alignment: .leading, spacing: 10) {
-                Text("主题色")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(DS.Palette.textPrimary)
-                HStack(spacing: 14) {
-                    ForEach(AccentChoice.allCases) { choice in
-                        Button {
-                            Haptics.selection()
-                            withAnimation(DS.Anim.spring) { theme.accent = choice }
-                        } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(choice.gradient)
-                                    .frame(width: 38, height: 38)
-                                if theme.accent == choice {
-                                    Circle()
-                                        .stroke(DS.Palette.textPrimary.opacity(0.85), lineWidth: 2.5)
-                                        .frame(width: 46, height: 46)
-                                }
-                            }
-                            .frame(width: 48, height: 48)
-                        }
-                        .buttonStyle(PressableStyle())
-                    }
-                    Spacer()
-                }
-            }
-
-            // 深色模式
-            VStack(alignment: .leading, spacing: 10) {
-                Text("深色模式")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(DS.Palette.textPrimary)
-                HStack(spacing: 8) {
-                    ForEach(AppearanceChoice.allCases) { choice in
-                        Button {
-                            Haptics.selection()
-                            withAnimation(DS.Anim.ease) { theme.appearance = choice }
-                        } label: {
-                            Text(choice.name)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(theme.appearance == choice ? .white : DS.Palette.textSecondary)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 9)
-                                .background(theme.appearance == choice
-                                    ? AnyShapeStyle(theme.accent.color)
-                                    : AnyShapeStyle(DS.Palette.innerSurface))
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-                        .buttonStyle(PressableStyle())
-                    }
-                }
-            }
-        }
-        .padding(DS.Spacing.card)
-        .dsCard()
-    }
-
     // MARK: - 设置项
     private var settingsCard: some View {
         VStack(spacing: 0) {
+            NavigationLink {
+                ThemeStyleView()
+            } label: {
+                settingRowLabel(icon: "paintpalette", title: "主题样式", subtitle: "主题色 · 深色模式 · 聊天壁纸")
+            }
+            .buttonStyle(PressableStyle())
+            divider
             settingRow(icon: "calendar.badge.plus", title: "日期设置", subtitle: "在一起的纪念日") {
                 showDateEditor = true
             }
@@ -191,29 +131,33 @@ struct ProfileView: View {
             Haptics.light()
             action()
         } label: {
-            HStack(spacing: 14) {
-                Image(systemName: icon)
-                    .font(.system(size: 17))
-                    .foregroundStyle(theme.accent.color)
-                    .frame(width: 30)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 16))
-                        .foregroundStyle(DS.Palette.textPrimary)
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(DS.Palette.textSecondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
-            }
-            .padding(.horizontal, DS.Spacing.card)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
+            settingRowLabel(icon: icon, title: title, subtitle: subtitle)
         }
         .buttonStyle(PressableStyle())
+    }
+
+    private func settingRowLabel(icon: String, title: String, subtitle: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 17))
+                .foregroundStyle(theme.accent.color)
+                .frame(width: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 16))
+                    .foregroundStyle(DS.Palette.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(DS.Palette.textSecondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
+        }
+        .padding(.horizontal, DS.Spacing.card)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
     }
 }
 

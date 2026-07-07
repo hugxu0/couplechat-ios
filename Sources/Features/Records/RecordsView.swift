@@ -14,28 +14,89 @@ struct RecordsView: View {
     @State private var showDateEditor = false
     @State private var recommendBusy = false
     @State private var recommendSent = false
+    @State private var showRecommendComposer = false
+    @State private var incomingRecommend: PartnerRecommend?
+    // 已看过的对方推荐 id，避免每次进页面重复弹
+    @AppStorage("records.seenRecommendId") private var seenRecommendId = ""
+
+    private var myUsername: String { store.session?.username ?? "" }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: DS.Spacing.gap) {
-                    heroCard
-                    anniversaryGrid
-                    ChatStatsCard()
-                    diaryCard
-                    recommendCard
+            ZStack {
+                ScrollView {
+                    VStack(spacing: DS.Spacing.gap) {
+                        heroCard
+                        anniversaryGrid
+                        ChatStatsCard()
+                        diaryCard
+                        recommendCard
+                    }
+                    .padding(.horizontal, DS.Spacing.page)
+                    .padding(.bottom, 90)
                 }
-                .padding(.horizontal, DS.Spacing.page)
-                .padding(.bottom, 90)
+                .scrollIndicators(.hidden)
+
+                if let rec = incomingRecommend {
+                    PartnerRecommendPopup(recommend: rec) {
+                        seenRecommendId = rec.id
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                            incomingRecommend = nil
+                        }
+                    }
+                    .zIndex(5)
+                }
             }
-            .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .refreshable { await reload() }
             .task { await reload() }
+            .onAppear { checkIncomingRecommend() }
+            .onChange(of: partnerRecommendId) { checkIncomingRecommend() }
             .sheet(isPresented: $showDateEditor) {
                 DateEditorSheet()
                     .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showRecommendComposer) {
+                RecommendComposerSheet { text in
+                    sendPartnerRecommend(text)
+                }
+                .presentationDetents([.medium])
+            }
+        }
+    }
+
+    // MARK: - 给 TA 推荐（shared 状态同步，对方打开记录页弹窗）
+
+    private var partnerRecommendId: String? {
+        store.sharedValue("partner_recommend")?["id"] as? String
+    }
+
+    private func checkIncomingRecommend() {
+        guard let value = store.sharedValue("partner_recommend"),
+              let rec = PartnerRecommend(dict: value),
+              rec.from != myUsername,
+              rec.id != seenRecommendId,
+              incomingRecommend?.id != rec.id else { return }
+        Haptics.medium()
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.78)) {
+            incomingRecommend = rec
+        }
+    }
+
+    private func sendPartnerRecommend(_ text: String) {
+        store.setShared("partner_recommend", value: [
+            "id": UUID().uuidString,
+            "from": myUsername,
+            "fromName": store.session?.name ?? "TA",
+            "text": text,
+            "ts": Date().timeIntervalSince1970 * 1000,
+        ])
+        withAnimation(DS.Anim.spring) { recommendSent = true }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await MainActor.run {
+                withAnimation(DS.Anim.ease) { recommendSent = false }
             }
         }
     }
@@ -183,18 +244,16 @@ struct RecordsView: View {
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(DS.Palette.textPrimary)
                 Spacer()
-                if daily?.recommend != nil {
-                    Button {
-                        Haptics.light()
-                        sendRecommendToPartner()
-                    } label: {
-                        Label(recommendSent ? "已发送" : "给 TA 推荐", systemImage: recommendSent ? "checkmark" : "paperplane.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(theme.accent.color)
-                    }
-                    .buttonStyle(PressableStyle())
-                    .disabled(recommendSent)
+                Button {
+                    Haptics.light()
+                    showRecommendComposer = true
+                } label: {
+                    Label(recommendSent ? "已送达" : "给 TA 推荐", systemImage: recommendSent ? "checkmark" : "gift.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.accent.color)
                 }
+                .buttonStyle(PressableStyle())
+                .disabled(recommendSent)
             }
 
             if let rec = daily?.recommend {
@@ -264,10 +323,173 @@ struct RecordsView: View {
         }
     }
 
-    private func sendRecommendToPartner() {
-        guard let rec = daily?.recommend else { return }
-        store.sendText("🎁 大橘的今日推荐：【\(rec.category)】\(rec.title)\n\(rec.reason)", channel: .couple)
-        withAnimation(DS.Anim.spring) { recommendSent = true }
+}
+
+// MARK: - 对方推荐的数据模型（存在 shared["partner_recommend"]）
+
+struct PartnerRecommend: Equatable {
+    let id: String
+    let from: String
+    let fromName: String
+    let text: String
+    let ts: Double
+
+    init?(dict: [String: Any]) {
+        guard let id = dict["id"] as? String,
+              let from = dict["from"] as? String,
+              let text = dict["text"] as? String, !text.isEmpty else { return nil }
+        self.id = id
+        self.from = from
+        self.fromName = dict["fromName"] as? String ?? "TA"
+        self.text = text
+        self.ts = (dict["ts"] as? NSNumber)?.doubleValue ?? 0
+    }
+}
+
+// MARK: - 推荐输入弹层（自己写一条推荐发给对方）
+
+private struct RecommendComposerSheet: View {
+    let onSend: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var theme: ThemeManager
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("推荐点什么给 TA？")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.Palette.textPrimary)
+                Text("一首歌、一部电影、一家店…TA 打开记录页就会看到")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DS.Palette.textSecondary)
+
+                TextField("比如：新出的那部电影超好看，周末一起？", text: $text, axis: .vertical)
+                    .focused($focused)
+                    .lineLimit(3...6)
+                    .font(.system(size: 16))
+                    .padding(14)
+                    .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                Button {
+                    let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !body.isEmpty else { return }
+                    Haptics.medium()
+                    onSend(String(body.prefix(120)))
+                    dismiss()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "gift.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("送出推荐")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(theme.accent.gradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+                .buttonStyle(PressableStyle())
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .background(DS.Palette.bgGradient.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+            .onAppear { focused = true }
+        }
+    }
+}
+
+// MARK: - 收到推荐的弹窗（对方送来的惊喜）
+
+private struct PartnerRecommendPopup: View {
+    let recommend: PartnerRecommend
+    let onDismiss: () -> Void
+
+    @EnvironmentObject private var theme: ThemeManager
+    @State private var appeared = false
+
+    var body: some View {
+        ZStack {
+            // 半透明暗背景，点击也可关闭
+            Color.black.opacity(0.35)
+                .ignoresSafeArea()
+                .onTapGesture { onDismiss() }
+
+            VStack(spacing: 0) {
+                // 顶部渐变礼物区
+                ZStack {
+                    theme.accent.gradient
+                    VStack(spacing: 6) {
+                        Text("🎁")
+                            .font(.system(size: 44))
+                            .scaleEffect(appeared ? 1.0 : 0.4)
+                            .rotationEffect(.degrees(appeared ? 0 : -18))
+                        Text("\(recommend.fromName) 给你推荐了")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.92))
+                    }
+                    .padding(.vertical, 22)
+
+                    // 柔光装饰
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 60))
+                        .foregroundStyle(.white.opacity(0.16))
+                        .offset(x: 110, y: -14)
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.white.opacity(0.14))
+                        .offset(x: -110, y: 20)
+                }
+                .frame(height: 118)
+
+                // 推荐内容
+                VStack(spacing: 18) {
+                    Text(recommend.text)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(DS.Palette.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(5)
+                        .padding(.horizontal, 22)
+                        .padding(.top, 20)
+
+                    Button {
+                        Haptics.light()
+                        onDismiss()
+                    } label: {
+                        Text("收到啦 💗")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                            .background(theme.accent.gradient, in: Capsule())
+                    }
+                    .buttonStyle(PressableStyle())
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 20)
+                }
+                .background(DS.Palette.cardSurface)
+            }
+            .frame(maxWidth: 320)
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .shadow(color: .black.opacity(0.18), radius: 30, y: 12)
+            .scaleEffect(appeared ? 1.0 : 0.82)
+            .opacity(appeared ? 1.0 : 0)
+            .padding(.horizontal, 36)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.74)) {
+                appeared = true
+            }
+        }
     }
 }
 

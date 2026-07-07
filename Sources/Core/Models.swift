@@ -2,6 +2,21 @@ import Foundation
 
 // 数据模型：字段与新后端 server/docs/API.md 的契约对齐。
 
+/// 服务端地址（放在非隔离的全局枚举里，供模型层/视图层直接取用）
+enum ServerConfig {
+    static let baseURL = URL(string: "https://hoo66.top")!
+
+    /// 把服务端下发的媒体地址解析成可加载的绝对 URL。
+    /// 导入的历史消息存的是相对路径（如 /uploads/xx.png），需要拼上服务器域名。
+    static func resolveMediaURL(_ raw: String?) -> URL? {
+        guard let raw, !raw.isEmpty else { return nil }
+        if raw.hasPrefix("http://") || raw.hasPrefix("https://") || raw.hasPrefix("file://") {
+            return URL(string: raw)
+        }
+        return URL(string: raw, relativeTo: baseURL)?.absoluteURL
+    }
+}
+
 struct Account: Codable, Equatable {
     let username: String
     let name: String
@@ -269,6 +284,9 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     }
 
     var date: Date { Date(timeIntervalSince1970: ts / 1000) }
+
+    /// 媒体消息的可加载地址（相对路径自动拼服务器域名）
+    var mediaURL: URL? { ServerConfig.resolveMediaURL(url) }
 
     var timeString: String {
         let f = DateFormatter()

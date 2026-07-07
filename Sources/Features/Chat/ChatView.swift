@@ -154,6 +154,8 @@ struct ChatView: View {
         // 进会话隐藏底部标签栏，退出（含侧滑返回）恢复
         .onAppear {
             app.chatOpen = true
+            // 兜底：内存里没消息时立刻从本地库补，保证进来就能看到历史
+            store.ensureLocalMessages(channel)
             store.markRead(channel)
         }
         .onDisappear { app.chatOpen = false }
@@ -395,9 +397,7 @@ struct ChatView: View {
                 recordingBar
             } else {
                 if channel == .couple {
-                    composerIcon("cat") {
-                        summonDaju()
-                    }
+                    catButton
                 }
                 messageBox
             }
@@ -462,7 +462,8 @@ struct ChatView: View {
         return String(format: "%02d:%02d", total / 60, total % 60)
     }
 
-    // 没文字 → 按住说话；有文字 → 主题色发送按钮
+    // 没文字 → 按住说话（空心主题色线条，跟左侧小猫按钮对称的玻璃底）；
+    // 有文字 → 主题色发送按钮；录音中 → 实心提示态
     private var micButton: some View {
         Group {
             if isRecording {
@@ -474,12 +475,11 @@ struct ChatView: View {
                     .clipShape(Circle())
                     .scaleEffect(recordingCancelled ? 1.12 : 1.0)
             } else if draft.isEmpty {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 19))
-                    .foregroundStyle(.white)
+                Image(systemName: "mic")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(DS.Palette.accent)
                     .frame(width: Self.composerButtonSize, height: Self.composerButtonSize)
-                    .background(DS.Palette.accent)
-                    .clipShape(Circle())
+                    .dsGlassInteractive(in: Circle())
             } else {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 18, weight: .semibold))
@@ -519,13 +519,15 @@ struct ChatView: View {
         )
     }
 
-    private func composerIcon(_ name: String, action: @escaping () -> Void = {}) -> some View {
-        Button(action: action) {
-            Image(systemName: name)
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(DS.Palette.accent)
+    /// 小猫按钮：可爱猫头像，点一下召唤大橘
+    private var catButton: some View {
+        Button {
+            summonDaju()
+        } label: {
+            Text("🐱")
+                .font(.system(size: 24))
                 .frame(width: Self.composerButtonSize, height: Self.composerButtonSize)
-                .dsGlass(in: Circle())
+                .dsGlassInteractive(in: Circle())
         }
         .buttonStyle(PressableStyle())
     }
@@ -1051,10 +1053,7 @@ struct MessageBubble: View {
         .foregroundStyle(DS.Palette.textSecondary)
     }
 
-    private var mediaURL: URL? {
-        guard let url = message.url else { return nil }
-        return URL(string: url)
-    }
+    private var mediaURL: URL? { message.mediaURL }
 
     /// 我方消息状态：发送中 → 钟；失败 → 红叹号可点重发；送达 → 单勾；已读 → 主题色双勾
     @ViewBuilder
@@ -1416,10 +1415,7 @@ private struct MediaPagerView: View {
         return messages.first { $0.id == selectedId } ?? messages.first
     }
 
-    private var currentURL: URL? {
-        guard let url = currentMessage?.url else { return nil }
-        return URL(string: url)
-    }
+    private var currentURL: URL? { currentMessage?.mediaURL }
 
     private var positionText: String {
         guard let currentMessage, let index = messages.firstIndex(where: { $0.id == currentMessage.id }) else {
@@ -1494,10 +1490,7 @@ private struct MediaPage: View {
         .ignoresSafeArea()
     }
 
-    private var mediaURL: URL? {
-        guard let url = message.url else { return nil }
-        return URL(string: url)
-    }
+    private var mediaURL: URL? { message.mediaURL }
 
     private var failedView: some View {
         VStack(spacing: 10) {
@@ -1739,7 +1732,7 @@ private struct MediaGallerySheet: View {
 
     @ViewBuilder
     private func mediaThumb(_ msg: ChatMessage) -> some View {
-        if msg.type == "video", let urlStr = msg.url, let url = URL(string: urlStr) {
+        if msg.type == "video", let url = msg.mediaURL {
             ZStack {
                 VideoThumbnailView(url: url)
                     .aspectRatio(contentMode: .fill)
@@ -1752,7 +1745,7 @@ private struct MediaGallerySheet: View {
             .frame(height: (UIScreen.main.bounds.width - 4) / 3)
             .clipped()
             .onTapGesture { selectedMedia = msg }
-        } else if let urlStr = msg.url, let url = URL(string: urlStr) {
+        } else if let url = msg.mediaURL {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
@@ -1796,7 +1789,7 @@ private struct MediaGallerySheet: View {
     private func mediaDetail(_ msg: ChatMessage) -> some View {
         NavigationStack {
             VStack {
-                if let urlStr = msg.url, let url = URL(string: urlStr) {
+                if let url = msg.mediaURL {
                     if msg.type == "video" {
                         VideoPlayer(player: AVPlayer(url: url))
                     } else {

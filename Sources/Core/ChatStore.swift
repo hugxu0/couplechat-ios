@@ -7,7 +7,7 @@ import SwiftUI
 
 @MainActor
 final class ChatStore: ObservableObject {
-    static let baseURL = URL(string: "https://hoo66.top")!
+    static let baseURL = ServerConfig.baseURL
 
     // MARK: 对外状态
     @Published var session: Session?
@@ -351,6 +351,7 @@ final class ChatStore: ObservableObject {
     // MARK: 本地缓存
     private func restoreLocalCache(for session: Session) {
         restoringCache = true
+        migrateLegacyCacheIfNeeded(for: session)
         messagesByChannel[ChatChannel.couple.rawValue] = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.couple.rawValue, limit: 50)
         messagesByChannel[ChatChannel.ai.rawValue] = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.ai.rawValue, limit: 50)
         
@@ -369,12 +370,40 @@ final class ChatStore: ObservableObject {
         restoringCache = false
     }
 
+    /// 老版本把聊天记录存在 JSON 快照里；换 SQLite 后首次启动把旧数据搬进来，
+    /// 否则升级后本地库是空的，离线/弱网时点进聊天会看不到任何历史。
+    private func migrateLegacyCacheIfNeeded(for session: Session) {
+        let existing = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.couple.rawValue, limit: 1)
+        guard existing.isEmpty,
+              let snapshot = ChatLocalCache.load(for: session.username) else { return }
+        for (_, list) in snapshot.messagesByChannel {
+            for msg in list where !msg.pending && !msg.failed {
+                ChatLocalDatabase.shared.insertMessage(msg)
+            }
+        }
+        for (channel, state) in snapshot.readStates {
+            for (user, ts) in state {
+                ChatLocalDatabase.shared.saveReadReceipt(channel: channel, username: user, ts: ts, updatedAt: snapshot.savedAt)
+            }
+        }
+        ChatLocalCache.clear(for: session.username)
+    }
+
+    /// 进聊天页兜底：内存里没消息但本地库有（比如 restore 之前被清过），立刻从本地库补上。
+    func ensureLocalMessages(_ channel: ChatChannel) {
+        guard messages(for: channel).isEmpty else { return }
+        let local = ChatLocalDatabase.shared.fetchLatestMessages(channel: channel.rawValue, limit: 50)
+        guard !local.isEmpty else { return }
+        updateMessages(channel) { $0 = local }
+    }
+
     // MARK: 历史 / 补漏
-    private func syncHistory(_ channel: ChatChannel) {
-        guard let s = socket else { return }
+    private func syncHistory(_ channel: ChatChannel, roundsLeft: Int = 5) {
+        guard let s = socket, roundsLeft > 0 else { return }
         let local = messages(for: channel)
         let lastTs = local.last(where: { !$0.pending && !$0.failed })?.ts ?? 0
-        var payload: [String: Any] = ["channel": channel.rawValue, "limit": 100]
+        let limit = 100
+        var payload: [String: Any] = ["channel": channel.rawValue, "limit": limit]
         if lastTs > 0 { payload["since"] = lastTs }
         s.emitWithAck("messages:fetch", payload).timingOut(after: 9) { [weak self] data in
             guard let dict = data.first as? [String: Any],
@@ -384,6 +413,10 @@ final class ChatStore: ObservableObject {
                 guard let self else { return }
                 incoming.forEach { self.upsert($0, in: channel) }
                 if channel == .couple { self.markRead(.couple) }
+                // 离线太久时缺口可能超过一页，继续增量拉直到补齐
+                if lastTs > 0, incoming.count >= limit {
+                    self.syncHistory(channel, roundsLeft: roundsLeft - 1)
+                }
             }
         }
     }
@@ -478,6 +511,8 @@ final class ChatStore: ObservableObject {
                             payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
                         }
                         list[i] = ChatMessage(dict: payload) ?? old
+                        // ack 确认成功的消息立刻落本地库，不依赖服务端回显
+                        ChatLocalDatabase.shared.insertMessage(list[i])
                     } else {
                         list[i].pending = false
                         list[i].failed = true
@@ -608,6 +643,8 @@ final class ChatStore: ObservableObject {
                     payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
                 }
                 list[i] = ChatMessage(dict: payload) ?? old
+                // ack 确认成功的媒体消息同样落本地库
+                ChatLocalDatabase.shared.insertMessage(list[i])
             } else {
                 list[i].pending = false
                 list[i].failed = true

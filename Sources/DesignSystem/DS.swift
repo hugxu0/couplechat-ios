@@ -156,9 +156,26 @@ extension View {
     /// 老系统退回半透明底。标签栏、输入栏等「浮在内容上的控件」都用这个。
     @ViewBuilder
     func dsGlass<S: Shape>(in shape: S) -> some View {
-        self
-            .background(.ultraThinMaterial)
-            .clipShape(shape)
-            .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: shape)
+        } else {
+            self
+                .background(.ultraThinMaterial)
+                .clipShape(shape)
+                .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+        }
+    }
+
+    /// 可交互的液态玻璃（按压时有高光反馈）：圆形小按钮用
+    @ViewBuilder
+    func dsGlassInteractive<S: Shape>(in shape: S) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: shape)
+        } else {
+            self
+                .background(.ultraThinMaterial)
+                .clipShape(shape)
+                .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+        }
     }
 }
