@@ -7,7 +7,11 @@ import { run } from "../db";
 import { config } from "../config";
 import { requireAuth } from "../auth/httpAuth";
 
-const allowedMime = new Set(["image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "video/quicktime"]);
+const allowedMime = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp",
+  "video/mp4", "video/quicktime",
+  "audio/m4a", "audio/x-m4a", "audio/mp4", "audio/aac",
+]);
 
 function extensionFor(mimeType: string) {
   switch (mimeType) {
@@ -17,8 +21,15 @@ function extensionFor(mimeType: string) {
     case "image/webp": return ".webp";
     case "video/mp4": return ".mp4";
     case "video/quicktime": return ".mov";
+    case "audio/m4a": case "audio/x-m4a": case "audio/mp4": case "audio/aac": return ".m4a";
     default: return "";
   }
+}
+
+function typeFor(mimeType: string) {
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "voice";
+  return "image";
 }
 
 export async function registerUploadRoutes(app: FastifyInstance) {
@@ -50,7 +61,7 @@ export async function registerUploadRoutes(app: FastifyInstance) {
       url,
       mimeType: file.mimetype,
       size: stat.size,
-      type: file.mimetype.startsWith("video/") ? "video" : "image",
+      type: typeFor(file.mimetype),
     };
   });
 }
