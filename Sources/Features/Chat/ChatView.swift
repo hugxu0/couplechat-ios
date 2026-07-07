@@ -104,72 +104,55 @@ struct ChatView: View {
 
     // MARK: 消息列表
     private var messageList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
-                        VStack(spacing: 0) {
-                            if showTimeSeparator(index) {
-                                Text(msg.timeString)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(DS.Palette.textSecondary)
-                                    .padding(.vertical, 14)
-                            }
-                            if msg.kind == "system" {
-                                Text(msg.text)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(DS.Palette.textSecondary)
-                                    .padding(.vertical, 8)
-                            } else {
-                                MessageBubble(
-                                    message: msg,
-                                    mine: msg.sender == store.session?.username,
-                                    peerAvatar: peerAvatar,
-                                    groupedWithPrevious: isGrouped(index),
-                                    read: store.partnerHasRead(msg),
-                                    canRetry: msg.type == "text",
-                                    onRetry: { store.resend(msg) })
-                                .padding(.top, bubbleTopPadding(index))
-                            }
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
+                    VStack(spacing: 0) {
+                        if showTimeSeparator(index) {
+                            Text(msg.timeString)
+                                .font(.system(size: 13))
+                                .foregroundStyle(DS.Palette.textSecondary)
+                                .padding(.vertical, 14)
                         }
-                        .id(msg.id)
-                        .onAppear {
-                            if index == 0 { store.loadOlder(channel) }
+                        if msg.kind == "system" {
+                            Text(msg.text)
+                                .font(.system(size: 12))
+                                .foregroundStyle(DS.Palette.textSecondary)
+                                .padding(.vertical, 8)
+                        } else {
+                            MessageBubble(
+                                message: msg,
+                                mine: msg.sender == store.session?.username,
+                                peerAvatar: peerAvatar,
+                                groupedWithPrevious: isGrouped(index),
+                                read: store.partnerHasRead(msg),
+                                canRetry: msg.type == "text",
+                                onRetry: { store.resend(msg) })
+                            .padding(.top, bubbleTopPadding(index))
                         }
                     }
-                    // 底部锚点：所有"滚到底"都 scrollTo 到这里
-                    Color.clear
-                        .frame(height: 1)
-                        .id("bottomAnchor")
+                    .id(msg.id)
+                    .onAppear {
+                        if index == 0 { store.loadOlder(channel) }
+                    }
                 }
-                .padding(.horizontal, DS.Spacing.page)
-                .padding(.vertical, 10)
+                // 底部占位：UIKeyboardScrollView 用它计算内容底部
+                Color.clear
+                    .frame(height: 1)
+                    .id("bottomAnchor")
             }
-            .scrollIndicators(.hidden)
-            .scrollDismissesKeyboard(.interactively)
-            .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
-            .onAppear { scrollToBottom(proxy) }
-            .onChange(of: messages.count) { scrollToBottom(proxy) }
-            // 键盘弹/收：用系统键盘动画的曲线和时长驱动 scrollTo，跟键盘完全同步
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-                guard let info = note.userInfo,
-                      let _ = (info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect),
-                      let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double),
-                      duration > 0 else { return }
-                withAnimation(.easeInOut(duration: duration)) {
-                    proxy.scrollTo("bottomAnchor", anchor: .bottom)
-                }
-            }
+            .padding(.horizontal, DS.Spacing.page)
+            .padding(.vertical, 10)
         }
-    }
-
-    /// 滚到底部锚点；延迟一帧让 LazyVStack 渲染稳定
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = false) {
-        DispatchQueue.main.async {
-            withAnimation(animated ? DS.Anim.message : nil) {
-                proxy.scrollTo("bottomAnchor", anchor: .bottom)
-            }
-        }
+        .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
+        .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
+        .background(
+            KeyboardScrollViewBridge(
+                bottomAnchorId: "bottomAnchor",
+                messageCount: messages.count
+            )
+        )
     }
 
     /// 与上一条间隔超过 8 分钟才显示时间分隔（贴近网页版行为）
@@ -711,5 +694,111 @@ private struct WallpaperPickerSheet: View {
             }
         }
         .buttonStyle(PressableStyle())
+    }
+}
+
+// MARK: - 键盘同步滚动桥接（iMessage/Telegram 做法）
+
+/// 嵌入 ScrollView 背景，找到底层 UIScrollView，
+/// 键盘弹收时直接操控 contentInset + contentOffset，用 UIView.animate 对齐键盘动画。
+private struct KeyboardScrollViewBridge: UIViewRepresentable {
+    let bottomAnchorId: String
+    let messageCount: Int
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard let sv = Self.findScrollView(from: view) else { return }
+            context.coordinator.scrollView = sv
+            sv.keyboardDismissMode = .interactiveWithAccessory
+            context.coordinator.scrollToBottom(animated: false)
+            context.coordinator.observeKeyboard()
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.scheduleScrollToBottom()
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.removeObservers()
+    }
+
+    private static func findScrollView(from view: UIView) -> UIScrollView? {
+        var current: UIView? = view
+        while let v = current {
+            if let sv = v as? UIScrollView { return sv }
+            current = v.superview
+        }
+        return nil
+    }
+
+    final class Coordinator: NSObject {
+        var parent: KeyboardScrollViewBridge
+        var scrollView: UIScrollView?
+        private var observers: [NSObjectProtocol] = []
+        private var pendingScroll = false
+
+        init(_ parent: KeyboardScrollViewBridge) { self.parent = parent }
+
+        func observeKeyboard() {
+            let name = UIResponder.keyboardWillChangeFrameNotification
+            let obs = NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] note in self?.handleKeyboard(note) }
+            observers.append(obs)
+        }
+
+        func removeObservers() {
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+            observers.removeAll()
+        }
+
+        func scheduleScrollToBottom() {
+            guard !pendingScroll else { return }
+            pendingScroll = true
+            DispatchQueue.main.async { [weak self] in
+                self?.pendingScroll = false
+                self?.scrollToBottom(animated: true)
+            }
+        }
+
+        func scrollToBottom(animated: Bool) {
+            guard let sv = scrollView else { return }
+            let bottom = max(0, sv.contentSize.height - sv.bounds.height + sv.contentInset.bottom)
+            if animated {
+                sv.setContentOffset(CGPoint(x: 0, y: bottom), animated: true)
+            } else {
+                sv.contentOffset.y = bottom
+            }
+        }
+
+        private func handleKeyboard(_ note: Notification) {
+            guard let sv = scrollView,
+                  let info = note.userInfo,
+                  let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect),
+                  let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double),
+                  duration > 0 else { return }
+
+            let screenH = UIScreen.main.bounds.height
+            let kbH = max(0, screenH - endFrame.minY)
+            let safeB = sv.window?.safeAreaInsets.bottom ?? 0
+            let inset = max(0, kbH - safeB)
+
+            let curveRaw = (info[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt) ?? 7
+            let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
+
+            UIView.animate(withDuration: duration, delay: 0, options: options) {
+                sv.contentInset.bottom = inset
+                sv.verticalScrollIndicatorInsets.bottom = inset
+                let bottom = max(0, sv.contentSize.height - sv.bounds.height + inset)
+                sv.contentOffset.y = bottom
+            }
+        }
     }
 }
