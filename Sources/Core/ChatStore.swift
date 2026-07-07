@@ -1047,6 +1047,35 @@ final class ChatStore: ObservableObject {
             }
         }
     }
+
+    func refreshHomeData() async -> Bool {
+        reportAway(false)
+        guard let s = socket else { return false }
+        if !connected {
+            s.connect(withPayload: ["token": session?.token ?? ""])
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        guard connected else { return false }
+        return await withCheckedContinuation { continuation in
+            s.emitWithAck("health").timingOut(after: 2.5) { [weak self] data in
+                Task { @MainActor in
+                    guard let self else {
+                        continuation.resume(returning: false)
+                        return
+                    }
+                    let ok = data.first is [String: Any]
+                    if ok {
+                        self.syncHistory(.couple)
+                        self.syncHistory(.ai)
+                    } else {
+                        self.socket?.disconnect()
+                        self.socket?.connect(withPayload: ["token": self.session?.token ?? ""])
+                    }
+                    continuation.resume(returning: ok)
+                }
+            }
+        }
+    }
 }
 
 private extension Data {

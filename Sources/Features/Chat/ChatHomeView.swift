@@ -12,6 +12,8 @@ struct ChatHomeView: View {
     @State private var showNotePrompt = false
     @State private var noteText = ""
     @State private var statusEditMode = false
+    @State private var refreshMessage: String?
+    @State private var isRefreshing = false
     @AppStorage("chat_home_statuses_v2") private var statusesJSON = ""
     @AppStorage("chat_home_custom_statuses") private var legacyCustomStatusData = ""
 
@@ -51,6 +53,9 @@ struct ChatHomeView: View {
                     .padding(.horizontal, DS.Spacing.page)
                     .padding(.bottom, 100)
             }
+            .refreshable {
+                await refreshHome()
+            }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
@@ -69,36 +74,54 @@ struct ChatHomeView: View {
             } message: {
                 Text("对方会被贴条挡住屏幕，需要手动撕掉。")
             }
+            .overlay(alignment: .top) {
+                if let refreshMessage {
+                    Text(refreshMessage)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill((refreshMessage == "已更新" ? DS.Palette.green : Color.red).opacity(0.9))
+                        )
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
         }
     }
 
     private var mainPanel: some View {
         VStack(spacing: 0) {
             coupleHeader
-                .padding(.top, DS.Spacing.card)
-                .padding(.bottom, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 10)
 
             Divider().opacity(0.38)
 
             statusStrip
-                .padding(.vertical, 12)
+                .padding(.vertical, 10)
 
             Divider().opacity(0.38)
 
             actionStrip
-                .padding(.vertical, 8)
+                .padding(.vertical, 10)
 
             Divider().opacity(0.38)
 
             latestMessages
-                .padding(.top, 12)
-                .padding(.bottom, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
 
             enterChatButton
-                .padding(.bottom, DS.Spacing.card)
+                .padding(.bottom, 16)
         }
         .padding(.horizontal, DS.Spacing.card)
+        .padding(.top, 4)
+        .padding(.bottom, 4)
         .frame(maxWidth: .infinity)
+        .frame(minHeight: 690)
         .dsCard()
     }
 
@@ -369,6 +392,24 @@ struct ChatHomeView: View {
             .shadow(color: DS.Palette.pink.opacity(0.22), radius: 10, y: 5)
         }
         .buttonStyle(PressableStyle())
+    }
+
+    private func refreshHome() async {
+        await MainActor.run {
+            isRefreshing = true
+            refreshMessage = nil
+        }
+        let success = await store.refreshHomeData()
+        await MainActor.run {
+            isRefreshing = false
+            refreshMessage = success ? "已更新" : "刷新失败，稍后再试"
+        }
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        await MainActor.run {
+            if refreshMessage != nil {
+                refreshMessage = nil
+            }
+        }
     }
 
     private func preview(_ message: ChatMessage) -> String {
