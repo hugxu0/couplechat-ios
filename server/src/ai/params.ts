@@ -8,7 +8,9 @@ export interface GenProfile {
 }
 
 export const GEN = {
-  // 用户问答：一轮直出 replies JSON（旧版 plan+retrievalQuery+ask 三连已合并）。
+  // 意图判断：决定这轮回复要不要联网/翻记忆/看图/查任务，供 respond() 有条件编排。
+  intent: { maxTokens: 500, temperature: 0.2, timeoutMs: 15_000 },
+  // 用户问答：一轮直出 replies JSON。
   reply: { maxTokens: 2000, temperature: 0.85, timeoutMs: 45_000 },
   // 后台事实提取：只输出 JSON，温度低。
   extractFacts: { maxTokens: 900, temperature: 0.2, timeoutMs: 30_000 },

@@ -12,6 +12,7 @@ export interface LogMessage {
   kind: string;
   type: string;
   text: string;
+  url: string | null;
   ts: number;
 }
 
@@ -23,8 +24,17 @@ function mapRow(row: MessageRow): LogMessage {
     kind: row.kind,
     type: row.type,
     text: row.text,
+    url: row.url,
     ts: row.ts,
   };
+}
+
+// 找最近一条图片消息（needImages 命中时拿它去识图）。
+export function latestImage(messages: LogMessage[]): LogMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].type === "image" && messages[i].url) return messages[i];
+  }
+  return undefined;
 }
 
 // 最近 N 条（按时间正序返回）。

@@ -10,14 +10,18 @@
 // 合并成一轮；检索词直接用「当前问题 + 最近几条用户消息」拼接。
 
 import { accounts, getDoc } from "./memoryStore";
-import { compactLine, recentMessages, type LogMessage } from "./chatLog";
-import { chat, extractJson, extractReplyText } from "./provider";
-import { recallSafe } from "./recall";
+import { compactLine, latestImage, recentMessages, type LogMessage } from "./chatLog";
+import { chat, describeImage, extractJson, extractReplyText } from "./provider";
+import { recallSafe, type Recalled } from "./recall";
 import { summaryText } from "./sessionSummary";
 import { ensureDailyMood } from "./nightly";
 import { personaCore, BOT_NAME } from "./persona";
+import { classifyIntent, type PlanContext } from "./intent";
+import { tasksContext } from "./tasksContext";
 import { CONTEXT, GEN, MEMORY, PACE } from "./params";
 import { beijingDateTime, cycleDate } from "./time";
+
+const NO_RECALL: Recalled = { factsContext: "", episodesContext: "" };
 
 export interface ReplySink {
   // 发一条大橘消息进频道（含入库+广播+推送），返回后继续下一条。
@@ -49,10 +53,10 @@ function profileCardsText(): string {
   return parts.join("\n\n");
 }
 
-function buildSystem(isPrivate: boolean, mood: string): string {
+function buildSystem(isPrivate: boolean, mood: string, plan: PlanContext): string {
   const names = accounts().map((a) => a.name);
   const cards = profileCardsText();
-  const shortTerm = getDoc("short-term").slice(0, MEMORY.shortTermMax);
+  const shortTerm = plan.needShortMemory ? getDoc("short-term").slice(0, MEMORY.shortTermMax) : "";
   return [
     personaCore(names),
     isPrivate
@@ -61,6 +65,9 @@ function buildSystem(isPrivate: boolean, mood: string): string {
     cards ? `【你对两位主人的了解（人物卡）】\n${cards}` : "",
     shortTerm ? `【短期记忆（最近一周发生的事）】\n${shortTerm}` : "",
     mood ? `【你今天的心情底色】${mood}` : "",
+    plan.needClarification
+      ? "这句话有点模糊，答不准的话可以先反问澄清一下，不用勉强给出猜测的答案。"
+      : "",
     "【回复格式】",
     "像人发微信一样说话：一次 1~3 条短消息，每条一句到三句话；不要一大段小作文。",
     "不要用「亲爱的用户」式客服腔；下面【相关记忆】【前情摘要】只在真相关时自然带出，不要机械复述。",
@@ -69,7 +76,15 @@ function buildSystem(isPrivate: boolean, mood: string): string {
   ].filter(Boolean).join("\n\n");
 }
 
-function buildUser(trigger: Trigger, recent: LogMessage[], factsContext: string, episodesContext: string): string {
+function buildUser(
+  trigger: Trigger,
+  recent: LogMessage[],
+  factsContext: string,
+  episodesContext: string,
+  imageContext: string,
+  tasksText: string,
+  plan: PlanContext,
+): string {
   const lines = recent
     .filter((m) => m.kind !== "system")
     .map((m) => compactLine(m))
@@ -85,6 +100,11 @@ function buildUser(trigger: Trigger, recent: LogMessage[], factsContext: string,
     `【紧邻上文（重点看这里）】\n${immediate}`,
     factsContext ? `【相关记忆（长期事实）】\n${factsContext}` : "",
     episodesContext ? `【相关记忆（过往事件）】\n${episodesContext}` : "",
+    imageContext ? `【你刚看了一眼最近的图片】\n${imageContext}` : "",
+    tasksText ? `【提醒/备忘概况】\n${tasksText}` : "",
+    plan.needSearch
+      ? "（这个问题看起来需要联网查最新信息，但你现在没有联网能力，如实告诉对方查不到，不要编造内容。）"
+      : "",
     `${trigger.requesterName} 对你说：${trigger.question || "（没有正文，可能只是唤了你一声）"}`,
     `请以${BOT_NAME}的身份回复。`,
   ].filter(Boolean).join("\n\n");
@@ -119,15 +139,27 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
   sink.typing(trigger.storedChannel, true);
   try {
     const recent = recentMessages(trigger.storedChannel, CONTEXT.recentCount);
-    const [recalled, mood] = await Promise.all([
-      recallSafe(retrievalQuery(trigger, recent), trigger.storedChannel),
+    const plan = await classifyIntent(trigger.question, recent);
+    const effective: Trigger = { ...trigger, question: plan.resolvedQuestion || trigger.question };
+
+    const [recalled, mood, imageContext] = await Promise.all([
+      plan.needMemory || plan.needRetrieval
+        ? recallSafe(plan.retrievalQuery || retrievalQuery(effective, recent), trigger.storedChannel)
+        : Promise.resolve(NO_RECALL),
       ensureDailyMood().catch(() => ""),
+      describeLatestImageIfNeeded(plan, recent),
     ]);
+    const tasksText = plan.needTasks ? tasksContext() : "";
+
+    console.log(
+      `[ai] intent=${plan.intent} 记忆=${plan.needMemory} 检索=${plan.needRetrieval} 看图=${plan.needImages}` +
+        `${imageContext ? "(命中)" : ""} 联网=${plan.needSearch} 任务=${plan.needTasks}`,
+    );
 
     let out = await chat({
       profile: "chat",
-      system: buildSystem(isPrivate, mood),
-      user: buildUser(trigger, recent, recalled.factsContext, recalled.episodesContext),
+      system: buildSystem(isPrivate, mood, plan),
+      user: buildUser(effective, recent, recalled.factsContext, recalled.episodesContext, imageContext, tasksText, plan),
       gen: GEN.reply,
     });
     let replies = normalizeReplies(out);
@@ -135,8 +167,8 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
       // 上游瞬时抖动（超时/限流）先原样重试一次；仍失败发固定兜底，绝不已读不回。
       out = await chat({
         profile: "chat",
-        system: buildSystem(isPrivate, mood),
-        user: buildUser(trigger, recent, recalled.factsContext, recalled.episodesContext),
+        system: buildSystem(isPrivate, mood, plan),
+        user: buildUser(effective, recent, recalled.factsContext, recalled.episodesContext, imageContext, tasksText, plan),
         gen: GEN.reply,
       });
       replies = normalizeReplies(out);
@@ -152,6 +184,15 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
   } finally {
     sink.typing(trigger.storedChannel, false);
   }
+}
+
+// needImages 命中时才去找最近一张图片识图；没有相关图片或识图失败就返回空串（正常聊，不提图片）。
+async function describeLatestImageIfNeeded(plan: PlanContext, recent: LogMessage[]): Promise<string> {
+  if (!plan.needImages) return "";
+  const image = latestImage(recent);
+  if (!image?.url) return "";
+  const description = await describeImage(image.url, GEN.describeImage);
+  return description ? `${image.senderName}发的图片，内容大致是：${description}` : "";
 }
 
 // ─── 每频道串行队列 ──────────────────────────────────────────────────────

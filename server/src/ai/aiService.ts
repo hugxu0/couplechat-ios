@@ -7,8 +7,7 @@ import { toStoredChannel, type StoredChannel } from "../types";
 import { createAiMessage } from "../chat/messageService";
 import { pushCoupleMessageToUnavailableRecipients } from "../push/pushService";
 import { config } from "../config";
-import { aiEnabled, describeImage } from "./provider";
-import { GEN } from "./params";
+import { aiEnabled } from "./provider";
 import { loadAccounts } from "./memoryStore";
 import { queueRespond, type ReplySink } from "./replyEngine";
 import { onCoupleUserMessage } from "./extractor";
@@ -111,20 +110,10 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
     return;
   }
 
-  if (isText) {
-    queueRespond(
-      { storedChannel, question: message.text.trim(), requesterName: user.name },
-      sink,
-    );
-    return;
-  }
-
-  // 图片：先识图拿一段简短描述，再把描述当问题喂给正常的回复流程（没配置识图/识图失败也不卡住，走兜底措辞）。
-  void (async () => {
-    const description = message.url ? await describeImage(message.url, GEN.describeImage) : null;
-    const question = description
-      ? `[用户发来一张图片，内容大致是：${description}]`
-      : "[用户发来一张图片，你暂时看不清楚，自然地回应一下，不用提「看不清」这件事]";
-    queueRespond({ storedChannel, question, requesterName: user.name }, sink);
-  })().catch(() => {});
+  // 文本 / 图片统一走一条流水线：图片消息此时已经落库，回复引擎里的意图判断
+  // 会自己决定要不要识图（needImages 命中才去看最近这张图，不强求）。
+  queueRespond(
+    { storedChannel, question: message.text.trim(), requesterName: user.name },
+    sink,
+  );
 }
