@@ -10,6 +10,8 @@ export interface GenProfile {
 export const GEN = {
   // 意图判断：决定这轮回复要不要联网/翻记忆/看图/查任务，供 respond() 有条件编排。
   intent: { maxTokens: 500, temperature: 0.2, timeoutMs: 15_000 },
+  // 独立检索词生成：与 classifyIntent 并行跑，专门为向量检索生成高质量关键词。
+  retrievalQuery: { maxTokens: 450, temperature: 0.05, timeoutMs: 15_000 },
   // 用户问答：一轮直出 replies JSON。
   reply: { maxTokens: 2000, temperature: 0.85, timeoutMs: 45_000 },
   // 后台事实提取：只输出 JSON，温度低。
@@ -35,6 +37,10 @@ export const GEN = {
   // 联网搜索：同样是 MiMo 推理模型 + 搜索结果一起吃 token，budget 要给够，
   // 实测 800 会在还没写完答案时就被截断。
   search: { maxTokens: 1800, temperature: 0.3, timeoutMs: 45_000 },
+  // 背景冲突检测：判断最近聊天有没有矛盾，要不要介入（低温稳输出 JSON）。
+  conflict: { maxTokens: 1400, temperature: 0.25, timeoutMs: 30_000 },
+  // 后台主动插话：判断现在要不要开口，要开口说什么（高温保 spontaneity）。
+  interject: { maxTokens: 900, temperature: 0.8, timeoutMs: 20_000 },
 } satisfies Record<string, GenProfile>;
 
 export const MEMORY = {
@@ -68,6 +74,10 @@ export const CONTEXT = {
   sessionSummaryBacklogMax: 200,
   // 单条消息压缩行的截断长度。
   lineMax: 180,
+  // 任务上下文（needTasks 命中时注入给模型）：带多少条提醒/备忘。
+  taskReminderCount: 20,
+  taskMemoCount: 12,
+  taskMemoTextMax: 200,
 } as const;
 
 export const PACE = {

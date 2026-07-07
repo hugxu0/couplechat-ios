@@ -32,6 +32,36 @@ COUPLECHAT_ACCOUNTS=xu|小旭|真实密码|🐶;si|小偲|真实密码|🐰
 PUBLIC_BASE_URL=https://hoo66.top
 ```
 
+AI 相关（可选，不配时 ai 频道走本地兜底）：
+
+```env
+# 对话模型（OpenAI 兼容口填到 /v1；claude- 开头自动走 Anthropic 原生协议）
+AI_BASE_URL=https://api.deepseek.com/v1
+AI_API_KEY=sk-xxx
+AI_MODEL=deepseek-chat
+AI_TRIGGER_ALIASES=@大橘
+# AI_CHAT_* / AI_TASK_* 可分别覆盖对话模型和后台任务模型
+
+# 识图 + 联网搜索（同一个 MiMo 账号，两种能力）
+# MiMo 是推理模型，max_tokens 给太小会在 reasoning_content 阶段截断，content 永远是空的
+AI_VISION_BASE_URL=https://api.xiaomimimo.com/v1
+AI_VISION_API_KEY=sk-xxx
+AI_VISION_MODEL=mimo-v2.5
+
+# 向量检索（多账号池，key 逗号分隔，失败自动换下一个）
+EMBEDDING_MODEL=voyage-4
+EMBEDDING_DIM=1024
+EMBEDDING_VOYAGE_PROVIDER=voyage
+EMBEDDING_VOYAGE_BASE_URL=https://api.voyageai.com/v1
+EMBEDDING_VOYAGE_API_KEYS=pa-key1,pa-key2
+# 也可配 MongoDB AI Gateway 作为 failover
+# EMBEDDING_MONGODB_PROVIDER=mongodb-voyage
+# EMBEDDING_MONGODB_BASE_URL=https://ai.mongodb.com/v1
+# EMBEDDING_MONGODB_API_KEYS=al-key1,al-key2
+```
+
+完整说明见 `.env.production.example` 和 `docs/AI.md`。
+
 安装并启动：
 
 ```bash
@@ -74,6 +104,15 @@ curl https://hoo66.top/api/accounts
 ]
 ```
 
+检查 pm2 状态和日志：
+
+```bash
+pm2 list                                              # 状态应为 online
+tail -f /root/.pm2/logs/couplechat-server-out-0.log   # 看有没有报错
+```
+
+配了 AI 的话日志里应有一行 `[ai] 大橘已就位（AI 模型已配置）`，以及 `[reminder] 到点提醒扫描已启动（60s 间隔）`。
+
 然后在 iPhone 上重新登录 `xu / si`。
 
 ## 更新部署
@@ -94,13 +133,18 @@ pm2 restart couplechat-server
 至少备份：
 
 ```text
-server/.data/couplechat.sqlite
-server/uploads/
+server/.data/couplechat.sqlite    # 数据库（消息/记忆/提醒全在这）
+server/.data/ai_logs/             # AI 全链路 trace 日志（排查用）
+server/uploads/                   # 媒体文件
+server/.env                       # 配置（含 TOKEN_SECRET 和 AI 密钥）
 ```
 
 简单备份命令：
 
 ```bash
 mkdir -p /opt/backups/couplechat
-tar -czf /opt/backups/couplechat/couplechat-$(date +%F-%H%M).tar.gz .data uploads
+cd /opt/couplechat-ios/server
+tar -czf /opt/backups/couplechat/couplechat-$(date +%F-%H%M).tar.gz .data uploads .env
 ```
+
+**部署前一定先备份**。`TOKEN_SECRET` 不能换，一换所有已登录 token 失效，用户回登录页。

@@ -195,6 +195,13 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in self?.applyRecall(id: id, byName: byName, channel: channel) }
         }
 
+        s.on("message:update") { [weak self] data, _ in
+            guard let dict = data.first as? [String: Any],
+                  let id = dict["id"] as? String else { return }
+            let metaDict = dict["meta"] as? [String: Any]
+            Task { @MainActor in self?.applyMessageUpdate(id: id, meta: metaDict) }
+        }
+
         s.on("ai:typing") { [weak self] data, _ in
             let typing = (data.first as? Bool) ?? true
             Task { @MainActor in self?.aiTyping = typing }
@@ -687,6 +694,23 @@ final class ChatStore: ObservableObject {
                 list[i] = m
             }
         }
+    }
+
+    // 确认卡：服务端确认/取消后把新 meta 推回来，更新对应消息
+    private func applyMessageUpdate(id: String, meta: [String: Any]?) {
+        for c in ChatChannel.allCases {
+            updateMessages(c) { list in
+                guard let i = list.firstIndex(where: { $0.id == id }) else { return }
+                var m = list[i]
+                m.meta = meta.flatMap { ChatMessageMeta(dict: $0) }
+                list[i] = m
+            }
+        }
+    }
+
+    // 用户在确认卡上点「确认」/「取消」，emit 给服务端
+    func confirmAction(messageId: String, decision: String) {
+        socket?.emit("action:confirm", ["messageId": messageId, "decision": decision])
     }
 
     func reportAway(_ away: Bool) {

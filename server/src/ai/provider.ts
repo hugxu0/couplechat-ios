@@ -149,7 +149,21 @@ export async function describeImage(imageUrl: string, gen: GenProfile, prompt = 
 // tools:[{type:"web_search",...}] 是 MiMo 私有格式，文档：
 // https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/tool-calling/web-search
 // 未配置/调用失败都返回 null，调用方按「如实说查不到」兜底，不编造内容。
-export async function webSearch(query: string, gen: GenProfile): Promise<string | null> {
+// 返回 { content, annotations }，annotations 是 MiMo 返回的来源引用列表（供前端展示来源卡片）。
+
+export interface Citation {
+  url: string;
+  title: string;
+  site_name?: string;
+  summary?: string;
+}
+
+export interface SearchResult {
+  content: string;
+  annotations: Citation[];
+}
+
+export async function webSearch(query: string, gen: GenProfile): Promise<SearchResult | null> {
   const p = config.aiVision;
   if (!p) return null;
   const controller = new AbortController();
@@ -171,9 +185,24 @@ export async function webSearch(query: string, gen: GenProfile): Promise<string 
       console.warn(`[ai] search HTTP ${res.status}`);
       return null;
     }
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      annotations?: Array<{ url?: string; title?: string; cite_url?: string }>;
+    };
     const content = data.choices?.[0]?.message?.content;
-    return content ? String(content).trim() || null : null;
+    const content2 = content ? String(content).trim() || null : null;
+    // MiMo 把 annotations 放在 choices 之外；也兼容放在 message.annotations 里的实现。
+    const rawAnnotations = data.annotations ?? [];
+    const annotations: Citation[] = rawAnnotations
+      .map((a) => ({
+        url: String(a.url ?? a.cite_url ?? ""),
+        title: String(a.title ?? a.url ?? ""),
+        site_name: undefined,
+        summary: undefined,
+      }))
+      .filter((a) => a.url);
+    if (!content2 && annotations.length === 0) return null;
+    return { content: content2 ?? "", annotations };
   } catch (error) {
     const name = error instanceof Error ? error.name : "";
     console.warn(`[ai] search ${name === "AbortError" ? "超时" : `失败: ${error instanceof Error ? error.message : error}`}`);

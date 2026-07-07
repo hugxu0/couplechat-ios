@@ -153,7 +153,8 @@ export async function createSystemMessage(channel: StoredChannel, text: string):
   return mapMessage(row);
 }
 
-export async function createAiMessage(channel: StoredChannel, text: string): Promise<ClientMessage> {
+export async function createAiMessage(channel: StoredChannel, text: string, meta?: unknown): Promise<ClientMessage> {
+  const metaJson = meta !== undefined && meta !== null ? JSON.stringify(meta) : null;
   const row: MessageRow = {
     id: `ai_${nanoid(16)}`,
     channel,
@@ -164,7 +165,7 @@ export async function createAiMessage(channel: StoredChannel, text: string): Pro
     text,
     url: null,
     reply_json: null,
-    meta_json: null,
+    meta_json: metaJson,
     ts: Date.now(),
     client_id: null,
   };

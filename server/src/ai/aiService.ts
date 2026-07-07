@@ -13,6 +13,8 @@ import { queueRespond, type ReplySink } from "./replyEngine";
 import { onCoupleUserMessage } from "./extractor";
 import { maybeUpdate as maybeUpdateSummary } from "./sessionSummary";
 import { startScheduler } from "./nightly";
+import { maybeCheck as maybeCheckConflict } from "./conflictDetector";
+import { maybeInterject } from "./interjector";
 
 export async function initAi(): Promise<void> {
   await loadAccounts();
@@ -52,8 +54,8 @@ function isTriggered(text: string): boolean {
 
 function makeSink(io: Server): ReplySink {
   return {
-    async emit(storedChannel, text, isFirst) {
-      const message = await createAiMessage(storedChannel as StoredChannel, text);
+    async emit(storedChannel, text, isFirst, meta) {
+      const message = await createAiMessage(storedChannel as StoredChannel, text, meta);
       if (storedChannel.startsWith("ai:")) {
         io.to(`user:${storedChannel.slice(3)}`).emit("message:new", message);
       } else {
@@ -90,9 +92,12 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
     if (!isText) return; // couple 频道暂不处理图片，只认文字召唤
     if (!aiEnabled()) return; // couple 频道未配置模型时不插话
     onCoupleUserMessage(); // 攒够 N 条触发一次事实提取
+    // 后台管道：冲突检测 + 主动插话（fire-and-forget，绝不阻塞 @召唤应答）
+    void maybeCheckConflict(io, storedChannel).catch(() => {});
+    void maybeInterject(io, storedChannel).catch(() => {});
     if (isTriggered(message.text)) {
       queueRespond(
-        { storedChannel, question: stripTrigger(message.text), requesterName: user.name },
+        { storedChannel, question: stripTrigger(message.text), requesterName: user.name, requesterUsername: user.username },
         sink,
       );
     }
@@ -113,7 +118,7 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
   // 文本 / 图片统一走一条流水线：图片消息此时已经落库，回复引擎里的意图判断
   // 会自己决定要不要识图（needImages 命中才去看最近这张图，不强求）。
   queueRespond(
-    { storedChannel, question: message.text.trim(), requesterName: user.name },
+    { storedChannel, question: message.text.trim(), requesterName: user.name, requesterUsername: user.username },
     sink,
   );
 }

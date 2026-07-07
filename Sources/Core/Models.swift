@@ -192,6 +192,9 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var replyTo: String?      // 引用的消息 ID
     var replyPreview: String? // 引用预览文本（发送者 + 内容摘要）
 
+    // 消息元信息：AI 提议的 actions 确认卡、联网搜索的来源卡片
+    var meta: ChatMessageMeta?
+
     // 本地状态（乐观发送用，不来自服务端）
     var pending = false
     var failed = false
@@ -224,6 +227,11 @@ struct ChatMessage: Identifiable, Codable, Equatable {
             replyTo = dict["replyTo"] as? String
             replyPreview = dict["replyPreview"] as? String
         }
+        if let metaDict = dict["meta"] as? [String: Any] {
+            self.meta = ChatMessageMeta(dict: metaDict)
+        } else {
+            self.meta = nil
+        }
     }
 
     /// 乐观占位消息：发送瞬间先上屏，服务端确认后对号入座
@@ -242,6 +250,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.pending = true
         self.replyTo = replyTo
         self.replyPreview = replyPreview
+        self.meta = nil
     }
 
     init(optimisticMedia type: String, text: String, localURL: String?, me: Session, clientId: String, channel: String) {
@@ -256,6 +265,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.channel = channel
         self.ts = Date().timeIntervalSince1970 * 1000
         self.pending = true
+        self.meta = nil
     }
 
     var date: Date { Date(timeIntervalSince1970: ts / 1000) }
@@ -264,5 +274,112 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
         return f.string(from: date)
+    }
+}
+
+/// 消息元信息：AI 提议的 actions 确认卡 + 联网搜索的来源卡片，挂在 AI 消息的 meta_json 上
+struct ChatMessageMeta: Codable, Equatable {
+    var confirm: ActionConfirm?
+    var search: SearchMeta?
+
+    init?(dict: [String: Any]) {
+        var hasAny = false
+        if let confirmDict = dict["confirm"] as? [String: Any] {
+            self.confirm = ActionConfirm(dict: confirmDict)
+            hasAny = true
+        } else {
+            self.confirm = nil
+        }
+        if let searchDict = dict["search"] as? [String: Any] {
+            self.search = SearchMeta(dict: searchDict)
+            hasAny = true
+        } else {
+            self.search = nil
+        }
+        return hasAny ? () : nil
+    }
+}
+
+/// 大桔提议的 actions 确认卡：主人点「确认」才真正写入
+struct ActionConfirm: Codable, Equatable {
+    var status: String  // "pending" | "confirmed" | "cancelled"
+    var items: [ConfirmItem]
+    var requesterName: String
+    var requesterUsername: String
+    var failed: Int?
+
+    init?(dict: [String: Any]) {
+        guard let status = dict["status"] as? String,
+              let itemsArr = dict["items"] as? [[String: Any]] else { return nil }
+        self.status = status
+        self.items = itemsArr.compactMap { ConfirmItem(dict: $0) }
+        if self.items.isEmpty { return nil }
+        self.requesterName = dict["requesterName"] as? String ?? ""
+        self.requesterUsername = dict["requesterUsername"] as? String ?? ""
+        self.failed = dict["failed"] as? Int
+    }
+}
+
+struct ConfirmItem: Codable, Equatable, Identifiable {
+    var id: String { label }
+    var action: AiAction
+    var label: String
+
+    init?(dict: [String: Any]) {
+        guard let label = dict["label"] as? String,
+              let actionDict = dict["action"] as? [String: Any] else { return nil }
+        self.label = label
+        self.action = AiAction(dict: actionDict)
+    }
+}
+
+/// 大橘提议的 action 本体
+struct AiAction: Codable, Equatable, Hashable {
+    var type: String
+    var title: String?
+    var text: String?
+    var time: String?
+    var id: String?
+    var newText: String?
+    var ownerName: String?
+    var scope: String?
+
+    init(dict: [String: Any]) {
+        self.type = dict["type"] as? String ?? ""
+        self.title = dict["title"] as? String
+        self.text = dict["text"] as? String
+        self.time = dict["time"] as? String
+        self.id = dict["id"] as? String
+        self.newText = dict["newText"] as? String
+        self.ownerName = dict["ownerName"] as? String
+        self.scope = dict["scope"] as? String
+    }
+}
+
+/// 联网搜索返回的来源卡片
+struct SearchMeta: Codable, Equatable {
+    var items: [SearchCitation]
+    var ts: Int
+
+    init?(dict: [String: Any]) {
+        guard let itemsArr = dict["items"] as? [[String: Any]] else { return nil }
+        self.items = itemsArr.compactMap { SearchCitation(dict: $0) }
+        if self.items.isEmpty { return nil }
+        self.ts = dict["ts"] as? Int ?? 0
+    }
+}
+
+struct SearchCitation: Codable, Equatable, Identifiable, Hashable {
+    var id: String { url }
+    var url: String
+    var title: String
+    var siteName: String?
+    var summary: String?
+
+    init(dict: [String: Any]) {
+        self.url = dict["url"] as? String ?? ""
+        self.title = dict["title"] as? String ?? url
+        self.siteName = dict["site_name"] as? String
+        self.summary = dict["summary"] as? String
     }
 }

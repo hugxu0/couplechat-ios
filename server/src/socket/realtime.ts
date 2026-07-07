@@ -11,6 +11,7 @@ import {
   upsertReadReceipt,
 } from "../chat/messageService";
 import { handleUserMessage } from "../ai/aiService";
+import { confirmAction } from "../ai/actionService";
 import { getSharedState, setSharedItem } from "../shared/sharedService";
 import {
   broadcastPresence,
@@ -62,6 +63,11 @@ const sharedSetSchema = z.object({
 
 const recallSchema = z.object({
   id: z.string().min(1),
+});
+
+const confirmActionSchema = z.object({
+  messageId: z.string().min(1),
+  decision: z.enum(["confirm", "cancel"]),
 });
 
 function userFrom(socket: Socket): AuthUser {
@@ -182,6 +188,14 @@ export function registerRealtime(io: Server) {
         const update = await setSharedItem(user, input.key, input.value);
         io.to("channel:couple").emit("shared:update", update);
         return { ok: true, update };
+      }, ack),
+    );
+
+    socket.on("action:confirm", (payload: unknown, ack?: Ack) =>
+      safeAck(async () => {
+        const input = confirmActionSchema.parse(payload ?? {});
+        const result = await confirmAction(io, input.messageId, input.decision);
+        return result;
       }, ack),
     );
   });

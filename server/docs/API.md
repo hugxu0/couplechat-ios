@@ -141,7 +141,10 @@ io("https://hoo66.top", {
 ```
 
 服务端内部把 AI 私聊存成 `ai:<username>`，客户端只使用 `channel: "ai"`。
-当前 AI 频道会返回本地兜底回复；后续接真实模型时保持同一事件契约。
+
+- couple 频道：含 `@大橘` 召唤词时大橘才回复；否则后台跑冲突检测/主动插话（命中时主动发消息）
+- ai 私聊：每条文本/图片都回复
+- 未配置 `AI_*` 时 ai 频道走本地兜底回复，couple 频道不插话
 
 ### 服务端主动事件
 
@@ -163,8 +166,49 @@ io("https://hoo66.top", {
   "text": "hi",
   "channel": "couple",
   "ts": 1710000000000,
-  "clientId": "tmp-xxx"
+  "clientId": "tmp-xxx",
+  "meta": null
 }
+```
+
+`meta` 字段：仅 AI 消息的最后一条回复会携带，承载两类附加信息：
+
+**确认卡**（AI 提议建提醒/备忘，主人确认后才写入）：
+
+```json
+{
+  "confirm": {
+    "status": "pending",
+    "items": [
+      { "action": { "type": "add_reminder", "title": "吃药", "time": "2026-07-09 08:00" }, "label": "提醒：吃药 · 2026-07-09 08:00" }
+    ],
+    "requesterName": "小旭",
+    "requesterUsername": "xu"
+  }
+}
+```
+
+`status` 流转：`pending` → `confirmed`（含 `failed` 计数） / `cancelled`。
+
+**搜索来源卡片**（AI 联网搜索返回的引用）：
+
+```json
+{
+  "search": {
+    "items": [
+      { "url": "https://example.com/article", "title": "文章标题", "site_name": "Example", "summary": "..." }
+    ],
+    "ts": 1710000000000
+  }
+}
+```
+
+#### `message:update`
+
+消息 meta 更新（确认/取消 action 后推回客户端）：
+
+```json
+{ "id": "msg_xxx", "meta": { "confirm": { "status": "confirmed", "failed": 0, ... } } }
 ```
 
 #### `read:init`
@@ -273,6 +317,22 @@ Ack：
 
 ```json
 { "id": "msg_xxx" }
+```
+
+#### `action:confirm`
+
+用户在确认卡上点「确认」或「取消」：
+
+```json
+{ "messageId": "ai_xxx", "decision": "confirm" }
+```
+
+`decision` 为 `"confirm"` 或 `"cancel"`。服务端执行后通过 `message:update` 推回新 meta。
+
+Ack：
+
+```json
+{ "ok": true }
 ```
 
 #### `read`
