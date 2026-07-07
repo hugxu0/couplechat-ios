@@ -160,8 +160,13 @@ struct ChatMessage: Identifiable, Equatable {
             ts = 0
         }
         clientId = dict["clientId"] as? String
-        replyTo = dict["replyTo"] as? String
-        replyPreview = dict["replyPreview"] as? String
+        if let reply = dict["reply"] as? [String: Any] {
+            replyTo = reply["id"] as? String ?? reply["replyTo"] as? String
+            replyPreview = reply["preview"] as? String ?? reply["replyPreview"] as? String
+        } else {
+            replyTo = dict["replyTo"] as? String
+            replyPreview = dict["replyPreview"] as? String
+        }
     }
 
     /// 乐观占位消息：发送瞬间先上屏，服务端确认后对号入座

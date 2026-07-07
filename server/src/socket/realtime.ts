@@ -29,6 +29,8 @@ const sendMessageSchema = z.object({
   type: z.enum(["text", "image", "video", "sticker", "voice"]).default("text"),
   text: z.string().default(""),
   url: z.string().url().optional(),
+  replyTo: z.string().min(1).optional(),
+  replyPreview: z.string().optional(),
   reply: z.unknown().optional(),
   meta: z.unknown().optional(),
   clientId: z.string().min(1).optional(),

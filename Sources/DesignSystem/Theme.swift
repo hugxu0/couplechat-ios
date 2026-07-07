@@ -168,77 +168,77 @@ enum WallpaperChoice: String, CaseIterable, Identifiable {
             switch self {
             case .aurora:
                 // 柔光散布小星点
-                ForEach(0..<14, id: \.self) { i in
+                ForEach(0..<28, id: \.self) { i in
                     let x = CGFloat((i * 73 + 17) % 100) / 100 * w
                     let y = CGFloat((i * 47 + 31) % 100) / 100 * h
                     Image(systemName: "sparkle")
-                        .font(.system(size: s * 0.06))
+                        .font(.system(size: s * 0.045))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
             case .peach:
                 // 蜜桃花瓣
-                ForEach(0..<8, id: \.self) { i in
+                ForEach(0..<16, id: \.self) { i in
                     let x = CGFloat((i * 89 + 11) % 100) / 100 * w
                     let y = CGFloat((i * 55 + 23) % 100) / 100 * h
                     Image(systemName: "heart.fill")
-                        .font(.system(size: s * 0.05))
+                        .font(.system(size: s * 0.04))
                         .foregroundStyle(c)
                         .rotationEffect(.degrees(Double(i) * 41))
                         .position(x: x, y: y)
                 }
             case .mist:
-                ForEach(0..<6, id: \.self) { i in
+                ForEach(0..<10, id: \.self) { i in
                     let x = CGFloat((i * 67 + 5) % 100) / 100 * w
                     let y = CGFloat((i * 81 + 13) % 100) / 100 * h
                     Image(systemName: "circle.fill")
-                        .font(.system(size: s * 0.25))
+                        .font(.system(size: s * 0.18))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
             case .cream:
-                ForEach(0..<12, id: \.self) { i in
+                ForEach(0..<24, id: \.self) { i in
                     let x = CGFloat((i * 43 + 19) % 100) / 100 * w
                     let y = CGFloat((i * 61 + 7) % 100) / 100 * h
                     Circle()
                         .stroke(c, lineWidth: 1)
-                        .frame(width: s * 0.08, height: s * 0.08)
+                        .frame(width: s * 0.06, height: s * 0.06)
                         .position(x: x, y: y)
                 }
             case .sky:
-                ForEach(0..<10, id: \.self) { i in
+                ForEach(0..<22, id: \.self) { i in
                     let x = CGFloat((i * 77 + 29) % 100) / 100 * w
                     let y = CGFloat((i * 53 + 17) % 100) / 100 * h
                     Image(systemName: "star.fill")
-                        .font(.system(size: s * 0.05))
+                        .font(.system(size: s * 0.038))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
             case .lavender:
-                ForEach(0..<9, id: \.self) { i in
+                ForEach(0..<18, id: \.self) { i in
                     let x = CGFloat((i * 71 + 13) % 100) / 100 * w
                     let y = CGFloat((i * 59 + 37) % 100) / 100 * h
                     Image(systemName: "leaf.fill")
-                        .font(.system(size: s * 0.05))
+                        .font(.system(size: s * 0.038))
                         .foregroundStyle(c)
                         .rotationEffect(.degrees(Double(i) * 57))
                         .position(x: x, y: y)
                 }
             case .night:
-                ForEach(0..<18, id: \.self) { i in
+                ForEach(0..<44, id: \.self) { i in
                     let x = CGFloat((i * 63 + 3) % 100) / 100 * w
                     let y = CGFloat((i * 41 + 11) % 100) / 100 * h
                     Image(systemName: "sparkle")
-                        .font(.system(size: s * 0.04))
+                        .font(.system(size: i % 5 == 0 ? s * 0.052 : s * 0.026))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
             case .plain:
-                ForEach(0..<8, id: \.self) { i in
+                ForEach(0..<16, id: \.self) { i in
                     let x = CGFloat((i * 59 + 7) % 100) / 100 * w
                     let y = CGFloat((i * 73 + 41) % 100) / 100 * h
                     Image(systemName: "diamond.fill")
-                        .font(.system(size: s * 0.05))
+                        .font(.system(size: s * 0.038))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
@@ -254,7 +254,7 @@ enum WallpaperChoice: String, CaseIterable, Identifiable {
         case .cream: return Color(red: 0.90, green: 0.75, blue: 0.50).opacity(0.18)
         case .sky: return .white.opacity(0.30)
         case .lavender: return Color(red: 0.7, green: 0.55, blue: 0.95).opacity(0.22)
-        case .night: return .white.opacity(0.18)
+        case .night: return .white.opacity(0.28)
         case .plain: return Color(red: 0.80, green: 0.78, blue: 0.82).opacity(0.25)
         }
     }

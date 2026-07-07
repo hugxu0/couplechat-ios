@@ -19,6 +19,8 @@ export interface ClientMessage {
   type: MessageType;
   text: string;
   url?: string;
+  replyTo?: string;
+  replyPreview?: string;
   reply?: unknown;
   meta?: unknown;
   channel: ClientChannel;

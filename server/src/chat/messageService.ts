@@ -8,6 +8,8 @@ export interface SendMessageInput {
   type: MessageType;
   text?: string;
   url?: string;
+  replyTo?: string;
+  replyPreview?: string;
   reply?: unknown;
   meta?: unknown;
   clientId?: string;
@@ -36,6 +38,8 @@ function readJson(value: string | null): unknown {
 }
 
 function mapMessage(row: MessageRow, clientChannel?: ClientChannel): ClientMessage {
+  const reply = readJson(row.reply_json);
+  const replyObject = typeof reply === "object" && reply !== null ? (reply as Record<string, unknown>) : undefined;
   return {
     id: row.id,
     sender: row.sender,
@@ -44,11 +48,22 @@ function mapMessage(row: MessageRow, clientChannel?: ClientChannel): ClientMessa
     type: row.type as MessageType,
     text: row.text,
     url: row.url ?? undefined,
-    reply: readJson(row.reply_json),
+    replyTo: typeof replyObject?.id === "string" ? replyObject.id : undefined,
+    replyPreview: typeof replyObject?.preview === "string" ? replyObject.preview : undefined,
+    reply,
     meta: readJson(row.meta_json),
     channel: clientChannel ?? toClientChannel(row.channel as StoredChannel),
     ts: row.ts,
     clientId: row.client_id ?? undefined,
+  };
+}
+
+function normalizedReply(input: SendMessageInput): unknown {
+  if (input.reply !== undefined) return input.reply;
+  if (!input.replyTo) return undefined;
+  return {
+    id: input.replyTo,
+    preview: input.replyPreview ?? "",
   };
 }
 
@@ -73,7 +88,7 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
     type: input.type,
     text: input.text ?? "",
     url: input.url ?? null,
-    reply_json: safeJson(input.reply),
+    reply_json: safeJson(normalizedReply(input)),
     meta_json: safeJson(input.meta),
     ts,
     client_id: input.clientId ?? null,

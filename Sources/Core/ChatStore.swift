@@ -369,6 +369,10 @@ final class ChatStore: ObservableObject {
         if let replyTo {
             payload["replyTo"] = replyTo
             payload["replyPreview"] = replyPreview ?? ""
+            payload["reply"] = [
+                "id": replyTo,
+                "preview": replyPreview ?? "",
+            ]
         }
         s.emitWithAck("message:send", payload).timingOut(after: 15) { [weak self] data in
             Task { @MainActor in
@@ -380,12 +384,17 @@ final class ChatStore: ObservableObject {
                     if let dict = data.first as? [String: Any],
                        dict["ok"] as? Bool == true, let realId = dict["id"] as? String {
                         let old = list[i]
-                        list[i] = ChatMessage(dict: [
+                        var payload: [String: Any] = [
                             "id": realId, "sender": old.sender, "senderName": old.senderName,
                             "kind": old.kind, "type": old.type, "text": old.text,
                             "channel": old.channel, "ts": old.ts,
-                            "replyTo": old.replyTo as Any, "replyPreview": old.replyPreview as Any,
-                        ]) ?? old
+                        ]
+                        if let replyTo = old.replyTo {
+                            payload["replyTo"] = replyTo
+                            payload["replyPreview"] = old.replyPreview ?? ""
+                            payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
+                        }
+                        list[i] = ChatMessage(dict: payload) ?? old
                     } else {
                         list[i].pending = false
                         list[i].failed = true
@@ -489,13 +498,18 @@ final class ChatStore: ObservableObject {
                 var old = list[i]
                 old.pending = false
                 old.clientId = clientId
-                list[i] = ChatMessage(dict: [
+                var payload: [String: Any] = [
                     "id": realId, "sender": old.sender, "senderName": old.senderName,
                     "kind": old.kind, "type": old.type, "text": old.text,
                     "url": old.url as Any, "channel": old.channel, "ts": old.ts,
                     "clientId": clientId,
-                    "replyTo": old.replyTo as Any, "replyPreview": old.replyPreview as Any,
-                ]) ?? old
+                ]
+                if let replyTo = old.replyTo {
+                    payload["replyTo"] = replyTo
+                    payload["replyPreview"] = old.replyPreview ?? ""
+                    payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
+                }
+                list[i] = ChatMessage(dict: payload) ?? old
             } else {
                 list[i].pending = false
                 list[i].failed = true

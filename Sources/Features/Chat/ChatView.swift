@@ -20,6 +20,7 @@ struct ChatView: View {
     @State private var replyTarget: ChatMessage?
     @State private var showMedia = false
     @State private var scrollToMessageId: String?
+    @State private var highlightedMessageId: String?
     @FocusState private var inputFocused: Bool
 
     init(channel: ChatChannel = .couple) {
@@ -49,6 +50,12 @@ struct ChatView: View {
         case .ai: return store.aiTyping ? DS.Palette.green : DS.Palette.textSecondary
         }
     }
+    private var displayedWallpaper: WallpaperChoice {
+        if colorScheme == .dark && !theme.hasCustomWallpaper(for: channel) {
+            return .night
+        }
+        return theme.wallpaper(for: channel)
+    }
 
     var body: some View {
         messageList
@@ -60,13 +67,13 @@ struct ChatView: View {
             }
         .background(
             ZStack {
-                theme.wallpaper(for: channel).gradient(dark: colorScheme == .dark)
+                displayedWallpaper.gradient(dark: colorScheme == .dark)
                 if let img = theme.customWallpaperImage(for: channel) {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
                 }
-                theme.wallpaper(for: channel).patternOverlay
+                displayedWallpaper.patternOverlay
             }
             .ignoresSafeArea()
         )
@@ -157,6 +164,7 @@ struct ChatView: View {
                                     groupedWithPrevious: isGrouped(index),
                                     read: store.partnerHasRead(msg),
                                     canRetry: msg.type == "text",
+                                    highlighted: highlightedMessageId == msg.id,
                                     onRetry: { store.resend(msg) },
                                     contextMenuContent: AnyView(messageContextMenu(msg, own: own, withinTwoMin: withinTwoMin)))
                                 .padding(.top, bubbleTopPadding(index))
@@ -205,6 +213,16 @@ struct ChatView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     withAnimation(DS.Anim.ease) {
                         proxy.scrollTo(targetId, anchor: .center)
+                        highlightedMessageId = targetId
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                        guard highlightedMessageId == targetId else { return }
+                        withAnimation(DS.Anim.ease) {
+                            highlightedMessageId = nil
+                        }
+                        if scrollToMessageId == targetId {
+                            scrollToMessageId = nil
+                        }
                     }
                 }
             }
@@ -424,10 +442,28 @@ struct ChatView: View {
         draft = ""
         replyTarget = nil
         let replyId = target?.id
-        let replyPreview = target.map { "\($0.senderName): \($0.text)" }
-        withAnimation(DS.Anim.message) {
-            store.sendText(text, channel: channel, replyTo: replyId, replyPreview: replyPreview)
+        let previewText: String?
+        if let target {
+            previewText = replyPreview(for: target)
+        } else {
+            previewText = nil
         }
+        withAnimation(DS.Anim.message) {
+            store.sendText(text, channel: channel, replyTo: replyId, replyPreview: previewText)
+        }
+    }
+
+    private func replyPreview(for message: ChatMessage) -> String {
+        let body: String
+        switch message.type {
+        case "image", "sticker":
+            body = "[图片]"
+        case "video":
+            body = "[视频]"
+        default:
+            body = message.text
+        }
+        return "\(message.senderName): \(body)"
     }
 
     private func sendMedia(_ item: PhotosPickerItem) {
@@ -525,9 +561,66 @@ private extension View {
     func `if`(_ condition: Bool, transform: (Self) -> some View) -> some View {
         if condition { transform(self) } else { self }
     }
+
+    func messageSearchHighlight(_ highlighted: Bool) -> some View {
+        self
+            .overlay {
+                if highlighted {
+                    RoundedRectangle(cornerRadius: DS.Radius.bubble + 5, style: .continuous)
+                        .stroke(DS.Palette.accent.opacity(0.9), lineWidth: 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: DS.Radius.bubble + 5, style: .continuous)
+                                .fill(DS.Palette.accent.opacity(0.14))
+                        )
+                        .padding(-5)
+                }
+            }
+            .shadow(color: highlighted ? DS.Palette.accent.opacity(0.28) : .clear, radius: 12, y: 2)
+    }
 }
 
 // MARK: - 消息气泡
+private struct MessageContextPreview: View {
+    let message: ChatMessage
+    let mine: Bool
+
+    var body: some View {
+        HStack {
+            if mine { Spacer(minLength: 24) }
+            VStack(alignment: .leading, spacing: 5) {
+                if let preview = message.replyPreview, !preview.isEmpty {
+                    Text(preview)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(mine ? .white.opacity(0.74) : DS.Palette.textSecondary)
+                        .lineLimit(1)
+                }
+                Text(summary)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
+                    .lineLimit(2)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .frame(maxWidth: 230, alignment: .leading)
+            .background(mine ? AnyShapeStyle(DS.Palette.accent) : AnyShapeStyle(DS.Palette.bubbleOther))
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+            if !mine { Spacer(minLength: 24) }
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private var summary: String {
+        switch message.type {
+        case "image", "sticker":
+            return "[图片]"
+        case "video":
+            return "[视频]"
+        default:
+            return message.text
+        }
+    }
+}
+
 struct MessageBubble: View {
     let message: ChatMessage
     let mine: Bool
@@ -535,6 +628,7 @@ struct MessageBubble: View {
     let groupedWithPrevious: Bool
     let read: Bool
     let canRetry: Bool
+    let highlighted: Bool
     var onRetry: () -> Void = {}
     var contextMenuContent: AnyView? = nil
 
@@ -586,10 +680,17 @@ struct MessageBubble: View {
             }
         }
 
+        let decorated = content
+            .messageSearchHighlight(highlighted)
+
         if let menu = contextMenuContent {
-            content.contextMenu { menu }
+            decorated.contextMenu {
+                menu
+            } preview: {
+                MessageContextPreview(message: message, mine: mine)
+            }
         } else {
-            content
+            decorated
         }
     }
 
@@ -620,13 +721,14 @@ struct MessageBubble: View {
         HStack(spacing: 5) {
             Rectangle()
                 .fill(.white.opacity(mine ? 0.45 : 0.35))
-                .frame(width: 2.5, height: 30)
+                .frame(width: 2.5, height: 28)
                 .clipShape(RoundedRectangle(cornerRadius: 1.5, style: .continuous))
             Text(message.replyPreview ?? "")
-                .font(.system(size: 12))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(mine ? .white.opacity(0.75) : DS.Palette.textSecondary)
                 .lineLimit(1)
         }
+        .frame(maxWidth: 220, alignment: .leading)
         .padding(.top, 2)
         .padding(.bottom, 4)
     }
@@ -645,7 +747,8 @@ struct MessageBubble: View {
                     case .success(let image):
                         image
                             .resizable()
-                            .scaledToFill()
+                            .scaledToFit()
+                            .padding(2)
                     case .failure:
                         mediaFallback("photo", text: "图片加载失败")
                     @unknown default:
@@ -656,7 +759,7 @@ struct MessageBubble: View {
                 mediaFallback("photo", text: message.pending ? "上传中" : "图片")
             }
         }
-        .frame(width: 210, height: 156)
+        .frame(width: 220, height: 220)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
         .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
         .opacity(message.pending ? 0.72 : 1)
@@ -1111,13 +1214,15 @@ private struct WallpaperPickerSheet: View {
                             Image(uiImage: img)
                                 .resizable()
                                 .scaledToFill()
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .frame(maxWidth: .infinity, maxHeight: 120)
+                                .clipped()
                         } else {
                             Image(systemName: "plus.circle")
                                 .font(.system(size: 28))
                                 .foregroundStyle(DS.Palette.textSecondary)
                         }
                     }
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .stroke(isCustom ? DS.Palette.accent : .clear, lineWidth: 3)
