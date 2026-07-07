@@ -19,6 +19,8 @@ struct ChatView: View {
     @State private var showWallpaperPicker = false
     @State private var keyboard = KeyboardTransition.hidden
     @State private var replyTarget: ChatMessage?
+    @State private var showMedia = false
+    @State private var scrollToMessageId: String?
     @FocusState private var inputFocused: Bool
 
     init(channel: ChatChannel = .couple) {
@@ -59,7 +61,18 @@ struct ChatView: View {
             .padding(.bottom, keyboard.bottomInset)
             .animation(keyboard.animation, value: keyboard.bottomInset)
         }
-        .background(theme.wallpaper(for: channel).gradient(dark: colorScheme == .dark).ignoresSafeArea())
+        .background(
+            ZStack {
+                theme.wallpaper(for: channel).gradient(dark: colorScheme == .dark)
+                if let img = theme.customWallpaperImage(for: channel) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                }
+                theme.wallpaper(for: channel).patternOverlay
+            }
+            .ignoresSafeArea()
+        )
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
@@ -81,6 +94,11 @@ struct ChatView: View {
                         Label("搜索聊天记录", systemImage: "magnifyingglass")
                     }
                     Button {
+                        showMedia = true
+                    } label: {
+                        Label("媒体内容", systemImage: "photo.on.rectangle")
+                    }
+                    Button {
                         showWallpaperPicker = true
                     } label: {
                         Label("更换壁纸", systemImage: "photo.on.rectangle.angled")
@@ -92,11 +110,19 @@ struct ChatView: View {
             }
         }
         .sheet(isPresented: $showSearch) {
-            ChatSearchSheet(channel: channel)
+            ChatSearchSheet(channel: channel, scrollToMessageId: $scrollToMessageId)
+        }
+        .sheet(isPresented: $showMedia) {
+            MediaGallerySheet(channel: channel)
         }
         .sheet(isPresented: $showWallpaperPicker) {
             WallpaperPickerSheet(channel: channel)
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
+        }
+        // 搜索结果跳转到原文
+        .onChange(of: scrollToMessageId) { _, _ in
+            guard scrollToMessageId != nil else { return }
+            showSearch = false
         }
         // 进会话隐藏底部标签栏，退出（含侧滑返回）恢复
         .onAppear {
@@ -178,6 +204,14 @@ struct ChatView: View {
                 withAnimation(transition.animation) {
                     keyboard = .hidden(with: transition.animation)
                     proxy.scrollTo("bottomAnchor", anchor: .bottom)
+                }
+            }
+            .onChange(of: scrollToMessageId) { _, targetId in
+                guard let targetId else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(DS.Anim.ease) {
+                        proxy.scrollTo(targetId, anchor: .center)
+                    }
                 }
             }
         }
@@ -681,6 +715,7 @@ struct MessageBubble: View {
 
 private struct ChatSearchSheet: View {
     let channel: ChatChannel
+    @Binding var scrollToMessageId: String?
 
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
@@ -770,6 +805,11 @@ private struct ChatSearchSheet: View {
                 .lineLimit(3)
         }
         .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            scrollToMessageId = msg.id
+            dismiss()
+        }
     }
 
     /// 关键词命中部分标主题色加粗
@@ -806,6 +846,159 @@ private struct ChatSearchSheet: View {
     }
 }
 
+// MARK: - 媒体内容浏览
+
+private struct MediaGallerySheet: View {
+    let channel: ChatChannel
+
+    @EnvironmentObject private var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedMedia: ChatMessage?
+    @State private var fullScreenImage: UIImage?
+
+    private let columns = [GridItem(.adaptive(minimum: 100), spacing: 2)]
+
+    private var mediaMessages: [ChatMessage] {
+        store.messages(for: channel).filter {
+            ($0.type == "image" || $0.type == "video" || $0.type == "sticker")
+                && $0.kind == "user" && !$0.pending
+        }.reversed()
+    }
+
+    var body: some View {
+        NavigationStack {
+            if mediaMessages.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "photo.on.rectangle")
+                        .font(.system(size: 40))
+                        .foregroundStyle(DS.Palette.textSecondary.opacity(0.4))
+                    Text("暂无图片或视频")
+                        .font(.system(size: 15))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .navigationTitle("媒体内容")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("关闭") { dismiss() }
+                    }
+                }
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 2) {
+                        ForEach(mediaMessages) { msg in
+                            mediaThumb(msg)
+                        }
+                    }
+                }
+                .navigationTitle("媒体内容")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("关闭") { dismiss() }
+                    }
+                }
+                .sheet(item: $selectedMedia) { msg in
+                    mediaDetail(msg)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func mediaThumb(_ msg: ChatMessage) -> some View {
+        if let urlStr = msg.url, let url = URL(string: urlStr) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(minWidth: 0, maxWidth: .infinity)
+                        .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+                        .clipped()
+                case .failure:
+                    fallbackThumb(msg)
+                case .empty:
+                    Color.gray.opacity(0.15)
+                        .frame(minWidth: 0, maxWidth: .infinity)
+                        .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+                        .overlay(ProgressView().tint(DS.Palette.accent))
+                @unknown default:
+                    fallbackThumb(msg)
+                }
+            }
+            .onTapGesture { selectedMedia = msg }
+        } else {
+            fallbackThumb(msg)
+                .onTapGesture { selectedMedia = msg }
+        }
+    }
+
+    @ViewBuilder
+    private func fallbackThumb(_ msg: ChatMessage) -> some View {
+        ZStack {
+            Color.gray.opacity(0.12)
+            Image(systemName: msg.type == "video" ? "play.rectangle" : "photo")
+                .font(.system(size: 24))
+                .foregroundStyle(DS.Palette.textSecondary)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+    }
+
+    @ViewBuilder
+    private func mediaDetail(_ msg: ChatMessage) -> some View {
+        NavigationStack {
+            VStack {
+                if let urlStr = msg.url, let url = URL(string: urlStr) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                        case .failure:
+                            VStack(spacing: 12) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 40))
+                                Text("加载失败")
+                            }
+                            .foregroundStyle(DS.Palette.textSecondary)
+                        case .empty:
+                            ProgressView()
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                }
+                Spacer()
+
+                HStack(spacing: 12) {
+                    Text(msg.senderName)
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(Self.dateTime(msg.ts))
+                        .font(.system(size: 12))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                }
+                .padding(.bottom, 20)
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { selectedMedia = nil }
+                }
+            }
+        }
+    }
+
+    private static func dateTime(_ ts: Double) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "M月d日 HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: ts / 1000))
+    }
+}
+
 // MARK: - 更换壁纸
 
 private struct WallpaperPickerSheet: View {
@@ -813,6 +1006,7 @@ private struct WallpaperPickerSheet: View {
 
     @EnvironmentObject private var theme: ThemeManager
     @Environment(\.dismiss) private var dismiss
+    @State private var customPickerItem: PhotosPickerItem?
 
     private let columns = [GridItem(.adaptive(minimum: 96), spacing: 14)]
 
@@ -823,6 +1017,7 @@ private struct WallpaperPickerSheet: View {
                     ForEach(WallpaperChoice.allCases) { choice in
                         wallpaperTile(choice)
                     }
+                    customTile
                 }
                 .padding(DS.Spacing.page)
             }
@@ -833,13 +1028,19 @@ private struct WallpaperPickerSheet: View {
                     Button("关闭") { dismiss() }
                 }
             }
+            .onChange(of: customPickerItem) {
+                guard let item = customPickerItem else { return }
+                loadCustomImage(item)
+            }
         }
     }
 
     private func wallpaperTile(_ choice: WallpaperChoice) -> some View {
-        let selected = theme.wallpaper(for: channel) == choice
+        let hasCustom = theme.hasCustomWallpaper(for: channel)
+        let selected = !hasCustom && theme.wallpaper(for: channel) == choice
         return Button {
             Haptics.selection()
+            theme.removeCustomWallpaper(for: channel)
             withAnimation(DS.Anim.spring) {
                 theme.setWallpaper(choice, for: channel)
             }
@@ -848,8 +1049,8 @@ private struct WallpaperPickerSheet: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(choice.previewGradient)
                     .frame(height: 120)
+                    .overlay { choice.patternOverlay }
                     .overlay(
-                        // 迷你气泡示意，预览更直观
                         VStack(alignment: .leading, spacing: 4) {
                             Capsule().fill(.white.opacity(0.85)).frame(width: 42, height: 12)
                             Capsule().fill(DS.Palette.accent.opacity(0.9)).frame(width: 34, height: 12)
@@ -874,5 +1075,64 @@ private struct WallpaperPickerSheet: View {
             }
         }
         .buttonStyle(PressableStyle())
+    }
+
+    private var customTile: some View {
+        let isCustom = theme.hasCustomWallpaper(for: channel)
+        PhotosPicker(selection: $customPickerItem, matching: .images) {
+            VStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(isCustom ? AnyShapeStyle(DS.Palette.accent.opacity(0.12)) : AnyShapeStyle(Color.gray.opacity(0.1)))
+                    .frame(height: 120)
+                    .overlay {
+                        if isCustom, let img = theme.customWallpaperImage(for: channel) {
+                            Image(uiImage: img)
+                                .resizable()
+                                .scaledToFill()
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        } else {
+                            Image(systemName: "plus.circle")
+                                .font(.system(size: 28))
+                                .foregroundStyle(DS.Palette.textSecondary)
+                        }
+                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(isCustom ? DS.Palette.accent : .clear, lineWidth: 3)
+                    )
+                HStack(spacing: 4) {
+                    if isCustom {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.Palette.accent)
+                    }
+                    Text(isCustom ? "已自定义" : "自定义")
+                        .font(.system(size: 13, weight: isCustom ? .semibold : .regular))
+                        .foregroundStyle(isCustom ? DS.Palette.accent : DS.Palette.textSecondary)
+                }
+
+                if isCustom {
+                    Button(role: .destructive) {
+                        theme.removeCustomWallpaper(for: channel)
+                    } label: {
+                        Text("移除")
+                            .font(.system(size: 11))
+                    }
+                }
+            }
+        }
+        .buttonStyle(PressableStyle())
+    }
+
+    private func loadCustomImage(_ item: PhotosPickerItem) {
+        Task {
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data),
+                  let jpeg = image.jpegData(compressionQuality: 0.9) else { return }
+            await MainActor.run {
+                theme.setCustomWallpaper(imageData: jpeg, for: channel)
+                customPickerItem = nil
+            }
+        }
     }
 }

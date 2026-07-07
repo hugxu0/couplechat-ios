@@ -156,6 +156,108 @@ enum WallpaperChoice: String, CaseIterable, Identifiable {
     var previewGradient: LinearGradient {
         LinearGradient(colors: stops, startPoint: .topLeading, endPoint: .bottomTrailing)
     }
+
+    /// 印花装饰图案
+    @ViewBuilder
+    var patternOverlay: some View {
+        let c = patternColor
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let s = min(w, h)
+            switch self {
+            case .aurora:
+                // 柔光散布小星点
+                ForEach(0..<14, id: \.self) { i in
+                    let x = CGFloat((i * 73 + 17) % 100) / 100 * w
+                    let y = CGFloat((i * 47 + 31) % 100) / 100 * h
+                    Image(systemName: "sparkle")
+                        .font(.system(size: s * 0.06))
+                        .foregroundStyle(c)
+                        .position(x: x, y: y)
+                }
+            case .peach:
+                // 蜜桃花瓣
+                ForEach(0..<8, id: \.self) { i in
+                    let x = CGFloat((i * 89 + 11) % 100) / 100 * w
+                    let y = CGFloat((i * 55 + 23) % 100) / 100 * h
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: s * 0.05))
+                        .foregroundStyle(c)
+                        .rotationEffect(.degrees(Double(i) * 41))
+                        .position(x: x, y: y)
+                }
+            case .mist:
+                ForEach(0..<6, id: \.self) { i in
+                    let x = CGFloat((i * 67 + 5) % 100) / 100 * w
+                    let y = CGFloat((i * 81 + 13) % 100) / 100 * h
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: s * 0.25))
+                        .foregroundStyle(c)
+                        .position(x: x, y: y)
+                }
+            case .cream:
+                ForEach(0..<12, id: \.self) { i in
+                    let x = CGFloat((i * 43 + 19) % 100) / 100 * w
+                    let y = CGFloat((i * 61 + 7) % 100) / 100 * h
+                    Circle()
+                        .stroke(c, lineWidth: 1)
+                        .frame(width: s * 0.08, height: s * 0.08)
+                        .position(x: x, y: y)
+                }
+            case .sky:
+                ForEach(0..<10, id: \.self) { i in
+                    let x = CGFloat((i * 77 + 29) % 100) / 100 * w
+                    let y = CGFloat((i * 53 + 17) % 100) / 100 * h
+                    Image(systemName: "star.fill")
+                        .font(.system(size: s * 0.05))
+                        .foregroundStyle(c)
+                        .position(x: x, y: y)
+                }
+            case .lavender:
+                ForEach(0..<9, id: \.self) { i in
+                    let x = CGFloat((i * 71 + 13) % 100) / 100 * w
+                    let y = CGFloat((i * 59 + 37) % 100) / 100 * h
+                    Image(systemName: "leaf.fill")
+                        .font(.system(size: s * 0.05))
+                        .foregroundStyle(c)
+                        .rotationEffect(.degrees(Double(i) * 57))
+                        .position(x: x, y: y)
+                }
+            case .night:
+                ForEach(0..<18, id: \.self) { i in
+                    let x = CGFloat((i * 63 + 3) % 100) / 100 * w
+                    let y = CGFloat((i * 41 + 11) % 100) / 100 * h
+                    Image(systemName: "sparkle")
+                        .font(.system(size: s * 0.04))
+                        .foregroundStyle(c)
+                        .position(x: x, y: y)
+                }
+            case .plain:
+                ForEach(0..<8, id: \.self) { i in
+                    let x = CGFloat((i * 59 + 7) % 100) / 100 * w
+                    let y = CGFloat((i * 73 + 41) % 100) / 100 * h
+                    Image(systemName: "diamond.fill")
+                        .font(.system(size: s * 0.05))
+                        .foregroundStyle(c)
+                        .position(x: x, y: y)
+                }
+            }
+        }
+    }
+
+    private var patternColor: Color {
+        switch self {
+        case .aurora: return .white.opacity(0.30)
+        case .peach: return Color(red: 0.95, green: 0.55, blue: 0.45).opacity(0.22)
+        case .mist: return .white.opacity(0.35)
+        case .cream: return Color(red: 0.90, green: 0.75, blue: 0.50).opacity(0.18)
+        case .sky: return .white.opacity(0.30)
+        case .lavender: return Color(red: 0.7, green: 0.55, blue: 0.95).opacity(0.22)
+        case .night: return .white.opacity(0.18)
+        case .plain: return Color(red: 0.80, green: 0.78, blue: 0.82).opacity(0.25)
+        }
+    }
 }
 
 // MARK: - ThemeManager
@@ -172,11 +274,24 @@ final class ThemeManager: ObservableObject {
     @Published private var wallpapers: [String: String] {
         didSet { UserDefaults.standard.set(wallpapers, forKey: "theme.wallpapers") }
     }
+    @Published private var customWallpaperKeys: Set<String> {
+        didSet {
+            UserDefaults.standard.set(Array(customWallpaperKeys), forKey: "theme.customWallpapers")
+        }
+    }
+
+    private let customDir: URL = {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CustomWallpapers", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
 
     private init() {
         accent = AccentChoice(rawValue: UserDefaults.standard.string(forKey: "theme.accent") ?? "") ?? .tangerine
         appearance = AppearanceChoice(rawValue: UserDefaults.standard.string(forKey: "theme.appearance") ?? "") ?? .system
         wallpapers = UserDefaults.standard.dictionary(forKey: "theme.wallpapers") as? [String: String] ?? [:]
+        customWallpaperKeys = Set(UserDefaults.standard.stringArray(forKey: "theme.customWallpapers") ?? [])
     }
 
     func wallpaper(for channel: ChatChannel) -> WallpaperChoice {
@@ -185,5 +300,27 @@ final class ThemeManager: ObservableObject {
 
     func setWallpaper(_ choice: WallpaperChoice, for channel: ChatChannel) {
         wallpapers[channel.rawValue] = choice.rawValue
+    }
+
+    func hasCustomWallpaper(for channel: ChatChannel) -> Bool {
+        customWallpaperKeys.contains(channel.rawValue)
+    }
+
+    func customWallpaperImage(for channel: ChatChannel) -> UIImage? {
+        let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return UIImage(data: data)
+    }
+
+    func setCustomWallpaper(imageData: Data, for channel: ChatChannel) {
+        let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
+        try? imageData.write(to: url, options: .atomic)
+        customWallpaperKeys.insert(channel.rawValue)
+    }
+
+    func removeCustomWallpaper(for channel: ChatChannel) {
+        let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
+        try? FileManager.default.removeItem(at: url)
+        customWallpaperKeys.remove(channel.rawValue)
     }
 }
