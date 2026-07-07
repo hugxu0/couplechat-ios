@@ -5,7 +5,10 @@ import SwiftUI
 // cute_cat.glb 模型；这一版先用 emoji 占位，把布局和交互立起来。
 
 struct PetView: View {
+    @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var theme: ThemeManager
     @State private var bubble = "喵~ 你来啦"
+    @State private var showAIChat = false
     @State private var stats: [(icon: String, name: String, value: Double)] = [
         ("🍖", "饱食", 0.91), ("🛁", "清洁", 0.75), ("😻", "心情", 0.95), ("⚡", "精力", 1.0),
     ]
@@ -17,13 +20,15 @@ struct PetView: View {
                     petCard
                     statsCard
                     actionsRow
+                    chatEntry
                 }
                 .padding(.horizontal, DS.Spacing.page)
-                .padding(.bottom, 90)
+                .padding(.bottom, 100)
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(isPresented: $showAIChat) { ChatView(channel: .ai) }
         }
     }
 
@@ -31,14 +36,18 @@ struct PetView: View {
         VStack(spacing: 12) {
             Text(bubble)
                 .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(DS.Palette.textPrimary)
                 .padding(.horizontal, 18).padding(.vertical, 10)
-                .background(Color.white)
+                .background(DS.Palette.bubbleOther)
                 .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
                 .shadow(color: DS.Surface.shadow, radius: 6, y: 3)
 
             Text("🐱")
                 .font(.system(size: 110))
                 .padding(.vertical, 8)
+                .background(
+                    // 猫身后的柔光，跟随主题色，深浅模式都协调
+                    Circle().fill(DS.Palette.accent.opacity(0.16)).frame(width: 150, height: 150).blur(radius: 24))
                 .onTapGesture {
                     Haptics.medium()
                     withAnimation(DS.Anim.spring) { bubble = "喵喵喵~ 💗" }
@@ -70,11 +79,7 @@ struct PetView: View {
         }
         .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity)
-        .background(
-            LinearGradient(colors: [Color(red: 1, green: 0.97, blue: 0.86), Color(red: 1, green: 0.93, blue: 0.90)],
-                           startPoint: .top, endPoint: .bottom))
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+        .dsCard()
     }
 
     private var statsCard: some View {
@@ -87,7 +92,7 @@ struct PetView: View {
                         .frame(width: 44, alignment: .leading)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            Capsule().fill(Color.black.opacity(0.06))
+                            Capsule().fill(DS.Palette.innerSurface)
                             Capsule().fill(DS.Palette.green)
                                 .frame(width: geo.size.width * s.value)
                         }
@@ -131,5 +136,53 @@ struct PetView: View {
             .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
         }
         .buttonStyle(PressableStyle())
+    }
+
+    // MARK: 和大橘聊天入口（从聊天首页移来）
+    private var chatEntry: some View {
+        Button {
+            Haptics.light()
+            showAIChat = true
+        } label: {
+            HStack(spacing: 14) {
+                Text("🐱")
+                    .font(.system(size: 30))
+                    .frame(width: 54, height: 54)
+                    .background(theme.accent.color.opacity(0.12))
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text("和大橘聊聊")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(DS.Palette.textPrimary)
+                        if store.aiTyping {
+                            Text("正在输入")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(DS.Palette.green)
+                        }
+                    }
+                    Text(aiPreview)
+                        .font(.system(size: 13))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
+            }
+            .padding(DS.Spacing.card)
+            .frame(maxWidth: .infinity)
+            .dsCard()
+        }
+        .buttonStyle(PressableStyle())
+    }
+
+    private var aiPreview: String {
+        guard let last = store.messages(for: .ai).last else { return "找大橘说点悄悄话" }
+        return last.type == "text" ? last.text : "[\(last.type)]"
     }
 }

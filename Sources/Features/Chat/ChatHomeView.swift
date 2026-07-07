@@ -1,149 +1,153 @@
 import SwiftUI
 
-// 聊天首页：情侣卡（头像 + 状态）、状态标签、互动按钮、最新消息预览、进入聊天。
-// couple / ai 消息来自 ChatStore；状态和互动数据后续接 shared。
+// 聊天首页：以「两个人此刻的联结」为主角。
+// 结构：时间问候 → 在场卡（头像+心跳联结+在线状态）→ 对话一瞥（整卡进入聊天）→ 悄悄递话。
+// 大橘入口已移到宠物页底部。互动按钮发送真实消息，不做假占位。
 
 struct ChatHomeView: View {
     @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showChat = false
-    @State private var showAI = false
+    @State private var sentNudge: String?
 
     private var myName: String { store.session?.name ?? "小旭" }
-    private var myAvatar: String { AccountPresentation.avatar(for: store.session?.username ?? "xu") }
+    private var myUsername: String { store.session?.username ?? "xu" }
+    private var myAvatar: String { AccountPresentation.avatar(for: myUsername) }
     private var partnerName: String { store.partner?.name ?? "小偲" }
+    private var partnerUsername: String { store.partner?.username ?? (myUsername == "xu" ? "si" : "xu") }
     private var partnerAvatar: String {
-        store.partner?.avatar ?? AccountPresentation.avatar(for: store.partner?.username ?? "si")
+        store.partner?.avatar ?? AccountPresentation.avatar(for: partnerUsername)
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: DS.Spacing.gap) {
-                    coupleCard
-                    aiCard
+                VStack(alignment: .leading, spacing: DS.Spacing.gap) {
+                    greeting
+                    presenceCard
+                    conversationCard
+                    nudgeCard
                 }
                 .padding(.horizontal, DS.Spacing.page)
-                .padding(.bottom, 90) // 给悬浮标签栏留位置
+                .padding(.top, 8)
+                .padding(.bottom, 100)
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
-            .navigationDestination(isPresented: $showAI) { ChatView(channel: .ai) }
         }
     }
 
-    // MARK: 情侣主卡片
-    private var coupleCard: some View {
-        VStack(spacing: 20) {
-            // 头像区
-            HStack {
-                avatarColumn(name: myName, mood: "要亲亲", moodColor: DS.Palette.pink, emoji: myAvatar)
-                Spacer()
-                Text("💗")
-                    .font(.system(size: 34))
-                Spacer()
-                avatarColumn(name: partnerName, mood: "在想你", moodColor: DS.Palette.textSecondary, emoji: partnerAvatar)
-            }
-            .padding(.horizontal, 12)
-
-            Divider().opacity(0.5)
-
-            // 状态标签
-            ScrollView(.horizontal) {
-                HStack(spacing: 10) {
-                    statusChip("在想你", color: DS.Palette.pink)
-                    statusChip("想贴贴", color: DS.Palette.pink)
-                    statusChip("忙完找你", color: DS.Palette.blue)
-                    statusChip("要亲亲", color: .orange)
-                    statusChip("＋", color: DS.Palette.textSecondary)
-                }
-            }
-            .scrollIndicators(.hidden)
-
-            Divider().opacity(0.5)
-
-            // 互动按钮
-            HStack(spacing: 10) {
-                quickAction("💗", "想你了", "心跳波纹")
-                quickAction("✋", "拍一拍", "轻轻碰一下")
-                quickAction("🌸", "送花花", "送你一朵")
-                quickAction("💩", "扔粑粑", "坏笑一下")
-                quickAction("🪧", "贴条", "贴张便利贴")
-            }
-
-            Divider().opacity(0.5)
-
-            // 最新消息预览（真数据：最近三条）
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("最新消息").font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(DS.Palette.pink)
-                    Spacer()
-                    Text(store.messages.last?.timeString ?? "")
-                        .font(.system(size: 13))
-                        .foregroundStyle(DS.Palette.textSecondary)
-                }
-                ForEach(store.messages.suffix(3)) { m in
-                    previewBubble(
-                        m.type == "text" ? m.text : "[\(m.type == "image" ? "图片" : m.type == "video" ? "视频" : "表情")]",
-                        mine: m.sender == store.session?.username)
-                }
-            }
-
-            // 进入聊天
-            Button {
-                Haptics.light()
-                showChat = true
-            } label: {
-                Text("进入聊天")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 15)
-                    .background(DS.Palette.accentGradient)
-                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
-            }
-            .buttonStyle(PressableStyle())
+    // MARK: 时间问候（页面开场）
+    private var greeting: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(greetingText)
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .foregroundStyle(DS.Palette.textPrimary)
+            Text("和 \(partnerName) 的悄悄话")
+                .font(.system(size: 15))
+                .foregroundStyle(DS.Palette.textSecondary)
         }
-        .padding(DS.Spacing.card)
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+    }
+
+    private var greetingText: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let time: String
+        switch hour {
+        case 5..<11: time = "早安"
+        case 11..<13: time = "中午好"
+        case 13..<18: time = "下午好"
+        case 18..<23: time = "晚上好"
+        default: time = "夜深了"
+        }
+        return "\(time)，\(myName)"
+    }
+
+    // MARK: 在场卡（签名元素）
+    private var presenceCard: some View {
+        VStack(spacing: 16) {
+            HStack(alignment: .center, spacing: 0) {
+                PresenceAvatar(
+                    emoji: myAvatar, name: myName,
+                    ring: DS.Palette.member(myUsername),
+                    online: store.connected, reduceMotion: reduceMotion)
+                    .frame(maxWidth: .infinity)
+
+                HeartbeatLink(alive: store.connected && store.partnerOnline, reduceMotion: reduceMotion)
+                    .frame(width: 76)
+
+                PresenceAvatar(
+                    emoji: partnerAvatar, name: partnerName,
+                    ring: DS.Palette.member(partnerUsername),
+                    online: store.partnerOnline, reduceMotion: reduceMotion)
+                    .frame(maxWidth: .infinity)
+            }
+
+            Text(presenceLine)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(DS.Palette.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+        .padding(.horizontal, DS.Spacing.card)
         .dsCard()
     }
 
-    private var aiCard: some View {
+    private var presenceLine: String {
+        if !store.connected { return "正在连接…" }
+        if store.partnerOnline { return "你们都在线，说点什么吧" }
+        return "\(partnerName) 还没上线，先留句话给 TA"
+    }
+
+    // MARK: 对话一瞥（整卡进入聊天）
+    private var conversationCard: some View {
         Button {
             Haptics.light()
-            showAI = true
+            showChat = true
         } label: {
-            HStack(spacing: 14) {
-                Text("🐱")
-                    .font(.system(size: 34))
-                    .frame(width: 58, height: 58)
-                    .background(DS.Palette.bubbleOther)
-                    .clipShape(Circle())
-
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
-                        Text("大橘")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(DS.Palette.textPrimary)
-                        if store.aiTyping {
-                            Text("正在输入")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(DS.Palette.green)
-                        }
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("最近的话")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(DS.Palette.textPrimary)
+                    Spacer()
+                    if let last = store.messages.last {
+                        Text(last.timeString)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.Palette.textSecondary)
                     }
-                    Text(aiPreviewText)
-                        .font(.system(size: 14))
-                        .foregroundStyle(DS.Palette.textSecondary)
-                        .lineLimit(1)
                 }
 
-                Spacer()
+                if store.messages.isEmpty {
+                    Text("还没有消息，进去说第一句吧")
+                        .font(.system(size: 14))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                        .padding(.vertical, 6)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(store.messages.suffix(2)) { m in
+                            glimpseBubble(
+                                preview(m),
+                                mine: m.sender == store.session?.username)
+                        }
+                    }
+                }
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(DS.Palette.textSecondary.opacity(0.6))
+                HStack(spacing: 5) {
+                    Spacer()
+                    Text("进入聊天")
+                        .font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "arrow.forward")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .foregroundStyle(theme.accent.color)
+                .padding(.top, 2)
             }
             .padding(DS.Spacing.card)
             .frame(maxWidth: .infinity)
@@ -154,74 +158,204 @@ struct ChatHomeView: View {
         .buttonStyle(PressableStyle())
     }
 
-    private var aiPreviewText: String {
-        guard let last = store.messages(for: .ai).last else { return "找大橘说点悄悄话" }
-        return last.type == "text" ? last.text : "[\(last.type)]"
-    }
-
-    private func avatarColumn(name: String, mood: String, moodColor: Color, emoji: String) -> some View {
-        VStack(spacing: 8) {
-            Text(mood)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(moodColor)
-            Text(emoji)
-                .font(.system(size: 44))
-                .frame(width: 92, height: 92)
-                .background(DS.Palette.innerSurface)
-                .clipShape(Circle())
-            Text(name)
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(DS.Palette.textPrimary)
+    private func preview(_ m: ChatMessage) -> String {
+        switch m.type {
+        case "image": return "[图片]"
+        case "video": return "[视频]"
+        case "sticker": return "[表情]"
+        case "voice": return "[语音]"
+        default: return m.text
         }
     }
 
-    private func statusChip(_ text: String, color: Color) -> some View {
-        Button {
-            Haptics.selection()
-        } label: {
+    private func glimpseBubble(_ text: String, mine: Bool) -> some View {
+        HStack {
+            if mine { Spacer(minLength: 40) }
             Text(text)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(color)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 9)
-                .background(DS.Palette.innerSurface)
-                .clipShape(Capsule())
+                .font(.system(size: 14))
+                .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .background(mine ? AnyShapeStyle(theme.accent.color) : AnyShapeStyle(DS.Palette.innerSurface))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            if !mine { Spacer(minLength: 40) }
         }
-        .buttonStyle(PressableStyle())
     }
 
-    private func quickAction(_ emoji: String, _ title: String, _ subtitle: String) -> some View {
-        Button {
-            Haptics.medium()
+    // MARK: 悄悄递话（发送真实消息）
+    private var nudgeCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("悄悄递给 TA")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(DS.Palette.textPrimary)
+
+            HStack(spacing: 10) {
+                ForEach(Self.nudges, id: \.label) { nudge in
+                    nudgeButton(nudge)
+                }
+            }
+        }
+        .padding(DS.Spacing.card)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dsCard()
+    }
+
+    private func nudgeButton(_ nudge: Nudge) -> some View {
+        let sent = sentNudge == nudge.label
+        return Button {
+            send(nudge)
         } label: {
-            VStack(spacing: 4) {
-                Text(emoji).font(.system(size: 26))
-                Text(title).font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(DS.Palette.textPrimary)
-                Text(subtitle).font(.system(size: 10))
-                    .foregroundStyle(DS.Palette.textSecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(theme.accent.color.opacity(0.12))
+                        .frame(width: 52, height: 52)
+                    Image(systemName: sent ? "checkmark" : nudge.symbol)
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(theme.accent.color)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                Text(sent ? "已送出" : nudge.label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(sent ? theme.accent.color : DS.Palette.textSecondary)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(DS.Palette.innerSurface)
-            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
         }
         .buttonStyle(PressableStyle())
+        .disabled(sent)
     }
 
-    private func previewBubble(_ text: String, mine: Bool) -> some View {
-        HStack {
-            if mine { Spacer() }
-            Text(text)
-                .font(.system(size: 15))
-                .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(mine ? AnyShapeStyle(DS.Palette.accent) : AnyShapeStyle(DS.Palette.bubbleOther))
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
-            if !mine { Spacer() }
+    private func send(_ nudge: Nudge) {
+        Haptics.medium()
+        store.sendText(nudge.message, channel: .couple)
+        withAnimation(DS.Anim.springFast) { sentNudge = nudge.label }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            await MainActor.run {
+                withAnimation(DS.Anim.ease) {
+                    if sentNudge == nudge.label { sentNudge = nil }
+                }
+            }
         }
+    }
+
+    private struct Nudge {
+        let symbol: String
+        let label: String
+        let message: String
+    }
+
+    private static let nudges: [Nudge] = [
+        .init(symbol: "heart.fill", label: "想你", message: "💗 突然有点想你了"),
+        .init(symbol: "hands.and.sparkles.fill", label: "抱抱", message: "🤗 给你一个抱抱"),
+        .init(symbol: "sun.max.fill", label: "早安", message: "☀️ 早安呀"),
+        .init(symbol: "moon.stars.fill", label: "晚安", message: "🌙 晚安，好梦"),
+    ]
+}
+
+// MARK: - 在场头像（呼吸光环 + 在线圆点）
+
+private struct PresenceAvatar: View {
+    let emoji: String
+    let name: String
+    let ring: Color
+    let online: Bool
+    let reduceMotion: Bool
+
+    @State private var breathe = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                // 柔光底（在线时更亮）
+                Circle()
+                    .fill(ring.opacity(online ? 0.22 : 0.08))
+                    .frame(width: 96, height: 96)
+                    .blur(radius: 10)
+                // 呼吸光环
+                Circle()
+                    .stroke(ring.opacity(online ? 0.85 : 0.28), lineWidth: 2.5)
+                    .frame(width: 86, height: 86)
+                    .scaleEffect(breathe ? 1.06 : 1.0)
+                    .opacity(breathe ? 0.55 : 1.0)
+                // 头像
+                Text(emoji)
+                    .font(.system(size: 42))
+                    .frame(width: 78, height: 78)
+                    .background(DS.Palette.cardSurface)
+                    .clipShape(Circle())
+                // 在线圆点
+                Circle()
+                    .fill(online ? DS.Palette.green : DS.Palette.textSecondary.opacity(0.5))
+                    .frame(width: 15, height: 15)
+                    .overlay(Circle().stroke(DS.Palette.cardSurface, lineWidth: 3))
+                    .offset(x: 30, y: 30)
+            }
+            .frame(width: 96, height: 96)
+
+            Text(name)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(DS.Palette.textPrimary)
+        }
+        .onAppear {
+            guard online, !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+                breathe = true
+            }
+        }
+        .onChange(of: online) {
+            if online, !reduceMotion {
+                withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+                    breathe = true
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.3)) { breathe = false }
+            }
+        }
+    }
+}
+
+// MARK: - 心跳联结线（两人都在线时跳动）
+
+private struct HeartbeatLink: View {
+    let alive: Bool
+    let reduceMotion: Bool
+
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            thread
+            Image(systemName: "heart.fill")
+                .font(.system(size: alive ? 18 : 15))
+                .foregroundStyle(DS.Palette.pink.opacity(alive ? 1 : 0.4))
+                .scaleEffect(pulse ? 1.18 : 1.0)
+            thread
+        }
+        .onAppear {
+            guard alive, !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+        .onChange(of: alive) {
+            if alive, !reduceMotion {
+                withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.3)) { pulse = false }
+            }
+        }
+    }
+
+    private var thread: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [DS.Palette.pink.opacity(alive ? 0.5 : 0.2), DS.Palette.pink.opacity(0.05)],
+                    startPoint: .trailing, endPoint: .leading))
+            .frame(height: 1.5)
     }
 }
