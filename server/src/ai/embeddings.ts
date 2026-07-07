@@ -78,6 +78,8 @@ export function packVector(v: Float32Array): Uint8Array {
 
 export function unpackVector(blob: Uint8Array | null): Float32Array | null {
   if (!blob || blob.byteLength === 0 || blob.byteLength % 4 !== 0) return null;
-  const copy = new Uint8Array(blob); // sql.js 返回的可能是共享 buffer 的视图，复制一份
-  return new Float32Array(copy.buffer);
+  // Node.js Buffer has a shared ArrayBuffer under the hood.
+  // Slice the ArrayBuffer to ensure we get a clean, independent and aligned memory block.
+  const buffer = blob.buffer.slice(blob.byteOffset, blob.byteOffset + blob.byteLength);
+  return new Float32Array(buffer);
 }

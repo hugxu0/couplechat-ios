@@ -45,14 +45,26 @@ struct RootTabView: View {
         ZStack(alignment: .bottom) {
             DS.Palette.bgGradient.ignoresSafeArea()
 
-            Group {
-                switch tab {
-                case .chat: ChatHomeView()
-                case .records: RecordsView()
-                case .pet: PetView()
-                case .reminders: RemindersView()
-                case .profile: ProfileView()
-                }
+            ZStack {
+                ChatHomeView()
+                    .opacity(tab == .chat ? 1.0 : 0.0)
+                    .disabled(tab != .chat)
+                
+                RecordsView()
+                    .opacity(tab == .records ? 1.0 : 0.0)
+                    .disabled(tab != .records)
+                
+                PetView()
+                    .opacity(tab == .pet ? 1.0 : 0.0)
+                    .disabled(tab != .pet)
+                
+                RemindersView()
+                    .opacity(tab == .reminders ? 1.0 : 0.0)
+                    .disabled(tab != .reminders)
+                
+                ProfileView()
+                    .opacity(tab == .profile ? 1.0 : 0.0)
+                    .disabled(tab != .profile)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 

@@ -15,13 +15,16 @@ final class ChatStore: ObservableObject {
     @Published private(set) var messagesByChannel: [String: [ChatMessage]] = [:]
     @Published var partnerOnline = false
     @Published var partner: Account? {
-        didSet { scheduleCacheSave() }
+        didSet {
+            if let partner = partner,
+               let data = try? JSONEncoder().encode(partner) {
+                UserDefaults.standard.set(data, forKey: "cached_partner_\(session?.username ?? "")")
+            }
+        }
     }
     @Published private(set) var readStates: [String: [String: Double]] = [:]
     @Published var aiTyping = false
-    @Published var sharedState: [String: Any] = [:] {
-        didSet { scheduleCacheSave() }
-    }
+    @Published var sharedState: [String: Any] = [:]
     @Published var lastConnectionError: String?
 
     // 通知提醒页：收到共享提醒/备忘变更时刷新
@@ -34,7 +37,6 @@ final class ChatStore: ObservableObject {
 
     private var manager: SocketManager?
     private var socket: SocketIOClient?
-    private var cacheSaveTask: Task<Void, Never>?
     private var restoringCache = false
     private var backfillingChannels = Set<String>()
 
@@ -55,6 +57,7 @@ final class ChatStore: ObservableObject {
     func bootstrap() {
         guard session == nil, let saved = Keychain.loadSession() else { return }
         session = saved
+        _ = ChatLocalDatabase.shared.open(username: saved.username)
         restoreLocalCache(for: saved)
         connect()
     }
@@ -73,6 +76,7 @@ final class ChatStore: ObservableObject {
         let s = try JSONDecoder().decode(Session.self, from: data)
         Keychain.saveSession(s)
         session = s
+        _ = ChatLocalDatabase.shared.open(username: s.username)
         restoreLocalCache(for: s)
         connect()
     }
@@ -91,9 +95,7 @@ final class ChatStore: ObservableObject {
         partnerOnline = false
         aiTyping = false
         lastConnectionError = nil
-        if let username {
-            ChatLocalCache.clear(for: username)
-        }
+        ChatLocalDatabase.shared.close()
     }
 
     func fetchAccounts() async -> [Account] {
@@ -209,13 +211,34 @@ final class ChatStore: ObservableObject {
 
         s.on("shared:init") { [weak self] data, _ in
             guard let state = data.first as? [String: Any] else { return }
-            Task { @MainActor in self?.sharedState = state }
+            Task { @MainActor in
+                self?.sharedState = state
+                for (key, val) in state {
+                    if let dict = val as? [String: Any],
+                       let value = dict["value"],
+                       let valueData = try? JSONSerialization.data(withJSONObject: value),
+                       let valueJson = String(data: valueData, encoding: .utf8) {
+                        let updatedBy = dict["updatedBy"] as? String ?? ""
+                        let updatedAt = (dict["updatedAt"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
+                        ChatLocalDatabase.shared.saveSharedState(key: key, valueJson: valueJson, updatedBy: updatedBy, updatedAt: updatedAt)
+                    }
+                }
+            }
         }
 
         s.on("shared:update") { [weak self] data, _ in
             guard let update = data.first as? [String: Any],
                   let key = update["key"] as? String else { return }
-            Task { @MainActor in self?.sharedState[key] = update }
+            Task { @MainActor in
+                self?.sharedState[key] = update
+                if let value = update["value"],
+                   let valueData = try? JSONSerialization.data(withJSONObject: value),
+                   let valueJson = String(data: valueData, encoding: .utf8) {
+                    let updatedBy = update["updatedBy"] as? String ?? ""
+                    let updatedAt = (update["updatedAt"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
+                    ChatLocalDatabase.shared.saveSharedState(key: key, valueJson: valueJson, updatedBy: updatedBy, updatedAt: updatedAt)
+                }
+            }
         }
 
         s.on("personalItem:changed") { [weak self] data, _ in
@@ -298,10 +321,10 @@ final class ChatStore: ObservableObject {
         transform(&list)
         next[channel.rawValue] = list
         messagesByChannel = next
-        scheduleCacheSave()
     }
 
     private func upsert(_ msg: ChatMessage, in channel: ChatChannel) {
+        ChatLocalDatabase.shared.insertMessage(msg)
         updateMessages(channel) { list in
             if let i = list.firstIndex(where: { $0.id == msg.id || (msg.clientId != nil && $0.id == msg.clientId) }) {
                 list[i] = msg
@@ -317,6 +340,9 @@ final class ChatStore: ObservableObject {
     }
 
     private func replaceMessages(_ incoming: [ChatMessage], in channel: ChatChannel) {
+        for msg in incoming {
+            ChatLocalDatabase.shared.insertMessage(msg)
+        }
         updateMessages(channel) { list in
             list = incoming
         }
@@ -324,39 +350,23 @@ final class ChatStore: ObservableObject {
 
     // MARK: 本地缓存
     private func restoreLocalCache(for session: Session) {
-        guard let snapshot = ChatLocalCache.load(for: session.username) else { return }
         restoringCache = true
-        messagesByChannel = snapshot.messagesByChannel.mapValues { messages in
-            messages.sorted { $0.ts < $1.ts }
+        messagesByChannel[ChatChannel.couple.rawValue] = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.couple.rawValue, limit: 50)
+        messagesByChannel[ChatChannel.ai.rawValue] = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.ai.rawValue, limit: 50)
+        
+        readStates = [
+            ChatChannel.couple.rawValue: ChatLocalDatabase.shared.loadReadReceipts(channel: ChatChannel.couple.rawValue),
+            ChatChannel.ai.rawValue: ChatLocalDatabase.shared.loadReadReceipts(channel: ChatChannel.ai.rawValue)
+        ]
+        
+        sharedState = ChatLocalDatabase.shared.loadSharedState()
+        
+        if let data = UserDefaults.standard.data(forKey: "cached_partner_\(session.username)"),
+           let p = try? JSONDecoder().decode(Account.self, from: data) {
+            partner = p
         }
-        readStates = snapshot.readStates
-        partner = snapshot.partner
-        sharedState = ChatLocalCache.decodeSharedState(snapshot.sharedStateData)
+        
         restoringCache = false
-    }
-
-    private func scheduleCacheSave() {
-        guard !restoringCache, let username = session?.username else { return }
-        cacheSaveTask?.cancel()
-        let snapshot = ChatLocalCache.Snapshot(
-            username: username,
-            savedAt: Date().timeIntervalSince1970,
-            messagesByChannel: messagesByChannel.mapValues { messages in
-                Array(messages
-                    .filter { !$0.pending }
-                    .sorted { $0.ts < $1.ts })
-            },
-            readStates: readStates,
-            partner: partner,
-            sharedStateData: ChatLocalCache.encodeSharedState(sharedState)
-        )
-        cacheSaveTask = Task {
-            try? await Task.sleep(nanoseconds: 450_000_000)
-            guard !Task.isCancelled else { return }
-            await Task.detached(priority: .utility) {
-                ChatLocalCache.save(snapshot)
-            }.value
-        }
     }
 
     // MARK: 历史 / 补漏
@@ -364,7 +374,7 @@ final class ChatStore: ObservableObject {
         guard let s = socket else { return }
         let local = messages(for: channel)
         let lastTs = local.last(where: { !$0.pending && !$0.failed })?.ts ?? 0
-        var payload: [String: Any] = ["channel": channel.rawValue, "limit": lastTs > 0 ? 300 : 80]
+        var payload: [String: Any] = ["channel": channel.rawValue, "limit": 100]
         if lastTs > 0 { payload["since"] = lastTs }
         s.emitWithAck("messages:fetch", payload).timingOut(after: 9) { [weak self] data in
             guard let dict = data.first as? [String: Any],
@@ -372,60 +382,40 @@ final class ChatStore: ObservableObject {
             let incoming = list.compactMap { ChatMessage(dict: $0) }
             Task { @MainActor in
                 guard let self else { return }
-                if lastTs > 0 {
-                    incoming.forEach { self.upsert($0, in: channel) }
-                } else {
-                    self.replaceMessages(incoming, in: channel)
-                }
+                incoming.forEach { self.upsert($0, in: channel) }
                 if channel == .couple { self.markRead(.couple) }
-                self.backfillAllHistory(channel)
             }
         }
-    }
-
-    private func backfillAllHistory(_ channel: ChatChannel) {
-        guard !backfillingChannels.contains(channel.rawValue) else { return }
-        backfillingChannels.insert(channel.rawValue)
-        fetchOlderHistoryPage(channel)
-    }
-
-    private func fetchOlderHistoryPage(_ channel: ChatChannel) {
-        guard let s = socket, connected, let first = messages(for: channel).first else {
-            backfillingChannels.remove(channel.rawValue)
-            return
-        }
-        s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": first.ts, "limit": 300])
-            .timingOut(after: 9) { [weak self] data in
-                guard let dict = data.first as? [String: Any],
-                      let list = dict["list"] as? [[String: Any]] else {
-                    Task { @MainActor in self?.backfillingChannels.remove(channel.rawValue) }
-                    return
-                }
-                let older = list.compactMap { ChatMessage(dict: $0) }
-                Task { @MainActor in
-                    guard let self else { return }
-                    guard !older.isEmpty else {
-                        self.backfillingChannels.remove(channel.rawValue)
-                        return
-                    }
-                    self.updateMessages(channel) { current in
-                        let known = Set(current.map(\.id))
-                        current.insert(contentsOf: older.filter { !known.contains($0.id) }, at: 0)
-                    }
-                    self.fetchOlderHistoryPage(channel)
-                }
-            }
     }
 
     func loadOlder(_ channel: ChatChannel = .couple) {
-        guard let s = socket, connected, let first = messages(for: channel).first else { return }
-        s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": first.ts, "limit": 50])
+        guard let first = messages(for: channel).first else { return }
+        let limit = 50
+        
+        // 1. First try to load from local SQLite
+        let localOlder = ChatLocalDatabase.shared.fetchMessages(channel: channel.rawValue, beforeTimestamp: first.ts, limit: limit)
+        if !localOlder.isEmpty {
+            updateMessages(channel) { current in
+                let known = Set(current.map(\.id))
+                current.insert(contentsOf: localOlder.filter { !known.contains($0.id) }, at: 0)
+            }
+            if localOlder.count >= limit {
+                return // Loaded a full page locally, no need to query network
+            }
+        }
+        
+        // 2. If local database has no more or not enough older messages, fetch from server
+        guard let s = socket, connected else { return }
+        s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": first.ts, "limit": limit])
             .timingOut(after: 9) { [weak self] data in
                 guard let dict = data.first as? [String: Any],
                       let list = dict["list"] as? [[String: Any]] else { return }
                 let older = list.compactMap { ChatMessage(dict: $0) }
                 Task { @MainActor in
                     guard let self, !older.isEmpty else { return }
+                    for msg in older {
+                        ChatLocalDatabase.shared.insertMessage(msg)
+                    }
                     self.updateMessages(channel) { current in
                         let known = Set(current.map(\.id))
                         current.insert(contentsOf: older.filter { !known.contains($0.id) }, at: 0)
@@ -654,7 +644,9 @@ final class ChatStore: ObservableObject {
         var next = readStates
         next[channel.rawValue] = state
         readStates = next
-        scheduleCacheSave()
+        for (user, ts) in state {
+            ChatLocalDatabase.shared.saveReadReceipt(channel: channel.rawValue, username: user, ts: ts, updatedAt: Date().timeIntervalSince1970 * 1000)
+        }
     }
 
     private func setReadState(_ channel: ChatChannel, user: String, ts: Double) {
@@ -675,6 +667,7 @@ final class ChatStore: ObservableObject {
             m.url = nil
             m.text = "你撤回了一条消息"
             list[i] = m
+            ChatLocalDatabase.shared.insertMessage(m)
         }
         s.emitWithAck("message:recall", ["id": message.id]).timingOut(after: 9) { _ in }
     }
@@ -692,6 +685,7 @@ final class ChatStore: ObservableObject {
                 m.url = nil
                 m.text = mine ? "你撤回了一条消息" : "\(byName ?? "对方")撤回了一条消息"
                 list[i] = m
+                ChatLocalDatabase.shared.insertMessage(m)
             }
         }
     }
@@ -704,6 +698,7 @@ final class ChatStore: ObservableObject {
                 var m = list[i]
                 m.meta = meta.flatMap { ChatMessageMeta(dict: $0) }
                 list[i] = m
+                ChatLocalDatabase.shared.insertMessage(m)
             }
         }
     }
@@ -721,7 +716,7 @@ final class ChatStore: ObservableObject {
     func searchMessages(_ query: String, channel: ChatChannel) async -> [ChatMessage] {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return [] }
-        let local = localSearchMessages(q, channel: channel)
+        let local = ChatLocalDatabase.shared.searchMessages(query: q, channel: channel.rawValue)
         guard let s = socket, connected else { return local }
 
         return await withCheckedContinuation { continuation in
@@ -741,16 +736,6 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    private func localSearchMessages(_ query: String, channel: ChatChannel) -> [ChatMessage] {
-        messages(for: channel)
-            .filter {
-                $0.kind == "user"
-                    && ($0.text.localizedCaseInsensitiveContains(query)
-                        || ($0.replyPreview?.localizedCaseInsensitiveContains(query) ?? false))
-            }
-            .sorted { $0.ts > $1.ts }
-    }
-
     nonisolated private static func mergeSearchResults(_ first: [ChatMessage], _ second: [ChatMessage]) -> [ChatMessage] {
         var seen = Set<String>()
         return (first + second)
@@ -766,6 +751,10 @@ final class ChatStore: ObservableObject {
     func setShared(_ key: String, value: [String: Any]) {
         // 乐观更新本地，服务端广播 shared:update 后自然对齐
         sharedState[key] = ["key": key, "value": value]
+        if let valueData = try? JSONSerialization.data(withJSONObject: value),
+           let valueJson = String(data: valueData, encoding: .utf8) {
+            ChatLocalDatabase.shared.saveSharedState(key: key, valueJson: valueJson, updatedBy: session?.username ?? "", updatedAt: Date().timeIntervalSince1970 * 1000)
+        }
         guard let s = socket, connected else {
             lastConnectionError = "Socket 未连接"
             return

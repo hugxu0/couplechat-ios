@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import initSqlJs, { type Database, type SqlValue } from "sql.js";
+import { DatabaseSync } from "node:sqlite";
 import { config } from "../config";
 
-let sqlite: Database | null = null;
+let sqlite: DatabaseSync | null = null;
 let dbPath = "";
 
 export interface AccountRow {
@@ -106,86 +106,50 @@ function conn() {
   return sqlite;
 }
 
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingPersist = false;
-
-function persist() {
-  pendingPersist = true;
-  if (persistTimer) return;
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    if (!pendingPersist) return;
-    pendingPersist = false;
-    doPersist();
-  }, 100);
-}
-
 export function flushSync() {
-  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
-  if (pendingPersist) { pendingPersist = false; doPersist(); }
-}
-
-function doPersist() {
-  const database = conn();
-  const data = Buffer.from(database.export());
-  const tmp = `${dbPath}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, dbPath);
+  // No-op for native node:sqlite since writes are incremental and saved immediately
 }
 
 export async function initDatabase() {
   fs.mkdirSync(config.dataDir, { recursive: true });
   dbPath = path.join(config.dataDir, "couplechat.sqlite");
 
-  const SQL = await initSqlJs();
-  if (fs.existsSync(dbPath)) {
-    sqlite = new SQL.Database(fs.readFileSync(dbPath));
-  } else {
-    sqlite = new SQL.Database();
-  }
+  sqlite = new DatabaseSync(dbPath);
+
+  // Enable WAL mode for high concurrency performance
+  sqlite.exec("PRAGMA journal_mode = WAL;");
+  sqlite.exec("PRAGMA synchronous = NORMAL;");
 
   migrate();
-  doPersist();
 }
 
-export function run(sql: string, params: SqlValue[] = [], shouldPersist = true) {
-  conn().run(sql, params);
-  if (shouldPersist) persist();
+export function run(sql: string, params: any[] = []) {
+  conn().prepare(sql).run(...params);
 }
 
-export function all<T extends object>(sql: string, params: SqlValue[] = []): T[] {
-  const stmt = conn().prepare(sql, params);
-  const rows: T[] = [];
-  try {
-    while (stmt.step()) {
-      rows.push(stmt.getAsObject() as unknown as T);
-    }
-  } finally {
-    stmt.free();
-  }
-  return rows;
+export function all<T extends object>(sql: string, params: any[] = []): T[] {
+  return conn().prepare(sql).all(...params) as T[];
 }
 
-export function get<T extends object>(sql: string, params: SqlValue[] = []): T | undefined {
-  return all<T>(sql, params)[0];
+export function get<T extends object>(sql: string, params: any[] = []): T | undefined {
+  return conn().prepare(sql).get(...params) as T | undefined;
 }
 
 export function transaction(fn: () => void) {
   const database = conn();
-  database.run("BEGIN");
+  database.exec("BEGIN");
   try {
     fn();
-    database.run("COMMIT");
-    persist();
+    database.exec("COMMIT");
   } catch (error) {
-    database.run("ROLLBACK");
+    database.exec("ROLLBACK");
     throw error;
   }
 }
 
 function migrate() {
   const database = conn();
-  database.run(`
+  database.exec(`
     CREATE TABLE IF NOT EXISTS accounts (
       username TEXT PRIMARY KEY,
       display_name TEXT NOT NULL,
@@ -277,7 +241,7 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS ai_facts_status_idx ON ai_facts(status);
 
     -- 事件卡片：每天把聊天按话题切成卡，独立向量化供语义召回
-    -- （取代旧后端的 knowledge_cards + chunk_embeddings 双索引）。
+    -- (取代旧后端的 knowledge_cards + chunk_embeddings 双索引)。
     CREATE TABLE IF NOT EXISTS ai_episodes (
       id TEXT PRIMARY KEY,
       channel TEXT NOT NULL,
@@ -304,7 +268,7 @@ function migrate() {
 
   // Idempotent migration for scope column (added post-initial schema)
   try {
-    database.run("ALTER TABLE personal_items ADD COLUMN scope TEXT NOT NULL DEFAULT 'personal'");
+    database.exec("ALTER TABLE personal_items ADD COLUMN scope TEXT NOT NULL DEFAULT 'personal'");
   } catch {
     // column already exists — safe to ignore
   }
