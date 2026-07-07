@@ -17,7 +17,6 @@ struct ChatView: View {
     @State private var mediaBusy = false
     @State private var showSearch = false
     @State private var showWallpaperPicker = false
-    @State private var keyboard = KeyboardTransition.hidden
     @State private var replyTarget: ChatMessage?
     @State private var showMedia = false
     @State private var scrollToMessageId: String?
@@ -52,18 +51,13 @@ struct ChatView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            messageList(in: geometry)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 0) {
-                        replyBar
-                        composer
-                        Color.clear
-                            .frame(height: keyboard.bottomInset)
-                    }
-                    .animation(keyboard.animation, value: keyboard.bottomInset)
+        messageList
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    replyBar
+                    composer
                 }
-        }
+            }
         .background(
             ZStack {
                 theme.wallpaper(for: channel).gradient(dark: colorScheme == .dark)
@@ -76,7 +70,6 @@ struct ChatView: View {
             }
             .ignoresSafeArea()
         )
-        .ignoresSafeArea(.keyboard, edges: .bottom)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -140,7 +133,7 @@ struct ChatView: View {
     }
 
     // MARK: 消息列表
-    private func messageList(in geometry: GeometryProxy) -> some View {
+    private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -196,18 +189,14 @@ struct ChatView: View {
             )
             .onAppear { scrollToBottom(proxy) }
             .onChange(of: messages.count) { scrollToBottom(proxy) }
-            // 键盘弹/收：用系统键盘动画驱动底部 inset 和 scrollTo，让消息与输入栏同步。
+            // 键盘弹/收：输入栏由系统避让键盘，这里只用同一动画同步贴底滚动。
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-                let transition = KeyboardTransition(note: note, geometry: geometry)
-                withAnimation(transition.animation) {
-                    keyboard = transition
+                withAnimation(keyboardAnimation(from: note)) {
                     proxy.scrollTo("bottomAnchor", anchor: .bottom)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
-                let transition = KeyboardTransition(note: note, geometry: geometry)
-                withAnimation(transition.animation) {
-                    keyboard = .hidden(with: transition.animation)
+                withAnimation(keyboardAnimation(from: note)) {
                     proxy.scrollTo("bottomAnchor", anchor: .bottom)
                 }
             }
@@ -508,53 +497,26 @@ private struct PreparedMedia {
     let messageType: String
 }
 
-private struct KeyboardTransition {
-    let bottomInset: CGFloat
-    let animation: Animation
+private func keyboardAnimation(from note: Notification) -> Animation {
+    let info = note.userInfo ?? [:]
+    let duration = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+    let curveRaw = (info[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue
+        ?? UIView.AnimationCurve.easeInOut.rawValue
+    let curve = UIView.AnimationCurve(rawValue: curveRaw) ?? .easeInOut
 
-    static let hidden = KeyboardTransition(bottomInset: 0, animation: .easeOut(duration: 0.25))
+    guard duration > 0 else { return .linear(duration: 0.01) }
 
-    static func hidden(with animation: Animation) -> KeyboardTransition {
-        KeyboardTransition(bottomInset: 0, animation: animation)
-    }
-
-    init(bottomInset: CGFloat, animation: Animation) {
-        self.bottomInset = bottomInset
-        self.animation = animation
-    }
-
-    init(note: Notification, geometry: GeometryProxy) {
-        let info = note.userInfo ?? [:]
-        let endFrame = info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect ?? .zero
-        let duration = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
-        let curveRaw = (info[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue
-            ?? UIView.AnimationCurve.easeInOut.rawValue
-        let curve = UIView.AnimationCurve(rawValue: curveRaw) ?? .easeInOut
-
-        self.animation = Self.animation(duration: duration, curve: curve)
-
-        let viewFrame = geometry.frame(in: .global)
-        let overlapsHorizontally = endFrame.maxX > viewFrame.minX && endFrame.minX < viewFrame.maxX
-        let safeAreaBottomY = viewFrame.maxY - geometry.safeAreaInsets.bottom
-        let inset = overlapsHorizontally ? max(0, safeAreaBottomY - endFrame.minY) : 0
-        self.bottomInset = inset.rounded(.toNearestOrAwayFromZero)
-    }
-
-    private static func animation(duration: Double, curve: UIView.AnimationCurve) -> Animation {
-        guard duration > 0 else { return .linear(duration: 0.01) }
-
-        switch curve {
-        case .easeInOut:
-            return .timingCurve(0.42, 0, 0.58, 1, duration: duration)
-        case .easeIn:
-            return .timingCurve(0.42, 0, 1, 1, duration: duration)
-        case .easeOut:
-            return .timingCurve(0, 0, 0.58, 1, duration: duration)
-        case .linear:
-            return .linear(duration: duration)
-        @unknown default:
-            return .easeOut(duration: duration)
-        }
+    switch curve {
+    case .easeInOut:
+        return .timingCurve(0.42, 0, 0.58, 1, duration: duration)
+    case .easeIn:
+        return .timingCurve(0.42, 0, 1, 1, duration: duration)
+    case .easeOut:
+        return .timingCurve(0, 0, 0.58, 1, duration: duration)
+    case .linear:
+        return .linear(duration: duration)
+    @unknown default:
+        return .easeOut(duration: duration)
     }
 }
 
