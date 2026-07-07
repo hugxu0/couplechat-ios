@@ -164,15 +164,8 @@ struct ChatView: View {
                                     onRetry: { store.resend(msg) },
                                     contextMenuContent: AnyView(messageContextMenu(msg, own: own, withinTwoMin: withinTwoMin)))
                                 .padding(.top, bubbleTopPadding(index))
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func `if`(_ condition: Bool, transform: (Self) -> some View) -> some View {
-        if condition { transform(self) } else { self }
-    }
-}
+                            }
+                        }
                         .id(msg.id)
                         .onAppear {
                             if index == 0 { store.loadOlder(channel) }
@@ -559,6 +552,13 @@ private struct KeyboardTransition {
         @unknown default:
             return .easeOut(duration: duration)
         }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func `if`(_ condition: Bool, transform: (Self) -> some View) -> some View {
+        if condition { transform(self) } else { self }
     }
 }
 
