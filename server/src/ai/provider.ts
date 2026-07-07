@@ -145,6 +145,44 @@ export async function describeImage(imageUrl: string, gen: GenProfile, prompt = 
   }
 }
 
+// 联网搜索：复用 AI_VISION_*（同一个 MiMo 账号既能识图也能联网），
+// tools:[{type:"web_search",...}] 是 MiMo 私有格式，文档：
+// https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/tool-calling/web-search
+// 未配置/调用失败都返回 null，调用方按「如实说查不到」兜底，不编造内容。
+export async function webSearch(query: string, gen: GenProfile): Promise<string | null> {
+  const p = config.aiVision;
+  if (!p) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), gen.timeoutMs ?? 45_000);
+  try {
+    const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
+      body: JSON.stringify({
+        model: p.model,
+        max_tokens: gen.maxTokens,
+        temperature: gen.temperature,
+        messages: [{ role: "user", content: query }],
+        tools: [{ type: "web_search", max_keyword: 3, force_search: true, limit: 3 }],
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      console.warn(`[ai] search HTTP ${res.status}`);
+      return null;
+    }
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data.choices?.[0]?.message?.content;
+    return content ? String(content).trim() || null : null;
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    console.warn(`[ai] search ${name === "AbortError" ? "超时" : `失败: ${error instanceof Error ? error.message : error}`}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // 从模型输出里抽出 JSON（容忍 ```json 包裹或前后多余文字）。
 export function extractJson<T = unknown>(text: string | null): T | null {
   if (!text) return null;

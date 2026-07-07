@@ -32,6 +32,9 @@ export const GEN = {
   // MiMo 是推理模型，大部分 token 会先花在看不见的 reasoning_content 上，
   // maxTokens 给太小会在思考阶段就被截断，content 永远是空的。
   describeImage: { maxTokens: 1500, temperature: 0.4, timeoutMs: 40_000 },
+  // 联网搜索：同样是 MiMo 推理模型 + 搜索结果一起吃 token，budget 要给够，
+  // 实测 800 会在还没写完答案时就被截断。
+  search: { maxTokens: 1800, temperature: 0.3, timeoutMs: 45_000 },
 } satisfies Record<string, GenProfile>;
 
 export const MEMORY = {

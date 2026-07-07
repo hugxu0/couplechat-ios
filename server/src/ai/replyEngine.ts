@@ -11,7 +11,7 @@
 
 import { accounts, getDoc } from "./memoryStore";
 import { compactLine, latestImage, recentMessages, type LogMessage } from "./chatLog";
-import { chat, describeImage, extractJson, extractReplyText } from "./provider";
+import { chat, describeImage, extractJson, extractReplyText, webSearch } from "./provider";
 import { recallSafe, type Recalled } from "./recall";
 import { summaryText } from "./sessionSummary";
 import { ensureDailyMood } from "./nightly";
@@ -83,6 +83,7 @@ function buildUser(
   episodesContext: string,
   imageContext: string,
   tasksText: string,
+  searchContext: string,
   plan: PlanContext,
 ): string {
   const lines = recent
@@ -102,8 +103,9 @@ function buildUser(
     episodesContext ? `【相关记忆（过往事件）】\n${episodesContext}` : "",
     imageContext ? `【你刚看了一眼最近的图片】\n${imageContext}` : "",
     tasksText ? `【提醒/备忘概况】\n${tasksText}` : "",
-    plan.needSearch
-      ? "（这个问题看起来需要联网查最新信息，但你现在没有联网能力，如实告诉对方查不到，不要编造内容。）"
+    searchContext ? `【联网查到的信息】\n${searchContext}` : "",
+    plan.needSearch && !searchContext
+      ? "（这个问题看起来需要联网查最新信息，但这次没查到，如实告诉对方查不到，不要编造内容。）"
       : "",
     `${trigger.requesterName} 对你说：${trigger.question || "（没有正文，可能只是唤了你一声）"}`,
     `请以${BOT_NAME}的身份回复。`,
@@ -142,24 +144,26 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
     const plan = await classifyIntent(trigger.question, recent);
     const effective: Trigger = { ...trigger, question: plan.resolvedQuestion || trigger.question };
 
-    const [recalled, mood, imageContext] = await Promise.all([
+    const [recalled, mood, imageContext, searchContext] = await Promise.all([
       plan.needMemory || plan.needRetrieval
         ? recallSafe(plan.retrievalQuery || retrievalQuery(effective, recent), trigger.storedChannel)
         : Promise.resolve(NO_RECALL),
       ensureDailyMood().catch(() => ""),
       describeLatestImageIfNeeded(plan, recent),
+      plan.needSearch ? webSearch(plan.retrievalQuery || effective.question, GEN.search) : Promise.resolve<string | null>(null),
     ]);
     const tasksText = plan.needTasks ? tasksContext() : "";
+    const search = searchContext ?? "";
 
     console.log(
       `[ai] intent=${plan.intent} 记忆=${plan.needMemory} 检索=${plan.needRetrieval} 看图=${plan.needImages}` +
-        `${imageContext ? "(命中)" : ""} 联网=${plan.needSearch} 任务=${plan.needTasks}`,
+        `${imageContext ? "(命中)" : ""} 联网=${plan.needSearch}${search ? "(命中)" : ""} 任务=${plan.needTasks}`,
     );
 
     let out = await chat({
       profile: "chat",
       system: buildSystem(isPrivate, mood, plan),
-      user: buildUser(effective, recent, recalled.factsContext, recalled.episodesContext, imageContext, tasksText, plan),
+      user: buildUser(effective, recent, recalled.factsContext, recalled.episodesContext, imageContext, tasksText, search, plan),
       gen: GEN.reply,
     });
     let replies = normalizeReplies(out);
@@ -168,7 +172,7 @@ async function respond(trigger: Trigger, sink: ReplySink): Promise<void> {
       out = await chat({
         profile: "chat",
         system: buildSystem(isPrivate, mood, plan),
-        user: buildUser(effective, recent, recalled.factsContext, recalled.episodesContext, imageContext, tasksText, plan),
+        user: buildUser(effective, recent, recalled.factsContext, recalled.episodesContext, imageContext, tasksText, search, plan),
         gen: GEN.reply,
       });
       replies = normalizeReplies(out);
