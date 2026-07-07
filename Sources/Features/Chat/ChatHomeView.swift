@@ -83,10 +83,16 @@ struct ChatHomeView: View {
                         .padding(.vertical, 9)
                         .background(
                             Capsule(style: .continuous)
-                                .fill((refreshMessage == "已更新" ? DS.Palette.green : Color.red).opacity(0.9))
+                                .fill((refreshMessage == "已更新" ? DS.Palette.green : Color.red).opacity(0.92))
+                                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
                         )
                         .padding(.top, 8)
                         .transition(.move(edge: .top).combined(with: .opacity))
+                        .animation(DS.Anim.ease, value: refreshMessage)
+                }
+                if isRefreshing {
+                    ProgressView()
+                        .padding(.top, 12)
                 }
             }
         }
@@ -402,11 +408,13 @@ struct ChatHomeView: View {
         let success = await store.refreshHomeData()
         await MainActor.run {
             isRefreshing = false
-            refreshMessage = success ? "已更新" : "刷新失败，稍后再试"
+            withAnimation(DS.Anim.ease) {
+                refreshMessage = success ? "已更新" : "刷新失败，稍后再试"
+            }
         }
-        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
         await MainActor.run {
-            if refreshMessage != nil {
+            withAnimation(DS.Anim.ease) {
                 refreshMessage = nil
             }
         }
