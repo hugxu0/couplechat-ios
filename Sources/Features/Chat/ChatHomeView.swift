@@ -11,6 +11,8 @@ struct ChatHomeView: View {
     @State private var customStatusText = ""
     @State private var showNotePrompt = false
     @State private var noteText = ""
+    @State private var editingCustomStatuses = false
+    @AppStorage("chat_home_custom_statuses") private var customStatusData = ""
 
     private var myName: String { store.session?.name ?? "小旭" }
     private var myUsername: String { store.session?.username ?? "xu" }
@@ -23,6 +25,23 @@ struct ChatHomeView: View {
 
     private var statusMap: [String: String] {
         store.sharedValue("chat_statuses") as? [String: String] ?? [:]
+    }
+
+    private var customStatuses: [String] {
+        get {
+            customStatusData
+                .split(separator: "\n")
+                .map { String($0) }
+                .filter { !$0.isEmpty }
+        }
+        nonmutating set {
+            var seen = Set<String>()
+            let values = newValue
+                .map { String($0.prefix(8)) }
+                .filter { !$0.isEmpty }
+                .filter { seen.insert($0).inserted }
+            customStatusData = values.joined(separator: "\n")
+        }
     }
 
     var body: some View {
@@ -143,53 +162,116 @@ struct ChatHomeView: View {
     }
 
     private var statusStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Self.statusOptions) { status in
-                    let selected = statusMap[myUsername] == status.title
-                    Button {
-                        setStatus(status)
-                    } label: {
-                        Text(status.title)
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundStyle(selected ? .white : status.color)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule()
-                                    .fill(selected ? AnyShapeStyle(status.gradient) : AnyShapeStyle(DS.Palette.innerSurface))
-                            )
+        VStack(alignment: .leading, spacing: 9) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Self.statusOptions) { status in
+                        statusButton(status)
                     }
-                    .buttonStyle(PressableStyle())
-                }
 
-                Button {
-                    customStatusText = statusMap[myUsername] ?? ""
-                    showCustomStatusPrompt = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(DS.Palette.textSecondary)
-                        .frame(width: 38, height: 34)
-                        .background(DS.Palette.innerSurface, in: Capsule())
-                }
-                .buttonStyle(PressableStyle())
-
-                if statusMap[myUsername] != nil {
                     Button {
-                        clearStatus()
+                        customStatusText = ""
+                        showCustomStatusPrompt = true
                     } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
+                        Image(systemName: "plus")
+                            .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(DS.Palette.textSecondary)
-                            .frame(width: 34, height: 34)
+                            .frame(width: 38, height: 34)
                             .background(DS.Palette.innerSurface, in: Capsule())
                     }
                     .buttonStyle(PressableStyle())
+
+                    if statusMap[myUsername] != nil {
+                        Button {
+                            clearStatus()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(DS.Palette.textSecondary)
+                                .frame(width: 34, height: 34)
+                                .background(DS.Palette.innerSurface, in: Capsule())
+                        }
+                        .buttonStyle(PressableStyle())
+                    }
+                }
+                .padding(.horizontal, 1)
+            }
+
+            if !customStatuses.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(customStatuses, id: \.self) { title in
+                            customStatusButton(title)
+                        }
+                    }
+                    .padding(.horizontal, 1)
                 }
             }
-            .padding(.horizontal, 1)
         }
+    }
+
+    private func statusButton(_ status: StatusOption) -> some View {
+        let selected = statusMap[myUsername] == status.title
+        return Button {
+            setStatus(status)
+        } label: {
+            Text(status.title)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(selected ? .white : status.color)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(selected ? AnyShapeStyle(status.gradient) : AnyShapeStyle(DS.Palette.innerSurface))
+                )
+        }
+        .buttonStyle(PressableStyle())
+    }
+
+    private func customStatusButton(_ title: String) -> some View {
+        let selected = statusMap[myUsername] == title
+        return ZStack(alignment: .topTrailing) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(selected ? .white : DS.Palette.textPrimary.opacity(0.72))
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(selected ? AnyShapeStyle(customStatusOption(title).gradient) : AnyShapeStyle(DS.Palette.innerSurface))
+                )
+                .rotationEffect(.degrees(editingCustomStatuses ? (title.hashValue.isMultiple(of: 2) ? 1.8 : -1.8) : 0))
+                .animation(editingCustomStatuses ? .easeInOut(duration: 0.11).repeatForever(autoreverses: true) : .default, value: editingCustomStatuses)
+
+            if editingCustomStatuses {
+                Button {
+                    deleteCustomStatus(title)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(.white)
+                        .frame(width: 17, height: 17)
+                        .background(Color.red, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .offset(x: 5, y: -6)
+            }
+        }
+        .contentShape(Capsule())
+        .onTapGesture {
+            if editingCustomStatuses {
+                withAnimation(DS.Anim.springFast) { editingCustomStatuses = false }
+            } else {
+                setStatus(customStatusOption(title))
+            }
+        }
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.35)
+                .onEnded { _ in
+                    Haptics.medium()
+                    withAnimation(DS.Anim.springFast) { editingCustomStatuses = true }
+                }
+        )
     }
 
     private var actionStrip: some View {
@@ -353,7 +435,13 @@ struct ChatHomeView: View {
         let raw = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = raw.isEmpty ? Self.randomNoteText() : String(raw.prefix(36))
         let message = "🪧 \(body)"
-        store.sendText(InteractionPayload.encode(kind: .note, text: message), channel: .couple)
+        store.setShared("screen_note", value: [
+            "id": UUID().uuidString,
+            "from": myUsername,
+            "fromName": myName,
+            "text": message,
+            "ts": Date().timeIntervalSince1970 * 1000,
+        ])
         withAnimation(DS.Anim.springFast) { sentAction = "note" }
         noteText = ""
         Task {
@@ -383,9 +471,41 @@ struct ChatHomeView: View {
     private func setCustomStatus() {
         let raw = customStatusText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
+        let title = String(raw.prefix(8))
+        var stored = customStatuses
+        if !stored.contains(title) {
+            stored.append(title)
+            customStatuses = stored
+        }
         var next = statusMap
-        next[myUsername] = String(raw.prefix(8))
+        next[myUsername] = title
         store.setShared("chat_statuses", value: next)
+    }
+
+    private func deleteCustomStatus(_ title: String) {
+        Haptics.selection()
+        withAnimation(DS.Anim.springFast) {
+            customStatuses = customStatuses.filter { $0 != title }
+            if customStatuses.isEmpty {
+                editingCustomStatuses = false
+            }
+        }
+        if statusMap[myUsername] == title {
+            clearStatus()
+        }
+    }
+
+    private func customStatusOption(_ title: String) -> StatusOption {
+        .init(
+            id: "custom-\(title)",
+            title: title,
+            color: DS.Palette.pink,
+            gradient: LinearGradient(
+                colors: [Color(red: 1.00, green: 0.53, blue: 0.72), Color(red: 1.00, green: 0.73, blue: 0.85)],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        )
     }
 
     private static func randomNoteText() -> String {
@@ -430,7 +550,7 @@ struct ChatHomeView: View {
         .init(id: "miss", emoji: "💗", title: "想你了", subtitle: "心跳波纹", message: "💗 想你了", background: Color(red: 1.00, green: 0.91, blue: 0.95), kind: .miss),
         .init(id: "pat", emoji: "🖐️", title: "拍一拍", subtitle: "轻轻碰一下", message: "🖐️ 拍了拍你", background: Color(red: 1.00, green: 0.94, blue: 0.86), kind: .pat),
         .init(id: "flower", emoji: "🌸", title: "送花花", subtitle: "送你一朵", message: "🌸 送你一朵花花", background: Color(red: 1.00, green: 0.91, blue: 0.94), kind: .flower),
-        .init(id: "poop", emoji: "💩", title: "扔粑粑", subtitle: "坏笑一下", message: "💩 扔了个坏笑", background: Color(red: 0.96, green: 0.91, blue: 0.83), kind: .poop),
+        .init(id: "poop", emoji: "💩", title: "扔粑粑", subtitle: "扔了个粑粑", message: "💩 扔了个粑粑", background: Color(red: 0.96, green: 0.91, blue: 0.83), kind: .poop),
         .init(id: "note", emoji: "🪧", title: "贴条", subtitle: "贴住屏幕", message: "🪧 给你贴了一张小纸条", background: Color(red: 0.94, green: 0.95, blue: 0.97), kind: .note),
     ]
 }

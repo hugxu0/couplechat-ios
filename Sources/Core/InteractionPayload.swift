@@ -42,7 +42,7 @@ struct InteractionPayload: Identifiable, Equatable {
         if text == "💗 想你了" { return .miss }
         if text == "🖐️ 拍了拍你" { return .pat }
         if text == "🌸 送你一朵花花" { return .flower }
-        if text == "💩 扔了个坏笑" { return .poop }
+        if text == "💩 扔了个粑粑" { return .poop }
         if text.hasPrefix("🪧 ") { return .note }
         return nil
     }
@@ -225,7 +225,7 @@ struct IncomingInteractionOverlay: View {
         case .miss: return "想你了"
         case .pat: return "拍了拍你"
         case .flower: return "送你一朵花花"
-        case .poop: return "坏笑一下"
+        case .poop: return "扔了个粑粑"
         case .note: return "贴了一张小纸条"
         }
     }

@@ -33,8 +33,13 @@ struct RootTabView: View {
     // 订阅主题变化：主题色一改，标签栏和全部子页立即重绘
     @EnvironmentObject private var theme: ThemeManager
     @State private var lastSeenEffectMessageId: String?
+    @State private var lastSeenNoteId: String?
     @State private var activeEffect: InteractionPayload?
     @State private var activeEffectSender = ""
+
+    private var screenNoteId: String? {
+        store.sharedValue("screen_note")?["id"] as? String
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -74,9 +79,13 @@ struct RootTabView: View {
         .animation(DS.Anim.spring, value: app.chatOpen)
         .onAppear {
             lastSeenEffectMessageId = store.messages.last?.id
+            lastSeenNoteId = screenNoteId
         }
         .onChange(of: store.messages.last?.id) {
             handleIncomingInteraction()
+        }
+        .onChange(of: screenNoteId) {
+            handleIncomingNote()
         }
         .environmentObject(app)
     }
@@ -92,6 +101,21 @@ struct RootTabView: View {
         activeEffectSender = message.senderName.isEmpty ? "TA" : message.senderName
         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
             activeEffect = payload
+        }
+    }
+
+    private func handleIncomingNote() {
+        guard let value = store.sharedValue("screen_note"),
+              let id = value["id"] as? String,
+              id != lastSeenNoteId else { return }
+        lastSeenNoteId = id
+        guard value["from"] as? String != store.session?.username,
+              let text = value["text"] as? String,
+              let ts = (value["ts"] as? NSNumber)?.doubleValue ?? (value["ts"] as? Double),
+              Date().timeIntervalSince1970 * 1000 - ts < 300_000 else { return }
+        activeEffectSender = value["fromName"] as? String ?? "TA"
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            activeEffect = InteractionPayload(id: "note-\(id)", kind: .note, text: text)
         }
     }
 

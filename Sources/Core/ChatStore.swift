@@ -725,9 +725,12 @@ final class ChatStore: ObservableObject {
 
     // MARK: shared 键值（纪念日等两人共享状态）
     func setShared(_ key: String, value: [String: Any]) {
-        guard let s = socket, connected else { return }
         // 乐观更新本地，服务端广播 shared:update 后自然对齐
         sharedState[key] = ["key": key, "value": value]
+        guard let s = socket, connected else {
+            lastConnectionError = "Socket 未连接"
+            return
+        }
         s.emit("shared:set", ["key": key, "value": value])
     }
 
