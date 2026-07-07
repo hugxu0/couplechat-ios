@@ -256,7 +256,7 @@ final class ChatLocalDatabase {
         
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let username = readText(stmt, index: 0) {
-                let ts = sqlite3_column_double(stmt, index: 1)
+                let ts = sqlite3_column_double(stmt, 1)
                 receipts[username] = ts
             }
         }
@@ -294,7 +294,7 @@ final class ChatLocalDatabase {
             if let key = readText(stmt, index: 0),
                let valueJson = readText(stmt, index: 1),
                let updatedBy = readText(stmt, index: 2) {
-                let updatedAt = sqlite3_column_double(stmt, index: 3)
+                let updatedAt = sqlite3_column_double(stmt, 3)
                 
                 if let data = valueJson.data(using: .utf8),
                    let jsonObject = try? JSONSerialization.jsonObject(with: data) {
@@ -341,7 +341,7 @@ final class ChatLocalDatabase {
         let url = readText(stmt, index: 7)
         let replyTo = readText(stmt, index: 8)
         let replyPreview = readText(stmt, index: 9)
-        let ts = sqlite3_column_double(stmt, index: 10)
+        let ts = sqlite3_column_double(stmt, 10)
         let clientId = readText(stmt, index: 11)
         let metaJson = readText(stmt, index: 12)
         
