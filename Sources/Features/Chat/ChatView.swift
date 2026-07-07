@@ -34,7 +34,6 @@ struct ChatView: View {
     @State private var recordingURL: URL?
     @State private var recordingStartDate: Date?
     @State private var showMicPermissionAlert = false
-    @State private var showAIChat = false
     @FocusState private var inputFocused: Bool
     private static let cancelDragThreshold: CGFloat = -70
     private static let composerButtonSize: CGFloat = 44
@@ -125,14 +124,6 @@ struct ChatView: View {
                     } label: {
                         Label("更换壁纸", systemImage: "photo.on.rectangle.angled")
                     }
-                    if channel == .couple {
-                        Button {
-                            Haptics.light()
-                            showAIChat = true
-                        } label: {
-                            Label("私聊大橘", systemImage: "cat.fill")
-                        }
-                    }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 16, weight: .semibold))
@@ -179,9 +170,6 @@ struct ChatView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("请在系统设置中允许访问麦克风，才能发送语音消息")
-        }
-        .navigationDestination(isPresented: $showAIChat) {
-            ChatView(channel: .ai)
         }
     }
 
