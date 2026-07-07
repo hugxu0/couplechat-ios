@@ -106,7 +106,26 @@ function conn() {
   return sqlite;
 }
 
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingPersist = false;
+
 function persist() {
+  pendingPersist = true;
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    if (!pendingPersist) return;
+    pendingPersist = false;
+    doPersist();
+  }, 100);
+}
+
+export function flushSync() {
+  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+  if (pendingPersist) { pendingPersist = false; doPersist(); }
+}
+
+function doPersist() {
   const database = conn();
   const data = Buffer.from(database.export());
   const tmp = `${dbPath}.tmp`;
@@ -126,7 +145,7 @@ export async function initDatabase() {
   }
 
   migrate();
-  persist();
+  doPersist();
 }
 
 export function run(sql: string, params: SqlValue[] = [], shouldPersist = true) {
