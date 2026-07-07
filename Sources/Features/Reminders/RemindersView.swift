@@ -49,7 +49,6 @@ struct RemindersView: View {
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
-            .refreshable { await reload() }
             .task { await reload() }
             .onReceive(NotificationCenter.default.publisher(for: ChatStore.personalItemChangedNotification)) { _ in
                 Task { await reload() }
