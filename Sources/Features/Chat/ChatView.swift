@@ -393,14 +393,10 @@ struct ChatView: View {
 
     @ViewBuilder
     private var aiTypingHint: some View {
-        if channel == .ai && store.aiTyping {
+        if channel == .ai && (store.aiTyping || store.aiReplying) {
             HStack(spacing: 8) {
-                Text("大橘正在回复")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.Palette.textSecondary)
-                ProgressView()
-                    .tint(DS.Palette.accent)
-                    .scaleEffect(0.85)
+                typingDots
+                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, DS.Spacing.page)
@@ -408,6 +404,38 @@ struct ChatView: View {
             .background(.ultraThinMaterial)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+    }
+
+    private var typingDots: some View {
+        HStack(spacing: 5) {
+            Circle().frame(width: 7, height: 7)
+                .scaleEffect(store.aiTyping || store.aiReplying ? 1.0 : 0.7)
+                .opacity(typingDotOpacity(0))
+                .animation(typingDotAnimation(0), value: store.aiTyping || store.aiReplying)
+            Circle().frame(width: 7, height: 7)
+                .scaleEffect(store.aiTyping || store.aiReplying ? 1.0 : 0.7)
+                .opacity(typingDotOpacity(1))
+                .animation(typingDotAnimation(1), value: store.aiTyping || store.aiReplying)
+            Circle().frame(width: 7, height: 7)
+                .scaleEffect(store.aiTyping || store.aiReplying ? 1.0 : 0.7)
+                .opacity(typingDotOpacity(2))
+                .animation(typingDotAnimation(2), value: store.aiTyping || store.aiReplying)
+        }
+        .foregroundStyle(DS.Palette.accent)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(DS.Palette.bubbleOther, in: Capsule())
+    }
+
+    private func typingDotOpacity(_ index: Int) -> Double {
+        guard store.aiTyping || store.aiReplying else { return 0.55 }
+        let phase = (Date().timeIntervalSinceReferenceDate * 3.4) + Double(index) * 0.35
+        let value = (sin(phase) + 1) / 2
+        return 0.35 + value * 0.65
+    }
+
+    private func typingDotAnimation(_ index: Int) -> Animation {
+        .easeInOut(duration: 0.6 + Double(index) * 0.08).repeatForever(autoreverses: true)
     }
 
     // MARK: 输入栏（Telegram 式：附件嵌入输入框内，与表情按钮对称；麦克风按住说话）
