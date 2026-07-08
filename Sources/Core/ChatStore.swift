@@ -184,12 +184,12 @@ final class ChatStore: ObservableObject {
     func logout() {
         authService.logout()
         socketService.disconnect()
+        socketService.lastConnectionError = nil
         messageService.clearAll()
         sharedStateService.clearAll()
         partnerOnline = false
         aiTyping = false
         aiReplying = false
-        lastConnectionError = nil
         ChatLocalDatabase.shared.close()
     }
     
@@ -202,7 +202,7 @@ final class ChatStore: ObservableObject {
     }
     
     private func handleConnect() {
-        messageService.reachedOldestLocal.removeAll()
+        messageService.clearReachedOldestLocal()
         reportAway(false)
         syncHistory(.couple)
         syncHistory(.ai)

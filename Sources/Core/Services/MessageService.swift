@@ -28,6 +28,10 @@ final class MessageService: ObservableObject {
         messagesByChannel[channel.rawValue] ?? []
     }
     
+    func clearReachedOldestLocal() {
+        reachedOldestLocal.removeAll()
+    }
+    
     func updateMessages(_ channel: ChatChannel, _ transform: (inout [ChatMessage]) -> Void) {
         var next = messagesByChannel
         var list = next[channel.rawValue] ?? []
