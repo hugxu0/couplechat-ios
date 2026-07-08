@@ -34,6 +34,8 @@ struct ChatView: View {
     @State private var recordingURL: URL?
     @State private var recordingStartDate: Date?
     @State private var showMicPermissionAlert = false
+    @State private var showStickerPanel = false
+    @ObservedObject private var stickerStore = StickerStore.shared
     @FocusState private var inputFocused: Bool
     private static let cancelDragThreshold: CGFloat = -70
     private static let composerButtonSize: CGFloat = 44
@@ -44,7 +46,8 @@ struct ChatView: View {
 
     private var messages: [ChatMessage] { store.messages(for: channel) }
     private var mediaMessages: [ChatMessage] {
-        messages.filter { ($0.type == "image" || $0.type == "video" || $0.type == "sticker") && !$0.pending }
+        // 贴纸不进大图浏览 / 媒体库，只算真实图片和视频
+        messages.filter { ($0.type == "image" || $0.type == "video") && !$0.pending }
     }
     private var title: String {
         switch channel {
@@ -82,6 +85,20 @@ struct ChatView: View {
                     replyBar
                     aiTypingHint
                     composer
+                    if showStickerPanel {
+                        StickerEmojiPanel(
+                            store: stickerStore,
+                            onEmoji: { draft += $0 },
+                            onSendSticker: { sendSticker($0) })
+                            .frame(height: 300)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
+            }
+            .onChange(of: inputFocused) { _, focused in
+                // 弹出键盘时收起表情面板，二者不并存
+                if focused, showStickerPanel {
+                    withAnimation(DS.Anim.springFast) { showStickerPanel = false }
                 }
             }
         .background(
@@ -227,6 +244,9 @@ struct ChatView: View {
                         #selector(UIResponder.resignFirstResponder),
                         to: nil, from: nil, for: nil
                     )
+                    if showStickerPanel {
+                        withAnimation(DS.Anim.springFast) { showStickerPanel = false }
+                    }
                 }
             )
             // 初始定位交给 .defaultScrollAnchor(.bottom)，这里只在消息数变化时补贴底，
@@ -478,10 +498,13 @@ struct ChatView: View {
                 .lineLimit(1...5)
                 .font(.system(size: 17))
                 .multilineTextAlignment(.leading)
-            Button { } label: {
-                Image(systemName: "face.smiling")
+            Button {
+                Haptics.light()
+                toggleStickerPanel()
+            } label: {
+                Image(systemName: showStickerPanel ? "keyboard" : "face.smiling")
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(DS.Palette.textSecondary)
+                    .foregroundStyle(showStickerPanel ? DS.Palette.accent : DS.Palette.textSecondary)
                     .frame(width: 22, height: 22)
             }
             .buttonStyle(PressableStyle())
@@ -714,6 +737,22 @@ struct ChatView: View {
         inputFocused = true
     }
 
+    private func toggleStickerPanel() {
+        if showStickerPanel {
+            withAnimation(DS.Anim.springFast) { showStickerPanel = false }
+        } else {
+            inputFocused = false // 先收键盘再展开面板
+            withAnimation(DS.Anim.springFast) { showStickerPanel = true }
+        }
+    }
+
+    private func sendSticker(_ sticker: Sticker) {
+        Haptics.light()
+        withAnimation(DS.Anim.message) {
+            store.sendSticker(url: sticker.url, channel: channel)
+        }
+    }
+
     private func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -736,7 +775,9 @@ struct ChatView: View {
     private func replyPreview(for message: ChatMessage) -> String {
         let body: String
         switch message.type {
-        case "image", "sticker":
+        case "sticker":
+            body = "[表情]"
+        case "image":
             body = "[图片]"
         case "video":
             body = "[视频]"
@@ -891,7 +932,9 @@ private struct MessageContextPreview: View {
 
     private var summary: String {
         switch message.type {
-        case "image", "sticker":
+        case "sticker":
+            return "[表情]"
+        case "image":
             return "[图片]"
         case "video":
             return "[视频]"
@@ -991,7 +1034,9 @@ struct MessageBubble: View {
     @ViewBuilder
     private var messageCore: some View {
         switch message.type {
-        case "image", "sticker":
+        case "sticker":
+            stickerBubble
+        case "image":
             imageBubble
         case "video":
             videoBubble
@@ -1027,6 +1072,23 @@ struct MessageBubble: View {
         .frame(maxWidth: 220, alignment: .leading)
         .padding(.top, 2)
         .padding(.bottom, 4)
+    }
+
+    /// 贴纸：无气泡底、无阴影、固定小尺寸，跟图片区分开
+    private var stickerBubble: some View {
+        Group {
+            if let url = mediaURL {
+                CachedImage(url: url, contentMode: .fit) {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(DS.Palette.bubbleOther.opacity(0.35))
+                }
+            } else {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(DS.Palette.bubbleOther.opacity(0.35))
+            }
+        }
+        .frame(width: 116, height: 116)
+        .opacity(message.pending ? 0.7 : 1)
     }
 
     private var imageBubble: some View {
@@ -1746,7 +1808,7 @@ struct MediaGallerySheet: View {
 
     private var mediaMessages: [ChatMessage] {
         store.messages(for: channel).filter {
-            ($0.type == "image" || $0.type == "video" || $0.type == "sticker")
+            ($0.type == "image" || $0.type == "video")
                 && $0.kind == "user" && !$0.pending
         }.reversed()
     }

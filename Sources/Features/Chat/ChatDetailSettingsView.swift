@@ -28,7 +28,7 @@ struct ChatDetailSettingsView: View {
 
     private var mediaMessages: [ChatMessage] {
         store.messages(for: channel).filter {
-            ($0.type == "image" || $0.type == "video" || $0.type == "sticker") && !$0.pending
+            ($0.type == "image" || $0.type == "video") && !$0.pending
         }
     }
 

@@ -429,7 +429,8 @@ struct ChatHomeView: View {
 
     private func preview(_ message: ChatMessage) -> String {
         switch message.type {
-        case "image", "sticker": return "[图片]"
+        case "sticker": return "[表情]"
+        case "image": return "[图片]"
         case "video": return "[视频]"
         case "voice": return "[语音]"
         default: return message.displayText

@@ -608,6 +608,55 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: 表情 / 贴纸
+    /// 发送一张贴纸（url 已是上传好的远程地址）。type=sticker 让它在气泡里以小图渲染。
+    func sendSticker(url: String, channel: ChatChannel = .couple) {
+        guard let session, let s = socket else { return }
+        let clientId = "tmp-" + UUID().uuidString
+        let optimistic = ChatMessage(
+            optimisticMedia: "sticker",
+            text: "[表情]",
+            localURL: url,
+            me: session,
+            clientId: clientId,
+            channel: channel.rawValue)
+        updateMessages(channel) { $0.append(optimistic) }
+
+        guard connected else {
+            updateMessages(channel) { list in
+                guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
+                list[i].pending = false
+                list[i].failed = true
+            }
+            lastConnectionError = "Socket 未连接"
+            return
+        }
+
+        let payload: [String: Any] = [
+            "type": "sticker",
+            "text": "[表情]",
+            "url": url,
+            "channel": channel.rawValue,
+            "clientId": clientId,
+        ]
+        s.emitWithAck("message:send", payload).timingOut(after: 15) { [weak self] data in
+            Task { @MainActor in
+                guard let self else { return }
+                self.handleSendAck(data, clientId: clientId, channel: channel)
+            }
+        }
+    }
+
+    /// 上传一张自定义贴纸，返回远程地址（供表情库保存）。顺手写入图片缓存。
+    func uploadSticker(_ image: UIImage) async -> String? {
+        guard let data = image.jpegData(compressionQuality: 0.9) else { return nil }
+        guard let uploaded = try? await uploadMedia(data: data, mimeType: "image/jpeg") else { return nil }
+        if let url = ServerConfig.resolveMediaURL(uploaded.url) {
+            ImageCache.shared.store(data: data, image: image, for: url)
+        }
+        return uploaded.url
+    }
+
     // MARK: 头像上传
 
     /// 上传用户头像：复用现有 /api/upload 拿到 URL，再写进 shared["avatar_<username>"]。

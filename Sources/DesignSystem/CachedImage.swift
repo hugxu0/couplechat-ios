@@ -5,9 +5,15 @@ import SwiftUI
 struct CachedImage<Placeholder: View>: View {
     let url: URL?
     var contentMode: ContentMode = .fill
-    @ViewBuilder var placeholder: () -> Placeholder
+    let placeholder: () -> Placeholder
 
     @State private var image: UIImage?
+
+    init(url: URL?, contentMode: ContentMode = .fill, @ViewBuilder placeholder: @escaping () -> Placeholder) {
+        self.url = url
+        self.contentMode = contentMode
+        self.placeholder = placeholder
+    }
 
     var body: some View {
         Group {
