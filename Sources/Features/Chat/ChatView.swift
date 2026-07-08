@@ -229,7 +229,8 @@ struct ChatView: View {
                     )
                 }
             )
-            .onAppear { scrollToBottom(proxy) }
+            // 初始定位交给 .defaultScrollAnchor(.bottom)，这里只在消息数变化时补贴底，
+            // 避免进页面时多一次 scrollTo 造成的入场卡顿。
             .onChange(of: messages.count) { scrollToBottom(proxy) }
             // 键盘弹/收：输入栏由系统避让键盘，这里只用同一动画同步贴底滚动。
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
@@ -1304,15 +1305,15 @@ private struct RemoteImageBubble: View {
     }
 
     private func load() async {
+        // 内存命中立刻出图（重复滚动不再抖动）；否则走缓存的后台下载 + 解码
+        if let hit = ImageCache.shared.memoryImage(for: url) {
+            image = hit
+            return
+        }
         failed = false
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            guard let loaded = UIImage(data: data) else {
-                failed = true
-                return
-            }
+        if let loaded = await ImageCache.shared.image(for: url) {
             image = loaded
-        } catch {
+        } else {
             failed = true
         }
     }

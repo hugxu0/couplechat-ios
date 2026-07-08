@@ -21,7 +21,8 @@ struct CachedImage<Placeholder: View>: View {
         }
         .task(id: url) {
             guard let url else { image = nil; return }
-            if let hit = ImageCache.shared.cachedImage(for: url) {
+            // 内存命中同步取，避免闪一下占位；否则后台异步加载
+            if let hit = ImageCache.shared.memoryImage(for: url) {
                 image = hit
             } else {
                 image = await ImageCache.shared.image(for: url)

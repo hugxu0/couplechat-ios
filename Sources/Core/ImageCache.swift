@@ -30,14 +30,9 @@ final class ImageCache {
         directory.appendingPathComponent(key(for: url))
     }
 
-    /// 只查缓存（内存 → 磁盘），不发起网络。用于「这张图是否已缓存」判断。
-    func cachedImage(for url: URL) -> UIImage? {
-        let nsKey = url.absoluteString as NSString
-        if let hit = memory.object(forKey: nsKey) { return hit }
-        let file = fileURL(for: url)
-        guard let data = try? Data(contentsOf: file), let img = UIImage(data: data) else { return nil }
-        memory.setObject(img, forKey: nsKey)
-        return img
+    /// 仅查内存缓存（主线程安全、极快）。命中就不用走异步、也不闪占位。
+    func memoryImage(for url: URL) -> UIImage? {
+        memory.object(forKey: url.absoluteString as NSString)
     }
 
     func isCached(_ url: URL) -> Bool {
@@ -45,14 +40,32 @@ final class ImageCache {
         return fileManager.fileExists(atPath: fileURL(for: url).path)
     }
 
-    /// 命中缓存直接返回，否则下载并写入内存 + 磁盘。
+    /// 命中内存直接返回；否则在后台线程读磁盘 / 下载 + 解码（preparingForDisplay），
+    /// 避免在滚动时于主线程解码大图造成掉帧。
     @discardableResult
     func image(for url: URL) async -> UIImage? {
-        if let hit = cachedImage(for: url) { return hit }
-        guard let (data, _) = try? await URLSession.shared.data(from: url),
-              let img = UIImage(data: data) else { return nil }
-        store(data: data, image: img, for: url)
-        return img
+        if let hit = memoryImage(for: url) { return hit }
+
+        let file = fileURL(for: url)
+        // 磁盘命中：后台读 + 解码
+        if let decoded = await Task.detached(priority: .utility) { () -> UIImage? in
+            guard let data = try? Data(contentsOf: file), let img = UIImage(data: data) else { return nil }
+            return img.preparingForDisplay() ?? img
+        }.value {
+            memory.setObject(decoded, forKey: url.absoluteString as NSString)
+            return decoded
+        }
+
+        // 网络：下载后仍在后台解码
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        let prepared = await Task.detached(priority: .utility) { () -> UIImage? in
+            guard let img = UIImage(data: data) else { return nil }
+            return img.preparingForDisplay() ?? img
+        }.value
+        guard let prepared else { return nil }
+        memory.setObject(prepared, forKey: url.absoluteString as NSString)
+        ioQueue.async { try? data.write(to: file) }
+        return prepared
     }
 
     /// 已经拿到 Data（比如自己刚上传的图）时直接落缓存，省一次下载。
