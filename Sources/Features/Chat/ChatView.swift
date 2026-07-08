@@ -205,6 +205,16 @@ struct ChatView: View {
                             .foregroundStyle(DS.Palette.textSecondary)
                             .padding(.vertical, 10)
                             .frame(maxWidth: .infinity)
+                    } else {
+                        // 加载更多哨兵：滚到顶部自动触发
+                        Color.clear
+                            .frame(height: 1)
+                            .id("loadMoreSentinel")
+                            .onAppear {
+                                guard messages.count > 0 else { return }
+                                pendingTopAnchor = messages.first?.id
+                                store.loadOlder(channel)
+                            }
                     }
                     ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
                         VStack(spacing: 0) {
@@ -239,12 +249,6 @@ struct ChatView: View {
                             }
                         }
                         .id(msg.id)
-                        .onAppear {
-                            if index == 0 {
-                                pendingTopAnchor = msg.id
-                                store.loadOlder(channel)
-                            }
-                        }
                     }
                     // 底部锚点：所有需要贴底的时候 scrollTo 到这里
                     Color.clear
@@ -282,9 +286,11 @@ struct ChatView: View {
             .onChange(of: messages.first?.id) { _, _ in
                 guard let anchor = pendingTopAnchor else { return }
                 pendingTopAnchor = nil
-                // 延迟一帧等 LazyVStack 完成新条目布局后再定位
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    proxy.scrollTo(anchor, anchor: .top)
+                // 等两帧让 LazyVStack 完成布局，再定位到原来的首条消息
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.none) {
+                        proxy.scrollTo(anchor, anchor: .top)
+                    }
                 }
             }
             // 键盘弹/收：输入栏由系统避让键盘，这里只用同一动画同步贴底滚动。
