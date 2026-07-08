@@ -35,8 +35,9 @@ struct StickerEmojiPanel: View {
             tabStrip
             Divider().opacity(0.15)
             content
+                .frame(maxHeight: .infinity)
         }
-        .dsGlass(in: Rectangle())
+        .background(.ultraThinMaterial)
         .photosPicker(isPresented: pickerBinding, selection: $pickerItem, matching: .images)
         .onChange(of: pickerItem) {
             guard let item = pickerItem else { return }

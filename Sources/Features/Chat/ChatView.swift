@@ -38,6 +38,8 @@ struct ChatView: View {
     @State private var showMicPermissionAlert = false
     @State private var showStickerPanel = false
     @State private var showAttachmentTray = false
+    @State private var selectedMediaItems: [PhotosPickerItem] = []
+    @State private var mediaPreviewItems: [MediaPreviewItem] = []
     @ObservedObject private var stickerStore = StickerStore.shared
     @FocusState private var inputFocused: Bool
     private static let cancelDragThreshold: CGFloat = -70
@@ -87,6 +89,9 @@ struct ChatView: View {
                 VStack(spacing: 0) {
                     replyBar
                     aiTypingHint
+                    if !mediaPreviewItems.isEmpty {
+                        mediaPreviewBar
+                    }
                     composer
                     if showStickerPanel {
                         StickerEmojiPanel(
@@ -95,16 +100,6 @@ struct ChatView: View {
                             onSendSticker: { sendSticker($0) })
                             .frame(height: 300)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                    if showAttachmentTray {
-                        AttachmentTray(
-                            selectedMedia: $selectedMedia,
-                            onPickFile: {
-                                withAnimation(DS.Anim.springFast) { showAttachmentTray = false }
-                                showFileImporter = true
-                            })
-                        .frame(height: 48)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
             }
@@ -180,16 +175,8 @@ struct ChatView: View {
             store.markRead(channel)
         }
         .onDisappear { app.popSubpage() }
-        .onChange(of: selectedMedia) {
-            guard let selectedMedia else { return }
-            if showAttachmentTray {
-                withAnimation(DS.Anim.springFast) { showAttachmentTray = false }
-            }
-            sendMedia(selectedMedia)
-        }
-        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
-            guard let url = try? result.get().first else { return }
-            sendFile(url)
+        .onChange(of: selectedMediaItems) {
+            loadMediaPreviewItems()
         }
         .alert("需要麦克风权限", isPresented: $showMicPermissionAlert) {
             Button("去设置") {
@@ -620,6 +607,13 @@ struct ChatView: View {
                     .background(recordingCancelled ? Color.red : DS.Palette.accent)
                     .clipShape(Circle())
                     .scaleEffect(recordingCancelled ? 1.12 : 1.0)
+            } else if !mediaPreviewItems.isEmpty {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: Self.composerButtonSize, height: Self.composerButtonSize)
+                    .background(DS.Palette.accent)
+                    .clipShape(Circle())
             } else if draft.isEmpty {
                 Image(systemName: "mic")
                     .font(.system(size: 20, weight: .medium))
@@ -638,11 +632,12 @@ struct ChatView: View {
         .animation(DS.Anim.springFast, value: draft.isEmpty)
         .animation(DS.Anim.springFast, value: isRecording)
         .animation(DS.Anim.springFast, value: recordingCancelled)
+        .animation(DS.Anim.springFast, value: mediaPreviewItems.isEmpty)
         .contentShape(Circle())
         .gesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .local)
                 .onChanged { value in
-                    guard draft.isEmpty else { return }
+                    guard draft.isEmpty && mediaPreviewItems.isEmpty else { return }
                     if !isRecording {
                         beginRecording()
                     }
@@ -655,6 +650,10 @@ struct ChatView: View {
                     }
                 }
                 .onEnded { _ in
+                    if !mediaPreviewItems.isEmpty {
+                        sendMediaItems()
+                        return
+                    }
                     if !draft.isEmpty {
                         sendDraft()
                         return
@@ -680,53 +679,19 @@ struct ChatView: View {
     }
 
     private var mediaPicker: some View {
-        Button {
-            Haptics.light()
-            withAnimation(DS.Anim.springFast) {
-                showAttachmentTray.toggle()
-                if showAttachmentTray {
-                    inputFocused = false
-                    showStickerPanel = false
-                }
-            }
-        } label: {
-            Image(systemName: mediaBusy ? "hourglass" : "paperclip")
+        PhotosPicker(
+            selection: $selectedMediaItems,
+            maxSelectionCount: 9,
+            matching: .any(of: [.images, .videos]),
+            photoLibrary: .shared()
+        ) {
+            Image(systemName: mediaBusy ? "hourglass" : "photo.on.rectangle")
                 .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(mediaBusy ? DS.Palette.textSecondary.opacity(0.6) : (showAttachmentTray ? DS.Palette.accent : DS.Palette.textSecondary))
+                .foregroundStyle(mediaBusy ? DS.Palette.textSecondary.opacity(0.6) : DS.Palette.textSecondary)
                 .frame(width: 22, height: 22)
         }
-            .buttonStyle(PressableStyle())
-            .disabled(mediaBusy)
-    }
-
-    private struct AttachmentTray: View {
-        @Binding var selectedMedia: PhotosPickerItem?
-        var onPickFile: () -> Void
-
-        var body: some View {
-            HStack(spacing: 10) {
-                PhotosPicker(
-                    selection: $selectedMedia,
-                    matching: .any(of: [.images, .videos]),
-                    photoLibrary: .shared()) {
-                        Label("图片", systemImage: "photo")
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(DS.Palette.accent)
-                    .controlSize(.small)
-
-                Button(action: onPickFile) {
-                    Label("文件", systemImage: "doc")
-                }
-                .buttonStyle(.bordered)
-                .tint(DS.Palette.accent)
-                .controlSize(.small)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, DS.Spacing.page)
-            .padding(.vertical, 8)
-        }
+        .buttonStyle(PressableStyle())
+        .disabled(mediaBusy)
     }
 
     // MARK: 录音（Telegram 式按住说话：抬手发送，左滑取消）
@@ -951,6 +916,108 @@ struct ChatView: View {
         }
     }
 
+    private func loadMediaPreviewItems() {
+        let items = selectedMediaItems
+        guard !items.isEmpty else {
+            withAnimation(DS.Anim.springFast) {
+                mediaPreviewItems = []
+            }
+            return
+        }
+
+        mediaBusy = true
+        Task {
+            var previews: [MediaPreviewItem] = []
+            for item in items {
+                guard let data = try? await item.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data) else {
+                    continue
+                }
+                let id = UUID().uuidString
+                previews.append(MediaPreviewItem(id: id, image: image, item: item))
+            }
+
+            await MainActor.run {
+                withAnimation(DS.Anim.springFast) {
+                    mediaPreviewItems = previews
+                }
+                mediaBusy = false
+            }
+        }
+    }
+
+    private func sendMediaItems() {
+        let items = mediaPreviewItems
+        guard !items.isEmpty else { return }
+
+        mediaBusy = true
+        withAnimation(DS.Anim.springFast) {
+            mediaPreviewItems = []
+            selectedMediaItems = []
+        }
+
+        Task {
+            for item in items {
+                guard let prepared = try? await prepareMedia(item.item) else {
+                    continue
+                }
+                await MainActor.run {
+                    Haptics.light()
+                    withAnimation(DS.Anim.message) {
+                        store.sendMedia(
+                            data: prepared.data,
+                            mimeType: prepared.mimeType,
+                            preferredType: prepared.messageType,
+                            localPreviewURL: nil,
+                            channel: channel)
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+
+            await MainActor.run {
+                mediaBusy = false
+            }
+        }
+    }
+
+    private var mediaPreviewBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(mediaPreviewItems) { item in
+                    ZStack(alignment: .topTrailing) {
+                        Image(uiImage: item.image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 60, height: 60)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(DS.Palette.textSecondary.opacity(0.2), lineWidth: 0.5)
+                            )
+
+                        Button {
+                            withAnimation(DS.Anim.springFast) {
+                                mediaPreviewItems.removeAll { $0.id == item.id }
+                                selectedMediaItems.removeAll { $0 == item.item }
+                            }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 16))
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, DS.Palette.textSecondary.opacity(0.6))
+                        }
+                        .offset(x: 4, y: -4)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+        }
+        .frame(height: 80)
+        .dsGlass(in: Rectangle())
+    }
+
     private func prepareMedia(_ item: PhotosPickerItem) async throws -> PreparedMedia {
         let contentTypes = item.supportedContentTypes
         let isVideo = contentTypes.contains { $0.conforms(to: .movie) }
@@ -987,6 +1054,12 @@ private struct PreparedMedia {
     let data: Data
     let mimeType: String
     let messageType: String
+}
+
+private struct MediaPreviewItem: Identifiable {
+    let id: String
+    let image: UIImage
+    let item: PhotosPickerItem
 }
 
 struct CatHeadIcon: Shape {
