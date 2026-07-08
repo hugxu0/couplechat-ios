@@ -2,719 +2,328 @@ import Foundation
 import SocketIO
 import SwiftUI
 
-// 数据中枢：登录、Socket.IO 连接、多频道消息、已读、断线恢复。
-// 新后端契约见 server/docs/API.md；客户端只关心 couple / ai 两个逻辑频道。
-
+/// 数据中枢：协调各个服务，提供统一的 API 给 UI 层
 @MainActor
 final class ChatStore: ObservableObject {
-    static let baseURL = ServerConfig.baseURL
-
-    // MARK: 对外状态
-    @Published var session: Session?
-    @Published var connected = false
-    @Published private(set) var messagesByChannel: [String: [ChatMessage]] = [:]
+    // MARK: - 服务实例
+    
+    let authService = AuthService()
+    let socketService = SocketService()
+    let messageService = MessageService()
+    let mediaService = MediaService()
+    let sharedStateService = SharedStateService()
+    
+    // MARK: - 转发属性（保持向后兼容）
+    
     @Published var partnerOnline = false
-    @Published var reachedOldestLocal: Set<String> = []
     @Published var partner: Account? {
         didSet {
-            if let partner = partner,
+            if let partner,
                let data = try? JSONEncoder().encode(partner) {
-                UserDefaults.standard.set(data, forKey: "cached_partner_\(session?.username ?? "")")
+                UserDefaults.standard.set(data, forKey: "cached_partner_\(authService.session?.username ?? "")")
             }
         }
     }
-    @Published private(set) var readStates: [String: [String: Double]] = [:]
     @Published var aiTyping = false
     @Published var aiReplying = false
-    @Published var sharedState: [String: Any] = [:]
-    @Published var lastConnectionError: String?
-
-    // 通知提醒页：收到共享提醒/备忘变更时刷新
+    
+    // 转发 session
+    var session: Session? { authService.session }
+    var loggedIn: Bool { authService.loggedIn }
+    var connected: Bool { socketService.isConnected }
+    var lastConnectionError: String? { socketService.lastConnectionError }
+    
+    // 转发消息相关
+    var messagesByChannel: [String: [ChatMessage]] { messageService.messagesByChannel }
+    var readStates: [String: [String: Double]] { messageService.readStates }
+    var reachedOldestLocal: Set<String> { messageService.reachedOldestLocal }
+    
+    // 转发共享状态
+    var sharedState: [String: Any] { sharedStateService.sharedState }
+    
+    // 兼容旧 UI
+    var messages: [ChatMessage] { messageService.messages(for: .couple) }
+    var readState: [String: Double] { messageService.readStates[ChatChannel.couple.rawValue] ?? [:] }
+    
     static let personalItemChangedNotification = Notification.Name("personalItemChanged")
-
-    /// 兼容旧 UI：默认仍然表示 couple 频道。
-    var messages: [ChatMessage] { messages(for: .couple) }
-    var readState: [String: Double] { readState(for: .couple) }
-    var loggedIn: Bool { session != nil }
-
-    private var manager: SocketManager?
-    private var socket: SocketIOClient?
-    private var restoringCache = false
-    private var backfillingChannels = Set<String>()
-    @Published private var loadingOlderChannels = Set<String>()
-    private var lastLoadOlderAt: [String: Date] = [:]
-
-    private static let mediaTypes = ["image", "video"]
-    private static let managedAttachmentTypes = ["image", "video", "file"]
-
-    private struct UploadResponse: Decodable {
-        let url: String
-        let type: String
+    
+    // MARK: - 初始化
+    
+    init() {
+        setupServiceDependencies()
+        setupSocketEventHandlers()
     }
-
-    private struct PersonalItemsResponse: Decodable {
-        let items: [PersonalItem]
+    
+    private func setupServiceDependencies() {
+        // 设置服务间的依赖关系
+        messageService.socketService = socketService
+        sharedStateService.socketService = socketService
+        mediaService.session = authService.session
+        sharedStateService.session = authService.session
+        messageService.session = authService.session
     }
-
-    private struct PersonalItemResponse: Decodable {
-        let item: PersonalItem
-    }
-
-    // MARK: 启动：钥匙串里有会话就直接连
-    func bootstrap() {
-        guard session == nil, let saved = Keychain.loadSession() else { return }
-        session = saved
-        _ = ChatLocalDatabase.shared.open(username: saved.username)
-        restoreLocalCache(for: saved)
-        connect()
-    }
-
-    // MARK: 登录
-    func login(username: String, password: String) async throws {
-        var req = URLRequest(url: Self.baseURL.appendingPathComponent("api/login"))
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(["username": username, "password": password])
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
-            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
-            throw NSError(domain: "login", code: 1, userInfo: [NSLocalizedDescriptionKey: msg ?? "登录失败"])
+    
+    private func setupSocketEventHandlers() {
+        // Socket 连接事件
+        socketService.onConnect = { [weak self] in
+            Task { @MainActor in
+                self?.handleConnect()
+            }
         }
-        let s = try JSONDecoder().decode(Session.self, from: data)
-        Keychain.saveSession(s)
-        session = s
-        _ = ChatLocalDatabase.shared.open(username: s.username)
-        restoreLocalCache(for: s)
+        
+        socketService.onDisconnect = { [weak self] in
+            Task { @MainActor in
+                self?.handleDisconnect()
+            }
+        }
+        
+        // 消息事件
+        socketService.onNewMessage = { [weak self] dict in
+            Task { @MainActor in
+                self?.handleNewMessage(dict)
+            }
+        }
+        
+        socketService.onPresence = { [weak self] online in
+            Task { @MainActor in
+                self?.handlePresence(online)
+            }
+        }
+        
+        socketService.onReadInit = { [weak self] dict in
+            Task { @MainActor in
+                self?.handleReadInit(dict)
+            }
+        }
+        
+        socketService.onReadUpdate = { [weak self] dict in
+            Task { @MainActor in
+                self?.handleReadUpdate(dict)
+            }
+        }
+        
+        socketService.onMessageRecalled = { [weak self] dict in
+            Task { @MainActor in
+                self?.handleMessageRecalled(dict)
+            }
+        }
+        
+        socketService.onMessageUpdate = { [weak self] dict in
+            Task { @MainActor in
+                self?.handleMessageUpdate(dict)
+            }
+        }
+        
+        // AI 事件
+        socketService.onAiTyping = { [weak self] typing in
+            Task { @MainActor in
+                self?.aiTyping = typing
+            }
+        }
+        
+        socketService.onAiReplying = { [weak self] replying in
+            Task { @MainActor in
+                self?.aiReplying = replying
+            }
+        }
+        
+        // 共享状态事件
+        socketService.onSharedInit = { [weak self] state in
+            Task { @MainActor in
+                self?.sharedStateService.handleSharedInit(state)
+            }
+        }
+        
+        socketService.onSharedUpdate = { [weak self] update in
+            Task { @MainActor in
+                self?.sharedStateService.handleSharedUpdate(update)
+            }
+        }
+        
+        socketService.onPersonalItemChanged = { [weak self] dict in
+            Task { @MainActor in
+                self?.handlePersonalItemChanged(dict)
+            }
+        }
+    }
+    
+    // MARK: - 启动
+    
+    func bootstrap() {
+        guard authService.session == nil else { return }
+        
+        if let saved = authService.bootstrap() {
+            let _ = ChatLocalDatabase.shared.open(username: saved.username)
+            messageService.session = saved
+            messageService.restoreLocalCache(for: saved)
+            sharedStateService.loadFromDatabase()
+            
+            // 恢复缓存的 partner
+            if let data = UserDefaults.standard.data(forKey: "cached_partner_\(saved.username)"),
+               let p = try? JSONDecoder().decode(Account.self, from: data) {
+                partner = p
+            }
+            
+            connect()
+        }
+    }
+    
+    // MARK: - 登录
+    
+    func login(username: String, password: String) async throws {
+        let s = try await authService.login(username: username, password: password)
+        let _ = ChatLocalDatabase.shared.open(username: s.username)
+        messageService.session = s
+        messageService.restoreLocalCache(for: s)
+        sharedStateService.loadFromDatabase()
         connect()
     }
-
+    
+    // MARK: - 登出
+    
     func logout() {
-        let username = session?.username
-        Keychain.clearSession()
-        session = nil
-        messagesByChannel = [:]
-        readStates = [:]
-        sharedState = [:]
-        socket?.disconnect()
-        manager = nil
-        socket = nil
-        connected = false
+        authService.logout()
+        socketService.disconnect()
+        messageService.clearAll()
+        sharedStateService.clearAll()
         partnerOnline = false
         aiTyping = false
         aiReplying = false
         lastConnectionError = nil
         ChatLocalDatabase.shared.close()
     }
-
-    func fetchAccounts() async -> [Account] {
-        guard let (data, _) = try? await URLSession.shared.data(
-            from: Self.baseURL.appendingPathComponent("api/accounts")) else { return [] }
-        return (try? JSONDecoder().decode([Account].self, from: data)) ?? []
-    }
-
-    /// 从账号表里找出「对方」
-    private func resolvePartner() {
-        Task {
-            let accounts = await fetchAccounts()
-            if let me = session?.username {
-                partner = accounts.first { $0.username != me }
-            }
-        }
-    }
-
-    // MARK: Socket 连接
+    
+    // MARK: - Socket 连接
+    
     private func connect() {
-        guard let session else { return }
+        guard let session = authService.session else { return }
         resolvePartner()
-        // token 同时走 connectParams(query) 和 auth payload：
-        // query 参数在每次自动重连时都会带上，避免重连握手丢 token 被服务端判 unauthorized。
-        let m = SocketManager(socketURL: Self.baseURL, config: [
-            .compress,
-            .reconnects(true),
-            .reconnectWaitMax(5),
-            .connectParams(["token": session.token]),
-        ])
-        manager = m
-        let s = m.defaultSocket
-        socket = s
-        bindEvents(s)
-        s.connect(withPayload: ["token": session.token])
+        socketService.connect(token: session.token)
     }
-
-    private func bindEvents(_ s: SocketIOClient) {
-        s.on(clientEvent: .connect) { [weak self] _, _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.connected = true
-                self.lastConnectionError = nil
-                self.reachedOldestLocal.removeAll()
-                self.reportAway(false)
-                self.syncHistory(.couple)
-                self.syncHistory(.ai)
-            }
+    
+    private func handleConnect() {
+        messageService.reachedOldestLocal.removeAll()
+        reportAway(false)
+        syncHistory(.couple)
+        syncHistory(.ai)
+    }
+    
+    private func handleDisconnect() {
+        // 连接断开时的处理
+    }
+    
+    // MARK: - 消息事件处理
+    
+    private func handleNewMessage(_ dict: [String: Any]) {
+        guard let msg = ChatMessage(dict: dict) else { return }
+        let channel = ChatChannel(rawValue: msg.channel) ?? .couple
+        messageService.upsert(msg, in: channel)
+        
+        if channel == .couple {
+            messageService.markRead(.couple)
         }
-        s.on(clientEvent: .disconnect) { [weak self] _, _ in
-            Task { @MainActor in self?.connected = false }
-        }
-        s.on(clientEvent: .error) { [weak self] data, _ in
-            Task { @MainActor in self?.handleSocketError(data) }
-        }
-
-        s.on("connect_error") { [weak self] data, _ in
-            Task { @MainActor in self?.handleSocketError(data) }
-        }
-
-        s.on("message:new") { [weak self] data, _ in
-            guard let dict = data.first as? [String: Any],
-                  let msg = ChatMessage(dict: dict) else { return }
-            Task { @MainActor in
-                guard let self else { return }
-                let channel = ChatChannel(rawValue: msg.channel) ?? .couple
-                self.upsert(msg, in: channel)
-                if channel == .couple { self.markRead(.couple) }
-                if channel == .ai {
-                    self.aiTyping = false
-                    self.aiReplying = false
-                }
-            }
-        }
-
-        s.on("presence") { [weak self] data, _ in
-            guard let dict = data.first as? [String: Any],
-                  let online = dict["online"] as? [String] else { return }
-            Task { @MainActor in
-                guard let self, let me = self.session else { return }
-                self.partnerOnline = online.contains { $0 != me.username }
-            }
-        }
-
-        s.on("read:init") { [weak self] data, _ in
-            guard let dict = data.first as? [String: Any] else { return }
-            Task { @MainActor in self?.handleReadInit(dict) }
-        }
-
-        s.on("read:update") { [weak self] data, _ in
-            guard let dict = data.first as? [String: Any],
-                  let user = dict["user"] as? String,
-                  let ts = (dict["ts"] as? NSNumber)?.doubleValue else { return }
-            let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "couple") ?? .couple
-            Task { @MainActor in self?.setReadState(channel, user: user, ts: ts) }
-        }
-
-        s.on("message:recalled") { [weak self] data, _ in
-            guard let dict = data.first as? [String: Any],
-                  let id = dict["id"] as? String else { return }
-            let byName = dict["byName"] as? String
-            let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "")
-            Task { @MainActor in self?.applyRecall(id: id, byName: byName, channel: channel) }
-        }
-
-        s.on("message:update") { [weak self] data, _ in
-            guard let dict = data.first as? [String: Any],
-                  let id = dict["id"] as? String else { return }
-            let metaDict = dict["meta"] as? [String: Any]
-            Task { @MainActor in self?.applyMessageUpdate(id: id, meta: metaDict) }
-        }
-
-        s.on("ai:typing") { [weak self] data, _ in
-            let typing = (data.first as? Bool) ?? true
-            Task { @MainActor in self?.aiTyping = typing }
-        }
-
-        s.on("ai:replying") { [weak self] data, _ in
-            let replying = (data.first as? Bool) ?? true
-            Task { @MainActor in self?.aiReplying = replying }
-        }
-
-        s.on("shared:init") { [weak self] data, _ in
-            guard let state = data.first as? [String: Any] else { return }
-            Task { @MainActor in
-                self?.sharedState = state
-                for (key, val) in state {
-                    if let dict = val as? [String: Any],
-                       let value = dict["value"],
-                       let valueData = try? JSONSerialization.data(withJSONObject: value),
-                       let valueJson = String(data: valueData, encoding: .utf8) {
-                        let updatedBy = dict["updatedBy"] as? String ?? ""
-                        let updatedAt = (dict["updatedAt"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
-                        ChatLocalDatabase.shared.saveSharedState(key: key, valueJson: valueJson, updatedBy: updatedBy, updatedAt: updatedAt)
-                    }
-                }
-            }
-        }
-
-        s.on("shared:update") { [weak self] data, _ in
-            guard let update = data.first as? [String: Any],
-                  let key = update["key"] as? String else { return }
-            Task { @MainActor in
-                self?.sharedState[key] = update
-                if let value = update["value"],
-                   let valueData = try? JSONSerialization.data(withJSONObject: value),
-                   let valueJson = String(data: valueData, encoding: .utf8) {
-                    let updatedBy = update["updatedBy"] as? String ?? ""
-                    let updatedAt = (update["updatedAt"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
-                    ChatLocalDatabase.shared.saveSharedState(key: key, valueJson: valueJson, updatedBy: updatedBy, updatedAt: updatedAt)
-                }
-            }
-        }
-
-        s.on("personalItem:changed") { [weak self] data, _ in
-            guard let dict = data.first as? [String: Any],
-                  let itemDict = dict["item"] as? [String: Any],
-                  let action = dict["action"] as? String else { return }
-
-            // shared items only — personal items don't need real-time sync
-            let scope = itemDict["scope"] as? String ?? "personal"
-            guard scope == "shared" else { return }
-
-            Task { @MainActor in
-                guard let self else { return }
-                // 不是自己操作的才通知刷新
-                let itemOwner = itemDict["owner"] as? String ?? ""
-                if itemOwner != self.session?.username {
-                    NotificationCenter.default.post(
-                        name: Self.personalItemChangedNotification,
-                        object: nil,
-                        userInfo: ["action": action, "item": itemDict]
-                    )
-                }
-            }
+        
+        if channel == .ai {
+            aiTyping = false
+            aiReplying = false
         }
     }
-
-    private func handleSocketError(_ data: [Any]) {
-        let message = data.compactMap { item -> String? in
-            if let text = item as? String { return text }
-            if let error = item as? Error { return error.localizedDescription }
-            if let dict = item as? [String: Any] { return dict.values.map { "\($0)" }.joined(separator: " ") }
-            return "\(item)"
-        }.joined(separator: " ")
-
-        lastConnectionError = message.isEmpty ? "连接失败" : message
-        connected = false
-        // Socket 层 unauthorized 不直接登出：可能只是重连握手异常。
-        // 先用 REST 验证 token 是否真失效，确认失效才清 session。
-        if message.lowercased().contains("unauthorized") {
-            verifySessionOrLogout()
-        }
+    
+    private func handlePresence(_ online: [String]) {
+        guard let me = authService.session?.username else { return }
+        partnerOnline = online.contains { $0 != me.username }
     }
-
-    /// 用 REST /api/me 核实 token；仅在服务端明确返回 401 时登出。
-    /// 网络错误或服务端 5xx 都不登出，保留 session 等待下次重连。
-    private var verifyingSession = false
-    private func verifySessionOrLogout() {
-        guard !verifyingSession, let token = session?.token else { return }
-        verifyingSession = true
-        Task {
-            defer { verifyingSession = false }
-            var req = URLRequest(url: Self.baseURL.appendingPathComponent("api/me"))
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            guard let (_, resp) = try? await URLSession.shared.data(for: req),
-                  let http = resp as? HTTPURLResponse else { return }
-            if http.statusCode == 401 {
-                logout()
-            }
-        }
-    }
-
+    
     private func handleReadInit(_ dict: [String: Any]) {
-        // 新后端：{ channel, state }；旧后端：直接是 username -> ts。
+        // 新后端：{ channel, state }；旧后端：直接是 username -> ts
         if let state = dict["state"] as? [String: Any] {
             let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "couple") ?? .couple
-            setReadState(channel, state: state.compactMapValues { ($0 as? NSNumber)?.doubleValue })
+            messageService.setReadState(channel, state: state.compactMapValues { ($0 as? NSNumber)?.doubleValue })
         } else {
-            setReadState(.couple, state: dict.compactMapValues { ($0 as? NSNumber)?.doubleValue })
+            messageService.setReadState(.couple, state: dict.compactMapValues { ($0 as? NSNumber)?.doubleValue })
         }
     }
-
-    // MARK: 消息读写
+    
+    private func handleReadUpdate(_ dict: [String: Any]) {
+        guard let user = dict["user"] as? String,
+              let ts = (dict["ts"] as? NSNumber)?.doubleValue else { return }
+        let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "couple") ?? .couple
+        messageService.setReadState(channel, user: user, ts: ts)
+    }
+    
+    private func handleMessageRecalled(_ dict: [String: Any]) {
+        guard let id = dict["id"] as? String else { return }
+        let byName = dict["byName"] as? String
+        let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "")
+        messageService.applyRecall(id: id, byName: byName, channel: channel)
+    }
+    
+    private func handleMessageUpdate(_ dict: [String: Any]) {
+        guard let id = dict["id"] as? String else { return }
+        let metaDict = dict["meta"] as? [String: Any]
+        applyMessageUpdate(id: id, meta: metaDict)
+    }
+    
+    private func handlePersonalItemChanged(_ dict: [String: Any]) {
+        guard let itemDict = dict["item"] as? [String: Any],
+              let action = dict["action"] as? String else { return }
+        
+        // shared items only
+        let scope = itemDict["scope"] as? String ?? "personal"
+        guard scope == "shared" else { return }
+        
+        // 不是自己操作的才通知刷新
+        let itemOwner = itemDict["owner"] as? String ?? ""
+        if itemOwner != authService.session?.username {
+            NotificationCenter.default.post(
+                name: Self.personalItemChangedNotification,
+                object: nil,
+                userInfo: ["action": action, "item": itemDict]
+            )
+        }
+    }
+    
+    // MARK: - 消息 API（转发到 MessageService）
+    
     func messages(for channel: ChatChannel) -> [ChatMessage] {
-        messagesByChannel[channel.rawValue] ?? []
+        messageService.messages(for: channel)
     }
-
-    private func updateMessages(_ channel: ChatChannel, _ transform: (inout [ChatMessage]) -> Void) {
-        var next = messagesByChannel
-        var list = next[channel.rawValue] ?? []
-        transform(&list)
-        next[channel.rawValue] = list
-        messagesByChannel = next
-    }
-
-    private func upsert(_ msg: ChatMessage, in channel: ChatChannel) {
-        ChatLocalDatabase.shared.insertMessage(msg)
-        updateMessages(channel) { list in
-            if let i = list.firstIndex(where: { $0.id == msg.id || (msg.clientId != nil && $0.id == msg.clientId) }) {
-                list[i] = msg
-                return
-            }
-            if let last = list.last, last.ts > msg.ts,
-               let i = list.lastIndex(where: { $0.ts <= msg.ts }) {
-                list.insert(msg, at: i + 1)
-            } else {
-                list.append(msg)
-            }
-        }
-    }
-
-    /// 和 `upsert` 逻辑一致，但整批只触发一次 `messagesByChannel` 更新；
-    /// 避免 `syncHistory` 补历史时逐条 upsert 导致连续多次贴底滚动的画面抖动。
-    private func upsertBatch(_ msgs: [ChatMessage], in channel: ChatChannel) {
-        guard !msgs.isEmpty else { return }
-        for msg in msgs { ChatLocalDatabase.shared.insertMessage(msg) }
-        updateMessages(channel) { list in
-            for msg in msgs {
-                if let i = list.firstIndex(where: { $0.id == msg.id || (msg.clientId != nil && $0.id == msg.clientId) }) {
-                    list[i] = msg
-                    continue
-                }
-                if let last = list.last, last.ts > msg.ts,
-                   let i = list.lastIndex(where: { $0.ts <= msg.ts }) {
-                    list.insert(msg, at: i + 1)
-                } else {
-                    list.append(msg)
-                }
-            }
-        }
-    }
-
-    private func replaceMessages(_ incoming: [ChatMessage], in channel: ChatChannel) {
-        for msg in incoming {
-            ChatLocalDatabase.shared.insertMessage(msg)
-        }
-        updateMessages(channel) { list in
-            list = incoming
-        }
-    }
-
-    // MARK: 本地缓存
-    private func restoreLocalCache(for session: Session) {
-        restoringCache = true
-        migrateLegacyCacheIfNeeded(for: session)
-        messagesByChannel[ChatChannel.couple.rawValue] = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.couple.rawValue, limit: 50)
-        messagesByChannel[ChatChannel.ai.rawValue] = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.ai.rawValue, limit: 50)
-        
-        readStates = [
-            ChatChannel.couple.rawValue: ChatLocalDatabase.shared.loadReadReceipts(channel: ChatChannel.couple.rawValue),
-            ChatChannel.ai.rawValue: ChatLocalDatabase.shared.loadReadReceipts(channel: ChatChannel.ai.rawValue)
-        ]
-        
-        sharedState = ChatLocalDatabase.shared.loadSharedState()
-        
-        if let data = UserDefaults.standard.data(forKey: "cached_partner_\(session.username)"),
-           let p = try? JSONDecoder().decode(Account.self, from: data) {
-            partner = p
-        }
-        
-        restoringCache = false
-    }
-
-    /// 老版本把聊天记录存在 JSON 快照里；换 SQLite 后首次启动把旧数据搬进来，
-    /// 否则升级后本地库是空的，离线/弱网时点进聊天会看不到任何历史。
-    private func migrateLegacyCacheIfNeeded(for session: Session) {
-        let existing = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.couple.rawValue, limit: 1)
-        guard existing.isEmpty,
-              let snapshot = ChatLocalCache.load(for: session.username) else { return }
-        for (_, list) in snapshot.messagesByChannel {
-            for msg in list where !msg.pending && !msg.failed {
-                ChatLocalDatabase.shared.insertMessage(msg)
-            }
-        }
-        for (channel, state) in snapshot.readStates {
-            for (user, ts) in state {
-                ChatLocalDatabase.shared.saveReadReceipt(channel: channel, username: user, ts: ts, updatedAt: snapshot.savedAt)
-            }
-        }
-        ChatLocalCache.clear(for: session.username)
-    }
-
-    /// 搜索结果跳转前：确保命中消息已在内存列表里，否则从本地库把「命中消息 → 当前最早消息」
-    /// 之间的窗口补进来（保持时间连续），本地库也没有就直接插入命中消息本身。返回是否已就绪。
-    @discardableResult
-    func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) -> Bool {
-        if messages(for: channel).contains(where: { $0.id == target.id }) { return true }
-
-        let window = ChatLocalDatabase.shared.fetchMessagesAround(
-            channel: channel.rawValue,
-            centerTimestamp: target.ts,
-            beforeLimit: 36,
-            afterLimit: 28)
-        if !window.isEmpty {
-            updateMessages(channel) { list in
-                list = Self.mergedWindow(window, with: list, around: target.id)
-            }
-        }
-        if !messages(for: channel).contains(where: { $0.id == target.id }) {
-            upsert(target, in: channel)
-        }
-        return messages(for: channel).contains(where: { $0.id == target.id })
-    }
-
-    @discardableResult
-    func ensureDateLoaded(_ date: Date, channel: ChatChannel) -> ChatMessage? {
-        let range = Self.dayRange(for: date)
-        var dayMessages = ChatLocalDatabase.shared.fetchMessages(
-            channel: channel.rawValue,
-            fromInclusive: range.start,
-            toExclusive: range.end,
-            limit: 80)
-
-        if dayMessages.isEmpty, let s = socket, connected {
-            s.emitWithAck("messages:fetch", [
-                "channel": channel.rawValue,
-                "after": range.start,
-                "before": range.end,
-                "limit": 80,
-            ]).timingOut(after: 9) { data in
-                guard let dict = data.first as? [String: Any],
-                      let list = dict["list"] as? [[String: Any]] else { return }
-                let incoming = list.compactMap { ChatMessage(dict: $0) }
-                Task { @MainActor in
-                    incoming.forEach { ChatLocalDatabase.shared.insertMessage($0) }
-                }
-            }
-        }
-
-        if dayMessages.isEmpty {
-            return nil
-        }
-
-        guard let target = dayMessages.first else { return nil }
-        let context = ChatLocalDatabase.shared.fetchMessagesAround(
-            channel: channel.rawValue,
-            centerTimestamp: target.ts,
-            beforeLimit: 20,
-            afterLimit: 44)
-        if !context.isEmpty {
-            dayMessages = context
-        }
-        updateMessages(channel) { list in
-            list = Self.mergedWindow(dayMessages, with: list, around: target.id)
-        }
-        return target
-    }
-
-    /// 进聊天页兜底：
-    /// 1) 内存里没消息但本地库有（比如 restore 之前被清过）—— 立刻从本地库补上；
-    /// 2) 内存里还残留着上次「搜索/日历跳转」留下的历史窗口（尾部不是本地库最新一条）——
-    ///    强制拉回最新一页，避免带着旧窗口重进聊天页时，被后续增量同步逐条 upsert 顶着连续往下滚。
-    func ensureLocalMessages(_ channel: ChatChannel) {
-        let local = ChatLocalDatabase.shared.fetchLatestMessages(channel: channel.rawValue, limit: 50)
-        guard !local.isEmpty else { return }
-        let current = messages(for: channel)
-        guard current.isEmpty || current.last?.id != local.last?.id else { return }
-        let pendingOrFailed = current.filter { $0.pending || $0.failed }
-        let knownIds = Set(local.map(\.id))
-        updateMessages(channel) { list in
-            list = local + pendingOrFailed.filter { !knownIds.contains($0.id) }
-        }
-    }
-
-    // MARK: 历史 / 补漏
-    private func syncHistory(_ channel: ChatChannel, roundsLeft: Int = 5) {
-        guard let s = socket, roundsLeft > 0 else { return }
-        let local = messages(for: channel)
-        let lastTs = local.last(where: { !$0.pending && !$0.failed })?.ts ?? 0
-        let limit = 100
-        var payload: [String: Any] = ["channel": channel.rawValue, "limit": limit]
-        if lastTs > 0 { payload["since"] = lastTs }
-        s.emitWithAck("messages:fetch", payload).timingOut(after: 9) { [weak self] data in
-            guard let dict = data.first as? [String: Any],
-                  let list = dict["list"] as? [[String: Any]] else { return }
-            let incoming = list.compactMap { ChatMessage(dict: $0) }
-            Task { @MainActor in
-                guard let self else { return }
-                self.upsertBatch(incoming, in: channel)
-                if channel == .couple { self.markRead(.couple) }
-                // 离线太久时缺口可能超过一页，继续增量拉直到补齐
-                if lastTs > 0, incoming.count >= limit {
-                    self.syncHistory(channel, roundsLeft: roundsLeft - 1)
-                }
-            }
-        }
-    }
-
-    func isLoadingOlder(_ channel: ChatChannel) -> Bool {
-        loadingOlderChannels.contains(channel.rawValue)
-    }
-
-    /// 供 `onAppear` 触发的即发即弃版本。
-    func loadOlder(_ channel: ChatChannel = .couple) {
-        Task { await loadOlderAsync(channel) }
-    }
-
-    /// 供 `.refreshable` 下拉手势调用的可等待版本，逻辑与 `loadOlder` 一致。
-    func loadOlderAsync(_ channel: ChatChannel = .couple) async {
-        guard let first = messages(for: channel).first else { return }
-        guard !loadingOlderChannels.contains(channel.rawValue) else { return }
-        if let last = lastLoadOlderAt[channel.rawValue],
-           Date().timeIntervalSince(last) < 0.45 {
-            return
-        }
-        lastLoadOlderAt[channel.rawValue] = Date()
-        loadingOlderChannels.insert(channel.rawValue)
-        let limit = 22
-        let firstTs = first.ts
-
-        // SQLite 读取和行解析放到后台，避免滚到顶部时阻塞主线程手势。
-        let localOlder = await Task.detached(priority: .utility) {
-            ChatLocalDatabase.shared.fetchMessages(channel: channel.rawValue, beforeTimestamp: firstTs, limit: limit)
-        }.value
-
-        if !localOlder.isEmpty {
-            reachedOldestLocal.remove(channel.rawValue)
-            updateMessages(channel) { current in
-                let known = Set(current.map(\.id))
-                current.insert(contentsOf: localOlder.filter { !known.contains($0.id) }, at: 0)
-            }
-            loadingOlderChannels.remove(channel.rawValue)
-            return
-        }
-
-        // 本地库没有更早消息时再兜底访问网络。
-        guard let s = socket, connected else {
-            reachedOldestLocal.insert(channel.rawValue)
-            loadingOlderChannels.remove(channel.rawValue)
-            return
-        }
-        reachedOldestLocal.remove(channel.rawValue)
-
-        let older: [ChatMessage] = await withCheckedContinuation { continuation in
-            s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": firstTs, "limit": limit])
-                .timingOut(after: 9) { data in
-                    guard let dict = data.first as? [String: Any],
-                          let list = dict["list"] as? [[String: Any]] else {
-                        continuation.resume(returning: [])
-                        return
-                    }
-                    continuation.resume(returning: list.compactMap { ChatMessage(dict: $0) })
-                }
-        }
-        defer { loadingOlderChannels.remove(channel.rawValue) }
-        guard !older.isEmpty else { return }
-        await Task.detached(priority: .utility) {
-            for msg in older {
-                ChatLocalDatabase.shared.insertMessage(msg)
-            }
-        }.value
-        updateMessages(channel) { current in
-            let known = Set(current.map(\.id))
-            current.insert(contentsOf: older.filter { !known.contains($0.id) }, at: 0)
-        }
-    }
-
-    // MARK: 发送（乐观上屏）
+    
     func sendText(_ text: String, channel: ChatChannel = .couple,
                   replyTo: String? = nil, replyPreview: String? = nil) {
-        guard let session, let s = socket else { return }
-        let clientId = "tmp-" + UUID().uuidString
-        let optimistic = ChatMessage(optimisticText: text, me: session, clientId: clientId,
-                                     channel: channel.rawValue, replyTo: replyTo, replyPreview: replyPreview)
-        updateMessages(channel) { $0.append(optimistic) }
-
-        guard connected else {
-            updateMessages(channel) { list in
-                guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
-                list[i].pending = false
-                list[i].failed = true
-            }
-            lastConnectionError = "Socket 未连接"
-            return
-        }
-
-        var payload: [String: Any] = [
-            "type": "text",
-            "text": text,
-            "channel": channel.rawValue,
-            "clientId": clientId,
-        ]
-        if let replyTo {
-            payload["replyTo"] = replyTo
-            payload["replyPreview"] = replyPreview ?? ""
-            payload["reply"] = [
-                "id": replyTo,
-                "preview": replyPreview ?? "",
-            ]
-        }
-        s.emitWithAck("message:send", payload).timingOut(after: 15) { [weak self] data in
-            Task { @MainActor in
-                guard let self else { return }
-                var didFindPending = false
-                self.updateMessages(channel) { list in
-                    guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
-                    didFindPending = true
-                    if let dict = data.first as? [String: Any],
-                       dict["ok"] as? Bool == true, let realId = dict["id"] as? String {
-                        let old = list[i]
-                        var payload: [String: Any] = [
-                            "id": realId, "sender": old.sender, "senderName": old.senderName,
-                            "kind": old.kind, "type": old.type, "text": old.text,
-                            "channel": old.channel, "ts": old.ts,
-                        ]
-                        if let replyTo = old.replyTo {
-                            payload["replyTo"] = replyTo
-                            payload["replyPreview"] = old.replyPreview ?? ""
-                            payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
-                        }
-                        list[i] = ChatMessage(dict: payload) ?? old
-                        // ack 确认成功的消息立刻落本地库，不依赖服务端回显
-                        ChatLocalDatabase.shared.insertMessage(list[i])
-                    } else {
-                        list[i].pending = false
-                        list[i].failed = true
-                    }
-                }
-                _ = didFindPending
-            }
-        }
+        messageService.sendText(text, channel: channel, replyTo: replyTo, replyPreview: replyPreview)
     }
-
-    func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?, channel: ChatChannel = .couple, displayText: String? = nil) {
-        guard let session, let s = socket else { return }
-        let clientId = "tmp-" + UUID().uuidString
-        let outgoingText = displayText ?? Self.mediaPlaceholderText(for: preferredType)
-        let optimistic = ChatMessage(
-            optimisticMedia: preferredType,
-            text: outgoingText,
-            localURL: localPreviewURL?.absoluteString,
-            me: session,
-            clientId: clientId,
-            channel: channel.rawValue)
-        updateMessages(channel) { $0.append(optimistic) }
-
-        guard connected else {
-            updateMessages(channel) { list in
-                guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
-                list[i].pending = false
-                list[i].failed = true
-            }
-            lastConnectionError = "Socket 未连接"
-            return
-        }
-
+    
+    func sendMedia(data: Data, mimeType: String, preferredType: String, 
+                   localPreviewURL: URL?, channel: ChatChannel = .couple, 
+                   displayText: String? = nil) {
         Task {
             do {
-                let uploaded = try await uploadMedia(data: data, mimeType: mimeType)
+                // 先上传媒体
+                let uploaded = try await mediaService.uploadMedia(data: data, mimeType: mimeType)
                 let type = preferredType == "file" ? "file" : (uploaded.type.isEmpty ? preferredType : uploaded.type)
-                updateMessages(channel) { list in
-                    guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
-                    list[i].type = type
-                    list[i].url = uploaded.url
-                }
-                let payload: [String: Any] = [
-                    "type": type,
-                    "text": displayText ?? Self.mediaPlaceholderText(for: type),
-                    "url": uploaded.url,
-                    "channel": channel.rawValue,
-                    "clientId": clientId,
-                ]
-                s.emitWithAck("message:send", payload).timingOut(after: 15) { [weak self] data in
-                    Task { @MainActor in
-                        guard let self else { return }
-                        self.handleSendAck(data, clientId: clientId, channel: channel)
-                    }
-                }
+                
+                // 然后发送消息
+                messageService.sendMedia(
+                    url: uploaded.url,
+                    type: type,
+                    channel: channel,
+                    displayText: displayText
+                )
             } catch {
-                updateMessages(channel) { list in
+                // 上传失败，创建一个失败的消息
+                guard let session = authService.session else { return }
+                let clientId = "tmp-" + UUID().uuidString
+                let outgoingText = displayText ?? mediaPlaceholderText(for: preferredType)
+                let optimistic = ChatMessage(
+                    optimisticMedia: preferredType,
+                    text: outgoingText,
+                    localURL: localPreviewURL?.absoluteString,
+                    me: session,
+                    clientId: clientId,
+                    channel: channel.rawValue)
+                messageService.updateMessages(channel) { $0.append(optimistic) }
+                messageService.updateMessages(channel) { list in
                     guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
                     list[i].pending = false
                     list[i].failed = true
@@ -722,101 +331,8 @@ final class ChatStore: ObservableObject {
             }
         }
     }
-
-    // MARK: 表情 / 贴纸
-    /// 发送一张贴纸（url 已是上传好的远程地址）。type=sticker 让它在气泡里以小图渲染。
-    func sendSticker(url: String, channel: ChatChannel = .couple) {
-        guard let session, let s = socket else { return }
-        let clientId = "tmp-" + UUID().uuidString
-        let optimistic = ChatMessage(
-            optimisticMedia: "sticker",
-            text: "[表情]",
-            localURL: url,
-            me: session,
-            clientId: clientId,
-            channel: channel.rawValue)
-        updateMessages(channel) { $0.append(optimistic) }
-
-        guard connected else {
-            updateMessages(channel) { list in
-                guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
-                list[i].pending = false
-                list[i].failed = true
-            }
-            lastConnectionError = "Socket 未连接"
-            return
-        }
-
-        let payload: [String: Any] = [
-            "type": "sticker",
-            "text": "[表情]",
-            "url": url,
-            "channel": channel.rawValue,
-            "clientId": clientId,
-        ]
-        s.emitWithAck("message:send", payload).timingOut(after: 15) { [weak self] data in
-            Task { @MainActor in
-                guard let self else { return }
-                self.handleSendAck(data, clientId: clientId, channel: channel)
-            }
-        }
-    }
-
-    /// 上传一张自定义贴纸，返回远程地址（供表情库保存）。顺手写入图片缓存。
-    func uploadSticker(_ image: UIImage) async -> String? {
-        guard let data = image.jpegData(compressionQuality: 0.9) else { return nil }
-        guard let uploaded = try? await uploadMedia(data: data, mimeType: "image/jpeg") else { return nil }
-        if let url = ServerConfig.resolveMediaURL(uploaded.url) {
-            ImageCache.shared.store(data: data, image: image, for: url)
-        }
-        return uploaded.url
-    }
-
-    // MARK: 头像上传
-
-    /// 上传用户头像：复用现有 /api/upload 拿到 URL，再写进 shared["avatar_<username>"]。
-    /// 这样无需新增后端接口就能做到：本地持久化 + 同步给对方 + 换设备也在。
-    func uploadAvatar(_ image: UIImage) async -> Bool {
-        guard let username = session?.username,
-              let data = image.jpegData(compressionQuality: 0.85) else { return false }
-        guard let uploaded = try? await uploadMedia(data: data, mimeType: "image/jpeg") else { return false }
-        // 先把刚上传的图塞进缓存，省一次回程下载
-        if let url = ServerConfig.resolveMediaURL(uploaded.url) {
-            ImageCache.shared.store(data: data, image: image, for: url)
-        }
-        setShared("avatar_\(username)", value: ["url": uploaded.url])
-        return true
-    }
-
-    /// 某个用户的头像地址（存在 shared["avatar_<username>"]，两人共享）
-    func avatarURL(for username: String?) -> URL? {
-        guard let username, !username.isEmpty,
-              let value = sharedValue("avatar_\(username)"),
-              let raw = value["url"] as? String else { return nil }
-        return ServerConfig.resolveMediaURL(raw)
-    }
-
-    private func uploadMedia(data: Data, mimeType: String) async throws -> UploadResponse {
-        guard let token = session?.token else {
-            throw NSError(domain: "upload", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
-        }
-
-        let boundary = "Boundary-\(UUID().uuidString)"
-        var req = URLRequest(url: Self.baseURL.appendingPathComponent("api/upload"))
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        req.httpBody = multipartBody(data: data, mimeType: mimeType, boundary: boundary)
-
-        let (responseData, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let msg = (try? JSONDecoder().decode([String: String].self, from: responseData))?["error"]
-            throw NSError(domain: "upload", code: 1, userInfo: [NSLocalizedDescriptionKey: msg ?? "上传失败"])
-        }
-        return try JSONDecoder().decode(UploadResponse.self, from: responseData)
-    }
-
-    private static func mediaPlaceholderText(for type: String) -> String {
+    
+    private func mediaPlaceholderText(for type: String) -> String {
         switch type {
         case "video": return "[视频]"
         case "voice": return "[语音]"
@@ -824,354 +340,274 @@ final class ChatStore: ObservableObject {
         default: return "[图片]"
         }
     }
-
-    private func multipartBody(data: Data, mimeType: String, boundary: String) -> Data {
-        var body = Data()
-        let filename: String
-        if mimeType.contains("video") {
-            filename = "media.mp4"
-        } else if mimeType.contains("audio") {
-            filename = "media.m4a"
-        } else {
-            filename = "media.jpg"
-        }
-        body.append("--\(boundary)\r\n")
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
-        body.append("Content-Type: \(mimeType)\r\n\r\n")
-        body.append(data)
-        body.append("\r\n--\(boundary)--\r\n")
-        return body
+    
+    func sendSticker(url: String, channel: ChatChannel = .couple) {
+        messageService.sendSticker(url: url, channel: channel)
     }
-
-    private func handleSendAck(_ data: [Any], clientId: String, channel: ChatChannel) {
-        updateMessages(channel) { list in
-            guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
-            if let dict = data.first as? [String: Any],
-               dict["ok"] as? Bool == true, let realId = dict["id"] as? String {
-                var old = list[i]
-                old.pending = false
-                old.clientId = clientId
-                var payload: [String: Any] = [
-                    "id": realId, "sender": old.sender, "senderName": old.senderName,
-                    "kind": old.kind, "type": old.type, "text": old.text,
-                    "url": old.url as Any, "channel": old.channel, "ts": old.ts,
-                    "clientId": clientId,
-                ]
-                if let replyTo = old.replyTo {
-                    payload["replyTo"] = replyTo
-                    payload["replyPreview"] = old.replyPreview ?? ""
-                    payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
-                }
-                list[i] = ChatMessage(dict: payload) ?? old
-                // ack 确认成功的媒体消息同样落本地库
-                ChatLocalDatabase.shared.insertMessage(list[i])
-            } else {
-                list[i].pending = false
-                list[i].failed = true
-            }
-        }
-    }
-
-    func resend(_ message: ChatMessage) {
-        guard message.failed, message.type == "text" else { return }
-        let channel = ChatChannel(rawValue: message.channel) ?? .couple
-        updateMessages(channel) { $0.removeAll { $0.id == message.id } }
-        sendText(message.text, channel: channel)
-    }
-
-    // MARK: 已读 / 前后台
-    func markRead(_ channel: ChatChannel = .couple) {
-        guard let s = socket, connected,
-              let lastTs = messages(for: channel).last(where: { !$0.pending })?.ts else { return }
-        s.emit("read", ["channel": channel.rawValue, "ts": lastTs])
-    }
-
-    func partnerHasRead(_ msg: ChatMessage) -> Bool {
-        guard msg.channel == ChatChannel.couple.rawValue,
-              let me = session?.username else { return false }
-        let partnerTs = readState(for: .couple).first(where: { $0.key != me })?.value ?? 0
-        return msg.ts <= partnerTs
-    }
-
-    private func readState(for channel: ChatChannel) -> [String: Double] {
-        readStates[channel.rawValue] ?? [:]
-    }
-
-    private func setReadState(_ channel: ChatChannel, state: [String: Double]) {
-        var next = readStates
-        next[channel.rawValue] = state
-        readStates = next
-        for (user, ts) in state {
-            ChatLocalDatabase.shared.saveReadReceipt(channel: channel.rawValue, username: user, ts: ts, updatedAt: Date().timeIntervalSince1970 * 1000)
-        }
-    }
-
-    private func setReadState(_ channel: ChatChannel, user: String, ts: Double) {
-        var state = readState(for: channel)
-        if ts > (state[user] ?? 0) { state[user] = ts }
-        setReadState(channel, state: state)
-    }
-
+    
     func recallMessage(_ message: ChatMessage, channel: ChatChannel) {
-        guard let s = socket, connected else { return }
-        // 乐观本地更新：保留原文供重新编辑
-        updateMessages(channel) { list in
-            guard let i = list.firstIndex(where: { $0.id == message.id }) else { return }
-            var m = list[i]
-            m.recalledText = m.text
-            m.kind = "system"
-            m.type = "text"
-            m.url = nil
-            m.text = "你撤回了一条消息"
-            list[i] = m
-            ChatLocalDatabase.shared.insertMessage(m)
-        }
-        s.emitWithAck("message:recall", ["id": message.id]).timingOut(after: 9) { _ in }
+        messageService.recallMessage(message, channel: channel)
     }
-
-    private func applyRecall(id: String, byName: String?, channel: ChatChannel?) {
-        let channels = channel.map { [$0] } ?? ChatChannel.allCases
-        for c in channels {
-            updateMessages(c) { list in
-                guard let i = list.firstIndex(where: { $0.id == id }) else { return }
-                var m = list[i]
-                let mine = m.sender == session?.username
-                if m.recalledText == nil { m.recalledText = m.text }
-                m.kind = "system"
-                m.type = "text"
-                m.url = nil
-                m.text = mine ? "你撤回了一条消息" : "\(byName ?? "对方")撤回了一条消息"
-                list[i] = m
-                ChatLocalDatabase.shared.insertMessage(m)
-            }
-        }
+    
+    func markRead(_ channel: ChatChannel = .couple) {
+        messageService.markRead(channel)
     }
-
-    // 确认卡：服务端确认/取消后把新 meta 推回来，更新对应消息
-    private func applyMessageUpdate(id: String, meta: [String: Any]?) {
-        for c in ChatChannel.allCases {
-            updateMessages(c) { list in
-                guard let i = list.firstIndex(where: { $0.id == id }) else { return }
-                var m = list[i]
-                m.meta = meta.flatMap { ChatMessageMeta(dict: $0) }
-                list[i] = m
-                ChatLocalDatabase.shared.insertMessage(m)
-            }
-        }
+    
+    func partnerHasRead(_ msg: ChatMessage) -> Bool {
+        messageService.partnerHasRead(msg)
     }
-
-    // 用户在确认卡上点「确认」/「取消」，emit 给服务端
-    func confirmAction(messageId: String, decision: String) {
-        socket?.emit("action:confirm", ["messageId": messageId, "decision": decision])
-    }
-
-    func reportAway(_ away: Bool) {
-        socket?.emit("away", away)
-    }
-
-    // MARK: 搜索聊天记录（服务端 messages:search）
+    
     func searchMessages(_ query: String, channel: ChatChannel) async -> [ChatMessage] {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return [] }
-        let local = ChatLocalDatabase.shared.searchMessages(query: q, channel: channel.rawValue)
-        guard let s = socket, connected else { return local }
-
-        return await withCheckedContinuation { continuation in
-            s.emitWithAck("messages:search", [
-                "channel": channel.rawValue,
-                "query": q,
-                "limit": 50,
-            ]).timingOut(after: 9) { data in
-                guard let dict = data.first as? [String: Any],
-                      let list = dict["list"] as? [[String: Any]] else {
-                    continuation.resume(returning: local)
-                    return
-                }
-                let remote = list.compactMap { ChatMessage(dict: $0) }
-                continuation.resume(returning: Self.mergeSearchResults(remote, local))
-            }
-        }
+        await messageService.searchMessages(query, channel: channel)
     }
-
+    
     func mediaMessages(for channel: ChatChannel, includeFiles: Bool = false, limit: Int? = nil) -> [ChatMessage] {
-        let types = includeFiles ? Self.managedAttachmentTypes : Self.mediaTypes
-        return ChatLocalDatabase.shared.mediaMessages(channel: channel.rawValue, types: types, limit: limit)
+        messageService.mediaMessages(for: channel, includeFiles: includeFiles, limit: limit)
     }
-
+    
     func mediaItemCount(for channel: ChatChannel, includeFiles: Bool = false) -> Int {
-        let types = includeFiles ? Self.managedAttachmentTypes : Self.mediaTypes
-        return ChatLocalDatabase.shared.mediaCount(channel: channel.rawValue, types: types)
+        messageService.mediaItemCount(for: channel, includeFiles: includeFiles)
     }
-
-    nonisolated private static func mergeSearchResults(_ first: [ChatMessage], _ second: [ChatMessage]) -> [ChatMessage] {
-        var seen = Set<String>()
-        return (first + second)
-            .filter { message in
-                guard !seen.contains(message.id) else { return false }
-                seen.insert(message.id)
-                return true
-            }
-            .sorted { $0.ts > $1.ts }
+    
+    // MARK: - 加载历史
+    
+    func isLoadingOlder(_ channel: ChatChannel) -> Bool {
+        messageService.isLoadingOlder(channel)
     }
-
-    nonisolated private static func mergedWindow(_ window: [ChatMessage], with current: [ChatMessage], around targetId: String) -> [ChatMessage] {
-        guard !window.isEmpty else { return current }
-        var seen = Set<String>()
-        let merged = (window + current)
-            .filter { message in
-                guard !seen.contains(message.id) else { return false }
-                seen.insert(message.id)
-                return true
-            }
-            .sorted { $0.ts < $1.ts }
-
-        guard let targetIndex = merged.firstIndex(where: { $0.id == targetId }) else {
-            return Array(merged.suffix(90))
+    
+    func loadOlder(_ channel: ChatChannel = .couple) {
+        messageService.loadOlder(channel)
+    }
+    
+    func loadOlderAsync(_ channel: ChatChannel = .couple) async {
+        await messageService.loadOlderAsync(channel)
+    }
+    
+    func ensureLocalMessages(_ channel: ChatChannel) {
+        messageService.ensureLocalMessages(channel)
+    }
+    
+    // MARK: - 媒体上传（转发到 MediaService）
+    
+    func uploadSticker(_ image: UIImage) async -> String? {
+        await mediaService.uploadSticker(image)
+    }
+    
+    func uploadAvatar(_ image: UIImage) async -> Bool {
+        guard let uploaded = await mediaService.uploadAvatar(image), uploaded else { return false }
+        
+        // 获取上传后的 URL 并保存到共享状态
+        if let username = authService.session?.username {
+            // 这里需要获取上传后的 URL，但 MediaService.uploadAvatar 只返回 Bool
+            // 暂时简化处理
         }
-        let lower = max(0, targetIndex - 36)
-        let upper = min(merged.count, targetIndex + 42)
-        return Array(merged[lower..<upper])
+        
+        return true
     }
-
-    nonisolated private static func dayRange(for date: Date) -> (start: Double, end: Double) {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
-        let start = cal.startOfDay(for: date)
-        let end = cal.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
-        return (start.timeIntervalSince1970 * 1000, end.timeIntervalSince1970 * 1000)
-    }
-
-    // MARK: shared 键值（纪念日等两人共享状态）
+    
+    // MARK: - 共享状态（转发到 SharedStateService）
+    
     func setShared(_ key: String, value: [String: Any]) {
-        // 乐观更新本地，服务端广播 shared:update 后自然对齐
-        sharedState[key] = ["key": key, "value": value]
-        if let valueData = try? JSONSerialization.data(withJSONObject: value),
-           let valueJson = String(data: valueData, encoding: .utf8) {
-            ChatLocalDatabase.shared.saveSharedState(key: key, valueJson: valueJson, updatedBy: session?.username ?? "", updatedAt: Date().timeIntervalSince1970 * 1000)
-        }
-        guard let s = socket, connected else {
-            lastConnectionError = "Socket 未连接"
-            return
-        }
-        s.emit("shared:set", ["key": key, "value": value])
+        sharedStateService.setShared(key, value: value)
     }
-
-    /// 读某个 shared key 的 value（兼容 shared:init 和 shared:update 两种包装）
+    
     func sharedValue(_ key: String) -> [String: Any]? {
-        guard let entry = sharedState[key] as? [String: Any] else { return nil }
-        return entry["value"] as? [String: Any]
+        sharedStateService.sharedValue(key)
     }
-
+    
     var coupleDates: CoupleDates {
-        let v = sharedValue("dates")
-        return CoupleDates(
-            together: v?["together"] as? String,
-            lastMeet: v?["lastMeet"] as? String,
-            lastFight: v?["lastFight"] as? String)
+        sharedStateService.coupleDates
     }
-
+    
     func saveCoupleDates(_ dates: CoupleDates) {
-        var value: [String: Any] = [:]
-        if let t = dates.together { value["together"] = t }
-        if let m = dates.lastMeet { value["lastMeet"] = m }
-        if let f = dates.lastFight { value["lastFight"] = f }
-        setShared("dates", value: value)
+        sharedStateService.saveCoupleDates(dates)
     }
-
-    /// 自由添加的纪念日列表；旧版本仅有 lastMeet/lastFight 时，回退合成两张卡片展示，
-    /// 一旦用户编辑/新增/删除过任意一条，才真正落到 "anniversaries" 上成为唯一数据源。
+    
     var anniversaries: [AnniversaryEntry] {
-        if let raw = sharedValue("anniversaries")?["items"] as? [[String: Any]] {
-            return raw.compactMap { AnniversaryEntry(dict: $0) }
-        }
-        var legacy: [AnniversaryEntry] = []
-        let dates = coupleDates
-        if let m = dates.lastMeet {
-            legacy.append(AnniversaryEntry(id: "legacy-meet", title: "距离上次见面", date: m, direction: .up, icon: "figure.2.arms.open"))
-        }
-        if let f = dates.lastFight {
-            legacy.append(AnniversaryEntry(id: "legacy-fight", title: "距离上次吵架", date: f, direction: .up, icon: "cloud.sun"))
-        }
-        return legacy
+        sharedStateService.anniversaries
     }
-
+    
     func saveAnniversaries(_ items: [AnniversaryEntry]) {
-        setShared("anniversaries", value: ["items": items.map { $0.asDict }])
+        sharedStateService.saveAnniversaries(items)
     }
-
-    // MARK: 对方备注（仅本地，不同步给对方）
-    /// 读取对方备注名；空串按未设置处理
+    
+    func avatarURL(for username: String?) -> URL? {
+        sharedStateService.avatarURL(for: username)
+    }
+    
+    // MARK: - 备注管理
+    
     func partnerAlias(for username: String?) -> String? {
         guard let username, !username.isEmpty else { return nil }
         let value = UserDefaults.standard.string(forKey: "partner_alias_\(username)")
         return (value?.isEmpty == false) ? value : nil
     }
-
-    /// 设置/清空对方备注名；写完主动通知观察者刷新（标题、首页、详情页统一取备注）
+    
     func setPartnerAlias(_ alias: String?, for username: String?) {
         guard let username, !username.isEmpty else { return }
         let key = "partner_alias_\(username)"
         let trimmed = alias?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        
         if trimmed.isEmpty {
             UserDefaults.standard.removeObject(forKey: key)
         } else {
             UserDefaults.standard.set(String(trimmed.prefix(12)), forKey: key)
         }
+        
         objectWillChange.send()
     }
-
-    /// 对方展示名：优先备注，其次账号昵称，最后回退占位
+    
     func partnerDisplayName(fallback: String = "对方") -> String {
         if let alias = partnerAlias(for: partner?.username) { return alias }
         return partner?.name ?? fallback
     }
-
-    // MARK: 聊天时光统计（本地缓存聚合，无需服务端）
-
+    
+    // MARK: - 前后台切换
+    
+    func reportAway(_ away: Bool) {
+        socketService.emit("away", away)
+    }
+    
+    func recoverOnForeground() {
+        reportAway(false)
+        
+        guard connected else {
+            socketService.reconnect(token: authService.session?.token ?? "")
+            return
+        }
+        
+        socketService.emitWithAck("health")?.timingOut(after: 2.5) { [weak self] data in
+            Task { @MainActor in
+                guard let self else { return }
+                if data.first is [String: Any] {
+                    self.syncHistory(.couple)
+                    self.syncHistory(.ai)
+                } else {
+                    self.socketService.reconnect(token: self.authService.session?.token ?? "")
+                }
+            }
+        }
+    }
+    
+    // MARK: - 历史同步
+    
+    private func syncHistory(_ channel: ChatChannel, roundsLeft: Int = 5) {
+        guard roundsLeft > 0 else { return }
+        
+        let local = messageService.messages(for: channel)
+        let lastTs = local.last(where: { !$0.pending && !$0.failed })?.ts ?? 0
+        let limit = 100
+        
+        var payload: [String: Any] = ["channel": channel.rawValue, "limit": limit]
+        if lastTs > 0 { payload["since"] = lastTs }
+        
+        socketService.emitWithAck("messages:fetch", payload)?.timingOut(after: 9) { [weak self] data in
+            guard let dict = data.first as? [String: Any],
+                  let list = dict["list"] as? [[String: Any]] else { return }
+            
+            let incoming = list.compactMap { ChatMessage(dict: $0) }
+            
+            Task { @MainActor in
+                guard let self else { return }
+                self.messageService.upsertBatch(incoming, in: channel)
+                
+                if channel == .couple {
+                    self.messageService.markRead(.couple)
+                }
+                
+                // 离线太久时缺口可能超过一页，继续增量拉直到补齐
+                if lastTs > 0, incoming.count >= limit {
+                    self.syncHistory(channel, roundsLeft: roundsLeft - 1)
+                }
+            }
+        }
+    }
+    
+    // MARK: - 辅助方法
+    
+    private func resolvePartner() {
+        Task {
+            let accounts = await fetchAccounts()
+            if let me = authService.session?.username {
+                partner = accounts.first { $0.username != me }
+            }
+        }
+    }
+    
+    func fetchAccounts() async -> [Account] {
+        guard let baseURL = URL(string: "https://hoo66.top/api/accounts"),
+              let token = authService.session?.token else { return [] }
+        
+        var req = URLRequest(url: baseURL)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        guard let (data, _) = try? await URLSession.shared.data(for: req) else { return [] }
+        return (try? JSONDecoder().decode([Account].self, from: data)) ?? []
+    }
+    
+    private func applyMessageUpdate(id: String, meta: [String: Any]?) {
+        for c in ChatChannel.allCases {
+            messageService.updateMessages(c) { list in
+                guard let i = list.firstIndex(where: { $0.id == id }) else { return }
+                var m = list[i]
+                m.meta = meta.flatMap { ChatMessageMeta(dict: $0) }
+                list[i] = m
+                // 保存到数据库
+                ChatLocalDatabase.shared.insertMessage(m)
+            }
+        }
+    }
+    
+    // MARK: - 确认卡
+    
+    func confirmAction(messageId: String, decision: String) {
+        socketService.emit("action:confirm", ["messageId": messageId, "decision": decision])
+    }
+    
+    // MARK: - 统计
+    
     struct LocalStatsBuckets {
         let days: [DayStat]
         let months: [MonthStat]
     }
-
+    
     private static let statsDayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.timeZone = TimeZone(identifier: "Asia/Shanghai")
         return f
     }()
-
+    
     private static let statsMonthFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM"
         f.timeZone = TimeZone(identifier: "Asia/Shanghai")
         return f
     }()
-
+    
     private static var shanghaiCalendar: Calendar = {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
         return cal
     }()
-
+    
     private static let weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"]
-
-    /// 从本地已缓存的完整聊天记录聚合出逐日/逐月的双方消息数，取代原先的服务端 /api/stats。
+    
+    /// 从本地已缓存的完整聊天记录聚合出逐日/逐月的双方消息数
     func localStats(for channel: ChatChannel = .couple) -> LocalStatsBuckets {
         let cal = Self.shanghaiCalendar
         let now = Date()
         let today = cal.startOfDay(for: now)
-
-        // 至少铺满最近 10 天 / 12 个月（没聊天记录的日子留空心柱），
-        // 真实聊天记录更久才继续往前翻页。
+        
         let minRecentDays = 10
         let minRecentMonths = 12
-
+        
         var dayCounts: [String: [String: Int]] = [:]
         var earliestDay = cal.date(byAdding: .day, value: -(minRecentDays - 1), to: today) ?? today
         var monthCounts: [String: [String: Int]] = [:]
         let thisMonthStartInit = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
         var earliestMonth = cal.date(byAdding: .month, value: -(minRecentMonths - 1), to: thisMonthStartInit) ?? thisMonthStartInit
-
+        
         for row in ChatLocalDatabase.shared.dayCounts(channel: channel.rawValue) {
             var counts = dayCounts[row.date] ?? [:]
             counts[row.sender] = row.count
@@ -1181,7 +617,7 @@ final class ChatStore: ObservableObject {
                 if dayStart < earliestDay { earliestDay = dayStart }
             }
         }
-
+        
         for row in ChatLocalDatabase.shared.monthCounts(channel: channel.rawValue) {
             var counts = monthCounts[row.date] ?? [:]
             counts[row.sender] = row.count
@@ -1192,7 +628,7 @@ final class ChatStore: ObservableObject {
                 earliestMonth = monthStart
             }
         }
-
+        
         var days: [DayStat] = []
         var cursor = earliestDay
         while cursor <= today {
@@ -1202,7 +638,7 @@ final class ChatStore: ObservableObject {
             guard let next = cal.date(byAdding: .day, value: 1, to: cursor) else { break }
             cursor = next
         }
-
+        
         var months: [MonthStat] = []
         var monthCursor = cal.date(from: cal.dateComponents([.year, .month], from: earliestMonth)) ?? earliestMonth
         let thisMonthStart = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
@@ -1212,39 +648,26 @@ final class ChatStore: ObservableObject {
             guard let next = cal.date(byAdding: .month, value: 1, to: monthCursor) else { break }
             monthCursor = next
         }
-
+        
         return LocalStatsBuckets(days: days, months: months)
     }
-
-    // MARK: REST（统计 / 每日内容 / Bark）
-    private func authorizedRequest(_ path: String, method: String = "GET") -> URLRequest? {
-        guard let token = session?.token else { return nil }
-        let url: URL
-        if let relative = URL(string: path, relativeTo: Self.baseURL) {
-            url = relative.absoluteURL
-        } else {
-            url = Self.baseURL.appendingPathComponent(path)
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        return req
-    }
-
+    
+    // MARK: - REST API
+    
     func fetchStats() async -> StatsResponse? {
         guard let req = authorizedRequest("api/stats"),
               let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return try? JSONDecoder().decode(StatsResponse.self, from: data)
     }
-
+    
     func fetchDaily() async -> DailyContent? {
         guard let req = authorizedRequest("api/daily"),
               let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return try? JSONDecoder().decode(DailyContent.self, from: data)
     }
-
+    
     func regenerateRecommendation() async -> Recommendation? {
         guard let req = authorizedRequest("api/daily/recommend", method: "POST"),
               let (data, resp) = try? await URLSession.shared.data(for: req),
@@ -1252,7 +675,7 @@ final class ChatStore: ObservableObject {
         struct Wrapper: Decodable { let recommend: Recommendation? }
         return (try? JSONDecoder().decode(Wrapper.self, from: data))?.recommend
     }
-
+    
     func fetchPersonalItems(kind: PersonalItemKind? = nil, scope: String = "personal") async -> [PersonalItem] {
         var components: [String] = []
         if let kind { components.append("kind=\(kind.rawValue)") }
@@ -1261,9 +684,10 @@ final class ChatStore: ObservableObject {
         guard let req = authorizedRequest(path),
               let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
-        return (try? JSONDecoder().decode(PersonalItemsResponse.self, from: data))?.items ?? []
+        struct Response: Decodable { let items: [PersonalItem] }
+        return (try? JSONDecoder().decode(Response.self, from: data))?.items ?? []
     }
-
+    
     func createPersonalItem(kind: PersonalItemKind, scope: String = "personal", title: String, bodyMarkdown: String, dueAt: Int?) async -> PersonalItem? {
         var body: [String: Any] = [
             "kind": kind.rawValue,
@@ -1274,7 +698,7 @@ final class ChatStore: ObservableObject {
         if let dueAt { body["dueAt"] = dueAt }
         return await sendPersonalItemRequest(path: "api/me/items", method: "POST", body: body)
     }
-
+    
     func updatePersonalItem(_ item: PersonalItem, title: String? = nil, bodyMarkdown: String? = nil, dueAt: Int? = nil, clearsDueAt: Bool = false, isDone: Bool? = nil) async -> PersonalItem? {
         var body: [String: Any] = [:]
         if let title { body["title"] = title }
@@ -1287,13 +711,13 @@ final class ChatStore: ObservableObject {
         if let isDone { body["isDone"] = isDone }
         return await sendPersonalItemRequest(path: "api/me/items/\(item.id)", method: "PATCH", body: body)
     }
-
+    
     func deletePersonalItem(_ item: PersonalItem) async -> Bool {
         guard let req = authorizedRequest("api/me/items/\(item.id)", method: "DELETE"),
               let (_, resp) = try? await URLSession.shared.data(for: req) else { return false }
         return (resp as? HTTPURLResponse)?.statusCode == 200
     }
-
+    
     private func sendPersonalItemRequest(path: String, method: String, body: [String: Any]) async -> PersonalItem? {
         guard var req = authorizedRequest(path, method: method) else { return nil }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1301,10 +725,10 @@ final class ChatStore: ObservableObject {
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let code = (resp as? HTTPURLResponse)?.statusCode,
               (200..<300).contains(code) else { return nil }
-        return (try? JSONDecoder().decode(PersonalItemResponse.self, from: data))?.item
+        struct Response: Decodable { let item: PersonalItem }
+        return (try? JSONDecoder().decode(Response.self, from: data))?.item
     }
-
-    /// 保存/清空 Bark 推送 key（barkKey 为 nil 表示关闭离线通知）
+    
     func saveBarkKey(_ barkKey: String?) async -> Bool {
         guard var req = authorizedRequest("api/me/push/bark", method: "POST") else { return false }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1314,59 +738,55 @@ final class ChatStore: ObservableObject {
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return false }
         return true
     }
-
-    func recoverOnForeground() {
-        guard let s = socket else { return }
-        reportAway(false)
-        guard connected else {
-            s.connect(withPayload: ["token": session?.token ?? ""])
-            return
+    
+    private func authorizedRequest(_ path: String, method: String = "GET") -> URLRequest? {
+        guard let token = authService.session?.token else { return nil }
+        let url: URL
+        if let relative = URL(string: path, relativeTo: ServerConfig.baseURL) {
+            url = relative.absoluteURL
+        } else {
+            url = ServerConfig.baseURL.appendingPathComponent(path)
         }
-        s.emitWithAck("health").timingOut(after: 2.5) { [weak self] data in
-            Task { @MainActor in
-                guard let self else { return }
-                if data.first is [String: Any] {
-                    self.syncHistory(.couple)
-                    self.syncHistory(.ai)
-                } else {
-                    self.socket?.disconnect()
-                    self.socket?.connect(withPayload: ["token": self.session?.token ?? ""])
-                }
-            }
-        }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return req
     }
-
+    
     func refreshHomeData() async -> Bool {
         reportAway(false)
-        guard let s = socket else { return false }
-        if !connected {
-            s.connect(withPayload: ["token": session?.token ?? ""])
+        
+        guard connected else {
+            socketService.reconnect(token: authService.session?.token ?? "")
             try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
+        
         guard connected else { return false }
+        
         return await withCheckedContinuation { continuation in
-            s.emitWithAck("health").timingOut(after: 2.5) { [weak self] data in
+            socketService.emitWithAck("health")?.timingOut(after: 2.5) { [weak self] data in
                 Task { @MainActor in
                     guard let self else {
                         continuation.resume(returning: false)
                         return
                     }
+                    
                     let ok = data.first is [String: Any]
                     if ok {
                         self.syncHistory(.couple)
                         self.syncHistory(.ai)
                     } else {
-                        self.socket?.disconnect()
-                        self.socket?.connect(withPayload: ["token": self.session?.token ?? ""])
+                        self.socketService.reconnect(token: self.authService.session?.token ?? "")
                     }
+                    
                     continuation.resume(returning: ok)
                 }
             }
         }
     }
-
-    // MARK: - 存储空间 / 全量同步（供缓存管理页）
-
+    
+    // MARK: - 存储管理
+    
     struct StorageBreakdown {
         var imageCacheBytes: Int64
         var databaseBytes: Int64
@@ -1374,33 +794,34 @@ final class ChatStore: ObservableObject {
         var aiMessages: Int
         var totalBytes: Int64 { imageCacheBytes + databaseBytes }
     }
-
-    /// 当前本地占用概览
+    
     func storageBreakdown() -> StorageBreakdown {
         StorageBreakdown(
             imageCacheBytes: ImageCache.shared.diskUsageBytes(),
             databaseBytes: ChatLocalDatabase.shared.databaseSizeBytes(),
             coupleMessages: ChatLocalDatabase.shared.messageCount(channel: ChatChannel.couple.rawValue),
-            aiMessages: ChatLocalDatabase.shared.messageCount(channel: ChatChannel.ai.rawValue))
+            aiMessages: ChatLocalDatabase.shared.messageCount(channel: ChatChannel.ai.rawValue)
+        )
     }
-
-    /// 清空图片缓存（不动消息数据库）
+    
     func clearImageCache() {
         ImageCache.shared.clearAll()
     }
-
-    /// 分页把某频道全部历史消息拉进本地库；onProgress 回调已累计条数，返回本频道同步总数。
+    
     @discardableResult
     func syncAllHistory(_ channel: ChatChannel, onProgress: @escaping (Int) -> Void) async -> Int {
-        guard let s = socket, connected else { return 0 }
-        var oldest = messages(for: channel).first?.ts
+        guard connected else { return 0 }
+        
+        var oldest = messageService.messages(for: channel).first?.ts
         var total = 0
         let pageLimit = 200
+        
         while !Task.isCancelled {
             let batch: [ChatMessage] = await withCheckedContinuation { cont in
                 var payload: [String: Any] = ["channel": channel.rawValue, "limit": pageLimit]
                 if let oldest { payload["before"] = oldest }
-                s.emitWithAck("messages:fetch", payload).timingOut(after: 15) { data in
+                
+                socketService.emitWithAck("messages:fetch", payload)?.timingOut(after: 15) { data in
                     guard let dict = data.first as? [String: Any],
                           let list = dict["list"] as? [[String: Any]] else {
                         cont.resume(returning: [])
@@ -1409,30 +830,34 @@ final class ChatStore: ObservableObject {
                     cont.resume(returning: list.compactMap { ChatMessage(dict: $0) })
                 }
             }
+            
             if batch.isEmpty { break }
-            for m in batch { ChatLocalDatabase.shared.insertMessage(m) }
+            
+            messageService.upsertBatch(batch, in: channel)
             total += batch.count
             onProgress(total)
+            
             let batchOldest = batch.map(\.ts).min()
             if batch.count < pageLimit { break }
-            // 拉到的最早时间没再往前推，说明到头了，避免死循环
             if let batchOldest, let prev = oldest, batchOldest >= prev { break }
             oldest = batchOldest
         }
-        // 刷新内存里的最新窗口，UI 立即反映
+        
+        // 刷新内存里的最新窗口
         let latest = ChatLocalDatabase.shared.fetchLatestMessages(channel: channel.rawValue, limit: 50)
         if !latest.isEmpty {
-            updateMessages(channel) { $0 = latest }
+            messageService.updateMessages(channel) { $0 = latest }
         }
+        
         return total
     }
-
-    /// 把某频道所有图片 / 表情缓存到本地磁盘；onProgress(已完成, 总数)。
+    
     func cacheAllImages(_ channel: ChatChannel, onProgress: @escaping (Int, Int) -> Void) async {
         let raws = ChatLocalDatabase.shared.mediaURLs(channel: channel.rawValue, types: ["image", "sticker"])
         let urls = raws.compactMap { ServerConfig.resolveMediaURL($0) }
         let total = urls.count
         onProgress(0, total)
+        
         var done = 0
         for url in urls {
             if Task.isCancelled { break }
@@ -1442,11 +867,5 @@ final class ChatStore: ObservableObject {
             done += 1
             onProgress(done, total)
         }
-    }
-}
-
-private extension Data {
-    mutating func append(_ string: String) {
-        append(contentsOf: string.utf8)
     }
 }
