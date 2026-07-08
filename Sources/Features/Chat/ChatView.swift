@@ -1570,15 +1570,18 @@ private struct VideoThumbnailView: View {
     }
 
     private func loadThumbnail() async {
-        let asset = AVURLAsset(url: url)
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 520, height: 520)
-        guard let cgImage = try? generator.copyCGImage(at: .zero, actualTime: nil) else {
-            thumbnail = nil
-            return
-        }
-        thumbnail = UIImage(cgImage: cgImage)
+        let image = await Task.detached(priority: .utility) { () -> UIImage? in
+            let asset = AVURLAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 360, height: 360)
+            guard let cgImage = try? generator.copyCGImage(at: .zero, actualTime: nil) else {
+                return nil
+            }
+            return UIImage(cgImage: cgImage).preparingForDisplay()
+                ?? UIImage(cgImage: cgImage)
+        }.value
+        thumbnail = image
     }
 }
 
