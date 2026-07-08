@@ -251,10 +251,6 @@ struct ChatView: View {
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .defaultScrollAnchor(.bottom)
-            .refreshable {
-                pendingTopAnchor = messages.first?.id
-                await store.loadOlderAsync(channel)
-            }
             // 点击空白处用 UIKit 标准方式收起键盘，跟系统键盘动画统一
             .simultaneousGesture(
                 TapGesture().onEnded {
@@ -280,7 +276,10 @@ struct ChatView: View {
             .onChange(of: messages.first?.id) { _, _ in
                 guard let anchor = pendingTopAnchor else { return }
                 pendingTopAnchor = nil
-                proxy.scrollTo(anchor, anchor: .top)
+                // 延迟一帧等 LazyVStack 完成新条目布局后再定位
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    proxy.scrollTo(anchor, anchor: .top)
+                }
             }
             // 键盘弹/收：输入栏由系统避让键盘，这里只用同一动画同步贴底滚动。
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
