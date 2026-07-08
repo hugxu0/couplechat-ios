@@ -261,6 +261,7 @@ struct ChatView: View {
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .defaultScrollAnchor(.bottom)
+            .animation(.easeOut(duration: 0.25), value: messages.last?.id)
             // 点击空白处用 UIKit 标准方式收起键盘，跟系统键盘动画统一
             .simultaneousGesture(
                 TapGesture().onEnded {
