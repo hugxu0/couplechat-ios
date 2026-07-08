@@ -189,6 +189,9 @@ struct ChatView: View {
                                     message: msg,
                                     mine: own,
                                     peerAvatar: peerAvatar,
+                                    myAvatar: myAvatarEmoji,
+                                    peerAvatarURL: peerAvatarURL,
+                                    myAvatarURL: myAvatarURL,
                                     groupedWithPrevious: isGrouped(index),
                                     read: store.partnerHasRead(msg),
                                     canRetry: msg.type == "text",
@@ -290,6 +293,18 @@ struct ChatView: View {
     private var peerAvatar: String {
         if channel == .ai { return "🐱" }
         return store.partner?.avatar ?? AccountPresentation.avatar(for: store.partner?.username ?? "si")
+    }
+
+    private var peerAvatarURL: URL? {
+        channel == .ai ? nil : store.avatarURL(for: store.partner?.username)
+    }
+
+    private var myAvatarEmoji: String {
+        AccountPresentation.avatar(for: store.session?.username ?? "xu")
+    }
+
+    private var myAvatarURL: URL? {
+        store.avatarURL(for: store.session?.username)
     }
 
     // MARK: 系统消息（撤回消息加重新编辑）
@@ -882,6 +897,9 @@ struct MessageBubble: View {
     let message: ChatMessage
     let mine: Bool
     let peerAvatar: String
+    var myAvatar: String = "🐶"
+    var peerAvatarURL: URL? = nil
+    var myAvatarURL: URL? = nil
     let groupedWithPrevious: Bool
     let read: Bool
     let canRetry: Bool
@@ -895,7 +913,7 @@ struct MessageBubble: View {
             if mine { Spacer(minLength: 60) }
 
             if !mine {
-                avatar(peerAvatar)
+                avatarBadge(url: peerAvatarURL, emoji: peerAvatar)
                     .opacity(groupedWithPrevious ? 0 : 1)
             }
 
@@ -915,7 +933,7 @@ struct MessageBubble: View {
             }
 
             if mine {
-                avatar("🐶")
+                avatarBadge(url: myAvatarURL, emoji: myAvatar)
                     .opacity(groupedWithPrevious ? 0 : 1)
             }
 
@@ -1120,12 +1138,8 @@ struct MessageBubble: View {
         }
     }
 
-    private func avatar(_ emoji: String) -> some View {
-        Text(emoji)
-            .font(.system(size: 20))
-            .frame(width: 36, height: 36)
-            .background(DS.Palette.bubbleOther)
-            .clipShape(Circle())
+    private func avatarBadge(url: URL?, emoji: String) -> some View {
+        AvatarBadge(url: url, fallbackEmoji: emoji, size: 36)
     }
 }
 

@@ -589,23 +589,26 @@ final class ChatStore: ObservableObject {
 
     // MARK: 头像上传
 
-    /// 上传用户头像。接入真实 API 后替换函数体。
-    /// 当前返回 true 模拟上传成功，方便前端先验证 UI 交互流。
+    /// 上传用户头像：复用现有 /api/upload 拿到 URL，再写进 shared["avatar_<username>"]。
+    /// 这样无需新增后端接口就能做到：本地持久化 + 同步给对方 + 换设备也在。
     func uploadAvatar(_ image: UIImage) async -> Bool {
-        // TODO: 实现真实上传 —— 将 UIImage 转为 JPEG/PNG Data，
-        // 通过 multipart/form-data 发送到服务端，token 认证方式与 uploadMedia 相同。
-        //
-        // 示例骨架：
-        // guard let data = image.jpegData(compressionQuality: 0.85) else { return false }
-        // let boundary = "Boundary-\(UUID().uuidString)"
-        // var req = URLRequest(url: Self.baseURL.appendingPathComponent("api/avatar"))
-        // req.httpMethod = "POST"
-        // req.setValue("Bearer \(session?.token ?? "")", forHTTPHeaderField: "Authorization")
-        // req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        // req.httpBody = multipartBody(data: data, mimeType: "image/jpeg", boundary: boundary)
-        // let (_, resp) = try await URLSession.shared.data(for: req)
-        // return (resp as? HTTPURLResponse)?.statusCode == 200
+        guard let username = session?.username,
+              let data = image.jpegData(compressionQuality: 0.85) else { return false }
+        guard let uploaded = try? await uploadMedia(data: data, mimeType: "image/jpeg") else { return false }
+        // 先把刚上传的图塞进缓存，省一次回程下载
+        if let url = ServerConfig.resolveMediaURL(uploaded.url) {
+            ImageCache.shared.store(data: data, image: image, for: url)
+        }
+        setShared("avatar_\(username)", value: ["url": uploaded.url])
         return true
+    }
+
+    /// 某个用户的头像地址（存在 shared["avatar_<username>"]，两人共享）
+    func avatarURL(for username: String?) -> URL? {
+        guard let username, !username.isEmpty,
+              let value = sharedValue("avatar_\(username)"),
+              let raw = value["url"] as? String else { return nil }
+        return ServerConfig.resolveMediaURL(raw)
     }
 
     private func uploadMedia(data: Data, mimeType: String) async throws -> UploadResponse {

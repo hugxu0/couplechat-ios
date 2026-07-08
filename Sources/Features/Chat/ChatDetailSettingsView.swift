@@ -75,10 +75,22 @@ struct ChatDetailSettingsView: View {
     private var partnerSection: some View {
         Section {
             VStack(spacing: 10) {
-                Text(partnerAvatar)
-                    .font(.system(size: 48))
+                Group {
+                    if channel == .couple, let url = store.avatarURL(for: store.partner?.username) {
+                        CachedImage(url: url) {
+                            Text(partnerAvatar)
+                                .font(.system(size: 48))
+                                .frame(width: 84, height: 84)
+                                .background(theme.accent.color.opacity(0.10))
+                        }
+                    } else {
+                        Text(partnerAvatar)
+                            .font(.system(size: 48))
+                            .frame(width: 84, height: 84)
+                            .background(theme.accent.color.opacity(0.10))
+                    }
+                }
                     .frame(width: 84, height: 84)
-                    .background(theme.accent.color.opacity(0.10))
                     .clipShape(Circle())
                     .overlay(Circle().stroke(theme.accent.color.opacity(0.25), lineWidth: 2))
                     .overlay(alignment: .bottomTrailing) {

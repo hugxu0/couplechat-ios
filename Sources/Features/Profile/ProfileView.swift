@@ -155,21 +155,29 @@ struct ProfileView: View {
 
     @ViewBuilder
     private var avatarView: some View {
-        if let avatar = customAvatar {
-            Image(uiImage: avatar)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 92, height: 92)
-                .clipShape(Circle())
-                .overlay(Circle().stroke(theme.accent.color.opacity(0.35), lineWidth: 2))
-        } else {
-            Text(myEmoji)
-                .font(.system(size: 46))
-                .frame(width: 92, height: 92)
-                .background(theme.accent.color.opacity(0.12))
-                .clipShape(Circle())
-                .overlay(Circle().stroke(theme.accent.color.opacity(0.35), lineWidth: 2))
+        Group {
+            if let avatar = customAvatar {
+                // 刚选好还没传完时的即时反馈
+                Image(uiImage: avatar)
+                    .resizable()
+                    .scaledToFill()
+            } else if let url = store.avatarURL(for: store.session?.username) {
+                CachedImage(url: url) {
+                    Text(myEmoji)
+                        .font(.system(size: 46))
+                        .frame(width: 92, height: 92)
+                        .background(theme.accent.color.opacity(0.12))
+                }
+            } else {
+                Text(myEmoji)
+                    .font(.system(size: 46))
+                    .frame(width: 92, height: 92)
+                    .background(theme.accent.color.opacity(0.12))
+            }
         }
+        .frame(width: 92, height: 92)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(theme.accent.color.opacity(0.35), lineWidth: 2))
     }
 
     // MARK: - 设置项

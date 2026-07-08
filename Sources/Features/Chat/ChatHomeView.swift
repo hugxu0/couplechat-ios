@@ -136,6 +136,7 @@ struct ChatHomeView: View {
             CoupleAvatarColumn(
                 name: myName,
                 avatar: myAvatar,
+                avatarURL: store.avatarURL(for: myUsername),
                 image: .dog,
                 status: statusMap[myUsername],
                 online: store.connected,
@@ -175,6 +176,7 @@ struct ChatHomeView: View {
             CoupleAvatarColumn(
                 name: partnerName,
                 avatar: partnerAvatar,
+                avatarURL: store.avatarURL(for: partnerUsername),
                 image: .bunny,
                 status: statusMap[partnerUsername],
                 online: store.partnerOnline,
@@ -610,6 +612,7 @@ struct ChatHomeView: View {
 private struct CoupleAvatarColumn: View {
     let name: String
     let avatar: String
+    var avatarURL: URL? = nil
     let image: AvatarArt
     let status: String?
     let online: Bool
@@ -623,7 +626,15 @@ private struct CoupleAvatarColumn: View {
             statusCapsule
 
             ZStack(alignment: .bottomTrailing) {
-                AvatarIllustration(kind: image, fallback: avatar)
+                Group {
+                    if let avatarURL {
+                        CachedImage(url: avatarURL) {
+                            AvatarIllustration(kind: image, fallback: avatar)
+                        }
+                    } else {
+                        AvatarIllustration(kind: image, fallback: avatar)
+                    }
+                }
                     .frame(width: 88, height: 88)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 4))
