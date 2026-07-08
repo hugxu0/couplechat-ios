@@ -352,10 +352,12 @@ struct ChatView: View {
 
     /// 滚到底部锚点；延迟一帧让 LazyVStack 渲染稳定
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = false) {
-        DispatchQueue.main.async {
-            withAnimation(animated ? .easeOut(duration: 0.15) : nil) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.15)) {
                 proxy.scrollTo("bottomAnchor", anchor: .bottom)
             }
+        } else {
+            proxy.scrollTo("bottomAnchor", anchor: .bottom)
         }
     }
 
@@ -829,9 +831,7 @@ struct ChatView: View {
 
     private func sendVoice(url: URL) {
         guard let data = try? Data(contentsOf: url) else { return }
-        withAnimation(DS.Anim.message) {
-            store.sendMedia(data: data, mimeType: "audio/m4a", preferredType: "voice", localPreviewURL: url, channel: channel)
-        }
+        store.sendMedia(data: data, mimeType: "audio/m4a", preferredType: "voice", localPreviewURL: url, channel: channel)
     }
 
     /// 猫猫按钮：在公共聊天里召唤大橘（服务端识别 @大橘 触发词才会插话），不跳转私聊
@@ -857,9 +857,7 @@ struct ChatView: View {
 
     private func sendSticker(_ sticker: Sticker) {
         Haptics.light()
-        withAnimation(DS.Anim.message) {
-            store.sendSticker(url: sticker.url, channel: channel)
-        }
+        store.sendSticker(url: sticker.url, channel: channel)
     }
 
     private func sendDraft() {
@@ -876,9 +874,7 @@ struct ChatView: View {
         } else {
             previewText = nil
         }
-        withAnimation(DS.Anim.message) {
-            store.sendText(text, channel: channel, replyTo: replyId, replyPreview: previewText)
-        }
+        store.sendText(text, channel: channel, replyTo: replyId, replyPreview: previewText)
     }
 
     private func replyPreview(for message: ChatMessage) -> String {
@@ -915,14 +911,12 @@ struct ChatView: View {
 
             await MainActor.run {
                 Haptics.light()
-                withAnimation(DS.Anim.message) {
-                    store.sendMedia(
-                        data: prepared.data,
-                        mimeType: prepared.mimeType,
-                        preferredType: prepared.messageType,
-                        localPreviewURL: nil,
-                        channel: channel)
-                }
+                store.sendMedia(
+                    data: prepared.data,
+                    mimeType: prepared.mimeType,
+                    preferredType: prepared.messageType,
+                    localPreviewURL: nil,
+                    channel: channel)
             }
         }
     }
@@ -946,15 +940,13 @@ struct ChatView: View {
             let name = url.lastPathComponent
             await MainActor.run {
                 Haptics.light()
-                withAnimation(DS.Anim.message) {
-                    store.sendMedia(
-                        data: data,
-                        mimeType: mimeType,
-                        preferredType: "file",
-                        localPreviewURL: nil,
-                        channel: channel,
-                        displayText: name)
-                }
+                store.sendMedia(
+                    data: data,
+                    mimeType: mimeType,
+                    preferredType: "file",
+                    localPreviewURL: nil,
+                    channel: channel,
+                    displayText: name)
             }
         }
     }
@@ -1006,14 +998,12 @@ struct ChatView: View {
                 }
                 await MainActor.run {
                     Haptics.light()
-                    withAnimation(DS.Anim.message) {
-                        store.sendMedia(
-                            data: prepared.data,
-                            mimeType: prepared.mimeType,
-                            preferredType: prepared.messageType,
-                            localPreviewURL: nil,
-                            channel: channel)
-                    }
+                    store.sendMedia(
+                        data: prepared.data,
+                        mimeType: prepared.mimeType,
+                        preferredType: prepared.messageType,
+                        localPreviewURL: nil,
+                        channel: channel)
                 }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
