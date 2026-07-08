@@ -93,8 +93,7 @@ struct MessageBubble: View {
             if !mine { Spacer(minLength: 60) }
         }
         .transition(.asymmetric(
-            insertion: .scale(scale: 0.85, anchor: mine ? .bottomTrailing : .bottomLeading)
-                .combined(with: .opacity),
+            insertion: .offset(y: 12).combined(with: .opacity),
             removal: .opacity))
     }
 
@@ -157,7 +156,8 @@ struct MessageBubble: View {
                       .background(mine ? AnyShapeStyle(DS.Palette.accent) : AnyShapeStyle(DS.Palette.bubbleOther))
                       .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
                       .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
-                      .opacity(message.pending ? 0.7 : 1)
+                .opacity(message.pending ? 0.7 : 1)
+                .animation(.easeOut(duration: 0.3), value: message.pending)
                 }
         }
     }
