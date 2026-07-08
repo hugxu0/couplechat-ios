@@ -51,7 +51,7 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            DS.Palette.bgGradient.ignoresSafeArea()
+            DynamicGradientBackground().ignoresSafeArea()
 
             ZStack {
                 ChatHomeView()
@@ -149,9 +149,16 @@ struct RootTabView: View {
                     Haptics.selection()
                 } label: {
                     VStack(spacing: 3) {
-                        Image(systemName: t.icon)
-                            .font(.system(size: 20))
-                            .scaleEffect(tab == t ? 1.08 : 1.0)
+                        if t == .pet {
+                            CatHeadIcon()
+                                .stroke(tab == t ? DS.Palette.accent : DS.Palette.textSecondary, style: StrokeStyle(lineWidth: 2.1, lineCap: .round, lineJoin: .round))
+                                .frame(width: 21, height: 21)
+                                .scaleEffect(tab == t ? 1.08 : 1.0)
+                        } else {
+                            Image(systemName: t.icon)
+                                .font(.system(size: 20))
+                                .scaleEffect(tab == t ? 1.08 : 1.0)
+                        }
                         Text(t.rawValue)
                             .font(.system(size: 11, weight: .medium))
                     }

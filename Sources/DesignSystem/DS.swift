@@ -147,6 +147,35 @@ struct PressableStyle: ButtonStyle {
     }
 }
 
+struct DynamicGradientBackground: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shifted = false
+
+    var body: some View {
+        LinearGradient(
+            colors: [
+                DS.Palette.accent.opacity(0.16),
+                Color(UIColor { $0.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.10, green: 0.09, blue: 0.16, alpha: 1)
+                    : UIColor(red: 1.00, green: 0.93, blue: 0.93, alpha: 1)
+                }),
+                Color(UIColor { $0.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.07, green: 0.10, blue: 0.15, alpha: 1)
+                    : UIColor(red: 0.93, green: 0.96, blue: 1.00, alpha: 1)
+                }),
+                ThemeManager.shared.accent.colorAlt.opacity(0.13),
+            ],
+            startPoint: shifted ? .topTrailing : .topLeading,
+            endPoint: shifted ? .bottomLeading : .bottomTrailing
+        )
+        .animation(reduceMotion ? nil : .easeInOut(duration: 7.5).repeatForever(autoreverses: true), value: shifted)
+        .onAppear {
+            guard !reduceMotion else { return }
+            shifted = true
+        }
+    }
+}
+
 extension View {
     func dsCard(radius: CGFloat = DS.Radius.card) -> some View {
         modifier(CardStyle(radius: radius))

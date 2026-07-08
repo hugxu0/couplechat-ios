@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // 存储空间 / 缓存管理页：查看本地占用、把云端聊天记录与图片全量同步到本地、清理缓存。
 // 从「我的 → 存储空间」进入。参考 Telegram 的缓存管理：先看清占了多少，再决定同步/清理。
@@ -32,6 +33,7 @@ struct StorageView: View {
             summarySection
             breakdownSection
             syncSection
+            fileSection
             cleanupSection
         }
         .listStyle(.insetGrouped)
@@ -158,6 +160,23 @@ struct StorageView: View {
 
     // MARK: - 清理
 
+    private var fileSection: some View {
+        Section {
+            NavigationLink {
+                AttachmentManagerView()
+            } label: {
+                Label("文件管理", systemImage: "folder")
+                    .foregroundStyle(DS.Palette.textPrimary)
+            }
+        } header: {
+            Text("媒体与文件")
+        } footer: {
+            Text("查看已同步到本地消息库里的图片、视频和文件记录。")
+        }
+    }
+
+    // MARK: - 清理
+
     private var cleanupSection: some View {
         Section {
             Button(role: .destructive) {
@@ -223,5 +242,100 @@ struct StorageView: View {
         refresh()
         statusText = "图片缓存已清理"
         Haptics.light()
+    }
+}
+
+private struct AttachmentManagerView: View {
+    @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var app: AppState
+    @State private var channel: ChatChannel = .couple
+
+    private var items: [ChatMessage] {
+        store.mediaMessages(for: channel, includeFiles: true, limit: 300)
+    }
+
+    var body: some View {
+        List {
+            Picker("频道", selection: $channel) {
+                Text("两人").tag(ChatChannel.couple)
+                Text("大橘").tag(ChatChannel.ai)
+            }
+            .pickerStyle(.segmented)
+            .listRowBackground(Color.clear)
+
+            if items.isEmpty {
+                ContentUnavailableView("暂无媒体或文件", systemImage: "folder")
+            } else {
+                Section("最近 \(items.count) 项") {
+                    ForEach(items) { item in
+                        Button {
+                            if let url = item.mediaURL {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: icon(for: item.type))
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 34, height: 34)
+                                    .background(tint(for: item.type), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(title(for: item))
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundStyle(DS.Palette.textPrimary)
+                                        .lineLimit(1)
+                                    Text(dateTime(item.ts))
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(DS.Palette.textSecondary)
+                                }
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(DS.Palette.textSecondary.opacity(0.6))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(item.mediaURL == nil)
+                    }
+                }
+            }
+        }
+        .navigationTitle("文件管理")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { app.pushSubpage() }
+        .onDisappear { app.popSubpage() }
+    }
+
+    private func icon(for type: String) -> String {
+        switch type {
+        case "image": return "photo"
+        case "video": return "play.rectangle"
+        default: return "doc"
+        }
+    }
+
+    private func tint(for type: String) -> Color {
+        switch type {
+        case "image": return DS.Palette.pink
+        case "video": return DS.Palette.purple
+        default: return DS.Palette.blue
+        }
+    }
+
+    private func title(for item: ChatMessage) -> String {
+        let text = item.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty && !text.hasPrefix("[") { return text }
+        if let name = item.mediaURL?.lastPathComponent, !name.isEmpty { return name }
+        switch item.type {
+        case "image": return "图片"
+        case "video": return "视频"
+        default: return "文件"
+        }
+    }
+
+    private func dateTime(_ ts: Double) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: ts / 1000))
     }
 }

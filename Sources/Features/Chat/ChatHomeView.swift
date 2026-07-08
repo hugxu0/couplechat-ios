@@ -13,6 +13,8 @@ struct ChatHomeView: View {
     @State private var noteText = ""
     @State private var statusEditMode = false
     @State private var refreshMessage: String?
+    @State private var refreshingHome = false
+    @State private var pullRefreshArmed = true
     @AppStorage("chat_home_statuses_v2") private var statusesJSON = ""
     @AppStorage("chat_home_custom_statuses") private var legacyCustomStatusData = ""
 
@@ -48,18 +50,14 @@ struct ChatHomeView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
+                shortPullRefreshProbe
                 mainPanel
                     .padding(.horizontal, DS.Spacing.page)
                     .padding(.bottom, 100)
             }
-            .refreshable {
-                // 只在下拉手势里做网络同步，拿到结果立刻收起刷新圈；
-                // 结果提示放到视图归位之后再弹，避免被下拉状态挡住「一闪而过」。
-                let success = await store.refreshHomeData()
-                await MainActor.run { flashRefreshResult(success) }
-            }
+            .coordinateSpace(name: "chatHomeScroll")
             .scrollIndicators(.hidden)
-            .background(DS.Palette.bgGradient.ignoresSafeArea())
+            .background(DynamicGradientBackground().ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
             .alert("自定义状态", isPresented: $showCustomStatusPrompt) {
@@ -102,19 +100,19 @@ struct ChatHomeView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 24)
 
-            Divider().opacity(0.28)
+            sectionDivider
 
             statusStrip
                 .padding(.top, 12)
                 .padding(.bottom, 8)
 
-            Divider().opacity(0.28)
+            sectionDivider
 
             actionStrip
                 .padding(.top, 8)
                 .padding(.bottom, 12)
 
-            Divider().opacity(0.28)
+            sectionDivider
 
             latestMessages
                 .padding(.top, 24)
@@ -128,7 +126,77 @@ struct ChatHomeView: View {
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity)
         .frame(minHeight: 690)
-        .dsCard()
+        .background(homeCardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                .stroke(DS.Palette.accent.opacity(0.14), lineWidth: 1)
+        )
+        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+    }
+
+    private var sectionDivider: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [
+                        DS.Palette.textSecondary.opacity(0.04),
+                        DS.Palette.textSecondary.opacity(0.22),
+                        DS.Palette.textSecondary.opacity(0.04),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(height: 1)
+    }
+
+    private var homeCardBackground: some View {
+        ZStack {
+            DS.Palette.cardSurface
+            LinearGradient(
+                colors: [
+                    DS.Palette.accent.opacity(0.13),
+                    DS.Palette.pink.opacity(0.06),
+                    DS.Palette.blue.opacity(0.07),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            GeometryReader { geo in
+                ForEach(0..<18, id: \.self) { index in
+                    Image(systemName: index.isMultiple(of: 3) ? "heart.fill" : "sparkle")
+                        .font(.system(size: index.isMultiple(of: 3) ? 13 : 10, weight: .semibold))
+                        .foregroundStyle(DS.Palette.accent.opacity(index.isMultiple(of: 3) ? 0.075 : 0.10))
+                        .position(
+                            x: CGFloat((index * 61 + 19) % 100) / 100 * geo.size.width,
+                            y: CGFloat((index * 43 + 29) % 100) / 100 * geo.size.height
+                        )
+                }
+            }
+        }
+    }
+
+    private var shortPullRefreshProbe: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onChange(of: geo.frame(in: .named("chatHomeScroll")).minY) { _, value in
+                    if value < 8 {
+                        pullRefreshArmed = true
+                    }
+                    guard value > 46, pullRefreshArmed, !refreshingHome else { return }
+                    pullRefreshArmed = false
+                    refreshingHome = true
+                    Task {
+                        let success = await store.refreshHomeData()
+                        await MainActor.run {
+                            flashRefreshResult(success)
+                            refreshingHome = false
+                        }
+                    }
+                }
+        }
+        .frame(height: 0)
     }
 
     private var coupleHeader: some View {
@@ -402,14 +470,10 @@ struct ChatHomeView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 13)
             .background(
-                LinearGradient(
-                    colors: [Color(red: 0.98, green: 0.55, blue: 0.62), Color(red: 0.99, green: 0.72, blue: 0.52)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                ),
+                theme.accent.gradient,
                 in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
             )
-            .shadow(color: Color(red: 0.98, green: 0.55, blue: 0.62).opacity(0.18), radius: 10, y: 5)
+            .shadow(color: theme.accent.color.opacity(0.22), radius: 10, y: 5)
         }
         .buttonStyle(PressableStyle())
     }
@@ -433,6 +497,7 @@ struct ChatHomeView: View {
         case "image": return "[图片]"
         case "video": return "[视频]"
         case "voice": return "[语音]"
+        case "file": return "[文件]"
         default: return message.displayText
         }
     }

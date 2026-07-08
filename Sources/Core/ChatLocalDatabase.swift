@@ -112,6 +112,7 @@ final class ChatLocalDatabase {
             metaJson TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_messages_channel_ts ON messages(channel, ts);
+        CREATE INDEX IF NOT EXISTS idx_messages_channel_type_ts ON messages(channel, type, ts);
         """
         
         let readReceiptsSQL = """
@@ -139,11 +140,7 @@ final class ChatLocalDatabase {
     }
     
     private func execute(sql: String) {
-        var statement: OpaquePointer?
-        if sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK {
-            sqlite3_step(statement)
-        }
-        sqlite3_finalize(statement)
+        sqlite3_exec(db, sql, nil, nil, nil)
     }
     
     // MARK: - Message Operations
@@ -256,6 +253,115 @@ final class ChatLocalDatabase {
         return messages
     }
 
+    /// 拉取目标消息附近的一小段上下文，避免跳到很久以前的消息时把中间全部历史塞进 SwiftUI 列表。
+    func fetchMessagesAround(channel: String, centerTimestamp: Double, beforeLimit: Int, afterLimit: Int) -> [ChatMessage] {
+        let before = fetchMessagesBeforeOrAt(channel: channel, timestamp: centerTimestamp, limit: beforeLimit)
+        let after = fetchMessagesAfter(channel: channel, timestamp: centerTimestamp, limit: afterLimit)
+        var seen = Set<String>()
+        return (before + after)
+            .filter { msg in
+                guard !seen.contains(msg.id) else { return false }
+                seen.insert(msg.id)
+                return true
+            }
+            .sorted { $0.ts < $1.ts }
+    }
+
+    func fetchMessages(channel: String, fromInclusive: Double, toExclusive: Double, limit: Int? = nil) -> [ChatMessage] {
+        var messages: [ChatMessage] = []
+        let limitClause = limit == nil ? "" : "LIMIT ?"
+        let sql = """
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        FROM messages
+        WHERE channel = ? AND ts >= ? AND ts < ?
+        ORDER BY ts ASC
+        \(limitClause);
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            return []
+        }
+
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 2, fromInclusive)
+        sqlite3_bind_double(stmt, 3, toExclusive)
+        if let limit {
+            sqlite3_bind_int(stmt, 4, Int32(limit))
+        }
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let msg = parseMessageRow(stmt) {
+                messages.append(msg)
+            }
+        }
+
+        sqlite3_finalize(stmt)
+        return messages
+    }
+
+    func mediaMessages(channel: String, types: [String], limit: Int? = nil) -> [ChatMessage] {
+        guard !types.isEmpty else { return [] }
+        var messages: [ChatMessage] = []
+        let placeholders = types.map { _ in "?" }.joined(separator: ",")
+        let limitClause = limit == nil ? "" : "LIMIT ?"
+        let sql = """
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        FROM messages
+        WHERE channel = ? AND type IN (\(placeholders)) AND kind = 'user'
+        ORDER BY ts DESC
+        \(limitClause);
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        for (i, type) in types.enumerated() {
+            sqlite3_bind_text(stmt, Int32(2 + i), type, -1, SQLITE_TRANSIENT)
+        }
+        if let limit {
+            sqlite3_bind_int(stmt, Int32(2 + types.count), Int32(limit))
+        }
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let msg = parseMessageRow(stmt) {
+                messages.append(msg)
+            }
+        }
+
+        sqlite3_finalize(stmt)
+        return messages
+    }
+
+    func mediaCount(channel: String, types: [String]) -> Int {
+        guard !types.isEmpty else { return 0 }
+        let placeholders = types.map { _ in "?" }.joined(separator: ",")
+        let sql = """
+        SELECT COUNT(*) FROM messages
+        WHERE channel = ? AND type IN (\(placeholders)) AND kind = 'user';
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        for (i, type) in types.enumerated() {
+            sqlite3_bind_text(stmt, Int32(2 + i), type, -1, SQLITE_TRANSIENT)
+        }
+        var count = 0
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            count = Int(sqlite3_column_int(stmt, 0))
+        }
+        sqlite3_finalize(stmt)
+        return count
+    }
+
+    func dayCounts(channel: String) -> [(date: String, sender: String, count: Int)] {
+        groupedCounts(channel: channel, format: "%Y-%m-%d")
+    }
+
+    func monthCounts(channel: String) -> [(date: String, sender: String, count: Int)] {
+        groupedCounts(channel: channel, format: "%Y-%m")
+    }
+
     func fetchLatestMessages(channel: String, limit: Int) -> [ChatMessage] {
         var messages: [ChatMessage] = []
         let sql = """
@@ -282,6 +388,82 @@ final class ChatLocalDatabase {
         
         sqlite3_finalize(stmt)
         return messages.reversed() // Return chronologically ordered
+    }
+
+    private func fetchMessagesBeforeOrAt(channel: String, timestamp: Double, limit: Int) -> [ChatMessage] {
+        var messages: [ChatMessage] = []
+        let sql = """
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        FROM messages
+        WHERE channel = ? AND ts <= ?
+        ORDER BY ts DESC
+        LIMIT ?;
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 2, timestamp)
+        sqlite3_bind_int(stmt, 3, Int32(limit))
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let msg = parseMessageRow(stmt) {
+                messages.append(msg)
+            }
+        }
+
+        sqlite3_finalize(stmt)
+        return messages.reversed()
+    }
+
+    private func fetchMessagesAfter(channel: String, timestamp: Double, limit: Int) -> [ChatMessage] {
+        var messages: [ChatMessage] = []
+        let sql = """
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        FROM messages
+        WHERE channel = ? AND ts > ?
+        ORDER BY ts ASC
+        LIMIT ?;
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 2, timestamp)
+        sqlite3_bind_int(stmt, 3, Int32(limit))
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let msg = parseMessageRow(stmt) {
+                messages.append(msg)
+            }
+        }
+
+        sqlite3_finalize(stmt)
+        return messages
+    }
+
+    private func groupedCounts(channel: String, format: String) -> [(date: String, sender: String, count: Int)] {
+        let sql = """
+        SELECT strftime(?, ts / 1000, 'unixepoch', '+8 hours') AS bucket, sender, COUNT(*)
+        FROM messages
+        WHERE channel = ? AND kind = 'user' AND sender <> 'ai'
+        GROUP BY bucket, sender
+        ORDER BY bucket ASC;
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, format, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, channel, -1, SQLITE_TRANSIENT)
+
+        var rows: [(date: String, sender: String, count: Int)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let bucket = readText(stmt, index: 0),
+               let sender = readText(stmt, index: 1) {
+                rows.append((date: bucket, sender: sender, count: Int(sqlite3_column_int(stmt, 2))))
+            }
+        }
+        sqlite3_finalize(stmt)
+        return rows
     }
     
     func searchMessages(query: String, channel: String) -> [ChatMessage] {

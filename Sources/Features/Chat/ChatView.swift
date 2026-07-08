@@ -17,7 +17,9 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var selectedMedia: PhotosPickerItem?
     @State private var mediaBusy = false
+    @State private var showFileImporter = false
     @State private var showSearch = false
+    @State private var showDateJump = false
     @State private var showWallpaperPicker = false
     @State private var replyTarget: ChatMessage?
     @State private var showMedia = false
@@ -47,7 +49,7 @@ struct ChatView: View {
     private var messages: [ChatMessage] { store.messages(for: channel) }
     private var mediaMessages: [ChatMessage] {
         // 贴纸不进大图浏览 / 媒体库，只算真实图片和视频
-        messages.filter { ($0.type == "image" || $0.type == "video") && !$0.pending }
+        Array(store.mediaMessages(for: channel, includeFiles: false).reversed())
     }
     private var title: String {
         switch channel {
@@ -125,7 +127,19 @@ struct ChatView: View {
                         .foregroundStyle(subtitleColor)
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showSearch = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15, weight: .semibold))
+                }
+                Button {
+                    showDateJump = true
+                } label: {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 15, weight: .semibold))
+                }
                 NavigationLink {
                     ChatDetailSettingsView(
                         channel: channel,
@@ -141,6 +155,10 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showSearch) {
             ChatSearchSheet(channel: channel, onJump: { jumpToMessage($0) })
+        }
+        .sheet(isPresented: $showDateJump) {
+            DateJumpSheet(channel: channel, onJump: { jumpToDate($0) })
+                .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showMedia) {
             MediaGallerySheet(channel: channel)
@@ -171,6 +189,10 @@ struct ChatView: View {
         .onChange(of: selectedMedia) {
             guard let selectedMedia else { return }
             sendMedia(selectedMedia)
+        }
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
+            guard let url = try? result.get().first else { return }
+            sendFile(url)
         }
         .alert("需要麦克风权限", isPresented: $showMicPermissionAlert) {
             Button("去设置") {
@@ -251,7 +273,7 @@ struct ChatView: View {
             )
             // 初始定位交给 .defaultScrollAnchor(.bottom)，这里只在消息数变化时补贴底，
             // 避免进页面时多一次 scrollTo 造成的入场卡顿。
-            .onChange(of: messages.count) { scrollToBottom(proxy) }
+            .onChange(of: messages.last?.id) { scrollToBottom(proxy) }
             // 键盘弹/收：输入栏由系统避让键盘，这里只用同一动画同步贴底滚动。
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
                 withAnimation(keyboardAnimation(from: note)) {
@@ -289,6 +311,12 @@ struct ChatView: View {
     private func jumpToMessage(_ message: ChatMessage) {
         store.ensureMessageLoaded(message, channel: channel)
         scrollToMessageId = message.id
+    }
+
+    private func jumpToDate(_ date: Date) {
+        guard let target = store.ensureDateLoaded(date, channel: channel) else { return }
+        scrollToMessageId = target.id
+        showDateJump = false
     }
 
     /// 滚到底部锚点；延迟一帧让 LazyVStack 渲染稳定
@@ -604,13 +632,14 @@ struct ChatView: View {
         )
     }
 
-    /// 小猫按钮：可爱猫头像，点一下召唤大橘
+    /// 小猫按钮：主题色线性猫头，点一下召唤大橘
     private var catButton: some View {
         Button {
             summonDaju()
         } label: {
-            Text("🐱")
-                .font(.system(size: 24))
+            CatHeadIcon()
+                .stroke(DS.Palette.accent, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                .frame(width: 23, height: 23)
                 .frame(width: Self.composerButtonSize, height: Self.composerButtonSize)
                 .dsGlassInteractive(in: Circle())
         }
@@ -618,15 +647,24 @@ struct ChatView: View {
     }
 
     private var mediaPicker: some View {
-        PhotosPicker(
-            selection: $selectedMedia,
-            matching: .any(of: [.images, .videos]),
-            photoLibrary: .shared()) {
-                Image(systemName: mediaBusy ? "hourglass" : "paperclip")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(mediaBusy ? DS.Palette.textSecondary.opacity(0.6) : DS.Palette.textSecondary)
-                    .frame(width: 22, height: 22)
+        Menu {
+            PhotosPicker(
+                selection: $selectedMedia,
+                matching: .any(of: [.images, .videos]),
+                photoLibrary: .shared()) {
+                    Label("照片或视频", systemImage: "photo.on.rectangle")
+                }
+            Button {
+                showFileImporter = true
+            } label: {
+                Label("文件", systemImage: "doc")
             }
+        } label: {
+            Image(systemName: mediaBusy ? "hourglass" : "paperclip")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(mediaBusy ? DS.Palette.textSecondary.opacity(0.6) : DS.Palette.textSecondary)
+                .frame(width: 22, height: 22)
+        }
             .buttonStyle(PressableStyle())
             .disabled(mediaBusy)
     }
@@ -781,6 +819,8 @@ struct ChatView: View {
             body = "[图片]"
         case "video":
             body = "[视频]"
+        case "file":
+            body = "[文件]"
         default:
             body = message.displayText
         }
@@ -811,6 +851,38 @@ struct ChatView: View {
                         preferredType: prepared.messageType,
                         localPreviewURL: nil,
                         channel: channel)
+                }
+            }
+        }
+    }
+
+    private func sendFile(_ url: URL) {
+        mediaBusy = true
+        Task {
+            defer {
+                Task { @MainActor in mediaBusy = false }
+            }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer {
+                if scoped { url.stopAccessingSecurityScopedResource() }
+            }
+            guard let data = try? Data(contentsOf: url) else {
+                await MainActor.run { Haptics.medium() }
+                return
+            }
+            let type = UTType(filenameExtension: url.pathExtension)
+            let mimeType = type?.preferredMIMEType ?? "application/octet-stream"
+            let name = url.lastPathComponent
+            await MainActor.run {
+                Haptics.light()
+                withAnimation(DS.Anim.message) {
+                    store.sendMedia(
+                        data: data,
+                        mimeType: mimeType,
+                        preferredType: "file",
+                        localPreviewURL: nil,
+                        channel: channel,
+                        displayText: name)
                 }
             }
         }
@@ -852,6 +924,34 @@ private struct PreparedMedia {
     let data: Data
     let mimeType: String
     let messageType: String
+}
+
+struct CatHeadIcon: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+
+        path.move(to: CGPoint(x: w * 0.24, y: h * 0.43))
+        path.addLine(to: CGPoint(x: w * 0.20, y: h * 0.12))
+        path.addLine(to: CGPoint(x: w * 0.39, y: h * 0.29))
+        path.addQuadCurve(to: CGPoint(x: w * 0.61, y: h * 0.29), control: CGPoint(x: w * 0.50, y: h * 0.22))
+        path.addLine(to: CGPoint(x: w * 0.80, y: h * 0.12))
+        path.addLine(to: CGPoint(x: w * 0.76, y: h * 0.43))
+        path.addQuadCurve(to: CGPoint(x: w * 0.50, y: h * 0.86), control: CGPoint(x: w * 0.82, y: h * 0.74))
+        path.addQuadCurve(to: CGPoint(x: w * 0.24, y: h * 0.43), control: CGPoint(x: w * 0.18, y: h * 0.74))
+
+        path.move(to: CGPoint(x: w * 0.38, y: h * 0.50))
+        path.addLine(to: CGPoint(x: w * 0.38, y: h * 0.54))
+        path.move(to: CGPoint(x: w * 0.62, y: h * 0.50))
+        path.addLine(to: CGPoint(x: w * 0.62, y: h * 0.54))
+        path.move(to: CGPoint(x: w * 0.50, y: h * 0.60))
+        path.addQuadCurve(to: CGPoint(x: w * 0.43, y: h * 0.67), control: CGPoint(x: w * 0.47, y: h * 0.64))
+        path.move(to: CGPoint(x: w * 0.50, y: h * 0.60))
+        path.addQuadCurve(to: CGPoint(x: w * 0.57, y: h * 0.67), control: CGPoint(x: w * 0.53, y: h * 0.64))
+
+        return path
+    }
 }
 
 private func keyboardAnimation(from note: Notification) -> Animation {
@@ -938,6 +1038,8 @@ private struct MessageContextPreview: View {
             return "[图片]"
         case "video":
             return "[视频]"
+        case "file":
+            return "[文件]"
         default:
             return message.displayText
         }
@@ -1042,6 +1144,8 @@ struct MessageBubble: View {
             videoBubble
         case "voice":
             voiceBubble
+        case "file":
+            fileBubble
         default:
             let hasReply = message.replyPreview != nil && !(message.replyPreview ?? "").isEmpty
             Text(message.displayText)
@@ -1167,6 +1271,46 @@ struct MessageBubble: View {
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
         .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
         .opacity(message.pending ? 0.7 : 1)
+    }
+
+    private var fileBubble: some View {
+        Button {
+            guard let mediaURL else { return }
+            UIApplication.shared.open(mediaURL)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "doc.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(mine ? .white : DS.Palette.accent)
+                    .frame(width: 34, height: 34)
+                    .background(mine ? Color.white.opacity(0.18) : DS.Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(fileTitle)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(mine ? .white : DS.Palette.textPrimary)
+                        .lineLimit(1)
+                    Text(message.pending ? "上传中" : "点击打开")
+                        .font(.system(size: 12))
+                        .foregroundStyle(mine ? .white.opacity(0.72) : DS.Palette.textSecondary)
+                }
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 10)
+            .frame(width: 228, alignment: .leading)
+            .background(mine ? AnyShapeStyle(DS.Palette.accent) : AnyShapeStyle(DS.Palette.bubbleOther))
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+            .shadow(color: DS.Surface.shadow, radius: 4, y: 2)
+            .opacity(message.pending ? 0.7 : 1)
+        }
+        .buttonStyle(PressableStyle())
+        .disabled(message.pending || mediaURL == nil)
+    }
+
+    private var fileTitle: String {
+        let text = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty && text != "[文件]" { return text }
+        if let name = mediaURL?.lastPathComponent, !name.isEmpty { return name }
+        return "文件"
     }
 
     @ViewBuilder
@@ -1658,6 +1802,64 @@ private enum MediaSaver {
     }
 }
 
+// MARK: - 按日期查找
+
+struct DateJumpSheet: View {
+    let channel: ChatChannel
+    var onJump: (Date) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var theme: ThemeManager
+    @State private var selectedDate = Date()
+    @State private var didAppear = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                DatePicker("选择日期", selection: $selectedDate, in: ...Date(), displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .tint(theme.accent.color)
+                    .padding(.horizontal, 8)
+                    .onChange(of: selectedDate) {
+                        guard didAppear else { return }
+                        Haptics.selection()
+                        onJump(selectedDate)
+                        dismiss()
+                    }
+
+                Button {
+                    Haptics.light()
+                    onJump(selectedDate)
+                    dismiss()
+                } label: {
+                    Label("跳转到当天", systemImage: "arrow.down.message.fill")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(theme.accent.gradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(PressableStyle())
+                .padding(.horizontal, 18)
+
+                Spacer(minLength: 0)
+            }
+            .navigationTitle("按日期查找")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .onAppear {
+                DispatchQueue.main.async {
+                    didAppear = true
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 搜索聊天记录
 
 struct ChatSearchSheet: View {
@@ -1807,25 +2009,22 @@ struct MediaGallerySheet: View {
     private let columns = [GridItem(.adaptive(minimum: 100), spacing: 2)]
 
     private var mediaMessages: [ChatMessage] {
-        store.messages(for: channel).filter {
-            ($0.type == "image" || $0.type == "video")
-                && $0.kind == "user" && !$0.pending
-        }.reversed()
+        store.mediaMessages(for: channel, includeFiles: true)
     }
 
     var body: some View {
         NavigationStack {
             if mediaMessages.isEmpty {
                 VStack(spacing: 12) {
-                    Image(systemName: "photo.on.rectangle")
+                    Image(systemName: "folder")
                         .font(.system(size: 40))
                         .foregroundStyle(DS.Palette.textSecondary.opacity(0.4))
-                    Text("暂无图片或视频")
+                    Text("暂无媒体或文件")
                         .font(.system(size: 15))
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .navigationTitle("媒体内容")
+                .navigationTitle("媒体与文件")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -1840,7 +2039,7 @@ struct MediaGallerySheet: View {
                         }
                     }
                 }
-                .navigationTitle("媒体内容")
+                .navigationTitle("媒体与文件")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -1856,7 +2055,10 @@ struct MediaGallerySheet: View {
 
     @ViewBuilder
     private func mediaThumb(_ msg: ChatMessage) -> some View {
-        if msg.type == "video", let url = msg.mediaURL {
+        if msg.type == "file" {
+            fileThumb(msg)
+                .onTapGesture { selectedMedia = msg }
+        } else if msg.type == "video", let url = msg.mediaURL {
             ZStack {
                 VideoThumbnailView(url: url)
                     .aspectRatio(contentMode: .fill)
@@ -1909,12 +2111,51 @@ struct MediaGallerySheet: View {
         .frame(height: (UIScreen.main.bounds.width - 4) / 3)
     }
 
+    private func fileThumb(_ msg: ChatMessage) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "doc.fill")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(DS.Palette.accent)
+            Text(fileTitle(msg))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.Palette.textSecondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+        }
+        .padding(8)
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+        .background(DS.Palette.innerSurface)
+    }
+
     @ViewBuilder
     private func mediaDetail(_ msg: ChatMessage) -> some View {
         NavigationStack {
             VStack {
                 if let url = msg.mediaURL {
-                    if msg.type == "video" {
+                    if msg.type == "file" {
+                        VStack(spacing: 14) {
+                            Image(systemName: "doc.fill")
+                                .font(.system(size: 54, weight: .semibold))
+                                .foregroundStyle(DS.Palette.accent)
+                            Text(fileTitle(msg))
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(DS.Palette.textPrimary)
+                                .multilineTextAlignment(.center)
+                            Button {
+                                UIApplication.shared.open(url)
+                            } label: {
+                                Label("打开文件", systemImage: "arrow.up.right.square")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 18)
+                                    .padding(.vertical, 10)
+                                    .background(DS.Palette.accent, in: Capsule())
+                            }
+                            .buttonStyle(PressableStyle())
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if msg.type == "video" {
                         VideoPlayer(player: AVPlayer(url: url))
                     } else {
                         AsyncImage(url: url) { phase in
@@ -1961,6 +2202,13 @@ struct MediaGallerySheet: View {
         let f = DateFormatter()
         f.dateFormat = "M月d日 HH:mm"
         return f.string(from: Date(timeIntervalSince1970: ts / 1000))
+    }
+
+    private func fileTitle(_ msg: ChatMessage) -> String {
+        let text = msg.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty && text != "[文件]" { return text }
+        if let name = msg.mediaURL?.lastPathComponent, !name.isEmpty { return name }
+        return "文件"
     }
 }
 

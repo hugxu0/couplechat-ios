@@ -27,9 +27,11 @@ struct ChatDetailSettingsView: View {
     @AppStorage("chat_muted") private var chatMuted: Bool = false
 
     private var mediaMessages: [ChatMessage] {
-        store.messages(for: channel).filter {
-            ($0.type == "image" || $0.type == "video") && !$0.pending
-        }
+        store.mediaMessages(for: channel, includeFiles: true, limit: 10)
+    }
+
+    private var mediaItemCount: Int {
+        store.mediaItemCount(for: channel, includeFiles: true)
     }
 
     var body: some View {
@@ -160,7 +162,7 @@ struct ChatDetailSettingsView: View {
                     Label("媒体与文件", systemImage: "photo.on.rectangle")
                         .foregroundStyle(DS.Palette.textPrimary)
                     Spacer()
-                    Text("\(mediaMessages.count) 项")
+                    Text("\(mediaItemCount) 项")
                         .font(.system(size: 14))
                         .foregroundStyle(DS.Palette.textSecondary)
                     Image(systemName: "chevron.right")
@@ -170,14 +172,14 @@ struct ChatDetailSettingsView: View {
             }
 
             if mediaMessages.isEmpty {
-                Text("暂无图片或视频")
+                Text("暂无媒体或文件")
                     .font(.system(size: 13))
                     .foregroundStyle(DS.Palette.textSecondary)
                     .padding(.vertical, 6)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(Array(mediaMessages.suffix(10).reversed())) { msg in
+                        ForEach(mediaMessages) { msg in
                             mediaThumbnail(msg)
                         }
                     }
@@ -196,6 +198,10 @@ struct ChatDetailSettingsView: View {
                     Image(systemName: "play.fill")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.8))
+                } else if message.type == "file" {
+                    Image(systemName: "doc.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.82))
                 } else if message.type == "sticker" {
                     Image(systemName: "face.smiling")
                         .font(.system(size: 16, weight: .semibold))

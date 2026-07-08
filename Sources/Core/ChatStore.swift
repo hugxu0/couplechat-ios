@@ -40,6 +40,10 @@ final class ChatStore: ObservableObject {
     private var socket: SocketIOClient?
     private var restoringCache = false
     private var backfillingChannels = Set<String>()
+    private var loadingOlderChannels = Set<String>()
+
+    private static let mediaTypes = ["image", "video"]
+    private static let managedAttachmentTypes = ["image", "video", "file"]
 
     private struct UploadResponse: Decodable {
         let url: String
@@ -405,19 +409,64 @@ final class ChatStore: ObservableObject {
     func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) -> Bool {
         if messages(for: channel).contains(where: { $0.id == target.id }) { return true }
 
-        let earliest = messages(for: channel).first?.ts ?? (Date().timeIntervalSince1970 * 1000)
-        let window = ChatLocalDatabase.shared.fetchMessages(
-            channel: channel.rawValue, fromTimestamp: target.ts, toTimestamp: earliest)
+        let window = ChatLocalDatabase.shared.fetchMessagesAround(
+            channel: channel.rawValue,
+            centerTimestamp: target.ts,
+            beforeLimit: 36,
+            afterLimit: 28)
         if !window.isEmpty {
             updateMessages(channel) { list in
-                let known = Set(list.map(\.id))
-                list.insert(contentsOf: window.filter { !known.contains($0.id) }, at: 0)
+                list = Self.mergedWindow(window, with: list, around: target.id)
             }
         }
         if !messages(for: channel).contains(where: { $0.id == target.id }) {
             upsert(target, in: channel)
         }
         return messages(for: channel).contains(where: { $0.id == target.id })
+    }
+
+    @discardableResult
+    func ensureDateLoaded(_ date: Date, channel: ChatChannel) -> ChatMessage? {
+        let range = Self.dayRange(for: date)
+        var dayMessages = ChatLocalDatabase.shared.fetchMessages(
+            channel: channel.rawValue,
+            fromInclusive: range.start,
+            toExclusive: range.end,
+            limit: 80)
+
+        if dayMessages.isEmpty, let s = socket, connected {
+            s.emitWithAck("messages:fetch", [
+                "channel": channel.rawValue,
+                "after": range.start,
+                "before": range.end,
+                "limit": 80,
+            ]).timingOut(after: 9) { data in
+                guard let dict = data.first as? [String: Any],
+                      let list = dict["list"] as? [[String: Any]] else { return }
+                let incoming = list.compactMap { ChatMessage(dict: $0) }
+                Task { @MainActor in
+                    incoming.forEach { ChatLocalDatabase.shared.insertMessage($0) }
+                }
+            }
+        }
+
+        if dayMessages.isEmpty {
+            return nil
+        }
+
+        guard let target = dayMessages.first else { return nil }
+        let context = ChatLocalDatabase.shared.fetchMessagesAround(
+            channel: channel.rawValue,
+            centerTimestamp: target.ts,
+            beforeLimit: 20,
+            afterLimit: 44)
+        if !context.isEmpty {
+            dayMessages = context
+        }
+        updateMessages(channel) { list in
+            list = Self.mergedWindow(dayMessages, with: list, around: target.id)
+        }
+        return target
     }
 
     /// 进聊天页兜底：内存里没消息但本地库有（比如 restore 之前被清过），立刻从本地库补上。
@@ -454,7 +503,9 @@ final class ChatStore: ObservableObject {
 
     func loadOlder(_ channel: ChatChannel = .couple) {
         guard let first = messages(for: channel).first else { return }
-        let limit = 50
+        guard !loadingOlderChannels.contains(channel.rawValue) else { return }
+        loadingOlderChannels.insert(channel.rawValue)
+        let limit = 40
         
         // 1. First try to load from local SQLite
         let localOlder = ChatLocalDatabase.shared.fetchMessages(channel: channel.rawValue, beforeTimestamp: first.ts, limit: limit)
@@ -464,19 +515,28 @@ final class ChatStore: ObservableObject {
                 current.insert(contentsOf: localOlder.filter { !known.contains($0.id) }, at: 0)
             }
             if localOlder.count >= limit {
+                loadingOlderChannels.remove(channel.rawValue)
                 return // Loaded a full page locally, no need to query network
             }
         }
         
         // 2. If local database has no more or not enough older messages, fetch from server
-        guard let s = socket, connected else { return }
+        guard let s = socket, connected else {
+            loadingOlderChannels.remove(channel.rawValue)
+            return
+        }
         s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": first.ts, "limit": limit])
             .timingOut(after: 9) { [weak self] data in
                 guard let dict = data.first as? [String: Any],
-                      let list = dict["list"] as? [[String: Any]] else { return }
+                      let list = dict["list"] as? [[String: Any]] else {
+                    Task { @MainActor in self?.loadingOlderChannels.remove(channel.rawValue) }
+                    return
+                }
                 let older = list.compactMap { ChatMessage(dict: $0) }
                 Task { @MainActor in
-                    guard let self, !older.isEmpty else { return }
+                    guard let self else { return }
+                    defer { self.loadingOlderChannels.remove(channel.rawValue) }
+                    guard !older.isEmpty else { return }
                     for msg in older {
                         ChatLocalDatabase.shared.insertMessage(msg)
                     }
@@ -554,12 +614,13 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?, channel: ChatChannel = .couple) {
+    func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?, channel: ChatChannel = .couple, displayText: String? = nil) {
         guard let session, let s = socket else { return }
         let clientId = "tmp-" + UUID().uuidString
+        let outgoingText = displayText ?? Self.mediaPlaceholderText(for: preferredType)
         let optimistic = ChatMessage(
             optimisticMedia: preferredType,
-            text: Self.mediaPlaceholderText(for: preferredType),
+            text: outgoingText,
             localURL: localPreviewURL?.absoluteString,
             me: session,
             clientId: clientId,
@@ -579,7 +640,7 @@ final class ChatStore: ObservableObject {
         Task {
             do {
                 let uploaded = try await uploadMedia(data: data, mimeType: mimeType)
-                let type = uploaded.type.isEmpty ? preferredType : uploaded.type
+                let type = preferredType == "file" ? "file" : (uploaded.type.isEmpty ? preferredType : uploaded.type)
                 updateMessages(channel) { list in
                     guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
                     list[i].type = type
@@ -587,7 +648,7 @@ final class ChatStore: ObservableObject {
                 }
                 let payload: [String: Any] = [
                     "type": type,
-                    "text": Self.mediaPlaceholderText(for: type),
+                    "text": displayText ?? Self.mediaPlaceholderText(for: type),
                     "url": uploaded.url,
                     "channel": channel.rawValue,
                     "clientId": clientId,
@@ -705,6 +766,7 @@ final class ChatStore: ObservableObject {
         switch type {
         case "video": return "[视频]"
         case "voice": return "[语音]"
+        case "file": return "[文件]"
         default: return "[图片]"
         }
     }
@@ -877,6 +939,16 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    func mediaMessages(for channel: ChatChannel, includeFiles: Bool = false, limit: Int? = nil) -> [ChatMessage] {
+        let types = includeFiles ? Self.managedAttachmentTypes : Self.mediaTypes
+        return ChatLocalDatabase.shared.mediaMessages(channel: channel.rawValue, types: types, limit: limit)
+    }
+
+    func mediaItemCount(for channel: ChatChannel, includeFiles: Bool = false) -> Int {
+        let types = includeFiles ? Self.managedAttachmentTypes : Self.mediaTypes
+        return ChatLocalDatabase.shared.mediaCount(channel: channel.rawValue, types: types)
+    }
+
     nonisolated private static func mergeSearchResults(_ first: [ChatMessage], _ second: [ChatMessage]) -> [ChatMessage] {
         var seen = Set<String>()
         return (first + second)
@@ -886,6 +958,33 @@ final class ChatStore: ObservableObject {
                 return true
             }
             .sorted { $0.ts > $1.ts }
+    }
+
+    nonisolated private static func mergedWindow(_ window: [ChatMessage], with current: [ChatMessage], around targetId: String) -> [ChatMessage] {
+        guard !window.isEmpty else { return current }
+        var seen = Set<String>()
+        let merged = (window + current)
+            .filter { message in
+                guard !seen.contains(message.id) else { return false }
+                seen.insert(message.id)
+                return true
+            }
+            .sorted { $0.ts < $1.ts }
+
+        guard let targetIndex = merged.firstIndex(where: { $0.id == targetId }) else {
+            return Array(merged.suffix(90))
+        }
+        let lower = max(0, targetIndex - 36)
+        let upper = min(merged.count, targetIndex + 42)
+        return Array(merged[lower..<upper])
+    }
+
+    nonisolated private static func dayRange(for date: Date) -> (start: Double, end: Double) {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        let start = cal.startOfDay(for: date)
+        let end = cal.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+        return (start.timeIntervalSince1970 * 1000, end.timeIntervalSince1970 * 1000)
     }
 
     // MARK: shared 键值（纪念日等两人共享状态）
@@ -1008,8 +1107,6 @@ final class ChatStore: ObservableObject {
         let now = Date()
         let today = cal.startOfDay(for: now)
 
-        let userMessages = messages(for: channel).filter { $0.kind == "user" && $0.sender != "ai" }
-
         // 至少铺满最近 10 天 / 12 个月（没聊天记录的日子留空心柱），
         // 真实聊天记录更久才继续往前翻页。
         let minRecentDays = 10
@@ -1021,16 +1118,22 @@ final class ChatStore: ObservableObject {
         let thisMonthStartInit = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
         var earliestMonth = cal.date(byAdding: .month, value: -(minRecentMonths - 1), to: thisMonthStartInit) ?? thisMonthStartInit
 
-        for message in userMessages {
-            let date = message.date
-            let dayStart = cal.startOfDay(for: date)
-            let dayKey = Self.statsDayFormatter.string(from: date)
-            dayCounts[dayKey, default: [:]][message.sender, default: 0] += 1
-            if dayStart < earliestDay { earliestDay = dayStart }
+        for row in ChatLocalDatabase.shared.dayCounts(channel: channel.rawValue) {
+            var counts = dayCounts[row.date] ?? [:]
+            counts[row.sender] = row.count
+            dayCounts[row.date] = counts
+            if let date = Self.statsDayFormatter.date(from: row.date) {
+                let dayStart = cal.startOfDay(for: date)
+                if dayStart < earliestDay { earliestDay = dayStart }
+            }
+        }
 
-            let monthKey = Self.statsMonthFormatter.string(from: date)
-            monthCounts[monthKey, default: [:]][message.sender, default: 0] += 1
-            if let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: date)),
+        for row in ChatLocalDatabase.shared.monthCounts(channel: channel.rawValue) {
+            var counts = monthCounts[row.date] ?? [:]
+            counts[row.sender] = row.count
+            monthCounts[row.date] = counts
+            if let date = Self.statsMonthFormatter.date(from: row.date),
+               let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: date)),
                monthStart < earliestMonth {
                 earliestMonth = monthStart
             }

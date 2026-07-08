@@ -47,7 +47,7 @@ struct RecordsView: View {
                     .zIndex(5)
                 }
             }
-            .background(DS.Palette.bgGradient.ignoresSafeArea())
+            .background(DynamicGradientBackground().ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .refreshable { await reload() }
             .task { await reload() }
