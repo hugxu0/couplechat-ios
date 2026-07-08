@@ -677,10 +677,10 @@ struct ChatView: View {
                     .clipShape(Circle())
             }
         }
-        .animation(DS.Anim.springFast, value: draft.isEmpty)
+        .animation(.none, value: draft.isEmpty)
+        .animation(.none, value: mediaPreviewItems.isEmpty)
         .animation(DS.Anim.springFast, value: isRecording)
         .animation(DS.Anim.springFast, value: recordingCancelled)
-        .animation(DS.Anim.springFast, value: mediaPreviewItems.isEmpty)
         .contentShape(Circle())
         .gesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .local)
