@@ -58,7 +58,7 @@ struct ChatHomeView: View {
             }
             .coordinateSpace(name: "chatHomeScroll")
             .scrollIndicators(.hidden)
-            .background(DynamicGradientBackground().ignoresSafeArea())
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .overlay(alignment: .top) { pullRefreshIndicator }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
@@ -156,26 +156,41 @@ struct ChatHomeView: View {
     private var homeCardBackground: some View {
         ZStack {
             DS.Palette.cardSurface
-            LinearGradient(
-                colors: [
-                    DS.Palette.accent.opacity(0.13),
-                    DS.Palette.pink.opacity(0.06),
-                    DS.Palette.blue.opacity(0.07),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            GeometryReader { geo in
-                ForEach(0..<18, id: \.self) { index in
-                    Image(systemName: index.isMultiple(of: 3) ? "heart.fill" : "sparkle")
-                        .font(.system(size: index.isMultiple(of: 3) ? 13 : 10, weight: .semibold))
-                        .foregroundStyle(DS.Palette.accent.opacity(index.isMultiple(of: 3) ? 0.075 : 0.10))
-                        .position(
-                            x: CGFloat((index * 61 + 19) % 100) / 100 * geo.size.width,
-                            y: CGFloat((index * 43 + 29) % 100) / 100 * geo.size.height
-                        )
+            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            theme.accent.color.opacity(0.12),
+                            Color.clear
+                        ],
+                        center: .topTrailing,
+                        startRadius: 20,
+                        endRadius: 260
+                    )
+                )
+            VStack {
+                HStack {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(theme.accent.color.opacity(0.10))
+                    Spacer()
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 56))
+                        .foregroundStyle(DS.Palette.pink.opacity(0.08))
+                        .rotationEffect(.degrees(-10))
+                }
+                Spacer()
+                HStack {
+                    Circle()
+                        .stroke(theme.accent.color.opacity(0.08), lineWidth: 2)
+                        .frame(width: 82, height: 82)
+                    Spacer()
+                    Image(systemName: "quote.opening")
+                        .font(.system(size: 32, weight: .semibold))
+                        .foregroundStyle(DS.Palette.textSecondary.opacity(0.06))
                 }
             }
+            .padding(22)
         }
     }
 
@@ -331,24 +346,14 @@ struct ChatHomeView: View {
                     .buttonStyle(PressableStyle())
                 }
             }
-            .padding(.horizontal, 1)
+            .padding(.top, statusEditMode ? 8 : 0)
+            .padding(.horizontal, statusEditMode ? 8 : 1)
         }
     }
 
     private func statusChip(_ status: StatusOption) -> some View {
         let selected = statusMap[myUsername] == status.title
-        return HStack(spacing: 4) {
-            if statusEditMode {
-                Button {
-                    deleteStatus(id: status.id)
-                } label: {
-                    Image(systemName: "minus.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.plain)
-            }
-
+        return ZStack(alignment: .topTrailing) {
             Text(status.title)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(selected && !statusEditMode ? status.color : status.color)
@@ -366,6 +371,21 @@ struct ChatHomeView: View {
                     Capsule()
                         .stroke(selected && !statusEditMode ? status.color.opacity(0.28) : Color.clear, lineWidth: 1)
                 )
+
+            if statusEditMode {
+                Button {
+                    deleteStatus(id: status.id)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8.5, weight: .heavy))
+                        .foregroundStyle(.white)
+                        .frame(width: 17, height: 17)
+                        .background(Color.red, in: Circle())
+                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.4))
+                }
+                .buttonStyle(.plain)
+                .offset(x: 6, y: -7)
+            }
         }
         .contentShape(Capsule())
         .onTapGesture {

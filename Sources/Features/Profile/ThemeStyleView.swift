@@ -25,7 +25,7 @@ struct ThemeStyleView: View {
             .padding(.bottom, 40)
         }
         .scrollIndicators(.hidden)
-        .background(DS.Palette.bgGradient.ignoresSafeArea())
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle("主题样式")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { app.pushSubpage() }

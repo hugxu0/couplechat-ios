@@ -28,7 +28,7 @@ Sources/
 ├── DesignSystem/         DS.swift + Theme.swift（设计令牌与主题）
 └── Features/
     ├── Auth/             登录
-    ├── Chat/             聊天首页 + 会话页
+    ├── Chat/             聊天首页 + ChatV2 会话页（UIKit 消息列表 + SwiftUI 外壳）
     ├── Records/          记录（纪念日、聊天统计、大橘日记）
     ├── Pet/              大橘 tab（AI 私聊入口；宠物 UI 占位）
     ├── Reminders/        提醒 / 备忘
@@ -37,7 +37,7 @@ Sources/
 server/                   Node.js + Fastify + Socket.IO + PostgreSQL
 ```
 
-改全局风格（圆角、玻璃、动画）主要改 `Sources/DesignSystem/DS.swift`；主题色与壁纸改 `Theme.swift`。
+改全局风格（圆角、玻璃、动画）主要改 `Sources/DesignSystem/DS.swift`；主题色与壁纸改 `Theme.swift`。聊天会话页的重构说明见 `Docs/CHAT_V2_ARCHITECTURE.md`。
 
 ## 构建
 

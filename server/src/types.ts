@@ -3,7 +3,7 @@ export type Username = string;
 export type ClientChannel = "couple" | "ai";
 export type StoredChannel = "couple" | `ai:${Username}`;
 
-export type MessageType = "text" | "image" | "video" | "sticker" | "voice";
+export type MessageType = "text" | "image" | "video" | "sticker" | "voice" | "file";
 export type MessageKind = "user" | "system";
 
 export interface AuthUser {

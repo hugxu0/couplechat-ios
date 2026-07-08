@@ -26,11 +26,11 @@ struct ChatDetailSettingsView: View {
         channel == .ai ? partnerName : store.partnerDisplayName(fallback: partnerName)
     }
 
-    @AppStorage("chat_muted") private var chatMuted: Bool = false
-
-    private var mediaMessages: [ChatMessage] {
-        store.mediaMessages(for: channel, includeFiles: true, limit: 10)
+    private var partnerUsername: String? {
+        store.partner?.username ?? (store.session?.username == "xu" ? "si" : "xu")
     }
+
+    @AppStorage("chat_muted") private var chatMuted: Bool = false
 
     private var mediaItemCount: Int {
         store.mediaItemCount(for: channel, includeFiles: true)
@@ -38,8 +38,8 @@ struct ChatDetailSettingsView: View {
 
     var body: some View {
         List {
-            partnerSection
-            contentSection
+            identitySection
+            actionSection
             settingsSection
         }
         .listStyle(.insetGrouped)
@@ -48,8 +48,8 @@ struct ChatDetailSettingsView: View {
         .sheet(isPresented: $showSearch) {
             ChatSearchSheet(
                 channel: channel,
-                onJump: { msg in onJumpToMessage(msg); dismiss() },
-                onJumpDate: { date in onJumpToDate(date); dismiss() }
+                onJump: { msg in onJumpToMessage(msg) },
+                onJumpDate: { date in onJumpToDate(date) }
             )
         }
         .sheet(isPresented: $showMedia) {
@@ -75,54 +75,65 @@ struct ChatDetailSettingsView: View {
         Haptics.light()
         // ai 频道不支持备注；couple 频道按对方账号存本地备注
         guard channel == .couple else { return }
-        store.setPartnerAlias(aliasText, for: store.partner?.username)
+        store.setPartnerAlias(aliasText, for: partnerUsername)
     }
 
-    // MARK: - Section 1: 头像 & 身份
+    // MARK: - Section 1: 身份横栏
 
-    private var partnerSection: some View {
+    private var identitySection: some View {
         Section {
-            VStack(spacing: 10) {
-                Group {
-                    if channel == .couple, let url = store.avatarURL(for: store.partner?.username) {
-                        CachedImage(url: url) {
-                            Text(partnerAvatar)
-                                .font(.system(size: 48))
-                                .frame(width: 84, height: 84)
-                                .background(theme.accent.color.opacity(0.10))
-                        }
-                    } else {
-                        Text(partnerAvatar)
-                            .font(.system(size: 48))
-                            .frame(width: 84, height: 84)
-                            .background(theme.accent.color.opacity(0.10))
-                    }
+            HStack(spacing: 12) {
+                avatar(size: 46, emojiSize: 27)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(displayName)
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.Palette.textPrimary)
+                    Text(partnerOnline ? "在线" : "离线")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(partnerOnline ? DS.Palette.green : DS.Palette.textSecondary)
                 }
-                    .frame(width: 84, height: 84)
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(theme.accent.color.opacity(0.25), lineWidth: 2))
-                    .overlay(alignment: .bottomTrailing) {
-                        Circle()
-                            .fill(partnerOnline ? DS.Palette.green : DS.Palette.textSecondary.opacity(0.5))
-                            .frame(width: 14, height: 14)
-                            .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 3))
-                            .offset(x: 2, y: 2)
-                    }
 
-                Text(displayName)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(DS.Palette.textPrimary)
-
-                Text(partnerOnline ? "在线" : "离线")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(partnerOnline ? DS.Palette.green : DS.Palette.textSecondary)
+                Spacer()
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .padding(.vertical, 4)
+        }
+    }
 
+    @ViewBuilder
+    private func avatar(size: CGFloat, emojiSize: CGFloat) -> some View {
+        Group {
+            if channel == .couple, let url = store.avatarURL(for: store.partner?.username) {
+                CachedImage(url: url) {
+                    Text(partnerAvatar)
+                        .font(.system(size: emojiSize))
+                        .frame(width: size, height: size)
+                        .background(theme.accent.color.opacity(0.10))
+                }
+            } else {
+                Text(partnerAvatar)
+                    .font(.system(size: emojiSize))
+                    .frame(width: size, height: size)
+                    .background(theme.accent.color.opacity(0.10))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(theme.accent.color.opacity(0.22), lineWidth: 1.4))
+        .overlay(alignment: .bottomTrailing) {
+            Circle()
+                .fill(partnerOnline ? DS.Palette.green : DS.Palette.textSecondary.opacity(0.55))
+                .frame(width: 10, height: 10)
+                .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+        }
+    }
+
+    // MARK: - Section 2: 功能入口
+
+    private var actionSection: some View {
+        Section {
             Button {
-                // 预填当前备注（没设置就留空，方便直接输入）
-                aliasText = store.partnerAlias(for: store.partner?.username) ?? ""
+                aliasText = store.partnerAlias(for: partnerUsername) ?? ""
                 showAliasPrompt = true
             } label: {
                 HStack {
@@ -138,13 +149,7 @@ struct ChatDetailSettingsView: View {
                         .foregroundStyle(DS.Palette.textSecondary.opacity(0.4))
                 }
             }
-        }
-    }
 
-    // MARK: - Section 2: 内容查找
-
-    private var contentSection: some View {
-        Section {
             Button {
                 showSearch = true
             } label: {
@@ -156,75 +161,22 @@ struct ChatDetailSettingsView: View {
         }
     }
 
-    // MARK: 横向滚动媒体缩略图
-
     private var mediaRow: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                showMedia = true
-            } label: {
-                HStack {
-                    Label("媒体与文件", systemImage: "photo.on.rectangle")
-                        .foregroundStyle(DS.Palette.textPrimary)
-                    Spacer()
-                    Text("\(mediaItemCount) 项")
-                        .font(.system(size: 14))
-                        .foregroundStyle(DS.Palette.textSecondary)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(DS.Palette.textSecondary.opacity(0.4))
-                }
-            }
-
-            if mediaMessages.isEmpty {
-                Text("暂无媒体或文件")
-                    .font(.system(size: 13))
+        Button {
+            showMedia = true
+        } label: {
+            HStack {
+                Label("媒体与文件", systemImage: "photo.on.rectangle")
+                    .foregroundStyle(DS.Palette.textPrimary)
+                Spacer()
+                Text("\(mediaItemCount) 项")
+                    .font(.system(size: 14))
                     .foregroundStyle(DS.Palette.textSecondary)
-                    .padding(.vertical, 6)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(mediaMessages) { msg in
-                            mediaThumbnail(msg)
-                        }
-                    }
-                    .padding(.horizontal, 2)
-                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.Palette.textSecondary.opacity(0.4))
             }
         }
-    }
-
-    private func mediaThumbnail(_ message: ChatMessage) -> some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(mediaThumbColor(index: message.text.hashValue))
-            .frame(width: 64, height: 64)
-            .overlay {
-                if message.type == "video" {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.8))
-                } else if message.type == "file" {
-                    Image(systemName: "doc.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.82))
-                } else if message.type == "sticker" {
-                    Image(systemName: "face.smiling")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.7))
-                }
-            }
-            .onTapGesture { showMedia = true }
-    }
-
-    private func mediaThumbColor(index: Int) -> Color {
-        let palette: [Color] = [
-            Color(red: 1.00, green: 0.55, blue: 0.62),
-            Color(red: 0.99, green: 0.72, blue: 0.52),
-            Color(red: 0.98, green: 0.75, blue: 0.82),
-            Color(red: 0.95, green: 0.64, blue: 0.48),
-            Color(red: 0.78, green: 0.58, blue: 0.88),
-        ]
-        return palette[abs(index) % palette.count].opacity(0.65)
     }
 
     // MARK: - Section 3: 聊天设置

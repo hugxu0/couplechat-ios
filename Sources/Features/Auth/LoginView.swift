@@ -94,7 +94,7 @@ struct LoginView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DS.Palette.bgGradient.ignoresSafeArea())
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .task {
             accounts = await store.fetchAccounts()
         }

@@ -36,7 +36,7 @@ struct ProfileView: View {
                 .padding(.bottom, 90)
             }
             .scrollIndicators(.hidden)
-            .background(DS.Palette.bgGradient.ignoresSafeArea())
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showDateEditor) {
                 DateEditorSheet()
@@ -100,35 +100,18 @@ struct ProfileView: View {
         }
     }
 
-    // MARK: - 身份卡
+    // MARK: - 身份横栏
     private var header: some View {
-        VStack(spacing: 12) {
-            ZStack(alignment: .bottomTrailing) {
-                avatarView
-                    .overlay(alignment: .bottom) {
-                        Image(systemName: "camera.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 24, height: 24)
-                            .background(theme.accent.color, in: Circle())
-                            .overlay(Circle().stroke(DS.Palette.cardSurface, lineWidth: 2.5))
-                            .offset(y: 5)
-                    }
+        HStack(spacing: 14) {
+            avatarView
+                .onTapGesture {
+                    Haptics.light()
+                    showAvatarActionSheet = true
+                }
 
-                Circle()
-                    .fill(store.connected ? DS.Palette.green : .red)
-                    .frame(width: 16, height: 16)
-                    .overlay(Circle().stroke(DS.Palette.cardSurface, lineWidth: 3))
-                    .offset(x: 4, y: 4)
-            }
-            .onTapGesture {
-                Haptics.light()
-                showAvatarActionSheet = true
-            }
-
-            VStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(store.session?.name ?? "未登录")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(DS.Palette.textPrimary)
                 if let partner = store.partner {
                     HStack(spacing: 4) {
@@ -139,17 +122,27 @@ struct ProfileView: View {
                     .font(.system(size: 14))
                     .foregroundStyle(DS.Palette.textSecondary)
                 }
+                Text(store.connected ? "已连接 · hoo66.top" : (store.lastConnectionError ?? "未连接"))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(store.connected ? DS.Palette.textSecondary : .red)
             }
-            Text(store.connected ? "已连接 · hoo66.top" : (store.lastConnectionError ?? "未连接"))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(store.connected ? DS.Palette.textSecondary : .red)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(DS.Palette.innerSurface)
-                .clipShape(Capsule())
+
+            Spacer()
+
+            Button {
+                Haptics.light()
+                showAvatarActionSheet = true
+            } label: {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(theme.accent.color, in: Circle())
+            }
+            .buttonStyle(PressableStyle())
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.horizontal, DS.Spacing.card)
+        .padding(.vertical, 14)
         .dsCard()
     }
 
@@ -164,20 +157,26 @@ struct ProfileView: View {
             } else if let url = store.avatarURL(for: store.session?.username) {
                 CachedImage(url: url) {
                     Text(myEmoji)
-                        .font(.system(size: 46))
-                        .frame(width: 92, height: 92)
+                        .font(.system(size: 28))
+                        .frame(width: 52, height: 52)
                         .background(theme.accent.color.opacity(0.12))
                 }
             } else {
                 Text(myEmoji)
-                    .font(.system(size: 46))
-                    .frame(width: 92, height: 92)
+                    .font(.system(size: 28))
+                    .frame(width: 52, height: 52)
                     .background(theme.accent.color.opacity(0.12))
             }
         }
-        .frame(width: 92, height: 92)
+        .frame(width: 52, height: 52)
         .clipShape(Circle())
         .overlay(Circle().stroke(theme.accent.color.opacity(0.35), lineWidth: 2))
+        .overlay(alignment: .bottomTrailing) {
+            Circle()
+                .fill(store.connected ? DS.Palette.green : .red)
+                .frame(width: 11, height: 11)
+                .overlay(Circle().stroke(DS.Palette.cardSurface, lineWidth: 2))
+        }
     }
 
     // MARK: - 设置项

@@ -1,7 +1,7 @@
 import SwiftUI
 
 // 记录页「我们」：在一起天数（主题渐变大卡）、纪念日/倒数日卡片网格（只读展示，
-// 增删改统一在「我的 → 日期设置」里做）、聊天统计（近10天/月度切换、左右翻页看更早、点柱查看）、
+// 增删改统一在「我的 → 日期设置」里做）、聊天统计（近30天/月度切换、横向滚动看更早、点柱查看）、
 // 大橘日记、今日推荐。
 // 数据：纪念日走 shared["dates"]/shared["anniversaries"]（两人共享），
 // 聊天统计聚合自本地缓存的完整聊天记录，日记/推荐走 REST。
@@ -47,7 +47,7 @@ struct RecordsView: View {
                     .zIndex(5)
                 }
             }
-            .background(DynamicGradientBackground().ignoresSafeArea())
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .refreshable { await reload() }
             .task { await reload() }
@@ -397,7 +397,7 @@ private struct RecommendComposerSheet: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
-            .background(DS.Palette.bgGradient.ignoresSafeArea())
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -493,65 +493,23 @@ private struct PartnerRecommendPopup: View {
     }
 }
 
-// MARK: - 聊天统计卡（近10天 / 月度，数据来自本地聊天缓存，支持左右翻页看更早）
+// MARK: - 聊天统计卡（近30天 / 月度，数据来自本地聊天缓存，支持横向滚动）
 
 private struct ChatStatsCard: View {
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
 
-    private enum Mode: String, CaseIterable { case days = "近 10 天", months = "月度" }
+    private enum Mode: String, CaseIterable { case days = "近 30 天", months = "月度" }
     @State private var mode: Mode = .days
     @State private var selectedIndex: Int?
     @State private var buckets = ChatStore.LocalStatsBuckets(days: [], months: [])
-    @State private var dayPage = 0
-    @State private var monthPage = 0
-    @State private var followLatestDay = true
-    @State private var followLatestMonth = true
-
-    private static let dayPageSize = 10
-    private static let monthPageSize = 12
-
-    private var dayPages: [[DayStat]] { Self.chunk(buckets.days, size: Self.dayPageSize) }
-    private var monthPages: [[MonthStat]] { Self.chunk(buckets.months, size: Self.monthPageSize) }
-
-    private static func chunk<T>(_ items: [T], size: Int) -> [[T]] {
-        guard !items.isEmpty else { return [[]] }
-        var pages: [[T]] = []
-        var idx = 0
-        while idx < items.count {
-            let end = min(idx + size, items.count)
-            pages.append(Array(items[idx..<end]))
-            idx = end
-        }
-        return pages
-    }
-
-    private var dayPageBinding: Binding<Int> {
-        Binding(
-            get: { dayPage },
-            set: { newValue in
-                dayPage = newValue
-                followLatestDay = newValue == dayPages.count - 1
-            })
-    }
-
-    private var monthPageBinding: Binding<Int> {
-        Binding(
-            get: { monthPage },
-            set: { newValue in
-                monthPage = newValue
-                followLatestMonth = newValue == monthPages.count - 1
-            })
-    }
 
     private var globalSelectedDayIndex: Int {
-        let localCount = dayPages.indices.contains(dayPage) ? dayPages[dayPage].count : 0
-        return dayPage * Self.dayPageSize + (selectedIndex ?? localCount - 1)
+        selectedIndex ?? max(0, buckets.days.count - 1)
     }
 
     private var globalSelectedMonthIndex: Int {
-        let localCount = monthPages.indices.contains(monthPage) ? monthPages[monthPage].count : 0
-        return monthPage * Self.monthPageSize + (selectedIndex ?? localCount - 1)
+        selectedIndex ?? max(0, buckets.months.count - 1)
     }
 
     var body: some View {
@@ -574,8 +532,6 @@ private struct ChatStatsCard: View {
 
     private func refreshBuckets() {
         buckets = store.localStats(for: .couple)
-        if followLatestDay { dayPage = max(0, dayPages.count - 1) }
-        if followLatestMonth { monthPage = max(0, monthPages.count - 1) }
     }
 
     private var header: some View {
@@ -641,7 +597,7 @@ private struct ChatStatsCard: View {
         }
     }
 
-    // MARK: 双色柱状图（左右滑动翻页看更早的日子/月份，页数由本地聊天记录的实际时长决定，没有上限）
+    // MARK: 双色柱状图（固定柱宽，横向滚动展示完整日期/月度序列）
     @ViewBuilder
     private var chart: some View {
         let me = store.session?.username ?? "xu"
@@ -649,31 +605,31 @@ private struct ChatStatsCard: View {
 
         switch mode {
         case .days:
-            TabView(selection: dayPageBinding) {
-                ForEach(Array(dayPages.enumerated()), id: \.offset) { pageIndex, page in
-                    let bars: [(label: String, counts: [String: Int])] = page.map { (label: $0.weekday, counts: $0.counts) }
-                    barsView(bars, me: me, partner: partner)
-                        .tag(pageIndex)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    let bars: [(label: String, counts: [String: Int])] = buckets.days.map { (label: $0.weekday, counts: $0.counts) }
+                    barsView(bars, me: me, partner: partner, barWidth: 38, lastId: "day-latest")
                 }
+                .onAppear { proxy.scrollTo("day-latest", anchor: .trailing) }
+                .onChange(of: buckets.days.count) { _, _ in proxy.scrollTo("day-latest", anchor: .trailing) }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(height: 140)
         case .months:
-            TabView(selection: monthPageBinding) {
-                ForEach(Array(monthPages.enumerated()), id: \.offset) { pageIndex, page in
-                    let bars: [(label: String, counts: [String: Int])] = page.map { (label: String(Int($0.month.suffix(2)) ?? 0) + "月", counts: $0.counts) }
-                    barsView(bars, me: me, partner: partner)
-                        .tag(pageIndex)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    let bars: [(label: String, counts: [String: Int])] = buckets.months.map { (label: String(Int($0.month.suffix(2)) ?? 0) + "月", counts: $0.counts) }
+                    barsView(bars, me: me, partner: partner, barWidth: 34, lastId: "month-latest")
                 }
+                .onAppear { proxy.scrollTo("month-latest", anchor: .trailing) }
+                .onChange(of: buckets.months.count) { _, _ in proxy.scrollTo("month-latest", anchor: .trailing) }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(height: 140)
         }
     }
 
-    private func barsView(_ bars: [(label: String, counts: [String: Int])], me: String, partner: String) -> some View {
+    private func barsView(_ bars: [(label: String, counts: [String: Int])], me: String, partner: String, barWidth: CGFloat, lastId: String) -> some View {
         let maxTotal = max(bars.map { $0.counts.values.reduce(0, +) }.max() ?? 1, 1)
-        return HStack(alignment: .bottom, spacing: mode == .days ? 8 : 6) {
+        return HStack(alignment: .bottom, spacing: 9) {
             ForEach(Array(bars.enumerated()), id: \.offset) { index, bar in
                 let mine = Double(bar.counts[me] ?? 0)
                 let hers = Double(bar.counts[partner] ?? 0)
@@ -689,7 +645,7 @@ private struct ChatStatsCard: View {
                         }
                     }
                     .frame(height: 110)
-                    .frame(maxWidth: .infinity)
+                    .frame(width: barWidth)
                     .background(DS.Palette.innerSurface.opacity(0.7))
                     .clipShape(Capsule())
                     .overlay(
@@ -701,6 +657,7 @@ private struct ChatStatsCard: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
+                .id(index == bars.count - 1 ? lastId : "\(lastId)-\(index)")
                 .contentShape(Rectangle())
                 .onTapGesture {
                     Haptics.selection()

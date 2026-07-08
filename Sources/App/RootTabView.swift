@@ -51,7 +51,7 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            DynamicGradientBackground().ignoresSafeArea()
+            Color(.systemGroupedBackground).ignoresSafeArea()
 
             ZStack {
                 ChatHomeView()
