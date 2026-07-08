@@ -361,6 +361,13 @@ final class MessageService: ObservableObject {
         socket.emitWithAck("message:recall", ["id": message.id])?.timingOut(after: 9) { _ in }
     }
     
+    func resend(_ message: ChatMessage) {
+        guard message.failed, message.type == "text" else { return }
+        let channel = ChatChannel(rawValue: message.channel) ?? .couple
+        updateMessages(channel) { $0.removeAll { $0.id == message.id } }
+        sendText(message.text, channel: channel)
+    }
+    
     func applyRecall(id: String, byName: String?, channel: ChatChannel?) {
         let channels = channel.map { [$0] } ?? ChatChannel.allCases
         

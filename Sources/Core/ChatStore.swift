@@ -231,7 +231,7 @@ final class ChatStore: ObservableObject {
     
     private func handlePresence(_ online: [String]) {
         guard let me = authService.session?.username else { return }
-        partnerOnline = online.contains { $0 != me.username }
+        partnerOnline = online.contains { $0 != me }
     }
     
     private func handleReadInit(_ dict: [String: Any]) {
@@ -349,6 +349,10 @@ final class ChatStore: ObservableObject {
         messageService.recallMessage(message, channel: channel)
     }
     
+    func resend(_ message: ChatMessage) {
+        messageService.resend(message)
+    }
+    
     func markRead(_ channel: ChatChannel = .couple) {
         messageService.markRead(channel)
     }
@@ -394,15 +398,15 @@ final class ChatStore: ObservableObject {
     }
     
     func uploadAvatar(_ image: UIImage) async -> Bool {
-        guard let uploaded = await mediaService.uploadAvatar(image), uploaded else { return false }
+        let success = await mediaService.uploadAvatar(image)
         
         // 获取上传后的 URL 并保存到共享状态
-        if let username = authService.session?.username {
+        if success, let username = authService.session?.username {
             // 这里需要获取上传后的 URL，但 MediaService.uploadAvatar 只返回 Bool
             // 暂时简化处理
         }
         
-        return true
+        return success
     }
     
     // MARK: - 共享状态（转发到 SharedStateService）
@@ -867,5 +871,98 @@ final class ChatStore: ObservableObject {
             done += 1
             onProgress(done, total)
         }
+    }
+    
+    // MARK: - 搜索/日历跳转辅助
+    
+    @discardableResult
+    func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) -> Bool {
+        if messages(for: channel).contains(where: { $0.id == target.id }) { return true }
+        
+        let window = ChatLocalDatabase.shared.fetchMessagesAround(
+            channel: channel.rawValue,
+            centerTimestamp: target.ts,
+            beforeLimit: 36,
+            afterLimit: 28)
+        if !window.isEmpty {
+            messageService.updateMessages(channel) { list in
+                list = Self.mergedWindow(window, with: list, around: target.id)
+            }
+        }
+        if !messages(for: channel).contains(where: { $0.id == target.id }) {
+            messageService.upsert(target, in: channel)
+        }
+        return messages(for: channel).contains(where: { $0.id == target.id })
+    }
+    
+    @discardableResult
+    func ensureDateLoaded(_ date: Date, channel: ChatChannel) -> ChatMessage? {
+        let range = Self.dayRange(for: date)
+        var dayMessages = ChatLocalDatabase.shared.fetchMessages(
+            channel: channel.rawValue,
+            fromInclusive: range.start,
+            toExclusive: range.end,
+            limit: 80)
+        
+        if dayMessages.isEmpty, let socket = socketService, connected {
+            socket.emitWithAck("messages:fetch", [
+                "channel": channel.rawValue,
+                "after": range.start,
+                "before": range.end,
+                "limit": 80,
+            ])?.timingOut(after: 9) { data in
+                guard let dict = data.first as? [String: Any],
+                      let list = dict["list"] as? [[String: Any]] else { return }
+                let incoming = list.compactMap { ChatMessage(dict: $0) }
+                Task { @MainActor in
+                    incoming.forEach { ChatLocalDatabase.shared.insertMessage($0) }
+                }
+            }
+        }
+        
+        if dayMessages.isEmpty {
+            return nil
+        }
+        
+        guard let target = dayMessages.first else { return nil }
+        let context = ChatLocalDatabase.shared.fetchMessagesAround(
+            channel: channel.rawValue,
+            centerTimestamp: target.ts,
+            beforeLimit: 20,
+            afterLimit: 44)
+        if !context.isEmpty {
+            dayMessages = context
+        }
+        messageService.updateMessages(channel) { list in
+            list = Self.mergedWindow(dayMessages, with: list, around: target.id)
+        }
+        return target
+    }
+    
+    private nonisolated static func mergedWindow(_ window: [ChatMessage], with current: [ChatMessage], around targetId: String) -> [ChatMessage] {
+        guard !window.isEmpty else { return current }
+        var seen = Set<String>()
+        let merged = (window + current)
+            .filter { message in
+                guard !seen.contains(message.id) else { return false }
+                seen.insert(message.id)
+                return true
+            }
+            .sorted { $0.ts < $1.ts }
+        
+        guard let targetIndex = merged.firstIndex(where: { $0.id == targetId }) else {
+            return Array(merged.suffix(90))
+        }
+        let lower = max(0, targetIndex - 36)
+        let upper = min(merged.count, targetIndex + 42)
+        return Array(merged[lower..<upper])
+    }
+    
+    private nonisolated static func dayRange(for date: Date) -> (start: Double, end: Double) {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        let start = cal.startOfDay(for: date)
+        let end = cal.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+        return (start.timeIntervalSince1970 * 1000, end.timeIntervalSince1970 * 1000)
     }
 }
