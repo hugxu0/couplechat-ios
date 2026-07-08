@@ -399,6 +399,27 @@ final class ChatStore: ObservableObject {
         ChatLocalCache.clear(for: session.username)
     }
 
+    /// 搜索结果跳转前：确保命中消息已在内存列表里，否则从本地库把「命中消息 → 当前最早消息」
+    /// 之间的窗口补进来（保持时间连续），本地库也没有就直接插入命中消息本身。返回是否已就绪。
+    @discardableResult
+    func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) -> Bool {
+        if messages(for: channel).contains(where: { $0.id == target.id }) { return true }
+
+        let earliest = messages(for: channel).first?.ts ?? (Date().timeIntervalSince1970 * 1000)
+        let window = ChatLocalDatabase.shared.fetchMessages(
+            channel: channel.rawValue, fromTimestamp: target.ts, toTimestamp: earliest)
+        if !window.isEmpty {
+            updateMessages(channel) { list in
+                let known = Set(list.map(\.id))
+                list.insert(contentsOf: window.filter { !known.contains($0.id) }, at: 0)
+            }
+        }
+        if !messages(for: channel).contains(where: { $0.id == target.id }) {
+            upsert(target, in: channel)
+        }
+        return messages(for: channel).contains(where: { $0.id == target.id })
+    }
+
     /// 进聊天页兜底：内存里没消息但本地库有（比如 restore 之前被清过），立刻从本地库补上。
     func ensureLocalMessages(_ channel: ChatChannel) {
         guard messages(for: channel).isEmpty else { return }

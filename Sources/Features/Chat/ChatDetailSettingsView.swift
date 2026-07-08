@@ -42,7 +42,8 @@ struct ChatDetailSettingsView: View {
         .navigationTitle("聊天详情")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showSearch) {
-            ChatSearchSheet(channel: channel, scrollToMessageId: .constant(nil))
+            // 详情页在会话之上，跳转定位交给会话页；这里只用搜索浏览
+            ChatSearchSheet(channel: channel)
         }
         .sheet(isPresented: $showMedia) {
             MediaGallerySheet(channel: channel)

@@ -172,6 +172,36 @@ final class ChatLocalDatabase {
         return messages.reversed() // Return chronologically ordered
     }
     
+    /// 拉取某个时间区间内的全部消息（含端点），按时间正序。
+    /// 用于「搜索结果跳转」把命中消息与当前已加载窗口之间的空档补齐，保证能定位。
+    func fetchMessages(channel: String, fromTimestamp: Double, toTimestamp: Double) -> [ChatMessage] {
+        var messages: [ChatMessage] = []
+        let sql = """
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        FROM messages
+        WHERE channel = ? AND ts >= ? AND ts <= ?
+        ORDER BY ts ASC;
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            return []
+        }
+
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 2, fromTimestamp)
+        sqlite3_bind_double(stmt, 3, toTimestamp)
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let msg = parseMessageRow(stmt) {
+                messages.append(msg)
+            }
+        }
+
+        sqlite3_finalize(stmt)
+        return messages
+    }
+
     func fetchLatestMessages(channel: String, limit: Int) -> [ChatMessage] {
         var messages: [ChatMessage] = []
         let sql = """

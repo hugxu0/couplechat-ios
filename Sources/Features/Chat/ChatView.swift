@@ -123,7 +123,7 @@ struct ChatView: View {
             }
         }
         .sheet(isPresented: $showSearch) {
-            ChatSearchSheet(channel: channel, scrollToMessageId: $scrollToMessageId)
+            ChatSearchSheet(channel: channel, onJump: { jumpToMessage($0) })
         }
         .sheet(isPresented: $showMedia) {
             MediaGallerySheet(channel: channel)
@@ -244,7 +244,8 @@ struct ChatView: View {
             }
             .onChange(of: scrollToMessageId) { _, targetId in
                 guard let targetId else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                // 等搜索 sheet 收起、新插入的消息完成布局后再定位（0.4s 覆盖 sheet 关闭动画）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                     withAnimation(DS.Anim.ease) {
                         proxy.scrollTo(targetId, anchor: .center)
                         highlightedMessageId = targetId
@@ -261,6 +262,12 @@ struct ChatView: View {
                 }
             }
         }
+    }
+
+    /// 搜索结果跳转：先确保命中消息已加载进列表（可能是很老的历史），再触发滚动定位
+    private func jumpToMessage(_ message: ChatMessage) {
+        store.ensureMessageLoaded(message, channel: channel)
+        scrollToMessageId = message.id
     }
 
     /// 滚到底部锚点；延迟一帧让 LazyVStack 渲染稳定
@@ -1592,7 +1599,8 @@ private enum MediaSaver {
 
 struct ChatSearchSheet: View {
     let channel: ChatChannel
-    @Binding var scrollToMessageId: String?
+    /// 点击某条结果时回调命中消息，由宿主负责加载上下文并滚动定位
+    var onJump: (ChatMessage) -> Void = { _ in }
 
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
@@ -1684,7 +1692,7 @@ struct ChatSearchSheet: View {
         .padding(.vertical, 3)
         .contentShape(Rectangle())
         .onTapGesture {
-            scrollToMessageId = msg.id
+            onJump(msg)
             dismiss()
         }
     }
