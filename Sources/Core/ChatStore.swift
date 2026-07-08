@@ -1158,6 +1158,85 @@ final class ChatStore: ObservableObject {
             }
         }
     }
+
+    // MARK: - 存储空间 / 全量同步（供缓存管理页）
+
+    struct StorageBreakdown {
+        var imageCacheBytes: Int64
+        var databaseBytes: Int64
+        var coupleMessages: Int
+        var aiMessages: Int
+        var totalBytes: Int64 { imageCacheBytes + databaseBytes }
+    }
+
+    /// 当前本地占用概览
+    func storageBreakdown() -> StorageBreakdown {
+        StorageBreakdown(
+            imageCacheBytes: ImageCache.shared.diskUsageBytes(),
+            databaseBytes: ChatLocalDatabase.shared.databaseSizeBytes(),
+            coupleMessages: ChatLocalDatabase.shared.messageCount(channel: ChatChannel.couple.rawValue),
+            aiMessages: ChatLocalDatabase.shared.messageCount(channel: ChatChannel.ai.rawValue))
+    }
+
+    /// 清空图片缓存（不动消息数据库）
+    func clearImageCache() {
+        ImageCache.shared.clearAll()
+    }
+
+    /// 分页把某频道全部历史消息拉进本地库；onProgress 回调已累计条数，返回本频道同步总数。
+    @discardableResult
+    func syncAllHistory(_ channel: ChatChannel, onProgress: @escaping (Int) -> Void) async -> Int {
+        guard let s = socket, connected else { return 0 }
+        var oldest = messages(for: channel).first?.ts
+        var total = 0
+        let pageLimit = 200
+        while !Task.isCancelled {
+            let batch: [ChatMessage] = await withCheckedContinuation { cont in
+                var payload: [String: Any] = ["channel": channel.rawValue, "limit": pageLimit]
+                if let oldest { payload["before"] = oldest }
+                s.emitWithAck("messages:fetch", payload).timingOut(after: 15) { data in
+                    guard let dict = data.first as? [String: Any],
+                          let list = dict["list"] as? [[String: Any]] else {
+                        cont.resume(returning: [])
+                        return
+                    }
+                    cont.resume(returning: list.compactMap { ChatMessage(dict: $0) })
+                }
+            }
+            if batch.isEmpty { break }
+            for m in batch { ChatLocalDatabase.shared.insertMessage(m) }
+            total += batch.count
+            onProgress(total)
+            let batchOldest = batch.map(\.ts).min()
+            if batch.count < pageLimit { break }
+            // 拉到的最早时间没再往前推，说明到头了，避免死循环
+            if let batchOldest, let prev = oldest, batchOldest >= prev { break }
+            oldest = batchOldest
+        }
+        // 刷新内存里的最新窗口，UI 立即反映
+        let latest = ChatLocalDatabase.shared.fetchLatestMessages(channel: channel.rawValue, limit: 50)
+        if !latest.isEmpty {
+            updateMessages(channel) { $0 = latest }
+        }
+        return total
+    }
+
+    /// 把某频道所有图片 / 表情缓存到本地磁盘；onProgress(已完成, 总数)。
+    func cacheAllImages(_ channel: ChatChannel, onProgress: @escaping (Int, Int) -> Void) async {
+        let raws = ChatLocalDatabase.shared.mediaURLs(channel: channel.rawValue, types: ["image", "sticker"])
+        let urls = raws.compactMap { ServerConfig.resolveMediaURL($0) }
+        let total = urls.count
+        onProgress(0, total)
+        var done = 0
+        for url in urls {
+            if Task.isCancelled { break }
+            if !ImageCache.shared.isCached(url) {
+                _ = await ImageCache.shared.image(for: url)
+            }
+            done += 1
+            onProgress(done, total)
+        }
+    }
 }
 
 private extension Data {

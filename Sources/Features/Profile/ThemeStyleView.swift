@@ -6,6 +6,7 @@ import SwiftUI
 
 struct ThemeStyleView: View {
     @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var app: AppState
 
     @State private var wallpaperChannel: ChatChannel = .couple
     @State private var customPickerItem: PhotosPickerItem?
@@ -27,6 +28,8 @@ struct ThemeStyleView: View {
         .background(DS.Palette.bgGradient.ignoresSafeArea())
         .navigationTitle("主题样式")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { app.pushSubpage() }
+        .onDisappear { app.popSubpage() }
         .onChange(of: customPickerItem) {
             guard let item = customPickerItem else { return }
             loadCustomImage(item)

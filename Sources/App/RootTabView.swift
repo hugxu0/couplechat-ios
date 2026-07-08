@@ -21,17 +21,17 @@ enum MainTab: String, CaseIterable {
     }
 }
 
-/// 跨页面共享的 App 状态（比如「正在会话中 → 隐藏底栏」）
+/// 跨页面共享的 App 状态（哪些子页需要隐藏底部标签栏）
 final class AppState: ObservableObject {
-    /// 会话栈深度：进聊天页 +1，进聊天里的子页（详情/设置）再 +1，逐层退出时递减。
-    /// 用计数而不是单个布尔，避免「push 子页时源页 onDisappear 把底栏又放出来」。
-    @Published private var chatDepth = 0
+    /// 子页栈深度：每进入一个需要全屏的子页（聊天、聊天详情、主题、存储…）+1，逐层退出时 -1。
+    /// 用计数而不是单个布尔，避免「push 子页时源页 onDisappear 把底栏又放出来」造成的闪烁/残留。
+    @Published private var subpageDepth = 0
 
-    /// 只要还在聊天流程里（含任何子页）就隐藏底部标签栏
-    var chatOpen: Bool { chatDepth > 0 }
+    /// 只要还在任意子页里就隐藏底部标签栏
+    var hidesTabBar: Bool { subpageDepth > 0 }
 
-    func enterChatLayer() { chatDepth += 1 }
-    func exitChatLayer() { chatDepth = max(0, chatDepth - 1) }
+    func pushSubpage() { subpageDepth += 1 }
+    func popSubpage() { subpageDepth = max(0, subpageDepth - 1) }
 }
 
 struct RootTabView: View {
@@ -76,8 +76,8 @@ struct RootTabView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // 会话中隐藏底栏，退出会话时滑回来
-            if !app.chatOpen {
+            // 进入子页时隐藏底栏，退出时滑回来
+            if !app.hidesTabBar {
                 tabBar
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -96,7 +96,7 @@ struct RootTabView: View {
                 .zIndex(10)
             }
         }
-        .animation(DS.Anim.spring, value: app.chatOpen)
+        .animation(DS.Anim.spring, value: app.hidesTabBar)
         .onAppear {
             lastSeenEffectMessageId = store.messages.last?.id
             lastSeenNoteId = screenNoteId

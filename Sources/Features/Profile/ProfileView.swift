@@ -197,6 +197,13 @@ struct ProfileView: View {
             settingRow(icon: "bell.badge", title: "离线通知", subtitle: "对方消息 Bark 推送") {
                 showBarkSheet = true
             }
+            divider
+            NavigationLink {
+                StorageView()
+            } label: {
+                settingRowLabel(icon: "internaldrive", title: "存储空间", subtitle: "同步聊天记录 · 缓存管理")
+            }
+            .buttonStyle(PressableStyle())
         }
         .padding(.vertical, 6)
         .dsCard()

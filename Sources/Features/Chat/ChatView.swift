@@ -145,12 +145,12 @@ struct ChatView: View {
         }
         // 进会话隐藏底部标签栏，退出（含侧滑返回）恢复
         .onAppear {
-            app.enterChatLayer()
+            app.pushSubpage()
             // 兜底：内存里没消息时立刻从本地库补，保证进来就能看到历史
             store.ensureLocalMessages(channel)
             store.markRead(channel)
         }
-        .onDisappear { app.exitChatLayer() }
+        .onDisappear { app.popSubpage() }
         .onChange(of: selectedMedia) {
             guard let selectedMedia else { return }
             sendMedia(selectedMedia)

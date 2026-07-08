@@ -59,9 +59,9 @@ struct ChatDetailSettingsView: View {
         } message: {
             Text("仅自己可见，不会同步给对方")
         }
-        // 子页也算聊天流程的一层，保持底部标签栏隐藏
-        .onAppear { app.enterChatLayer() }
-        .onDisappear { app.exitChatLayer() }
+        // 子页保持底部标签栏隐藏
+        .onAppear { app.pushSubpage() }
+        .onDisappear { app.popSubpage() }
     }
 
     private func saveAlias() {

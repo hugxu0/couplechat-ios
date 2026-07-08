@@ -4,6 +4,7 @@ import SQLite3
 final class ChatLocalDatabase {
     static let shared = ChatLocalDatabase()
     private var db: OpaquePointer?
+    private(set) var currentDatabaseURL: URL?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     private init() {}
@@ -13,24 +14,77 @@ final class ChatLocalDatabase {
         let fileManager = FileManager.default
         let appSupportDirs = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let directoryURL = appSupportDirs[0].appendingPathComponent("ChatCache", isDirectory: true)
-        
+
         do {
             try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
         } catch {
             return false
         }
-        
+
         let safeUsername = username
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: ":", with: "_")
         let dbURL = directoryURL.appendingPathComponent("\(safeUsername).sqlite")
-        
+        currentDatabaseURL = dbURL
+
         if sqlite3_open(dbURL.path, &db) != SQLITE_OK {
             return false
         }
-        
+
         createTables()
         return true
+    }
+
+    // MARK: - 存储空间统计（供缓存管理页）
+
+    /// 本地数据库文件大小（含 -wal / -shm）
+    func databaseSizeBytes() -> Int64 {
+        guard let url = currentDatabaseURL else { return 0 }
+        let fm = FileManager.default
+        var total: Int64 = 0
+        for path in [url.path, url.path + "-wal", url.path + "-shm"] {
+            if let attrs = try? fm.attributesOfItem(atPath: path),
+               let size = (attrs[.size] as? NSNumber)?.int64Value {
+                total += size
+            }
+        }
+        return total
+    }
+
+    /// 某频道已缓存的消息条数
+    func messageCount(channel: String) -> Int {
+        let sql = "SELECT COUNT(*) FROM messages WHERE channel = ?;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        var count = 0
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            count = Int(sqlite3_column_int(stmt, 0))
+        }
+        sqlite3_finalize(stmt)
+        return count
+    }
+
+    /// 某频道内指定类型消息的媒体地址列表（去重、去空），用于「缓存全部图片」
+    func mediaURLs(channel: String, types: [String]) -> [String] {
+        guard !types.isEmpty else { return [] }
+        let placeholders = types.map { _ in "?" }.joined(separator: ",")
+        let sql = """
+        SELECT DISTINCT url FROM messages
+        WHERE channel = ? AND url IS NOT NULL AND url <> '' AND type IN (\(placeholders));
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        for (i, type) in types.enumerated() {
+            sqlite3_bind_text(stmt, Int32(2 + i), type, -1, SQLITE_TRANSIENT)
+        }
+        var urls: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let value = readText(stmt, index: 0) { urls.append(value) }
+        }
+        sqlite3_finalize(stmt)
+        return urls
     }
     
     func close() {
