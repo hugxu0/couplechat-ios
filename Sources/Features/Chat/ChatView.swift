@@ -37,6 +37,7 @@ struct ChatView: View {
     @State private var recordingStartDate: Date?
     @State private var showMicPermissionAlert = false
     @State private var showStickerPanel = false
+    @State private var showAttachmentTray = false
     @ObservedObject private var stickerStore = StickerStore.shared
     @FocusState private var inputFocused: Bool
     private static let cancelDragThreshold: CGFloat = -70
@@ -95,12 +96,27 @@ struct ChatView: View {
                             .frame(height: 300)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+                    if showAttachmentTray {
+                        AttachmentTray(
+                            selectedMedia: $selectedMedia,
+                            onPickFile: {
+                                withAnimation(DS.Anim.springFast) { showAttachmentTray = false }
+                                showFileImporter = true
+                            })
+                            .frame(height: 140)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
             }
             .onChange(of: inputFocused) { _, focused in
-                // 弹出键盘时收起表情面板，二者不并存
-                if focused, showStickerPanel {
-                    withAnimation(DS.Anim.springFast) { showStickerPanel = false }
+                // 弹出键盘时收起表情面板和附件面板，三者不并存
+                if focused {
+                    if showStickerPanel || showAttachmentTray {
+                        withAnimation(DS.Anim.springFast) {
+                            showStickerPanel = false
+                            showAttachmentTray = false
+                        }
+                    }
                 }
             }
         .background(
@@ -166,6 +182,9 @@ struct ChatView: View {
         .onDisappear { app.popSubpage() }
         .onChange(of: selectedMedia) {
             guard let selectedMedia else { return }
+            if showAttachmentTray {
+                withAnimation(DS.Anim.springFast) { showAttachmentTray = false }
+            }
             sendMedia(selectedMedia)
         }
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
@@ -256,8 +275,11 @@ struct ChatView: View {
                         #selector(UIResponder.resignFirstResponder),
                         to: nil, from: nil, for: nil
                     )
-                    if showStickerPanel {
-                        withAnimation(DS.Anim.springFast) { showStickerPanel = false }
+                    if showStickerPanel || showAttachmentTray {
+                        withAnimation(DS.Anim.springFast) {
+                            showStickerPanel = false
+                            showAttachmentTray = false
+                        }
                     }
                 }
             )
@@ -265,7 +287,7 @@ struct ChatView: View {
             // 避免进页面时多一次 scrollTo 造成的入场卡顿。
             .onChange(of: messages.last?.id) {
                 guard !isJumping else { return }
-                scrollToBottom(proxy)
+                scrollToBottom(proxy, animated: true)
             }
             // 顶部插入更早消息后，把视口锚回插入前的第一条消息，避免画面跳动
             .onChange(of: messages.first?.id) { _, _ in
@@ -648,26 +670,65 @@ struct ChatView: View {
     }
 
     private var mediaPicker: some View {
-        Menu {
-            PhotosPicker(
-                selection: $selectedMedia,
-                matching: .any(of: [.images, .videos]),
-                photoLibrary: .shared()) {
-                    Label("照片或视频", systemImage: "photo.on.rectangle")
+        Button {
+            Haptics.light()
+            withAnimation(DS.Anim.springFast) {
+                showAttachmentTray.toggle()
+                if showAttachmentTray {
+                    inputFocused = false
+                    showStickerPanel = false
                 }
-            Button {
-                showFileImporter = true
-            } label: {
-                Label("文件", systemImage: "doc")
             }
         } label: {
             Image(systemName: mediaBusy ? "hourglass" : "paperclip")
                 .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(mediaBusy ? DS.Palette.textSecondary.opacity(0.6) : DS.Palette.textSecondary)
+                .foregroundStyle(mediaBusy ? DS.Palette.textSecondary.opacity(0.6) : (showAttachmentTray ? DS.Palette.accent : DS.Palette.textSecondary))
                 .frame(width: 22, height: 22)
         }
             .buttonStyle(PressableStyle())
             .disabled(mediaBusy)
+    }
+
+    /// Telegram 式附件卡片面板：目前只做图片和文件两种入口
+    private struct AttachmentTray: View {
+        @Binding var selectedMedia: PhotosPickerItem?
+        var onPickFile: () -> Void
+
+        var body: some View {
+            HStack(spacing: 16) {
+                PhotosPicker(
+                    selection: $selectedMedia,
+                    matching: .any(of: [.images, .videos]),
+                    photoLibrary: .shared()) {
+                        tile(icon: "photo.on.rectangle", title: "图片")
+                    }
+                    .buttonStyle(PressableStyle())
+
+                Button(action: onPickFile) {
+                    tile(icon: "doc", title: "文件")
+                }
+                .buttonStyle(PressableStyle())
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, DS.Spacing.page)
+            .padding(.top, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .dsGlass(in: Rectangle())
+        }
+
+        private func tile(icon: String, title: String) -> some View {
+            VStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(DS.Palette.accent)
+                    .frame(width: 56, height: 56)
+                    .background(DS.Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.Palette.textSecondary)
+            }
+        }
     }
 
     // MARK: 录音（Telegram 式按住说话：抬手发送，左滑取消）
@@ -777,11 +838,14 @@ struct ChatView: View {
     }
 
     private func toggleStickerPanel() {
-        if showStickerPanel {
-            withAnimation(DS.Anim.springFast) { showStickerPanel = false }
-        } else {
-            inputFocused = false // 先收键盘再展开面板
-            withAnimation(DS.Anim.springFast) { showStickerPanel = true }
+        withAnimation(DS.Anim.springFast) {
+            if showStickerPanel {
+                showStickerPanel = false
+            } else {
+                inputFocused = false
+                showStickerPanel = true
+                showAttachmentTray = false
+            }
         }
     }
 
@@ -1343,9 +1407,9 @@ struct MessageBubble: View {
                     .foregroundStyle(.red)
             }
         } else if message.pending {
-            Image(systemName: "clock")
-                .font(.system(size: 11))
-                .foregroundStyle(DS.Palette.textSecondary)
+            ProgressView()
+                .controlSize(.mini)
+                .tint(DS.Palette.textSecondary)
         } else {
             Image(systemName: read ? "checkmark.circle.fill" : "checkmark.circle")
                 .font(.system(size: 13))

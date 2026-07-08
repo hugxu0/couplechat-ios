@@ -354,6 +354,27 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    /// 和 `upsert` 逻辑一致，但整批只触发一次 `messagesByChannel` 更新；
+    /// 避免 `syncHistory` 补历史时逐条 upsert 导致连续多次贴底滚动的画面抖动。
+    private func upsertBatch(_ msgs: [ChatMessage], in channel: ChatChannel) {
+        guard !msgs.isEmpty else { return }
+        for msg in msgs { ChatLocalDatabase.shared.insertMessage(msg) }
+        updateMessages(channel) { list in
+            for msg in msgs {
+                if let i = list.firstIndex(where: { $0.id == msg.id || (msg.clientId != nil && $0.id == msg.clientId) }) {
+                    list[i] = msg
+                    continue
+                }
+                if let last = list.last, last.ts > msg.ts,
+                   let i = list.lastIndex(where: { $0.ts <= msg.ts }) {
+                    list.insert(msg, at: i + 1)
+                } else {
+                    list.append(msg)
+                }
+            }
+        }
+    }
+
     private func replaceMessages(_ incoming: [ChatMessage], in channel: ChatChannel) {
         for msg in incoming {
             ChatLocalDatabase.shared.insertMessage(msg)
@@ -470,12 +491,20 @@ final class ChatStore: ObservableObject {
         return target
     }
 
-    /// 进聊天页兜底：内存里没消息但本地库有（比如 restore 之前被清过），立刻从本地库补上。
+    /// 进聊天页兜底：
+    /// 1) 内存里没消息但本地库有（比如 restore 之前被清过）—— 立刻从本地库补上；
+    /// 2) 内存里还残留着上次「搜索/日历跳转」留下的历史窗口（尾部不是本地库最新一条）——
+    ///    强制拉回最新一页，避免带着旧窗口重进聊天页时，被后续增量同步逐条 upsert 顶着连续往下滚。
     func ensureLocalMessages(_ channel: ChatChannel) {
-        guard messages(for: channel).isEmpty else { return }
         let local = ChatLocalDatabase.shared.fetchLatestMessages(channel: channel.rawValue, limit: 50)
         guard !local.isEmpty else { return }
-        updateMessages(channel) { $0 = local }
+        let current = messages(for: channel)
+        guard current.isEmpty || current.last?.id != local.last?.id else { return }
+        let pendingOrFailed = current.filter { $0.pending || $0.failed }
+        let knownIds = Set(local.map(\.id))
+        updateMessages(channel) { list in
+            list = local + pendingOrFailed.filter { !knownIds.contains($0.id) }
+        }
     }
 
     // MARK: 历史 / 补漏
@@ -492,7 +521,7 @@ final class ChatStore: ObservableObject {
             let incoming = list.compactMap { ChatMessage(dict: $0) }
             Task { @MainActor in
                 guard let self else { return }
-                incoming.forEach { self.upsert($0, in: channel) }
+                self.upsertBatch(incoming, in: channel)
                 if channel == .couple { self.markRead(.couple) }
                 // 离线太久时缺口可能超过一页，继续增量拉直到补齐
                 if lastTs > 0, incoming.count >= limit {

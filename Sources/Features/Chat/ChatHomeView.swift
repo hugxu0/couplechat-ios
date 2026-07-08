@@ -15,6 +15,7 @@ struct ChatHomeView: View {
     @State private var refreshMessage: String?
     @State private var refreshingHome = false
     @State private var pullRefreshArmed = true
+    @State private var pullProgress: CGFloat = 0
     @AppStorage("chat_home_statuses_v2") private var statusesJSON = ""
     @AppStorage("chat_home_custom_statuses") private var legacyCustomStatusData = ""
 
@@ -58,6 +59,7 @@ struct ChatHomeView: View {
             .coordinateSpace(name: "chatHomeScroll")
             .scrollIndicators(.hidden)
             .background(DynamicGradientBackground().ignoresSafeArea())
+            .overlay(alignment: .top) { pullRefreshIndicator }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
             .alert("自定义状态", isPresented: $showCustomStatusPrompt) {
@@ -181,22 +183,50 @@ struct ChatHomeView: View {
         GeometryReader { geo in
             Color.clear
                 .onChange(of: geo.frame(in: .named("chatHomeScroll")).minY) { _, value in
+                    if !refreshingHome {
+                        pullProgress = min(1, max(0, value / 46))
+                    }
                     if value < 8 {
                         pullRefreshArmed = true
                     }
                     guard value > 46, pullRefreshArmed, !refreshingHome else { return }
                     pullRefreshArmed = false
                     refreshingHome = true
+                    pullProgress = 1
                     Task {
                         let success = await store.refreshHomeData()
                         await MainActor.run {
                             flashRefreshResult(success)
                             refreshingHome = false
+                            pullProgress = 0
                         }
                     }
                 }
         }
         .frame(height: 0)
+    }
+
+    /// QQ 式下拉指示器：跟随下拉距离渐显/旋转箭头，刷新中换成持续转圈
+    private var pullRefreshIndicator: some View {
+        Group {
+            if refreshingHome {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(DS.Palette.accent)
+            } else {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(DS.Palette.accent)
+                    .rotationEffect(.degrees(pullProgress >= 1 ? 180 : 0))
+            }
+        }
+        .frame(width: 30, height: 30)
+        .background(DS.Palette.innerSurface, in: Circle())
+        .opacity(refreshingHome ? 1 : pullProgress)
+        .scaleEffect(refreshingHome ? 1 : 0.6 + 0.4 * pullProgress)
+        .padding(.top, 8)
+        .animation(DS.Anim.springFast, value: pullProgress >= 1)
+        .animation(DS.Anim.ease, value: refreshingHome)
     }
 
     private var coupleHeader: some View {
