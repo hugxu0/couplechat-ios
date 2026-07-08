@@ -84,36 +84,39 @@ struct ChatView: View {
     }
 
     var body: some View {
-        messageList
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(spacing: 0) {
-                    replyBar
-                    aiTypingHint
-                    if !mediaPreviewItems.isEmpty {
-                        mediaPreviewRow
-                    }
-                    composer
-                    if showStickerPanel {
-                        StickerEmojiPanel(
-                            store: stickerStore,
-                            onEmoji: { draft += $0 },
-                            onSendSticker: { sendSticker($0) })
-                            .frame(height: 300)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
-            }
-            .onChange(of: inputFocused) { _, focused in
-                // 弹出键盘时收起表情面板和附件面板，三者不并存
-                if focused {
-                    if showStickerPanel || showAttachmentTray {
-                        withAnimation(DS.Anim.springFast) {
-                            showStickerPanel = false
-                            showAttachmentTray = false
+        ZStack(alignment: .bottom) {
+            messageList
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
+                        replyBar
+                        aiTypingHint
+                        if !mediaPreviewItems.isEmpty {
+                            mediaPreviewRow
                         }
+                        composer
+                    }
+                }
+
+            // 表情面板覆盖层（不推动消息布局）
+            if showStickerPanel {
+                StickerEmojiPanel(
+                    store: stickerStore,
+                    onEmoji: { draft += $0 },
+                    onSendSticker: { sendSticker($0) })
+                    .frame(height: 300)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .onChange(of: inputFocused) { _, focused in
+            if focused {
+                if showStickerPanel || showAttachmentTray {
+                    withAnimation(DS.Anim.springFast) {
+                        showStickerPanel = false
+                        showAttachmentTray = false
                     }
                 }
             }
+        }
         .background(
             ZStack {
                 displayedWallpaper.gradient(dark: colorScheme == .dark)
