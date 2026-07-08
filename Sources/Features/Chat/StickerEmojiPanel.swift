@@ -36,7 +36,7 @@ struct StickerEmojiPanel: View {
             Divider().opacity(0.15)
             content
         }
-        .background(DS.Palette.floatSurface)
+        .dsGlass(in: Rectangle())
         .photosPicker(isPresented: pickerBinding, selection: $pickerItem, matching: .images)
         .onChange(of: pickerItem) {
             guard let item = pickerItem else { return }

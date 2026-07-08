@@ -103,8 +103,8 @@ struct ChatView: View {
                                 withAnimation(DS.Anim.springFast) { showAttachmentTray = false }
                                 showFileImporter = true
                             })
-                            .frame(height: 140)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .frame(height: 48)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
             }
@@ -303,6 +303,16 @@ struct ChatView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
                 withAnimation(keyboardAnimation(from: note)) {
+                    proxy.scrollTo("bottomAnchor", anchor: .bottom)
+                }
+            }
+            .onChange(of: showStickerPanel) {
+                withAnimation(DS.Anim.springFast) {
+                    proxy.scrollTo("bottomAnchor", anchor: .bottom)
+                }
+            }
+            .onChange(of: showAttachmentTray) {
+                withAnimation(DS.Anim.springFast) {
                     proxy.scrollTo("bottomAnchor", anchor: .bottom)
                 }
             }
@@ -689,45 +699,33 @@ struct ChatView: View {
             .disabled(mediaBusy)
     }
 
-    /// Telegram 式附件卡片面板：目前只做图片和文件两种入口
     private struct AttachmentTray: View {
         @Binding var selectedMedia: PhotosPickerItem?
         var onPickFile: () -> Void
 
         var body: some View {
-            HStack(spacing: 16) {
+            HStack(spacing: 10) {
                 PhotosPicker(
                     selection: $selectedMedia,
                     matching: .any(of: [.images, .videos]),
                     photoLibrary: .shared()) {
-                        tile(icon: "photo.on.rectangle", title: "图片")
+                        Label("图片", systemImage: "photo")
                     }
-                    .buttonStyle(PressableStyle())
+                    .buttonStyle(.bordered)
+                    .tint(DS.Palette.accent)
+                    .controlSize(.small)
 
                 Button(action: onPickFile) {
-                    tile(icon: "doc", title: "文件")
+                    Label("文件", systemImage: "doc")
                 }
-                .buttonStyle(PressableStyle())
+                .buttonStyle(.bordered)
+                .tint(DS.Palette.accent)
+                .controlSize(.small)
 
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, DS.Spacing.page)
-            .padding(.top, 16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .dsGlass(in: Rectangle())
-        }
-
-        private func tile(icon: String, title: String) -> some View {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(DS.Palette.accent)
-                    .frame(width: 56, height: 56)
-                    .background(DS.Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.Palette.textSecondary)
-            }
+            .padding(.vertical, 8)
         }
     }
 
