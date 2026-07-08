@@ -18,13 +18,13 @@ struct ChatView: View {
     @State private var selectedMedia: PhotosPickerItem?
     @State private var mediaBusy = false
     @State private var showFileImporter = false
-    @State private var showSearch = false
-    @State private var showDateJump = false
     @State private var showWallpaperPicker = false
     @State private var replyTarget: ChatMessage?
     @State private var showMedia = false
     @State private var scrollToMessageId: String?
     @State private var highlightedMessageId: String?
+    @State private var pendingTopAnchor: String?
+    @State private var isJumping = false
     @State private var mediaViewerMessageId: String?
     @State private var isRecording = false
     @State private var recordingCancelled = false
@@ -128,37 +128,20 @@ struct ChatView: View {
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    showSearch = true
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 15, weight: .semibold))
-                }
-                Button {
-                    showDateJump = true
-                } label: {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 15, weight: .semibold))
-                }
                 NavigationLink {
                     ChatDetailSettingsView(
                         channel: channel,
                         partnerName: title,
                         partnerAvatar: peerAvatar,
-                        partnerOnline: store.partnerOnline
+                        partnerOnline: store.partnerOnline,
+                        onJumpToMessage: { jumpToMessage($0) },
+                        onJumpToDate: { jumpToDate($0) }
                     )
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 16, weight: .semibold))
                 }
             }
-        }
-        .sheet(isPresented: $showSearch) {
-            ChatSearchSheet(channel: channel, onJump: { jumpToMessage($0) })
-        }
-        .sheet(isPresented: $showDateJump) {
-            DateJumpSheet(channel: channel, onJump: { jumpToDate($0) })
-                .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showMedia) {
             MediaGallerySheet(channel: channel)
@@ -172,11 +155,6 @@ struct ChatView: View {
             set: { if !$0 { mediaViewerMessageId = nil } }
         )) {
             MediaPagerView(messages: mediaMessages, selectedId: $mediaViewerMessageId)
-        }
-        // 搜索结果跳转到原文
-        .onChange(of: scrollToMessageId) { _, _ in
-            guard scrollToMessageId != nil else { return }
-            showSearch = false
         }
         // 进会话隐藏底部标签栏，退出（含侧滑返回）恢复
         .onAppear {
@@ -211,6 +189,11 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
+                    if store.isLoadingOlder(channel) {
+                        ProgressView()
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                    }
                     ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
                         VStack(spacing: 0) {
                             if showTimeSeparator(index) {
@@ -245,7 +228,10 @@ struct ChatView: View {
                         }
                         .id(msg.id)
                         .onAppear {
-                            if index == 0 { store.loadOlder(channel) }
+                            if index == 0 {
+                                pendingTopAnchor = msg.id
+                                store.loadOlder(channel)
+                            }
                         }
                     }
                     // 底部锚点：所有需要贴底的时候 scrollTo 到这里
@@ -259,6 +245,10 @@ struct ChatView: View {
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .defaultScrollAnchor(.bottom)
+            .refreshable {
+                pendingTopAnchor = messages.first?.id
+                await store.loadOlderAsync(channel)
+            }
             // 点击空白处用 UIKit 标准方式收起键盘，跟系统键盘动画统一
             .simultaneousGesture(
                 TapGesture().onEnded {
@@ -273,7 +263,16 @@ struct ChatView: View {
             )
             // 初始定位交给 .defaultScrollAnchor(.bottom)，这里只在消息数变化时补贴底，
             // 避免进页面时多一次 scrollTo 造成的入场卡顿。
-            .onChange(of: messages.last?.id) { scrollToBottom(proxy) }
+            .onChange(of: messages.last?.id) {
+                guard !isJumping else { return }
+                scrollToBottom(proxy)
+            }
+            // 顶部插入更早消息后，把视口锚回插入前的第一条消息，避免画面跳动
+            .onChange(of: messages.first?.id) { _, _ in
+                guard let anchor = pendingTopAnchor else { return }
+                pendingTopAnchor = nil
+                proxy.scrollTo(anchor, anchor: .top)
+            }
             // 键盘弹/收：输入栏由系统避让键盘，这里只用同一动画同步贴底滚动。
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
                 withAnimation(keyboardAnimation(from: note)) {
@@ -287,10 +286,12 @@ struct ChatView: View {
             }
             .onChange(of: scrollToMessageId) { _, targetId in
                 guard let targetId else { return }
+                isJumping = true
                 // 等搜索 sheet 收起、新插入的消息完成布局后再定位（0.4s 覆盖 sheet 关闭动画）
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    // 定位滚动不加动画，避免对刚整体替换、未布局过的 LazyVStack 做动画插值
+                    proxy.scrollTo(targetId, anchor: .center)
                     withAnimation(DS.Anim.ease) {
-                        proxy.scrollTo(targetId, anchor: .center)
                         highlightedMessageId = targetId
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
@@ -301,6 +302,7 @@ struct ChatView: View {
                         if scrollToMessageId == targetId {
                             scrollToMessageId = nil
                         }
+                        isJumping = false
                     }
                 }
             }
@@ -316,7 +318,6 @@ struct ChatView: View {
     private func jumpToDate(_ date: Date) {
         guard let target = store.ensureDateLoaded(date, channel: channel) else { return }
         scrollToMessageId = target.id
-        showDateJump = false
     }
 
     /// 滚到底部锚点；延迟一帧让 LazyVStack 渲染稳定
@@ -1869,6 +1870,8 @@ struct ChatSearchSheet: View {
     let channel: ChatChannel
     /// 点击某条结果时回调命中消息，由宿主负责加载上下文并滚动定位
     var onJump: (ChatMessage) -> Void = { _ in }
+    /// 非 nil 时在工具栏显示日历入口，用于按日期跳转
+    var onJumpDate: ((Date) -> Void)? = nil
 
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
@@ -1876,6 +1879,7 @@ struct ChatSearchSheet: View {
     @State private var results: [ChatMessage] = []
     @State private var searching = false
     @State private var searched = false
+    @State private var showDateJump = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -1893,6 +1897,15 @@ struct ChatSearchSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
                 }
+                if onJumpDate != nil {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button {
+                            showDateJump = true
+                        } label: {
+                            Image(systemName: "calendar")
+                        }
+                    }
+                }
             }
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索消息内容")
             .onSubmit(of: .search) { runSearch() }
@@ -1902,8 +1915,16 @@ struct ChatSearchSheet: View {
                     searched = false
                 }
             }
+            .sheet(isPresented: $showDateJump) {
+                DateJumpSheet(channel: channel, onJump: { date in
+                    onJumpDate?(date)
+                    dismiss()
+                })
+                .presentationDetents([.medium, .large])
+            }
         }
     }
+
 
     @ViewBuilder
     private var emptyState: some View {

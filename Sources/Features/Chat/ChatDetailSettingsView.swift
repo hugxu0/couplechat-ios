@@ -7,6 +7,8 @@ struct ChatDetailSettingsView: View {
     let partnerName: String
     let partnerAvatar: String
     let partnerOnline: Bool
+    let onJumpToMessage: (ChatMessage) -> Void
+    let onJumpToDate: (Date) -> Void
 
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
@@ -44,8 +46,11 @@ struct ChatDetailSettingsView: View {
         .navigationTitle("聊天详情")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showSearch) {
-            // 详情页在会话之上，跳转定位交给会话页；这里只用搜索浏览
-            ChatSearchSheet(channel: channel)
+            ChatSearchSheet(
+                channel: channel,
+                onJump: { msg in onJumpToMessage(msg); dismiss() },
+                onJumpDate: { date in onJumpToDate(date); dismiss() }
+            )
         }
         .sheet(isPresented: $showMedia) {
             MediaGallerySheet(channel: channel)
@@ -143,7 +148,7 @@ struct ChatDetailSettingsView: View {
             Button {
                 showSearch = true
             } label: {
-                Label("查找聊天记录", systemImage: "magnifyingglass")
+                Label("搜索聊天记录", systemImage: "magnifyingglass")
                     .foregroundStyle(DS.Palette.textPrimary)
             }
 

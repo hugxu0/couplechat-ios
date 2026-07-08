@@ -40,7 +40,7 @@ final class ChatStore: ObservableObject {
     private var socket: SocketIOClient?
     private var restoringCache = false
     private var backfillingChannels = Set<String>()
-    private var loadingOlderChannels = Set<String>()
+    @Published private var loadingOlderChannels = Set<String>()
     private var lastLoadOlderAt: [String: Date] = [:]
 
     private static let mediaTypes = ["image", "video"]
@@ -502,7 +502,17 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    func isLoadingOlder(_ channel: ChatChannel) -> Bool {
+        loadingOlderChannels.contains(channel.rawValue)
+    }
+
+    /// 供 onAppear 触发的即发即弃版本。
     func loadOlder(_ channel: ChatChannel = .couple) {
+        Task { await loadOlderAsync(channel) }
+    }
+
+    /// 供 `.refreshable` 下拉手势调用的可等待版本，逻辑与 `loadOlder` 一致。
+    func loadOlderAsync(_ channel: ChatChannel = .couple) async {
         guard let first = messages(for: channel).first else { return }
         guard !loadingOlderChannels.contains(channel.rawValue) else { return }
         if let last = lastLoadOlderAt[channel.rawValue],
@@ -514,50 +524,47 @@ final class ChatStore: ObservableObject {
         let limit = 22
         let firstTs = first.ts
 
-        Task {
-            // SQLite 读取和行解析放到后台，避免滚到顶部时阻塞主线程手势。
-            let localOlder = await Task.detached(priority: .utility) {
-                ChatLocalDatabase.shared.fetchMessages(channel: channel.rawValue, beforeTimestamp: firstTs, limit: limit)
-            }.value
+        // SQLite 读取和行解析放到后台，避免滚到顶部时阻塞主线程手势。
+        let localOlder = await Task.detached(priority: .utility) {
+            ChatLocalDatabase.shared.fetchMessages(channel: channel.rawValue, beforeTimestamp: firstTs, limit: limit)
+        }.value
 
-            if !localOlder.isEmpty {
-                updateMessages(channel) { current in
-                    let known = Set(current.map(\.id))
-                    current.insert(contentsOf: localOlder.filter { !known.contains($0.id) }, at: 0)
-                }
-                loadingOlderChannels.remove(channel.rawValue)
-                return
+        if !localOlder.isEmpty {
+            updateMessages(channel) { current in
+                let known = Set(current.map(\.id))
+                current.insert(contentsOf: localOlder.filter { !known.contains($0.id) }, at: 0)
             }
+            loadingOlderChannels.remove(channel.rawValue)
+            return
+        }
 
-            // 本地库没有更早消息时再兜底访问网络。
-            guard let s = socket, connected else {
-                loadingOlderChannels.remove(channel.rawValue)
-                return
-            }
+        // 本地库没有更早消息时再兜底访问网络。
+        guard let s = socket, connected else {
+            loadingOlderChannels.remove(channel.rawValue)
+            return
+        }
 
+        let older: [ChatMessage] = await withCheckedContinuation { continuation in
             s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": firstTs, "limit": limit])
-                .timingOut(after: 9) { [weak self] data in
+                .timingOut(after: 9) { data in
                     guard let dict = data.first as? [String: Any],
                           let list = dict["list"] as? [[String: Any]] else {
-                        Task { @MainActor in self?.loadingOlderChannels.remove(channel.rawValue) }
+                        continuation.resume(returning: [])
                         return
                     }
-                    let older = list.compactMap { ChatMessage(dict: $0) }
-                    Task { @MainActor in
-                        guard let self else { return }
-                        defer { self.loadingOlderChannels.remove(channel.rawValue) }
-                        guard !older.isEmpty else { return }
-                        await Task.detached(priority: .utility) {
-                            for msg in older {
-                                ChatLocalDatabase.shared.insertMessage(msg)
-                            }
-                        }.value
-                        self.updateMessages(channel) { current in
-                            let known = Set(current.map(\.id))
-                            current.insert(contentsOf: older.filter { !known.contains($0.id) }, at: 0)
-                        }
-                    }
+                    continuation.resume(returning: list.compactMap { ChatMessage(dict: $0) })
                 }
+        }
+        defer { loadingOlderChannels.remove(channel.rawValue) }
+        guard !older.isEmpty else { return }
+        await Task.detached(priority: .utility) {
+            for msg in older {
+                ChatLocalDatabase.shared.insertMessage(msg)
+            }
+        }.value
+        updateMessages(channel) { current in
+            let known = Set(current.map(\.id))
+            current.insert(contentsOf: older.filter { !known.contains($0.id) }, at: 0)
         }
     }
 
