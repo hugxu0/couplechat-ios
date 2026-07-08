@@ -353,7 +353,7 @@ struct ChatView: View {
     /// 滚到底部锚点；延迟一帧让 LazyVStack 渲染稳定
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = false) {
         DispatchQueue.main.async {
-            withAnimation(animated ? DS.Anim.message : nil) {
+            withAnimation(animated ? .easeOut(duration: 0.15) : nil) {
                 proxy.scrollTo("bottomAnchor", anchor: .bottom)
             }
         }
