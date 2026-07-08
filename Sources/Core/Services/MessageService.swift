@@ -157,15 +157,14 @@ final class MessageService: ObservableObject {
         reachedOldestLocal.remove(channel.rawValue)
         
         let older: [ChatMessage] = await withCheckedContinuation { continuation in
-            socket.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": firstTs, "limit": limit])?
-                .timingOut(after: 9) { data in
-                    guard let dict = data.first as? [String: Any],
-                          let list = dict["list"] as? [[String: Any]] else {
-                        continuation.resume(returning: [])
-                        return
-                    }
-                    continuation.resume(returning: list.compactMap { ChatMessage(dict: $0) })
+            socket.emitWithAck("messages:fetch", timeout: 9, ["channel": channel.rawValue, "before": firstTs, "limit": limit]) { data in
+                guard let dict = data.first as? [String: Any],
+                      let list = dict["list"] as? [[String: Any]] else {
+                    continuation.resume(returning: [])
+                    return
                 }
+                continuation.resume(returning: list.compactMap { ChatMessage(dict: $0) })
+            }
         }
         
         defer { loadingOlderChannels.remove(channel.rawValue) }
@@ -216,7 +215,7 @@ final class MessageService: ObservableObject {
             payload["reply"] = ["id": replyTo, "preview": replyPreview ?? ""]
         }
         
-        socket.emitWithAck("message:send", payload)?.timingOut(after: 15) { [weak self] data in
+        socket.emitWithAck("message:send", timeout: 15, payload) { [weak self] data in
             Task { @MainActor in
                 self?.handleSendAck(data, clientId: clientId, channel: channel)
             }
@@ -255,7 +254,7 @@ final class MessageService: ObservableObject {
             "clientId": clientId,
         ]
         
-        socket.emitWithAck("message:send", payload)?.timingOut(after: 15) { [weak self] data in
+        socket.emitWithAck("message:send", timeout: 15, payload) { [weak self] data in
             Task { @MainActor in
                 self?.handleSendAck(data, clientId: clientId, channel: channel)
             }
@@ -292,7 +291,7 @@ final class MessageService: ObservableObject {
             "clientId": clientId,
         ]
         
-        socket.emitWithAck("message:send", payload)?.timingOut(after: 15) { [weak self] data in
+        socket.emitWithAck("message:send", timeout: 15, payload) { [weak self] data in
             Task { @MainActor in
                 self?.handleSendAck(data, clientId: clientId, channel: channel)
             }
@@ -358,7 +357,7 @@ final class MessageService: ObservableObject {
             self.database?.insertMessage(m)
         }
         
-        socket.emitWithAck("message:recall", ["id": message.id])?.timingOut(after: 9) { _ in }
+        socket.emitWithAck("message:recall", timeout: 9, ["id": message.id]) { _ in }
     }
     
     func resend(_ message: ChatMessage) {
@@ -433,11 +432,11 @@ final class MessageService: ObservableObject {
         guard let socket = socketService, socket.isConnected else { return local }
         
         return await withCheckedContinuation { continuation in
-            socket.emitWithAck("messages:search", [
+            socket.emitWithAck("messages:search", timeout: 9, [
                 "channel": channel.rawValue,
                 "query": q,
                 "limit": 50,
-            ])?.timingOut(after: 9) { data in
+            ]) { data in
                 guard let dict = data.first as? [String: Any],
                       let list = dict["list"] as? [[String: Any]] else {
                     continuation.resume(returning: local)

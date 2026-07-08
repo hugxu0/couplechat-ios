@@ -480,7 +480,7 @@ final class ChatStore: ObservableObject {
             return
         }
         
-        socketService.emitWithAck("health")?.timingOut(after: 2.5) { [weak self] data in
+        socketService.emitWithAck("health", timeout: 2.5) { [weak self] data in
             Task { @MainActor in
                 guard let self else { return }
                 if data.first is [String: Any] {
@@ -505,7 +505,7 @@ final class ChatStore: ObservableObject {
         var payload: [String: Any] = ["channel": channel.rawValue, "limit": limit]
         if lastTs > 0 { payload["since"] = lastTs }
         
-        socketService.emitWithAck("messages:fetch", payload)?.timingOut(after: 9) { [weak self] data in
+        socketService.emitWithAck("messages:fetch", timeout: 9, payload) { [weak self] data in
             guard let dict = data.first as? [String: Any],
                   let list = dict["list"] as? [[String: Any]] else { return }
             
@@ -768,7 +768,7 @@ final class ChatStore: ObservableObject {
         guard connected else { return false }
         
         return await withCheckedContinuation { continuation in
-            socketService.emitWithAck("health")?.timingOut(after: 2.5) { [weak self] data in
+            socketService.emitWithAck("health", timeout: 2.5) { [weak self] data in
                 Task { @MainActor in
                     guard let self else {
                         continuation.resume(returning: false)
@@ -825,7 +825,7 @@ final class ChatStore: ObservableObject {
                 var payload: [String: Any] = ["channel": channel.rawValue, "limit": pageLimit]
                 if let oldest { payload["before"] = oldest }
                 
-                socketService.emitWithAck("messages:fetch", payload)?.timingOut(after: 15) { data in
+                socketService.emitWithAck("messages:fetch", timeout: 15, payload) { data in
                     guard let dict = data.first as? [String: Any],
                           let list = dict["list"] as? [[String: Any]] else {
                         cont.resume(returning: [])
@@ -905,12 +905,12 @@ final class ChatStore: ObservableObject {
             limit: 80)
         
         if dayMessages.isEmpty, let socket = socketService, connected {
-            socket.emitWithAck("messages:fetch", [
+            socket.emitWithAck("messages:fetch", timeout: 9, [
                 "channel": channel.rawValue,
                 "after": range.start,
                 "before": range.end,
                 "limit": 80,
-            ])?.timingOut(after: 9) { data in
+            ]) { data in
                 guard let dict = data.first as? [String: Any],
                       let list = dict["list"] as? [[String: Any]] else { return }
                 let incoming = list.compactMap { ChatMessage(dict: $0) }

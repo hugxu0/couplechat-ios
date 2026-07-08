@@ -64,8 +64,10 @@ final class SocketService: ObservableObject {
         socket?.emit(event, items)
     }
     
-    func emitWithAck(_ event: String, _ items: Any...) -> SocketAckEmitter? {
-        socket?.emitWithAck(event, items)
+    func emitWithAck(_ event: String, timeout: Double, _ items: Any..., callback: @escaping ([Any]) -> Void) {
+        socket?.emitWithAck(event, items).timingOut(after: timeout) { data in
+            callback(data)
+        }
     }
     
     // MARK: - 事件绑定
