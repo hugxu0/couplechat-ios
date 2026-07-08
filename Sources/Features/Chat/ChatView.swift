@@ -89,6 +89,9 @@ struct ChatView: View {
                 VStack(spacing: 0) {
                     replyBar
                     aiTypingHint
+                    if !mediaPreviewItems.isEmpty {
+                        mediaPreviewRow
+                    }
                     composer
                     if showStickerPanel {
                         StickerEmojiPanel(
@@ -536,32 +539,26 @@ struct ChatView: View {
 
     // 单层输入框：附件按钮嵌在左侧，表情按钮嵌在右侧，对称布局，整体高度与两侧圆形按钮对齐
     private var messageBox: some View {
-        VStack(spacing: 0) {
-            if !mediaPreviewItems.isEmpty {
-                mediaPreviewRow
+        HStack(alignment: .center, spacing: 8) {
+            mediaPicker
+            TextField("消息", text: $draft, axis: .vertical)
+                .focused($inputFocused)
+                .lineLimit(1...5)
+                .font(.system(size: 17))
+                .multilineTextAlignment(.leading)
+            Button {
+                Haptics.light()
+                toggleStickerPanel()
+            } label: {
+                Image(systemName: showStickerPanel ? "keyboard" : "face.smiling")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(showStickerPanel ? DS.Palette.accent : DS.Palette.textSecondary)
+                    .frame(width: 22, height: 22)
             }
-            HStack(alignment: .center, spacing: 8) {
-                mediaPicker
-                TextField("消息", text: $draft, axis: .vertical)
-                    .focused($inputFocused)
-                    .lineLimit(1...5)
-                    .font(.system(size: 17))
-                    .multilineTextAlignment(.leading)
-                Button {
-                    Haptics.light()
-                    toggleStickerPanel()
-                } label: {
-                    Image(systemName: showStickerPanel ? "keyboard" : "face.smiling")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(showStickerPanel ? DS.Palette.accent : DS.Palette.textSecondary)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(PressableStyle())
-            }
-            .padding(.horizontal, 13)
-            .padding(.vertical, mediaPreviewItems.isEmpty ? 0 : 8)
-            .frame(minHeight: Self.composerButtonSize)
+            .buttonStyle(PressableStyle())
         }
+        .padding(.horizontal, 13)
+        .frame(minHeight: Self.composerButtonSize)
         .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.bubble + 2, style: .continuous))
     }
 
