@@ -14,6 +14,7 @@ final class ChatStore: ObservableObject {
     @Published var connected = false
     @Published private(set) var messagesByChannel: [String: [ChatMessage]] = [:]
     @Published var partnerOnline = false
+    @Published var reachedOldestLocal: Set<String> = []
     @Published var partner: Account? {
         didSet {
             if let partner = partner,
@@ -146,6 +147,7 @@ final class ChatStore: ObservableObject {
                 guard let self else { return }
                 self.connected = true
                 self.lastConnectionError = nil
+                self.reachedOldestLocal.removeAll()
                 self.reportAway(false)
                 self.syncHistory(.couple)
                 self.syncHistory(.ai)
@@ -535,7 +537,7 @@ final class ChatStore: ObservableObject {
         loadingOlderChannels.contains(channel.rawValue)
     }
 
-    /// 供 onAppear 触发的即发即弃版本。
+    /// 供 `onAppear` 触发的即发即弃版本。
     func loadOlder(_ channel: ChatChannel = .couple) {
         Task { await loadOlderAsync(channel) }
     }
@@ -559,6 +561,7 @@ final class ChatStore: ObservableObject {
         }.value
 
         if !localOlder.isEmpty {
+            reachedOldestLocal.remove(channel.rawValue)
             updateMessages(channel) { current in
                 let known = Set(current.map(\.id))
                 current.insert(contentsOf: localOlder.filter { !known.contains($0.id) }, at: 0)
@@ -569,9 +572,11 @@ final class ChatStore: ObservableObject {
 
         // 本地库没有更早消息时再兜底访问网络。
         guard let s = socket, connected else {
+            reachedOldestLocal.insert(channel.rawValue)
             loadingOlderChannels.remove(channel.rawValue)
             return
         }
+        reachedOldestLocal.remove(channel.rawValue)
 
         let older: [ChatMessage] = await withCheckedContinuation { continuation in
             s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": firstTs, "limit": limit])

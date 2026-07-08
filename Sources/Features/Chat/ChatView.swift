@@ -199,6 +199,12 @@ struct ChatView: View {
                         ProgressView()
                             .padding(.vertical, 10)
                             .frame(maxWidth: .infinity)
+                    } else if !store.connected && store.reachedOldestLocal.contains(channel.rawValue) {
+                        Text("已显示所有本地消息")
+                            .font(.system(size: 13))
+                            .foregroundStyle(DS.Palette.textSecondary)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
                     }
                     ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
                         VStack(spacing: 0) {
