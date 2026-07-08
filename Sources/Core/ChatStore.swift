@@ -873,6 +873,33 @@ final class ChatStore: ObservableObject {
         setShared("anniversaries", value: ["items": items.map { $0.asDict }])
     }
 
+    // MARK: 对方备注（仅本地，不同步给对方）
+    /// 读取对方备注名；空串按未设置处理
+    func partnerAlias(for username: String?) -> String? {
+        guard let username, !username.isEmpty else { return nil }
+        let value = UserDefaults.standard.string(forKey: "partner_alias_\(username)")
+        return (value?.isEmpty == false) ? value : nil
+    }
+
+    /// 设置/清空对方备注名；写完主动通知观察者刷新（标题、首页、详情页统一取备注）
+    func setPartnerAlias(_ alias: String?, for username: String?) {
+        guard let username, !username.isEmpty else { return }
+        let key = "partner_alias_\(username)"
+        let trimmed = alias?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: key)
+        } else {
+            UserDefaults.standard.set(String(trimmed.prefix(12)), forKey: key)
+        }
+        objectWillChange.send()
+    }
+
+    /// 对方展示名：优先备注，其次账号昵称，最后回退占位
+    func partnerDisplayName(fallback: String = "对方") -> String {
+        if let alias = partnerAlias(for: partner?.username) { return alias }
+        return partner?.name ?? fallback
+    }
+
     // MARK: 聊天时光统计（本地缓存聚合，无需服务端）
 
     struct LocalStatsBuckets {

@@ -13,14 +13,13 @@ struct ChatHomeView: View {
     @State private var noteText = ""
     @State private var statusEditMode = false
     @State private var refreshMessage: String?
-    @State private var isRefreshing = false
     @AppStorage("chat_home_statuses_v2") private var statusesJSON = ""
     @AppStorage("chat_home_custom_statuses") private var legacyCustomStatusData = ""
 
     private var myName: String { store.session?.name ?? "小旭" }
     private var myUsername: String { store.session?.username ?? "xu" }
     private var myAvatar: String { AccountPresentation.avatar(for: myUsername) }
-    private var partnerName: String { store.partner?.name ?? "小偲" }
+    private var partnerName: String { store.partnerDisplayName(fallback: "小偲") }
     private var partnerUsername: String { store.partner?.username ?? (myUsername == "xu" ? "si" : "xu") }
     private var partnerAvatar: String {
         store.partner?.avatar ?? AccountPresentation.avatar(for: partnerUsername)
@@ -54,7 +53,10 @@ struct ChatHomeView: View {
                     .padding(.bottom, 100)
             }
             .refreshable {
-                await refreshHome()
+                // 只在下拉手势里做网络同步，拿到结果立刻收起刷新圈；
+                // 结果提示放到视图归位之后再弹，避免被下拉状态挡住「一闪而过」。
+                let success = await store.refreshHomeData()
+                await MainActor.run { flashRefreshResult(success) }
             }
             .scrollIndicators(.hidden)
             .background(DS.Palette.bgGradient.ignoresSafeArea())
@@ -89,10 +91,6 @@ struct ChatHomeView: View {
                         .padding(.top, 8)
                         .transition(.move(edge: .top).combined(with: .opacity))
                         .animation(DS.Anim.ease, value: refreshMessage)
-                }
-                if isRefreshing {
-                    ProgressView()
-                        .padding(.top, 12)
                 }
             }
         }
@@ -414,22 +412,15 @@ struct ChatHomeView: View {
         .buttonStyle(PressableStyle())
     }
 
-    private func refreshHome() async {
-        await MainActor.run {
-            isRefreshing = true
-            refreshMessage = nil
+    /// 刷新结束后弹一条结果提示，1.8s 后自动消失（独立于下拉手势的生命周期）
+    private func flashRefreshResult(_ success: Bool) {
+        withAnimation(DS.Anim.ease) {
+            refreshMessage = success ? "已更新" : "刷新失败，稍后再试"
         }
-        let success = await store.refreshHomeData()
-        await MainActor.run {
-            isRefreshing = false
-            withAnimation(DS.Anim.ease) {
-                refreshMessage = success ? "已更新" : "刷新失败，稍后再试"
-            }
-        }
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
-        await MainActor.run {
-            withAnimation(DS.Anim.ease) {
-                refreshMessage = nil
+        Task {
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            await MainActor.run {
+                withAnimation(DS.Anim.ease) { refreshMessage = nil }
             }
         }
     }

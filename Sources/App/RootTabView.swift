@@ -23,7 +23,15 @@ enum MainTab: String, CaseIterable {
 
 /// 跨页面共享的 App 状态（比如「正在会话中 → 隐藏底栏」）
 final class AppState: ObservableObject {
-    @Published var chatOpen = false
+    /// 会话栈深度：进聊天页 +1，进聊天里的子页（详情/设置）再 +1，逐层退出时递减。
+    /// 用计数而不是单个布尔，避免「push 子页时源页 onDisappear 把底栏又放出来」。
+    @Published private var chatDepth = 0
+
+    /// 只要还在聊天流程里（含任何子页）就隐藏底部标签栏
+    var chatOpen: Bool { chatDepth > 0 }
+
+    func enterChatLayer() { chatDepth += 1 }
+    func exitChatLayer() { chatDepth = max(0, chatDepth - 1) }
 }
 
 struct RootTabView: View {

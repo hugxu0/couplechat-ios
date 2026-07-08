@@ -10,6 +10,7 @@ struct ChatDetailSettingsView: View {
 
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
 
     @State private var showSearch = false
@@ -17,6 +18,11 @@ struct ChatDetailSettingsView: View {
     @State private var showWallpaper = false
     @State private var showAliasPrompt = false
     @State private var aliasText = ""
+
+    /// 当前展示名：优先本地备注，其次账号昵称
+    private var displayName: String {
+        channel == .ai ? partnerName : store.partnerDisplayName(fallback: partnerName)
+    }
 
     @AppStorage("chat_muted") private var chatMuted: Bool = false
 
@@ -47,12 +53,21 @@ struct ChatDetailSettingsView: View {
         }
         .alert("设置备注", isPresented: $showAliasPrompt) {
             TextField("备注名（最多 12 字）", text: $aliasText)
-            Button("保存") { Haptics.light() }
+            Button("保存") { saveAlias() }
             Button("取消", role: .cancel) {}
         } message: {
             Text("仅自己可见，不会同步给对方")
         }
-        .onAppear { aliasText = partnerName }
+        // 子页也算聊天流程的一层，保持底部标签栏隐藏
+        .onAppear { app.enterChatLayer() }
+        .onDisappear { app.exitChatLayer() }
+    }
+
+    private func saveAlias() {
+        Haptics.light()
+        // ai 频道不支持备注；couple 频道按对方账号存本地备注
+        guard channel == .couple else { return }
+        store.setPartnerAlias(aliasText, for: store.partner?.username)
     }
 
     // MARK: - Section 1: 头像 & 身份
@@ -74,7 +89,7 @@ struct ChatDetailSettingsView: View {
                             .offset(x: 2, y: 2)
                     }
 
-                Text(aliasText.isEmpty ? partnerName : aliasText)
+                Text(displayName)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(DS.Palette.textPrimary)
 
@@ -86,14 +101,15 @@ struct ChatDetailSettingsView: View {
             .padding(.vertical, 12)
 
             Button {
-                aliasText = aliasText.isEmpty ? partnerName : aliasText
+                // 预填当前备注（没设置就留空，方便直接输入）
+                aliasText = store.partnerAlias(for: store.partner?.username) ?? ""
                 showAliasPrompt = true
             } label: {
                 HStack {
                     Label("设置备注", systemImage: "pencil")
                         .foregroundStyle(DS.Palette.textPrimary)
                     Spacer()
-                    Text(aliasText.isEmpty ? partnerName : aliasText)
+                    Text(displayName)
                         .font(.system(size: 14))
                         .foregroundStyle(DS.Palette.textSecondary)
                         .lineLimit(1)

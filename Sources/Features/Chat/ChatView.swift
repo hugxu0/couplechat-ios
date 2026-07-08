@@ -48,7 +48,7 @@ struct ChatView: View {
     }
     private var title: String {
         switch channel {
-        case .couple: return store.partner?.name ?? "聊天"
+        case .couple: return store.partnerDisplayName(fallback: "聊天")
         case .ai: return "大橘"
         }
     }
@@ -145,12 +145,12 @@ struct ChatView: View {
         }
         // 进会话隐藏底部标签栏，退出（含侧滑返回）恢复
         .onAppear {
-            app.chatOpen = true
+            app.enterChatLayer()
             // 兜底：内存里没消息时立刻从本地库补，保证进来就能看到历史
             store.ensureLocalMessages(channel)
             store.markRead(channel)
         }
-        .onDisappear { app.chatOpen = false }
+        .onDisappear { app.exitChatLayer() }
         .onChange(of: selectedMedia) {
             guard let selectedMedia else { return }
             sendMedia(selectedMedia)

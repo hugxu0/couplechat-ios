@@ -29,8 +29,8 @@ struct RecordsView: View {
                         heroCard
                         anniversaryGrid
                         ChatStatsCard()
-                        diaryCard
                         recommendCard
+                        diaryCard
                     }
                     .padding(.horizontal, DS.Spacing.page)
                     .padding(.bottom, 90)
