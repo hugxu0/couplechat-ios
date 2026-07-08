@@ -89,9 +89,6 @@ struct ChatView: View {
                 VStack(spacing: 0) {
                     replyBar
                     aiTypingHint
-                    if !mediaPreviewItems.isEmpty {
-                        mediaPreviewBar
-                    }
                     composer
                     if showStickerPanel {
                         StickerEmojiPanel(
@@ -539,27 +536,65 @@ struct ChatView: View {
 
     // 单层输入框：附件按钮嵌在左侧，表情按钮嵌在右侧，对称布局，整体高度与两侧圆形按钮对齐
     private var messageBox: some View {
-        HStack(alignment: .center, spacing: 8) {
-            mediaPicker
-            TextField("消息", text: $draft, axis: .vertical)
-                .focused($inputFocused)
-                .lineLimit(1...5)
-                .font(.system(size: 17))
-                .multilineTextAlignment(.leading)
-            Button {
-                Haptics.light()
-                toggleStickerPanel()
-            } label: {
-                Image(systemName: showStickerPanel ? "keyboard" : "face.smiling")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(showStickerPanel ? DS.Palette.accent : DS.Palette.textSecondary)
-                    .frame(width: 22, height: 22)
+        VStack(spacing: 0) {
+            if !mediaPreviewItems.isEmpty {
+                mediaPreviewRow
             }
-            .buttonStyle(PressableStyle())
+            HStack(alignment: .center, spacing: 8) {
+                mediaPicker
+                TextField("消息", text: $draft, axis: .vertical)
+                    .focused($inputFocused)
+                    .lineLimit(1...5)
+                    .font(.system(size: 17))
+                    .multilineTextAlignment(.leading)
+                Button {
+                    Haptics.light()
+                    toggleStickerPanel()
+                } label: {
+                    Image(systemName: showStickerPanel ? "keyboard" : "face.smiling")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(showStickerPanel ? DS.Palette.accent : DS.Palette.textSecondary)
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(PressableStyle())
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, mediaPreviewItems.isEmpty ? 0 : 8)
+            .frame(minHeight: Self.composerButtonSize)
         }
-        .padding(.horizontal, 13)
-        .frame(minHeight: Self.composerButtonSize)
         .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.bubble + 2, style: .continuous))
+    }
+
+    private var mediaPreviewRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(mediaPreviewItems) { item in
+                    ZStack(alignment: .topTrailing) {
+                        Image(uiImage: item.image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 52, height: 52)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                        Button {
+                            withAnimation(DS.Anim.springFast) {
+                                mediaPreviewItems.removeAll { $0.id == item.id }
+                                selectedMediaItems.removeAll { $0 == item.item }
+                            }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, DS.Palette.textSecondary.opacity(0.5))
+                        }
+                        .offset(x: 3, y: -3)
+                    }
+                }
+            }
+            .padding(.horizontal, 13)
+            .padding(.top, 8)
+        }
+        .frame(height: 64)
     }
 
     // 录音中：替换输入框，展示时长 + 左滑取消提示
@@ -685,7 +720,7 @@ struct ChatView: View {
             matching: .any(of: [.images, .videos]),
             photoLibrary: .shared()
         ) {
-            Image(systemName: mediaBusy ? "hourglass" : "photo.on.rectangle")
+            Image(systemName: mediaBusy ? "hourglass" : "paperclip")
                 .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(mediaBusy ? DS.Palette.textSecondary.opacity(0.6) : DS.Palette.textSecondary)
                 .frame(width: 22, height: 22)
@@ -981,42 +1016,6 @@ struct ChatView: View {
         }
     }
 
-    private var mediaPreviewBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(mediaPreviewItems) { item in
-                    ZStack(alignment: .topTrailing) {
-                        Image(uiImage: item.image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 60, height: 60)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(DS.Palette.textSecondary.opacity(0.2), lineWidth: 0.5)
-                            )
-
-                        Button {
-                            withAnimation(DS.Anim.springFast) {
-                                mediaPreviewItems.removeAll { $0.id == item.id }
-                                selectedMediaItems.removeAll { $0 == item.item }
-                            }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 16))
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(.white, DS.Palette.textSecondary.opacity(0.6))
-                        }
-                        .offset(x: 4, y: -4)
-                    }
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-        }
-        .frame(height: 80)
-        .dsGlass(in: Rectangle())
-    }
 
     private func prepareMedia(_ item: PhotosPickerItem) async throws -> PreparedMedia {
         let contentTypes = item.supportedContentTypes
