@@ -124,7 +124,7 @@ final class MessageStore: ObservableObject {
     private func migrateLegacyCacheIfNeeded(for session: Session) {
         let existing = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.couple.rawValue, limit: 1)
         guard existing.isEmpty,
-              let snapshot = ChatLocalCache.load(for: session.username) else { return }
+              let snapshot = LegacyCacheMigration.load(for: session.username) else { return }
         for (_, list) in snapshot.messagesByChannel {
             for msg in list where !msg.pending && !msg.failed {
                 ChatLocalDatabase.shared.insertMessage(msg)
@@ -135,7 +135,7 @@ final class MessageStore: ObservableObject {
                 ChatLocalDatabase.shared.saveReadReceipt(channel: channel, username: user, ts: ts, updatedAt: snapshot.savedAt)
             }
         }
-        ChatLocalCache.clear(for: session.username)
+        LegacyCacheMigration.clear(for: session.username)
     }
 
     // MARK: - 搜索跳转

@@ -1,6 +1,6 @@
 import Foundation
 
-enum ChatLocalCache {
+enum LegacyCacheMigration {
     struct Snapshot: Codable {
         var username: String
         var savedAt: Double
