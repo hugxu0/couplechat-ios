@@ -47,6 +47,7 @@ final class ChatViewController: UIViewController {
     private var highlightedMessageId: String?
     private var pendingTopAnchor: (itemId: String, offset: CGFloat)?
     private var didInitialScroll = false
+    private var hasPinnedInitialTimeline = false
     private var inputState: ChatInputState = .idle
     private var browsingHistoricalWindow = false
     var stickToLatestAfterNextReload = false
@@ -142,6 +143,7 @@ final class ChatViewController: UIViewController {
             // 导致最后一个气泡轻微上弹。
             applyInputLayout(duration: 0, curve: .curveEaseOut, forceBottom: true)
             scrollToBottom(animated: false)
+            hasPinnedInitialTimeline = !timelineItems.isEmpty
             updateJumpToBottomVisibility(animated: false)
         } else {
             applyInputLayout(duration: 0, curve: .curveEaseOut)
@@ -375,7 +377,12 @@ final class ChatViewController: UIViewController {
             UIView.performWithoutAnimation(reload)
         }
 
-        if stickToLatestAfterNextReload {
+        if !hasPinnedInitialTimeline && newMessageCount > 0 {
+            // 本地数据库在页面展示后才回填时，首批消息也必须无动画贴底，
+            // 否则会先显示在输入栏下方再弹回正确位置。
+            hasPinnedInitialTimeline = true
+            scrollToBottom(animated: false)
+        } else if stickToLatestAfterNextReload {
             stickToLatestAfterNextReload = false
             browsingHistoricalWindow = false
             scrollToBottom(animated: animated)

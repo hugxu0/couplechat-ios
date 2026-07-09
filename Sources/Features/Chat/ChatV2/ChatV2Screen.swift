@@ -12,6 +12,7 @@ struct ChatV2Screen: View {
 
     @State private var mediaViewerMessageId: String?
     @State private var jumpCommand: ChatV2JumpCommand?
+    @State private var isShowingDetail = false
 
     private var title: String {
         switch channel {
@@ -45,7 +46,9 @@ struct ChatV2Screen: View {
 
     private var topBarUsesDarkText: Bool {
         if let image = theme.customWallpaperImage(for: channel) {
-            return Self.topRegionLuminance(of: image) > 0.54
+            // 自定义壁纸可能混有局部高光；用顶部控制区的中位亮度而非平均值，
+            // 避免深色壁纸被一小块亮图误判成浅色。
+            return Self.topRegionLuminance(of: image) > 0.62
         }
         return displayedWallpaper != .night
     }
@@ -151,14 +154,26 @@ struct ChatV2Screen: View {
 
             Spacer(minLength: 0)
 
-            NavigationLink {
+            NavigationLink(isActive: $isShowingDetail) {
                 ChatDetailSettingsView(
                     channel: channel,
                     partnerName: title,
                     partnerAvatar: peerAvatar,
                     partnerOnline: store.partnerOnline,
-                    onJumpToMessage: { jumpCommand = ChatV2JumpCommand(action: .message($0)) },
-                    onJumpToDate: { jumpCommand = ChatV2JumpCommand(action: .date($0)) }
+                    onJumpToMessage: { message in
+                        isShowingDetail = false
+                        let command = ChatV2JumpCommand(action: .message(message))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            jumpCommand = command
+                        }
+                    },
+                    onJumpToDate: { date in
+                        isShowingDetail = false
+                        let command = ChatV2JumpCommand(action: .date(date))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            jumpCommand = command
+                        }
+                    }
                 )
             } label: {
                 AvatarBadge(
@@ -246,20 +261,21 @@ struct ChatV2Screen: View {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return 0.7 }
         let sourceHeight = CGFloat(cgImage.height)
-        let cropRect = CGRect(x: 0, y: 0, width: CGFloat(cgImage.width), height: max(1, sourceHeight * 0.22))
+        let cropRect = CGRect(x: 0, y: 0, width: CGFloat(cgImage.width), height: max(1, sourceHeight * 0.18))
         if let topImage = cgImage.cropping(to: cropRect) {
             context.draw(topImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         } else {
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         }
-        var total: CGFloat = 0
+        var luminances: [CGFloat] = []
+        luminances.reserveCapacity(width * height)
         for index in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
             let r = CGFloat(pixels[index]) / 255
             let g = CGFloat(pixels[index + 1]) / 255
             let b = CGFloat(pixels[index + 2]) / 255
-            total += 0.2126 * r + 0.7152 * g + 0.0722 * b
+            luminances.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
         }
-        return total / CGFloat(width * height)
+        return luminances.sorted()[luminances.count / 2]
     }
 }
 

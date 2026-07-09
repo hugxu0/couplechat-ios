@@ -184,7 +184,12 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         avatarView.isHidden = false
 
         let mediaOnly = Self.isStandaloneMedia(message)
-        bubbleView.backgroundColor = mediaOnly ? .clear : (mine ? accentColor : UIColor.systemBackground.withAlphaComponent(0.94))
+        // Context-menu 预览可能在不同 trait 环境中重绘动态系统色，造成气泡翻色。
+        // 这里在配置时固化当前外观下的颜色，让长按仅表现为系统的轻微抬起效果。
+        let incomingBubbleColor = UIColor.systemBackground
+            .resolvedColor(with: traitCollection)
+            .withAlphaComponent(0.94)
+        bubbleView.backgroundColor = mediaOnly ? .clear : (mine ? accentColor : incomingBubbleColor)
         bodyLabel.textColor = mine ? .white : .label
         replyMarker.backgroundColor = mine ? UIColor.white.withAlphaComponent(0.9) : accentColor
         replyLabel.textColor = mine ? UIColor.white.withAlphaComponent(0.86) : .secondaryLabel
@@ -436,10 +441,10 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         let parameters = UIPreviewParameters()
         parameters.backgroundColor = .clear
         parameters.visiblePath = UIBezierPath(
-            roundedRect: bubbleView.bounds,
+            roundedRect: bubbleView.frame,
             cornerRadius: bubbleView.layer.cornerRadius
         )
-        return UITargetedPreview(view: bubbleView, parameters: parameters)
+        return UITargetedPreview(view: contentView, parameters: parameters)
     }
 }
 
