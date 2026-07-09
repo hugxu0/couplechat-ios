@@ -44,11 +44,22 @@ struct ChatV2Screen: View {
         Array(store.mediaMessages(for: channel, includeFiles: false).reversed())
     }
 
-    private var topBarUsesDarkText: Bool {
+    /// 顶栏和输入栏是两块独立的“表面”：它们应该由实际壁纸采样决定，
+    /// 而不是受系统深浅模式或同一段渐变的偶然观感影响。
+    private var topSurfaceLuminance: CGFloat {
         if let luminance = theme.customWallpaperLuminance(for: channel, region: .top) {
-            return luminance > 0.50
+            return luminance
         }
-        return displayedWallpaper != .night
+        return displayedWallpaper == .night ? 0.18 : 0.82
+    }
+
+    private var usesNightTopChrome: Bool {
+        // 低于此值时，黑色玻璃与白色内容的对比度比浅色玻璃稳定。
+        topSurfaceLuminance < 0.47
+    }
+
+    private var topBarUsesDarkText: Bool {
+        !usesNightTopChrome
     }
 
     private var composerUsesDarkText: Bool {
@@ -197,34 +208,45 @@ struct ChatV2Screen: View {
         .padding(.bottom, 7)
     }
 
+    @ViewBuilder
     private func topSafeGlass(height: CGFloat) -> some View {
-        // 保留最初的轻量渐变玻璃：材质只在状态栏附近轻轻取样，
-        // 由渐变自然消失，不能把整张深色壁纸洗成一层灰白色。
-        ZStack {
-            LiquidGlassBackground(
-                cornerRadius: 0,
-                tintColor: topBarUsesDarkText ? .white : .black,
-                tintAlpha: topBarUsesDarkText ? 0.035 : 0.065,
-                borderAlpha: 0,
-                gradientAlpha: topBarUsesDarkText ? 0.10 : 0.14
-            )
-            // 材质层本身也要淡出，避免标题栏底部出现硬边或雾状横带。
-            .mask(
+        Group {
+            if usesNightTopChrome {
+                // 深色顶端：沿用已验证正常的夜间黑玻璃。
+                ZStack {
+                    LiquidGlassBackground(
+                        cornerRadius: 0,
+                        tintColor: .black,
+                        tintAlpha: 0.065,
+                        borderAlpha: 0,
+                        gradientAlpha: 0.14
+                    )
+                    .mask(
+                        LinearGradient(
+                            colors: [.black.opacity(0.92), .black.opacity(0.58), .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    LinearGradient(
+                        colors: [.black.opacity(0.10), .black.opacity(0.035), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+            } else {
+                // 浅色顶端不铺全宽 material；原生材质的高光会叠成用户看到的白雾。
+                // 只保留一层极轻的暗色阴影，既让黑色状态栏清楚，又不改变壁纸颜色。
                 LinearGradient(
-                    colors: [.black.opacity(0.92), .black.opacity(0.58), .clear],
+                    colors: [
+                        .black.opacity(0.035),
+                        .black.opacity(0.010),
+                        .clear,
+                    ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-            )
-            LinearGradient(
-                colors: [
-                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.06 : 0.10),
-                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.018 : 0.035),
-                    .clear,
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            }
         }
         .frame(height: height)
         .allowsHitTesting(false)
