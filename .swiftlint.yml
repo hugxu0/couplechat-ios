@@ -18,26 +18,6 @@ disabled_rules:
   - vertical_whitespace
   - modifier_order
   - statement_position
-  - opening_brace
-  - closure_parameter_position
-  - no_space_in_method_call
-  - colon
-  - return_arrow_whitespace
-  - unused_closure_parameter
-  - weak_delegate
-  - redundant_optional_initialization
-  - multiple_closures_with_trailing_closure
-  - void_return
-  - empty_parentheses_with_trailing_closure
-  - syntactic_sugar
-  - mark
-  - todo
-  - no_fallthrough_only
-  - fallthrough
-  - control_statement
-  - trailing_semicolon
-  - vertical_parameter_alignment
-  - void_return_in_closure
 
 opt_in_rules:
   - empty_count
@@ -48,7 +28,6 @@ opt_in_rules:
   - private_action
   - private_outlet
   - prohibited_super_call
-  - redundant_nil_coalescing
   - toggle_bool
 
 excluded:
@@ -59,25 +38,3 @@ excluded:
   - server
   - .build
   - .github
-
-identifier_name:
-  min_length:
-    warning: 2
-  max_length:
-    warning: 60
-  excluded:
-    - id
-    - i
-    - j
-    - x
-    - y
-    - to
-    - at
-
-type_body_length:
-  warning: 800
-  error: 1500
-
-function_body_length:
-  warning: 150
-  error: 300
