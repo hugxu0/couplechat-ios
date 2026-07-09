@@ -10,6 +10,9 @@ disabled_rules:
   - nesting
   - force_cast
   - force_try
+  - comma
+  - type_name
+  - trailing_comma
 
 opt_in_rules:
   - empty_count
