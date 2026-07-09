@@ -6,5 +6,4 @@ protocol SocketProvider: AnyObject {
     var socket: SocketIOClient? { get }
     var isConnected: Bool { get }
     var sessionUsername: String? { get }
-    func emit(_ event: String, _ items: SocketData...)
 }
