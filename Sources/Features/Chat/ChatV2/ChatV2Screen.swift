@@ -212,9 +212,21 @@ struct ChatV2Screen: View {
     private func topSafeGlass(height: CGFloat) -> some View {
         Group {
             if #available(iOS 26.0, *) {
-                // 顶部交给透明的系统导航环境与控件自身的 Liquid Glass；
-                // 不能在整个安全区再放一层自定义 material。
-                Color.clear
+                // 不加人工颜色，只把原生玻璃本身沿垂直方向羽化成顶部渐变模糊。
+                LiquidGlassBackground(
+                    cornerRadius: 0,
+                    tintColor: .clear,
+                    tintAlpha: 0,
+                    borderAlpha: 0,
+                    gradientAlpha: 0
+                )
+                .mask(
+                    LinearGradient(
+                        colors: [.white.opacity(0.88), .white.opacity(0.42), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
             } else {
                 // 旧系统没有 Liquid Glass，仅保留不改变壁纸色相的细微可读性渐隐。
                 LinearGradient(

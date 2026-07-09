@@ -72,7 +72,7 @@ final class ChatGlassView: UIView {
 
     func setTintColor(_ color: UIColor, alpha: CGFloat) {
         guard !usesSystemLiquidGlass else {
-            resetSystemLiquidGlassTint()
+            setSystemLiquidGlassTint(color, alpha: alpha)
             return
         }
         tintView.backgroundColor = color.withAlphaComponent(alpha)
@@ -87,7 +87,7 @@ final class ChatGlassView: UIView {
     /// 旧系统才使用兼容的模糊、渐变和色调。
     func setGlassTone(dark: Bool, tintAlpha: CGFloat, borderAlpha: CGFloat = 0.16) {
         guard !usesSystemLiquidGlass else {
-            resetSystemLiquidGlassTint()
+            setSystemLiquidGlassTint(dark ? .black : .white, alpha: tintAlpha)
             tintView.isHidden = true
             gradientLayer.isHidden = true
             layer.borderColor = UIColor.clear.cgColor
@@ -127,9 +127,9 @@ final class ChatGlassView: UIView {
         return false
     }
 
-    private func resetSystemLiquidGlassTint() {
+    private func setSystemLiquidGlassTint(_ color: UIColor, alpha: CGFloat) {
         if #available(iOS 26.0, *) {
-            (blurView.effect as? UIGlassEffect)?.tintColor = nil
+            (blurView.effect as? UIGlassEffect)?.tintColor = alpha > 0 ? color.withAlphaComponent(alpha) : nil
         }
     }
 }

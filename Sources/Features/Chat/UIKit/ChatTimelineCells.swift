@@ -246,18 +246,15 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         if mine {
             let avatarX = bounds.width - ChatTimelineMetrics.horizontalInset - avatarSize
             avatarView.frame = CGRect(x: avatarX, y: avatarY, width: avatarSize, height: avatarSize)
-            // 图片贴近头像，回执叠在图片右下；文字消息维持原有的外置回执，
-            // 给正文留出完整的可读区域，绝不能把勾选标志压到文字上。
-            let usesOverlayStatus = isMediaMessage(message) && !statusLabel.isHidden
-            let statusSpace = statusLabel.isHidden || usesOverlayStatus
+            // 统一“内容右边线”：文字、图片与贴纸都止于回执左侧。
+            // 回执永远外置，头像在最右，避免媒体遮挡勾选也避免内容左右跳线。
+            let statusSpace = statusLabel.isHidden
                 ? 0
                 : ChatTimelineMetrics.statusOutsideWidth + ChatTimelineMetrics.statusOutsideGap
             let x = avatarX - ChatTimelineMetrics.avatarGap - statusSpace - bubbleWidth
             bubbleView.frame = CGRect(x: x, y: topGap, width: bubbleWidth, height: bubbleHeight)
             statusLabel.frame = statusLabel.isHidden ? .zero : CGRect(
-                x: usesOverlayStatus
-                    ? bubbleView.frame.maxX - 20
-                    : bubbleView.frame.maxX + ChatTimelineMetrics.statusOutsideGap,
+                x: bubbleView.frame.maxX + ChatTimelineMetrics.statusOutsideGap,
                 y: bubbleView.frame.maxY - 25,
                 width: 16,
                 height: 16
@@ -431,13 +428,6 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         }
     }
 
-    private func isMediaMessage(_ message: ChatMessage) -> Bool {
-        switch message.type {
-        case "image", "video", "sticker": return true
-        default: return false
-        }
-    }
-
     private func cornerRadius(for message: ChatMessage) -> CGFloat {
         switch message.type {
         case "image", "video", "sticker": return 16
@@ -516,13 +506,13 @@ final class ChatNativeMessageCell: UICollectionViewCell {
     func bubbleTargetedPreview() -> UITargetedPreview {
         let parameters = UIPreviewParameters()
         parameters.backgroundColor = .clear
-        let path = UIBezierPath(
-            roundedRect: bubbleView.frame,
+        // 只让系统提升气泡。头像继续留在 collection cell 中，不参与坐标系转换，
+        // 这样长按不会把整格内容与头像一起抖动或造成滚动位置跳变。
+        parameters.visiblePath = UIBezierPath(
+            roundedRect: bubbleView.bounds,
             cornerRadius: bubbleView.layer.cornerRadius
         )
-        path.append(UIBezierPath(ovalIn: avatarView.frame))
-        parameters.visiblePath = path
-        return UITargetedPreview(view: contentView, parameters: parameters)
+        return UITargetedPreview(view: bubbleView, parameters: parameters)
     }
 }
 
