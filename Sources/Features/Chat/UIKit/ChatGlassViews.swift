@@ -46,6 +46,12 @@ final class ChatGlassView: UIView {
 
         layer.borderWidth = 0.6
         layer.borderColor = UIColor.white.withAlphaComponent(0.14).cgColor
+
+        if usesSystemLiquidGlass {
+            tintView.isHidden = true
+            gradientLayer.isHidden = true
+            layer.borderColor = UIColor.clear.cgColor
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -54,20 +60,39 @@ final class ChatGlassView: UIView {
 
     func update(cornerRadius: CGFloat, tintAlpha: CGFloat = 0.04, borderAlpha: CGFloat = 0.10) {
         layer.cornerRadius = cornerRadius
+        guard !usesSystemLiquidGlass else {
+            tintView.isHidden = true
+            gradientLayer.isHidden = true
+            layer.borderColor = UIColor.clear.cgColor
+            return
+        }
         tintView.backgroundColor = UIColor.white.withAlphaComponent(tintAlpha)
         layer.borderColor = UIColor.white.withAlphaComponent(borderAlpha).cgColor
     }
 
     func setTintColor(_ color: UIColor, alpha: CGFloat) {
+        guard !usesSystemLiquidGlass else {
+            resetSystemLiquidGlassTint()
+            return
+        }
         tintView.backgroundColor = color.withAlphaComponent(alpha)
     }
 
     func setGradientAlpha(_ alpha: CGFloat) {
+        guard !usesSystemLiquidGlass else { return }
         gradientLayer.opacity = Float(alpha)
     }
 
-    /// 原生模糊负责采样背景；根据背景选择深/浅玻璃以保持前景对比度。
+    /// iOS 26 的原生玻璃自行完成材质采样，不能再叠加我们自己的 tint 或高光层；
+    /// 旧系统才使用兼容的模糊、渐变和色调。
     func setGlassTone(dark: Bool, tintAlpha: CGFloat, borderAlpha: CGFloat = 0.16) {
+        guard !usesSystemLiquidGlass else {
+            resetSystemLiquidGlassTint()
+            tintView.isHidden = true
+            gradientLayer.isHidden = true
+            layer.borderColor = UIColor.clear.cgColor
+            return
+        }
         let tint = dark ? UIColor.black : UIColor.white
         tintView.backgroundColor = tint.withAlphaComponent(tintAlpha)
         gradientLayer.colors = dark
@@ -95,6 +120,17 @@ final class ChatGlassView: UIView {
             return UIGlassEffect(style: .regular)
         }
         return UIBlurEffect(style: fallback)
+    }
+
+    private var usesSystemLiquidGlass: Bool {
+        if #available(iOS 26.0, *) { return true }
+        return false
+    }
+
+    private func resetSystemLiquidGlassTint() {
+        if #available(iOS 26.0, *) {
+            (blurView.effect as? UIGlassEffect)?.tintColor = nil
+        }
     }
 }
 

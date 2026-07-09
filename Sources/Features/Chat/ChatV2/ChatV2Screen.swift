@@ -210,43 +210,20 @@ struct ChatV2Screen: View {
 
     @ViewBuilder
     private func topSafeGlass(height: CGFloat) -> some View {
-        Group {
-            if usesNightTopChrome {
-                // 深色顶端：沿用已验证正常的夜间黑玻璃。
-                ZStack {
-                    LiquidGlassBackground(
-                        cornerRadius: 0,
-                        tintColor: .black,
-                        tintAlpha: 0.065,
-                        borderAlpha: 0,
-                        gradientAlpha: 0.14
-                    )
-                    .mask(
-                        LinearGradient(
-                            colors: [.black.opacity(0.92), .black.opacity(0.58), .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    LinearGradient(
-                        colors: [.black.opacity(0.10), .black.opacity(0.035), .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
-            } else {
-                // 浅色顶端不铺全宽 material；原生材质的高光会叠成用户看到的白雾。
-                // 只保留一层极轻的暗色阴影，既让黑色状态栏清楚，又不改变壁纸颜色。
-                LinearGradient(
-                    colors: [
-                        .black.opacity(0.035),
-                        .black.opacity(0.010),
-                        .clear,
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
+        if #available(iOS 26.0, *) {
+            // 顶部交给透明的系统导航环境与控件自身的 Liquid Glass；
+            // 不能在整个安全区再放一层自定义 material。
+            Color.clear
+        } else {
+            // 旧系统没有 Liquid Glass，仅保留不改变壁纸色相的细微可读性渐隐。
+            LinearGradient(
+                colors: [
+                    usesNightTopChrome ? .black.opacity(0.10) : .black.opacity(0.035),
+                    .clear,
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
         }
         .frame(height: height)
         .allowsHitTesting(false)
@@ -280,25 +257,15 @@ private extension View {
     func chatTopLiquidGlass(cornerRadius: CGFloat, textIsDark: Bool) -> some View {
         self
             .background {
-                ZStack {
-                    LiquidGlassBackground(
-                        cornerRadius: cornerRadius,
-                        tintColor: textIsDark ? .white : .black,
-                        tintAlpha: textIsDark ? 0.14 : 0.34,
-                        borderAlpha: textIsDark ? 0.18 : 0.20,
-                        gradientAlpha: textIsDark ? 0.22 : 0.30
-                    )
-                    if !textIsDark {
-                        Color.black.opacity(0.12)
-                    }
-                }
+                LiquidGlassBackground(
+                    cornerRadius: cornerRadius,
+                    tintColor: textIsDark ? .white : .black,
+                    tintAlpha: textIsDark ? 0.14 : 0.34,
+                    borderAlpha: textIsDark ? 0.18 : 0.20,
+                    gradientAlpha: textIsDark ? 0.22 : 0.30
+                )
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke((textIsDark ? Color.white.opacity(0.28) : Color.white.opacity(0.18)), lineWidth: 0.8)
-            )
-            .shadow(color: .black.opacity(textIsDark ? 0.08 : 0.18), radius: 12, x: 0, y: 6)
     }
 }
 
@@ -325,77 +292,16 @@ private struct LiquidGlassBackground: UIViewRepresentable {
 }
 
 private struct SwipeBackEnabler: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> ChatNavigationChromeController {
-        ChatNavigationChromeController()
+    func makeUIViewController(context: Context) -> UIViewController {
+        UIViewController()
     }
 
-    func updateUIViewController(_ controller: ChatNavigationChromeController, context: Context) {
+    func updateUIViewController(_ controller: UIViewController, context: Context) {
         DispatchQueue.main.async {
-            controller.applyChatNavigationChrome()
+            guard let navigationController = controller.navigationController else { return }
+            navigationController.interactivePopGestureRecognizer?.isEnabled = true
+            navigationController.interactivePopGestureRecognizer?.delegate = nil
         }
-    }
-}
-
-/// 聊天画面自行绘制顶端渐变，不能再叠加 App 全局 UINavigationBar 的默认模糊。
-/// 仅在此页面透明化导航栏；离开聊天时立即恢复，避免影响聊天详情和其他普通列表页。
-private final class ChatNavigationChromeController: UIViewController {
-    private weak var observedNavigationController: UINavigationController?
-    private var savedStandardAppearance: UINavigationBarAppearance?
-    private var savedScrollEdgeAppearance: UINavigationBarAppearance?
-    private var savedCompactAppearance: UINavigationBarAppearance?
-    private var savedCompactScrollEdgeAppearance: UINavigationBarAppearance?
-    private var savedNavigationBarHidden = false
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        applyChatNavigationChrome()
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        restoreNavigationChrome()
-    }
-
-    func applyChatNavigationChrome() {
-        guard let navigationController else { return }
-        if observedNavigationController !== navigationController {
-            restoreNavigationChrome()
-            observedNavigationController = navigationController
-            let navigationBar = navigationController.navigationBar
-            savedStandardAppearance = navigationBar.standardAppearance.copy() as? UINavigationBarAppearance
-            savedScrollEdgeAppearance = navigationBar.scrollEdgeAppearance?.copy() as? UINavigationBarAppearance
-            savedCompactAppearance = navigationBar.compactAppearance?.copy() as? UINavigationBarAppearance
-            savedCompactScrollEdgeAppearance = navigationBar.compactScrollEdgeAppearance?.copy() as? UINavigationBarAppearance
-            savedNavigationBarHidden = navigationController.isNavigationBarHidden
-        }
-
-        let transparent = UINavigationBarAppearance()
-        transparent.configureWithTransparentBackground()
-        transparent.backgroundColor = .clear
-        transparent.shadowColor = .clear
-        let navigationBar = navigationController.navigationBar
-        navigationBar.standardAppearance = transparent
-        navigationBar.scrollEdgeAppearance = transparent
-        navigationBar.compactAppearance = transparent
-        navigationBar.compactScrollEdgeAppearance = transparent
-        navigationController.setNavigationBarHidden(true, animated: false)
-        navigationController.interactivePopGestureRecognizer?.isEnabled = true
-        navigationController.interactivePopGestureRecognizer?.delegate = nil
-    }
-
-    private func restoreNavigationChrome() {
-        guard let navigationController = observedNavigationController else { return }
-        let navigationBar = navigationController.navigationBar
-        if let savedStandardAppearance { navigationBar.standardAppearance = savedStandardAppearance }
-        navigationBar.scrollEdgeAppearance = savedScrollEdgeAppearance
-        navigationBar.compactAppearance = savedCompactAppearance
-        navigationBar.compactScrollEdgeAppearance = savedCompactScrollEdgeAppearance
-        navigationController.setNavigationBarHidden(savedNavigationBarHidden, animated: false)
-        observedNavigationController = nil
-        savedStandardAppearance = nil
-        savedScrollEdgeAppearance = nil
-        savedCompactAppearance = nil
-        savedCompactScrollEdgeAppearance = nil
     }
 }
 

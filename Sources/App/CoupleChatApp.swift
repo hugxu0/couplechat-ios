@@ -11,19 +11,6 @@ struct CoupleChatApp: App {
 
     init() {
         UNUserNotificationCenter.current().delegate = AppNotificationDelegate.shared
-        Self.configureNavigationBarAppearance()
-    }
-
-    /// 统一导航栏外观：标准态 / 滚到顶态 / 紧凑态都用同一份系统模糊材质。
-    /// 侧滑返回时源页与目标页外观一致，毛玻璃不会中途跳成不透明纯色块。
-    private static func configureNavigationBarAppearance() {
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithDefaultBackground()
-        let bar = UINavigationBar.appearance()
-        bar.standardAppearance = appearance
-        bar.scrollEdgeAppearance = appearance
-        bar.compactAppearance = appearance
-        bar.compactScrollEdgeAppearance = appearance
     }
 
     var body: some Scene {
