@@ -48,8 +48,14 @@ struct ChatDetailSettingsView: View {
         .sheet(isPresented: $showSearch) {
             ChatSearchSheet(
                 channel: channel,
-                onJump: { msg in onJumpToMessage(msg) },
-                onJumpDate: { date in onJumpToDate(date) }
+                onJump: { msg in
+                    onJumpToMessage(msg)
+                    dismiss()
+                },
+                onJumpDate: { date in
+                    onJumpToDate(date)
+                    dismiss()
+                }
             )
         }
         .sheet(isPresented: $showMedia) {

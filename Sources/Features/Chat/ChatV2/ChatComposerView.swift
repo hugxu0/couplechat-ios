@@ -46,6 +46,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private let attachmentButton = UIButton(type: .system)
     private let actionButton = UIButton(type: .system)
     private let placeholderLabel = UILabel()
+    private let recordingHintLabel = UILabel()
     private let recordingContainer = UIView()
     private let recordingLabel = UILabel()
     private let recordingWaveStack = UIStackView()
@@ -131,24 +132,30 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         recordingContainer.isHidden = false
         inputCapsuleRow.alpha = 0
         recordingLabel.text = cancelled
-            ? "松开取消"
-            : String(format: "正在录音 %02d:%02d   左滑取消", Int(elapsed) / 60, Int(elapsed) % 60)
+            ? "取消"
+            : String(format: "%02d:%02d", Int(elapsed) / 60, Int(elapsed) % 60)
         recordingLabel.textColor = cancelled ? .systemRed : .secondaryLabel
+        recordingHintLabel.text = cancelled ? "松开即可取消" : "松手发送 · 左滑取消"
+        recordingHintLabel.textColor = cancelled ? .systemRed : .secondaryLabel
+        recordingHintLabel.isHidden = false
         updateWaveBars(level: level, cancelled: cancelled)
         textView.isEditable = false
         updateActionButton()
         updatePlaceholder()
+        recalculateHeight()
     }
 
     func clearRecording() {
         isRecording = false
         recordingCancelled = false
         recordingContainer.isHidden = true
+        recordingHintLabel.isHidden = true
         inputCapsuleRow.alpha = 1
         textView.textColor = .label
         textView.isEditable = true
         textViewDidChange(textView)
         updatePlaceholder()
+        recalculateHeight()
     }
 
     private func build() {
@@ -172,6 +179,12 @@ final class ChatComposerView: UIView, UITextViewDelegate {
 
         buildMediaPreview()
         stack.addArrangedSubview(mediaScrollView)
+
+        recordingHintLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        recordingHintLabel.textAlignment = .center
+        recordingHintLabel.isHidden = true
+        recordingHintLabel.setContentHuggingPriority(.required, for: .vertical)
+        stack.addArrangedSubview(recordingHintLabel)
 
         buildInputRow()
         stack.addArrangedSubview(inputRow)
@@ -200,6 +213,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         if typingVisible { height += 18 + stack.spacing }
         if replyVisible { height += 50 + stack.spacing }
         if mediaVisible { height += 84 + stack.spacing }
+        if isRecording { height += 18 + stack.spacing }
         height = ceil(height)
         guard abs(preferredHeight - height) > 0.5 else { return }
         preferredHeight = height

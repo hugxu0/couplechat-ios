@@ -59,7 +59,7 @@ struct ChatMessageLayout: Hashable {
 enum ChatTimelineMetrics {
     static let horizontalInset: CGFloat = 7
     static let avatarSize: CGFloat = 36
-    static let avatarGap: CGFloat = 6
+    static let avatarGap: CGFloat = 5
     static let bubbleHorizontalPadding: CGFloat = 14
     static let bubbleVerticalPadding: CGFloat = 9
     static let bubbleMaxWidthRatio: CGFloat = 0.72

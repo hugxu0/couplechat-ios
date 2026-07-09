@@ -50,6 +50,11 @@ final class ChatViewController: UIViewController {
     private var inputState: ChatInputState = .idle
     private var browsingHistoricalWindow = false
     var stickToLatestAfterNextReload = false
+    private var activeJumpID: UUID?
+
+    private var voicePlayer: AVPlayer?
+    private var voicePlaybackEndObserver: NSObjectProtocol?
+    private var playingVoiceMessageID: String?
 
     private var replyTarget: ChatMessage?
 
@@ -80,6 +85,7 @@ final class ChatViewController: UIViewController {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        stopVoicePlayback(deactivateSession: false)
     }
 
     func updateEnvironment(
@@ -127,11 +133,15 @@ final class ChatViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        applyInputLayout(duration: 0, curve: .curveEaseOut)
         if !didInitialScroll {
             didInitialScroll = true
+            // 在安全区、输入栏高度都稳定后只贴底一次，避免首条渲染后再修正 inset
+            // 导致最后一个气泡轻微上弹。
+            applyInputLayout(duration: 0, curve: .curveEaseOut, forceBottom: true)
             scrollToBottom(animated: false)
             updateJumpToBottomVisibility(animated: false)
+        } else {
+            applyInputLayout(duration: 0, curve: .curveEaseOut)
         }
     }
 
@@ -146,6 +156,8 @@ final class ChatViewController: UIViewController {
     }
 
     func performJump(_ command: ChatV2JumpCommand) {
+        guard activeJumpID != command.id else { return }
+        activeJumpID = command.id
         switch command.action {
         case .message(let message):
             store.ensureMessageLoaded(message, channel: channel)
@@ -162,7 +174,10 @@ final class ChatViewController: UIViewController {
     private func completeJump(to target: ChatMessage) {
         browsingHistoricalWindow = true
         reloadTimeline(animated: false)
-        scrollToMessage(id: target.id, highlighted: true)
+        view.layoutIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            self?.scrollToMessage(id: target.id, highlighted: true)
+        }
     }
 
     private func buildCollectionView() {
@@ -368,8 +383,6 @@ final class ChatViewController: UIViewController {
            indexPath(forItemId: anchor.itemId) != nil {
             restoreTimelineAnchor(anchor)
             pendingTopAnchor = nil
-        } else if !didInitialScroll {
-            scrollToBottom(animated: false)
         } else if wasNearLatestBottom && oldLastMessageId != newLastMessageId && newMessageCount > oldMessageCount {
             scrollToBottom(animated: animated)
         }
@@ -901,7 +914,8 @@ extension ChatViewController: UICollectionViewDataSource {
                     myAvatar: myAvatar,
                     peerAvatarURL: peerAvatarURL,
                     myAvatarURL: myAvatarURL,
-                    accentColor: theme.accent.uiColor
+                    accentColor: theme.accent.uiColor,
+                    voicePlaying: playingVoiceMessageID == message.id
                 )
             }
             return cell
@@ -1018,8 +1032,11 @@ extension ChatViewController: UICollectionViewDelegateFlowLayout {
 extension ChatViewController: ChatTimelineCellDelegate {
     func chatCellDidTapMedia(_ cell: ChatNativeMessageCell) {
         guard let indexPath = collectionView.indexPath(for: cell),
-              case .message(let id) = timelineItems[indexPath.item] else { return }
-        if let message = messagesById[id], message.type == "file", let url = message.mediaURL {
+              case .message(let id) = timelineItems[indexPath.item],
+              let message = messagesById[id] else { return }
+        if message.type == "voice" {
+            toggleVoicePlayback(message)
+        } else if message.type == "file", let url = message.mediaURL {
             UIApplication.shared.open(url)
         } else {
             onMediaTap(id)
@@ -1031,6 +1048,61 @@ extension ChatViewController: ChatTimelineCellDelegate {
               case .message(let id) = timelineItems[indexPath.item],
               let message = messagesById[id] else { return }
         store.resend(message)
+    }
+}
+
+private extension ChatViewController {
+    func toggleVoicePlayback(_ message: ChatMessage) {
+        guard let url = message.mediaURL else { return }
+        if playingVoiceMessageID == message.id {
+            stopVoicePlayback()
+            return
+        }
+
+        stopVoicePlayback(deactivateSession: false)
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.duckOthers])
+            try session.setActive(true)
+        } catch {
+            return
+        }
+
+        let player = AVPlayer(url: url)
+        voicePlayer = player
+        playingVoiceMessageID = message.id
+        voicePlaybackEndObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: player.currentItem,
+            queue: .main
+        ) { [weak self] _ in
+            self?.stopVoicePlayback()
+        }
+        player.play()
+        reloadVoiceMessageCell(message.id)
+    }
+
+    func stopVoicePlayback(deactivateSession: Bool = true) {
+        let previousID = playingVoiceMessageID
+        voicePlayer?.pause()
+        voicePlayer = nil
+        playingVoiceMessageID = nil
+        if let observer = voicePlaybackEndObserver {
+            NotificationCenter.default.removeObserver(observer)
+            voicePlaybackEndObserver = nil
+        }
+        if deactivateSession {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        if let previousID { reloadVoiceMessageCell(previousID) }
+    }
+
+    func reloadVoiceMessageCell(_ id: String) {
+        guard let indexPath = indexPath(forMessageId: id),
+              collectionView.indexPathsForVisibleItems.contains(indexPath) else { return }
+        UIView.performWithoutAnimation {
+            collectionView.reloadItems(at: [indexPath])
+        }
     }
 }
 

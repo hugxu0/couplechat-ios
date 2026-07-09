@@ -82,6 +82,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
     private var mine = false
     private var grouped = false
     private var accentColor = UIColor.systemMint
+    private var voicePlaying = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -168,12 +169,14 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         myAvatar: String,
         peerAvatarURL: URL?,
         myAvatarURL: URL?,
-        accentColor: UIColor
+        accentColor: UIColor,
+        voicePlaying: Bool = false
     ) {
         self.message = message
         self.mine = mine
         self.grouped = groupedWithPrevious
         self.accentColor = accentColor
+        self.voicePlaying = voicePlaying
 
         let avatarText = mine ? myAvatar : peerAvatar
         let avatarURL = mine ? myAvatarURL : peerAvatarURL
@@ -217,11 +220,12 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             let avatarX = bounds.width - ChatTimelineMetrics.horizontalInset - avatarSize
             avatarView.frame = CGRect(x: avatarX, y: avatarY, width: avatarSize, height: avatarSize)
             let statusWidth = statusLabel.isHidden ? 0 : ChatTimelineMetrics.statusOutsideWidth
-            let statusSpace = statusLabel.isHidden ? 0 : statusWidth + ChatTimelineMetrics.statusOutsideGap
+            let usesOverlayStatus = isMediaMessage(message) && !statusLabel.isHidden
+            let statusSpace = statusLabel.isHidden || usesOverlayStatus ? 0 : statusWidth + ChatTimelineMetrics.statusOutsideGap
             let x = avatarX - ChatTimelineMetrics.avatarGap - statusSpace - bubbleWidth
             bubbleView.frame = CGRect(x: x, y: topGap, width: bubbleWidth, height: bubbleHeight)
             statusLabel.frame = statusLabel.isHidden ? .zero : CGRect(
-                x: bubbleView.frame.maxX + ChatTimelineMetrics.statusOutsideGap,
+                x: usesOverlayStatus ? bubbleView.frame.maxX - 20 : bubbleView.frame.maxX + ChatTimelineMetrics.statusOutsideGap,
                 y: bubbleView.frame.maxY - 25,
                 width: 16,
                 height: 16
@@ -301,12 +305,17 @@ final class ChatNativeMessageCell: UICollectionViewCell {
     }
 
     private func configureAttachment(_ message: ChatMessage) {
-        let iconName = message.type == "voice" ? "waveform" : "doc.fill"
+        let iconName: String
+        if message.type == "voice" {
+            iconName = voicePlaying ? "pause.fill" : "play.fill"
+        } else {
+            iconName = "doc.fill"
+        }
         mediaIconView.image = UIImage(systemName: iconName)
         mediaIconView.tintColor = mine ? .white : accentColor
         switch message.type {
         case "voice":
-            bodyLabel.text = message.pending ? "语音上传中" : "语音消息"
+            bodyLabel.text = message.pending ? "语音上传中" : (voicePlaying ? "正在播放" : "点击播放语音")
         case "file":
             let text = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
             bodyLabel.text = text.isEmpty ? "文件" : text
@@ -389,6 +398,13 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             return message.replyPreview?.isEmpty != false
         default:
             return false
+        }
+    }
+
+    private func isMediaMessage(_ message: ChatMessage) -> Bool {
+        switch message.type {
+        case "image", "video", "sticker": return true
+        default: return false
         }
     }
 

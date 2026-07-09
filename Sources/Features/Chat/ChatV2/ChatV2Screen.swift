@@ -183,14 +183,22 @@ struct ChatV2Screen: View {
             LiquidGlassBackground(
                 cornerRadius: 0,
                 tintColor: topBarUsesDarkText ? .white : .black,
-                tintAlpha: topBarUsesDarkText ? 0.025 : 0.055,
+                tintAlpha: topBarUsesDarkText ? 0.035 : 0.065,
                 borderAlpha: 0,
-                gradientAlpha: topBarUsesDarkText ? 0.06 : 0.10
+                gradientAlpha: topBarUsesDarkText ? 0.10 : 0.14
+            )
+            // 将系统材质本身也渐隐，避免在标题栏底部留下明显的横向分界线。
+            .mask(
+                LinearGradient(
+                    colors: [.black.opacity(0.92), .black.opacity(0.58), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             )
             LinearGradient(
                 colors: [
-                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.025 : 0.055),
-                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.01 : 0.025),
+                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.06 : 0.10),
+                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.018 : 0.035),
                     .clear,
                 ],
                 startPoint: .top,
