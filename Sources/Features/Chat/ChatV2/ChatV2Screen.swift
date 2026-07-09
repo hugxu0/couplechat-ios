@@ -13,6 +13,9 @@ struct ChatV2Screen: View {
     @State private var mediaViewerMessageId: String?
     @State private var jumpCommand: ChatV2JumpCommand?
     @State private var isShowingDetail = false
+    // UIVisualEffectView 在导航转场的第一帧会先呈现默认材质。先保持透明，
+    // 再无动画地启用已确定色调的羽化层，避免一进聊天页闪一帧白雾。
+    @State private var hasResolvedTopBackdrop = false
 
     private var title: String {
         switch channel {
@@ -53,20 +56,19 @@ struct ChatV2Screen: View {
         return displayedWallpaper == .night ? 0.18 : 0.82
     }
 
-    private var usesNightTopChrome: Bool {
-        // 低于此值时，黑色玻璃与白色内容的对比度比浅色玻璃稳定。
-        topSurfaceLuminance < 0.47
-    }
-
-    private var topBarUsesDarkText: Bool {
-        !usesNightTopChrome
-    }
-
-    private var composerUsesDarkText: Bool {
+    private var composerSurfaceLuminance: CGFloat {
         if let luminance = theme.customWallpaperLuminance(for: channel, region: .composerCenter) {
-            return luminance > 0.50
+            return luminance
         }
-        return displayedWallpaper != .night
+        return displayedWallpaper == .night ? 0.18 : 0.82
+    }
+
+    private var topChromeTone: ChatSurfaceTone {
+        ChatSurfaceTone(luminance: topSurfaceLuminance)
+    }
+
+    private var composerChromeTone: ChatSurfaceTone {
+        ChatSurfaceTone(luminance: composerSurfaceLuminance)
     }
 
     private var usesDarkChatSurface: Bool {
@@ -79,16 +81,16 @@ struct ChatV2Screen: View {
     }
 
     private var topPrimaryColor: Color {
-        topBarUsesDarkText ? Color.black.opacity(0.86) : .white
+        topChromeTone.primaryTextColor
     }
 
     private var topSecondaryColor: Color {
         if !store.connected { return .red }
-        return topBarUsesDarkText ? Color.black.opacity(0.54) : Color.white.opacity(0.82)
+        return topChromeTone.secondaryTextColor
     }
 
     private var topShadowColor: Color {
-        topBarUsesDarkText ? .white.opacity(0.40) : .black.opacity(0.42)
+        topChromeTone.usesLightContent ? .black.opacity(0.42) : .white.opacity(0.34)
     }
 
     var body: some View {
@@ -110,7 +112,8 @@ struct ChatV2Screen: View {
                 ChatUIKitHost(
                     channel: channel,
                     topOverlayInset: topOverlayInset,
-                    composerUsesLightContent: !composerUsesDarkText,
+                    composerUsesLightContent: composerChromeTone.usesLightContent,
+                    dynamicallySamplesComposerTone: theme.hasCustomWallpaper(for: channel),
                     usesDarkChatSurface: usesDarkChatSurface,
                     jumpCommand: $jumpCommand,
                     onMediaTap: { mediaViewerMessageId = $0 }
@@ -141,6 +144,12 @@ struct ChatV2Screen: View {
         }
         .onAppear {
             app.pushSubpage()
+            // 此时壁纸采样已同步完成；不要给首帧叠加默认浅色材质。
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                hasResolvedTopBackdrop = true
+            }
         }
         .onDisappear { app.popSubpage() }
         .background(SwipeBackEnabler())
@@ -156,7 +165,7 @@ struct ChatV2Screen: View {
                     .foregroundStyle(topPrimaryColor)
                     .shadow(color: topShadowColor, radius: 1.5, x: 0, y: 1)
                     .frame(width: 44, height: 44)
-                    .chatTopLiquidGlass(cornerRadius: 22, textIsDark: topBarUsesDarkText)
+                    .chatTopLiquidGlass(cornerRadius: 22, tone: topChromeTone)
             }
             .buttonStyle(PressableStyle())
 
@@ -175,7 +184,7 @@ struct ChatV2Screen: View {
             .lineLimit(1)
             .padding(.horizontal, 22)
             .frame(minWidth: 156, minHeight: 42)
-            .chatTopLiquidGlass(cornerRadius: 21, textIsDark: topBarUsesDarkText)
+            .chatTopLiquidGlass(cornerRadius: 21, tone: topChromeTone)
 
             Spacer(minLength: 0)
 
@@ -209,7 +218,7 @@ struct ChatV2Screen: View {
                 )
                 .padding(4.5)
                     .frame(width: 44, height: 44)
-                    .chatTopLiquidGlass(cornerRadius: 22, textIsDark: topBarUsesDarkText)
+                    .chatTopLiquidGlass(cornerRadius: 22, tone: topChromeTone)
             }
             .buttonStyle(PressableStyle())
         }
@@ -220,18 +229,24 @@ struct ChatV2Screen: View {
 
     @ViewBuilder
     private func topSafeGlass(height: CGFloat) -> some View {
-        // 这是背景本身的模糊，而非会产生镜面高光的 Liquid Glass。
-        // 明亮壁纸用浅材质、深色壁纸用深材质，再由 mask 自然向下消退。
-        TopBackdropBlur(style: topBarUsesDarkText ? .systemUltraThinMaterialLight : .systemUltraThinMaterialDark)
-            .mask(
-                LinearGradient(
-                    colors: [.white.opacity(0.90), .white.opacity(0.46), .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
+        // 暗壁纸不额外铺一层顶端材质，只有胶囊自己维持偏暗的 Liquid Glass；
+        // 亮壁纸才需要一层很短的白色羽化，以便黑字稳定可读。
+        if hasResolvedTopBackdrop && topChromeTone.usesDarkText {
+            TopBackdropBlur(style: .systemUltraThinMaterialLight)
+                .mask(
+                    LinearGradient(
+                        colors: [.white.opacity(0.64), .white.opacity(0.20), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                 )
-            )
-        .frame(height: height)
-        .allowsHitTesting(false)
+                .frame(height: height)
+                .allowsHitTesting(false)
+        } else {
+            Color.clear
+                .frame(height: height)
+                .allowsHitTesting(false)
+        }
     }
 
     @ViewBuilder
@@ -258,16 +273,27 @@ struct ChatV2Screen: View {
 
 }
 
+private extension ChatSurfaceTone {
+    /// 以胶囊正后方的中位亮度为准。阈值只在一个地方定义，
+    /// 使面板的黑/白材质与所有内部文字永远相反，不会各自漂移。
+    var primaryTextColor: Color { usesLightContent ? .white : Color.black.opacity(0.86) }
+    var secondaryTextColor: Color { usesLightContent ? Color.white.opacity(0.82) : Color.black.opacity(0.54) }
+    var panelTintColor: UIColor { usesLightContent ? .black : .white }
+    var panelTintAlpha: CGFloat { usesLightContent ? 0.16 : 0.18 }
+    var panelBorderAlpha: CGFloat { usesLightContent ? 0.14 : 0.20 }
+    var panelGradientAlpha: CGFloat { usesLightContent ? 0.14 : 0.24 }
+}
+
 private extension View {
-    func chatTopLiquidGlass(cornerRadius: CGFloat, textIsDark: Bool) -> some View {
+    func chatTopLiquidGlass(cornerRadius: CGFloat, tone: ChatSurfaceTone) -> some View {
         self
             .background {
                 LiquidGlassBackground(
                     cornerRadius: cornerRadius,
-                    tintColor: textIsDark ? .white : .black,
-                    tintAlpha: textIsDark ? 0.14 : 0.34,
-                    borderAlpha: textIsDark ? 0.18 : 0.20,
-                    gradientAlpha: textIsDark ? 0.22 : 0.30
+                    tintColor: tone.panelTintColor,
+                    tintAlpha: tone.panelTintAlpha,
+                    borderAlpha: tone.panelBorderAlpha,
+                    gradientAlpha: tone.panelGradientAlpha
                 )
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -340,6 +366,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
     let channel: ChatChannel
     let topOverlayInset: CGFloat
     let composerUsesLightContent: Bool
+    let dynamicallySamplesComposerTone: Bool
     let usesDarkChatSurface: Bool
     @Binding var jumpCommand: ChatV2JumpCommand?
     let onMediaTap: (String) -> Void
@@ -353,6 +380,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             store: store,
             theme: theme,
             composerUsesLightContent: composerUsesLightContent,
+            dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
             onMediaTap: onMediaTap
         )
@@ -366,6 +394,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             theme: theme,
             topOverlayInset: topOverlayInset,
             composerUsesLightContent: composerUsesLightContent,
+            dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
             onMediaTap: onMediaTap
         )

@@ -276,6 +276,20 @@ enum WallpaperSurfaceRegion: Hashable {
     case composerCenter
 }
 
+/// 同一块玻璃面板只允许两种互斥组合：暗玻璃白字，或亮玻璃黑字。
+/// 系统材质不会替应用完成局部壁纸采样，所以顶栏和输入栏都使用这一套阈值。
+enum ChatSurfaceTone: Equatable {
+    case lightContent
+    case darkContent
+
+    init(luminance: CGFloat) {
+        self = luminance < 0.52 ? .lightContent : .darkContent
+    }
+
+    var usesLightContent: Bool { self == .lightContent }
+    var usesDarkText: Bool { self == .darkContent }
+}
+
 final class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
 
@@ -347,6 +361,13 @@ final class ThemeManager: ObservableObject {
         return value
     }
 
+    /// 输入栏会跟随键盘上下移动，因此不能一直采样壁纸底部；由 UIKit 传入它当前
+    /// 胶囊在整屏中的位置，取样结果再驱动玻璃和文字的同一套互斥状态。
+    func customWallpaperLuminance(for channel: ChatChannel, normalizedRect: CGRect) -> CGFloat? {
+        guard let image = customWallpaperImage(for: channel) else { return nil }
+        return Self.regionLuminance(of: image, normalizedRect: normalizedRect)
+    }
+
     func setCustomWallpaper(imageData: Data, for channel: ChatChannel) {
         let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
         try? imageData.write(to: url, options: .atomic)
@@ -368,6 +389,19 @@ final class ThemeManager: ObservableObject {
     }
 
     private static func regionLuminance(of image: UIImage, region: WallpaperSurfaceRegion) -> CGFloat {
+        // 采样点要与实际控件位置对应：顶部标题在中间，输入胶囊也只看中间区域。
+        // 整条边缘的天空、头像或消息不该干扰该控件的前景色决定。
+        let sampleRect: CGRect
+        switch region {
+        case .topCenter:
+            sampleRect = CGRect(x: 14.0 / 48.0, y: 7.0 / 104.0, width: 20.0 / 48.0, height: 12.0 / 104.0)
+        case .composerCenter:
+            sampleRect = CGRect(x: 7.0 / 48.0, y: 84.0 / 104.0, width: 34.0 / 48.0, height: 12.0 / 104.0)
+        }
+        return regionLuminance(of: image, normalizedRect: sampleRect)
+    }
+
+    private static func regionLuminance(of image: UIImage, normalizedRect: CGRect) -> CGFloat {
         guard image.size.width > 0, image.size.height > 0 else { return 0.7 }
         let pixelWidth = 48
         let pixelHeight = 104
@@ -380,27 +414,24 @@ final class ThemeManager: ObservableObject {
             width: drawnSize.width,
             height: drawnSize.height
         )
-        // 采样点要与实际控件位置对应：顶部标题在中间，输入胶囊也只看中间区域。
-        // 整条边缘的天空、头像或消息不该干扰该控件的前景色决定。
-        let horizontalRange: Range<CGFloat>
-        let verticalRange: Range<CGFloat>
-        switch region {
-        case .topCenter:
-            horizontalRange = 12..<36
-            verticalRange = 3..<25
-        case .composerCenter:
-            horizontalRange = 8..<40
-            verticalRange = 76..<101
-        }
+        let normalized = normalizedRect.standardized.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !normalized.isNull, normalized.width > 0, normalized.height > 0 else { return 0.7 }
+        let sampleRect = CGRect(
+            x: floor(normalized.minX * renderSize.width),
+            y: floor(normalized.minY * renderSize.height),
+            width: max(1, ceil(normalized.width * renderSize.width)),
+            height: max(1, ceil(normalized.height * renderSize.height))
+        ).intersection(CGRect(origin: .zero, size: renderSize))
+        guard sampleRect.width > 0, sampleRect.height > 0 else { return 0.7 }
         let sampleSize = CGSize(
-            width: horizontalRange.upperBound - horizontalRange.lowerBound,
-            height: verticalRange.upperBound - verticalRange.lowerBound
+            width: sampleRect.width,
+            height: sampleRect.height
         )
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
         let sampled = UIGraphicsImageRenderer(size: sampleSize, format: format).image { _ in
-            image.draw(in: drawRect.offsetBy(dx: -horizontalRange.lowerBound, dy: -verticalRange.lowerBound))
+            image.draw(in: drawRect.offsetBy(dx: -sampleRect.minX, dy: -sampleRect.minY))
         }
         guard let sampledCGImage = sampled.cgImage else { return 0.7 }
         let sampleWidth = Int(sampleSize.width)

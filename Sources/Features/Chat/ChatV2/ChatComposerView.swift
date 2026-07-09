@@ -98,10 +98,12 @@ final class ChatComposerView: UIView, UITextViewDelegate {
                 textView.reloadInputViews()
             }
         }
-        replyContainer.setGlassTone(dark: usesLightContent, tintAlpha: 0.18, borderAlpha: usesLightContent ? 0.18 : 0.22)
-        catBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: 0.20, borderAlpha: usesLightContent ? 0.18 : 0.22)
-        inputCapsule.setGlassTone(dark: usesLightContent, tintAlpha: 0.22, borderAlpha: usesLightContent ? 0.18 : 0.22)
-        actionBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: 0.20, borderAlpha: usesLightContent ? 0.18 : 0.22)
+        // 与所有内部文字、图标共用 usesLightContent：暗背景只能是偏暗玻璃 + 白字，
+        // 亮背景只能是偏亮玻璃 + 黑字，避免面板和占位文案同时发白。
+        replyContainer.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18, borderAlpha: usesLightContent ? 0.14 : 0.20)
+        catBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18, borderAlpha: usesLightContent ? 0.14 : 0.20)
+        inputCapsule.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.16 : 0.20, borderAlpha: usesLightContent ? 0.14 : 0.20)
+        actionBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18, borderAlpha: usesLightContent ? 0.14 : 0.20)
         updateWaveBars(level: 0.35, cancelled: recordingCancelled)
         updateActionButton()
     }
@@ -145,6 +147,11 @@ final class ChatComposerView: UIView, UITextViewDelegate {
 
     func resignTextInput() {
         textView.resignFirstResponder()
+    }
+
+    /// 当前输入胶囊在控制器坐标系内的精确位置，用于从壁纸同一位置采样明暗。
+    func inputCapsuleFrame(in container: UIView) -> CGRect {
+        inputCapsule.convert(inputCapsule.bounds, to: container)
     }
 
     func setRecording(elapsed: TimeInterval, cancelled: Bool, level: CGFloat = 0.35) {

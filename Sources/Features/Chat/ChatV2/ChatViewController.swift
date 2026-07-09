@@ -39,6 +39,8 @@ final class ChatViewController: UIViewController {
     private var currentListBottomInset: CGFloat = 0
     private var topOverlayInset: CGFloat = 96
     private var composerUsesLightContent = false
+    private var dynamicallySamplesComposerTone = false
+    private var lastComposerSampleFrame: CGRect = .null
     private var usesDarkChatSurface = false
     private var appliedAccent: AccentChoice?
 
@@ -77,6 +79,7 @@ final class ChatViewController: UIViewController {
         store: ChatStore,
         theme: ThemeManager,
         composerUsesLightContent: Bool,
+        dynamicallySamplesComposerTone: Bool,
         usesDarkChatSurface: Bool,
         onMediaTap: @escaping (String) -> Void
     ) {
@@ -84,6 +87,7 @@ final class ChatViewController: UIViewController {
         self.store = store
         self.theme = theme
         self.composerUsesLightContent = composerUsesLightContent
+        self.dynamicallySamplesComposerTone = dynamicallySamplesComposerTone
         self.usesDarkChatSurface = usesDarkChatSurface
         self.onMediaTap = onMediaTap
         super.init(nibName: nil, bundle: nil)
@@ -109,21 +113,30 @@ final class ChatViewController: UIViewController {
         theme: ThemeManager,
         topOverlayInset: CGFloat,
         composerUsesLightContent: Bool,
+        dynamicallySamplesComposerTone: Bool,
         usesDarkChatSurface: Bool,
         onMediaTap: @escaping (String) -> Void
     ) {
         let storeChanged = self.store !== store
         let themeChanged = self.theme !== theme
         let composerToneChanged = self.composerUsesLightContent != composerUsesLightContent
+        let dynamicComposerToneChanged = self.dynamicallySamplesComposerTone != dynamicallySamplesComposerTone
         let chatSurfaceToneChanged = self.usesDarkChatSurface != usesDarkChatSurface
         self.store = store
         self.theme = theme
-        self.composerUsesLightContent = composerUsesLightContent
+        self.dynamicallySamplesComposerTone = dynamicallySamplesComposerTone
+        // 自定义壁纸首次布局前仍需要一个后备状态；布局完成后会改采输入胶囊的真实位置。
+        if !dynamicallySamplesComposerTone || dynamicComposerToneChanged {
+            self.composerUsesLightContent = composerUsesLightContent
+        }
         self.usesDarkChatSurface = usesDarkChatSurface
         self.onMediaTap = onMediaTap
-        if themeChanged || composerToneChanged || appliedAccent != theme.accent {
-            composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
+        if themeChanged || composerToneChanged || dynamicComposerToneChanged || appliedAccent != theme.accent {
+            composer.applyTheme(theme, usesLightContent: self.composerUsesLightContent)
             applyAccentColor()
+        }
+        if dynamicallySamplesComposerTone, isViewLoaded {
+            refreshComposerSurfaceTone(force: true)
         }
         if chatSurfaceToneChanged, collectionView != nil {
             UIView.performWithoutAnimation {
@@ -175,6 +188,7 @@ final class ChatViewController: UIViewController {
             layoutHeightCache.removeAll()
             collectionView.collectionViewLayout.invalidateLayout()
         }
+        refreshComposerSurfaceTone()
         scheduleInitialTimelinePositioning()
     }
 
@@ -191,6 +205,32 @@ final class ChatViewController: UIViewController {
             collectionView.layoutIfNeeded()
         }
         applyInputLayout(duration: 0, curve: .curveEaseOut)
+    }
+
+    /// 输入栏在键盘出现时会移动到屏幕中部。静态的“底部取样”会因此把深浅判错，
+    /// 所以直接取当前输入胶囊正后方的小区域，并用相同状态同时设置玻璃和文字。
+    private func refreshComposerSurfaceTone(force: Bool = false) {
+        guard dynamicallySamplesComposerTone,
+              view.bounds.width > 0,
+              view.bounds.height > 0 else { return }
+
+        let capsuleFrame = composer.inputCapsuleFrame(in: view).integral
+        guard !capsuleFrame.isEmpty, !capsuleFrame.isNull else { return }
+        guard force || !capsuleFrame.equalTo(lastComposerSampleFrame) else { return }
+        lastComposerSampleFrame = capsuleFrame
+
+        let samplingFrame = capsuleFrame.insetBy(dx: 12, dy: 6)
+        let normalizedFrame = CGRect(
+            x: samplingFrame.minX / view.bounds.width,
+            y: samplingFrame.minY / view.bounds.height,
+            width: samplingFrame.width / view.bounds.width,
+            height: samplingFrame.height / view.bounds.height
+        )
+        guard let luminance = theme.customWallpaperLuminance(for: channel, normalizedRect: normalizedFrame) else { return }
+        let usesLightContent = ChatSurfaceTone(luminance: luminance).usesLightContent
+        guard composerUsesLightContent != usesLightContent else { return }
+        composerUsesLightContent = usesLightContent
+        composer.applyTheme(theme, usesLightContent: usesLightContent)
     }
 
     func performJump(_ command: ChatV2JumpCommand) {
