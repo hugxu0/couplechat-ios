@@ -13,6 +13,7 @@ enum PhotoPickerPurpose {
 final class ChatViewController: UIViewController {
     let channel: ChatChannel
     var store: ChatStore
+    var messageStore: MessageStore { store.messageStore }
     var pendingMedia: [ChatPendingMedia] = []
     var photoPickerPurpose: PhotoPickerPurpose = .messageMedia
 
@@ -308,7 +309,7 @@ final class ChatViewController: UIViewController {
 
     private func bindStore() {
         cancellables.removeAll()
-        store.$messagesByChannel
+        messageStore.$messagesByChannel
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.handleStoreChange()

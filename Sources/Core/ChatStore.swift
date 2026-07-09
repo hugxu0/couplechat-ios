@@ -2,33 +2,33 @@ import Foundation
 import SocketIO
 import SwiftUI
 
-/// 协调层：持有 socket，分发事件给子 store，对外暴露统一接口。
-/// 子 store：AuthStore（登录）、MessageStore（消息）、SharedStore（共享状态）。
-@MainActor
+/// 鍗忚皟灞傦細鎸佹湁 socket锛屽垎鍙戜簨浠剁粰瀛?store锛屽澶栨毚闇茬粺涓€鎺ュ彛銆?/// 瀛?store锛欰uthStore锛堢櫥褰曪級銆丮essageStore锛堟秷鎭級銆丼haredStore锛堝叡浜姸鎬侊級銆?@MainActor
 final class ChatStore: ObservableObject {
     static let baseURL = ServerConfig.baseURL
 
-    // MARK: - 子 store
+    // MARK: - 瀛?store
 
     let auth = AuthStore()
-    let messages = MessageStore()
+    let messageStore = MessageStore()
     let shared = SharedStore()
 
-    // MARK: - 对外聚合状态
-
+    // MARK: - 瀵瑰鑱氬悎鐘舵€?
     @Published var connected = false
     @Published var partnerOnline = false
     @Published var lastConnectionError: String?
 
-    // 便捷访问（保持向后兼容，减少子 store 的改动量）
+    // 渚挎嵎璁块棶锛堜繚鎸佸悜鍚庡吋瀹癸級
     var session: Session? { auth.session }
     var loggedIn: Bool { auth.loggedIn }
     var partner: Account? { auth.partner }
-    var messagesByChannel: [String: [ChatMessage]] { messages.messagesByChannel }
-    var readStates: [String: [String: Double]] { messages.readStates }
+    var messagesByChannel: [String: [ChatMessage]] { messageStore.messagesByChannel }
+    var readStates: [String: [String: Double]] { messageStore.readStates }
     var sharedState: [String: Any] { shared.sharedState }
-    var aiTyping: Bool { messages.aiTyping }
-    var aiReplying: Bool { messages.aiReplying }
+    var aiTyping: Bool { messageStore.aiTyping }
+    var aiReplying: Bool { messageStore.aiReplying }
+
+    /// 鍚戝悗鍏煎锛歴tore.messages 杩斿洖 couple 棰戦亾娑堟伅鏁扮粍
+    var messages: [ChatMessage] { messageStore.messages(for: .couple) }
 
     static let personalItemChangedNotification = SharedStore.personalItemChangedNotification
 
@@ -37,8 +37,7 @@ final class ChatStore: ObservableObject {
     var isConnected: Bool { connected }
     var sessionUsername: String? { auth.session?.username }
 
-    // MARK: - 统计/存储（保留为静态方法供 SharedStore 调用）
-
+    // MARK: - 缁熻/瀛樺偍锛堜繚鐣欎负闈欐€佹柟娉曚緵 SharedStore 璋冪敤锛?
     struct LocalStatsBuckets {
         let days: [DayStat]
         let months: [MonthStat]
@@ -72,7 +71,7 @@ final class ChatStore: ObservableObject {
         return cal
     }()
 
-    private static let weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"]
+    private static let weekdayLabels = ["鏃?, "涓€", "浜?, "涓?, "鍥?, "浜?, "鍏?]
 
     static func computeLocalStats(for channel: ChatChannel = .couple) -> LocalStatsBuckets {
         let cal = shanghaiCalendar
@@ -109,7 +108,7 @@ final class ChatStore: ObservableObject {
         var cursor = earliestDay
         while cursor <= today {
             let key = statsDayFormatter.string(from: cursor)
-            let weekday = cal.isDate(cursor, inSameDayAs: today) ? "今" : weekdayLabels[cal.component(.weekday, from: cursor) - 1]
+            let weekday = cal.isDate(cursor, inSameDayAs: today) ? "浠? : weekdayLabels[cal.component(.weekday, from: cursor) - 1]
             days.append(DayStat(date: key, weekday: weekday, counts: dayCounts[key] ?? [:]))
             guard let next = cal.date(byAdding: .day, value: 1, to: cursor) else { break }
             cursor = next
@@ -128,31 +127,30 @@ final class ChatStore: ObservableObject {
         return LocalStatsBuckets(days: days, months: months)
     }
 
-    // MARK: - 初始化
-
+    // MARK: - 鍒濆鍖?
     init() {
         auth.socketProvider = self
-        messages.socketProvider = self
+        messageStore.socketProvider = self
         shared.socketProvider = self
     }
 
-    // MARK: - 启动
+    // MARK: - 鍚姩
 
     func bootstrap() {
         auth.bootstrap()
         guard let session = auth.session else { return }
-        messages.restoreLocalCache(for: session)
+        messageStore.restoreLocalCache(for: session)
         shared.restoreCachedSharedState()
         auth.restoreCachedPartner()
         connect()
     }
 
-    // MARK: - 登录/登出
+    // MARK: - 鐧诲綍/鐧诲嚭
 
     func login(username: String, password: String) async throws {
         try await auth.login(username: username, password: password)
         guard let session = auth.session else { return }
-        messages.restoreLocalCache(for: session)
+        messageStore.restoreLocalCache(for: session)
         shared.restoreCachedSharedState()
         auth.resolvePartner()
         connect()
@@ -166,10 +164,10 @@ final class ChatStore: ObservableObject {
         partnerOnline = false
         lastConnectionError = nil
         auth.logout()
-        // 子 store 不需要手动清——auth.session = nil 后，UI 自然走登录页
+        // 瀛?store 涓嶉渶瑕佹墜鍔ㄦ竻鈥斺€攁uth.session = nil 鍚庯紝UI 鑷劧璧扮櫥褰曢〉
     }
 
-    // MARK: - Socket 连接
+    // MARK: - Socket 杩炴帴
 
     private func connect() {
         guard let session = auth.session else { return }
@@ -194,8 +192,8 @@ final class ChatStore: ObservableObject {
                 self.connected = true
                 self.lastConnectionError = nil
                 self.reportAway(false)
-                self.messages.syncHistory(.couple)
-                self.messages.syncHistory(.ai)
+                self.messageStore.syncHistory(.couple)
+                self.messageStore.syncHistory(.ai)
             }
         }
         s.on(clientEvent: .disconnect) { [weak self] _, _ in
@@ -208,18 +206,18 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in self?.handleSocketError(data) }
         }
 
-        // 消息事件 → MessageStore
+        // 娑堟伅浜嬩欢 鈫?MessageStore
         s.on("message:new") { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let msg = MessageStore.parseMessage(dict, context: "message:new") else { return }
             Task { @MainActor in
                 guard let self else { return }
                 let channel = ChatChannel(rawValue: msg.channel) ?? .couple
-                self.messages.upsert(msg, in: channel)
-                if channel == .couple { self.messages.markRead(.couple) }
+                self.messageStore.upsert(msg, in: channel)
+                if channel == .couple { self.messageStore.markRead(.couple) }
                 if channel == .ai {
-                    self.messages.aiTyping = false
-                    self.messages.aiReplying = false
+                    self.messageStore.aiTyping = false
+                    self.messageStore.aiReplying = false
                 }
             }
         }
@@ -232,31 +230,31 @@ final class ChatStore: ObservableObject {
                   let user = dict["user"] as? String,
                   let ts = (dict["ts"] as? NSNumber)?.doubleValue else { return }
             let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "couple") ?? .couple
-            Task { @MainActor in self?.messages.setReadState(channel, user: user, ts: ts) }
+            Task { @MainActor in self?.messageStore.setReadState(channel, user: user, ts: ts) }
         }
         s.on("message:recalled") { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let id = dict["id"] as? String else { return }
             let byName = dict["byName"] as? String
             let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "")
-            Task { @MainActor in self?.messages.applyRecall(id: id, byName: byName, channel: channel, myUsername: self?.auth.session?.username) }
+            Task { @MainActor in self?.messageStore.applyRecall(id: id, byName: byName, channel: channel, myUsername: self?.auth.session?.username) }
         }
         s.on("message:update") { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let id = dict["id"] as? String else { return }
             let metaDict = dict["meta"] as? [String: Any]
-            Task { @MainActor in self?.messages.applyMessageUpdate(id: id, meta: metaDict) }
+            Task { @MainActor in self?.messageStore.applyMessageUpdate(id: id, meta: metaDict) }
         }
         s.on("ai:typing") { [weak self] data, _ in
             let typing = (data.first as? Bool) ?? true
-            Task { @MainActor in self?.messages.aiTyping = typing }
+            Task { @MainActor in self?.messageStore.aiTyping = typing }
         }
         s.on("ai:replying") { [weak self] data, _ in
             let replying = (data.first as? Bool) ?? true
-            Task { @MainActor in self?.messages.aiReplying = replying }
+            Task { @MainActor in self?.messageStore.aiReplying = replying }
         }
 
-        // 在线状态 → ConnectionStore
+        // 鍦ㄧ嚎鐘舵€?鈫?ConnectionStore
         s.on("presence") { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let online = dict["online"] as? [String] else { return }
@@ -266,7 +264,7 @@ final class ChatStore: ObservableObject {
             }
         }
 
-        // 共享状态事件 → SharedStore
+        // 鍏变韩鐘舵€佷簨浠?鈫?SharedStore
         s.on("shared:init") { [weak self] data, _ in
             guard let state = data.first as? [String: Any] else { return }
             Task { @MainActor in self?.shared.applySharedInit(state) }
@@ -301,7 +299,7 @@ final class ChatStore: ObservableObject {
             if let dict = item as? [String: Any] { return dict.values.map { "\($0)" }.joined(separator: " ") }
             return "\(item)"
         }.joined(separator: " ")
-        lastConnectionError = message.isEmpty ? "连接失败" : message
+        lastConnectionError = message.isEmpty ? "杩炴帴澶辫触" : message
         connected = false
         if message.lowercased().contains("unauthorized") {
             auth.verifySessionOrLogout()
@@ -311,15 +309,15 @@ final class ChatStore: ObservableObject {
     private func handleReadInit(_ dict: [String: Any]) {
         if let state = dict["state"] as? [String: Any] {
             let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "couple") ?? .couple
-            messages.setReadState(channel, state: state.compactMapValues { ($0 as? NSNumber)?.doubleValue })
+            messageStore.setReadState(channel, state: state.compactMapValues { ($0 as? NSNumber)?.doubleValue })
         } else {
-            messages.setReadState(.couple, state: dict.compactMapValues { ($0 as? NSNumber)?.doubleValue })
+            messageStore.setReadState(.couple, state: dict.compactMapValues { ($0 as? NSNumber)?.doubleValue })
         }
     }
 
-    // MARK: - 便捷方法（桥接到子 store，保持向后兼容）
+    // MARK: - 渚挎嵎鏂规硶锛堟ˉ鎺ュ埌瀛?store锛屼繚鎸佸悜鍚庡吋瀹癸級
 
-    func messages(for channel: ChatChannel) -> [ChatMessage] { messages.messages(for: channel) }
+    func messages(for channel: ChatChannel) -> [ChatMessage] { messageStore.messages(for: channel) }
 
     func setShared(_ key: String, value: [String: Any]) {
         shared.setShared(key, value: value, session: auth.session)
@@ -336,32 +334,32 @@ final class ChatStore: ObservableObject {
 
     func partnerAlias(for username: String?) -> String? { auth.partnerAlias(for: username) }
     func setPartnerAlias(_ alias: String?, for username: String?) { auth.setPartnerAlias(alias, for: username) }
-    func partnerDisplayName(fallback: String = "对方") -> String { auth.partnerDisplayName(fallback: fallback) }
+    func partnerDisplayName(fallback: String = "瀵规柟") -> String { auth.partnerDisplayName(fallback: fallback) }
 
     func sendText(_ text: String, channel: ChatChannel = .couple, replyTo: String? = nil, replyPreview: String? = nil) {
         guard let session = auth.session else { return }
-        messages.sendText(text, channel: channel, replyTo: replyTo, replyPreview: replyPreview, session: session)
+        messageStore.sendText(text, channel: channel, replyTo: replyTo, replyPreview: replyPreview, session: session)
     }
 
     func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?, channel: ChatChannel = .couple, displayText: String? = nil) {
         guard let session = auth.session else { return }
-        messages.sendMedia(data: data, mimeType: mimeType, preferredType: preferredType, localPreviewURL: localPreviewURL, channel: channel, displayText: displayText, session: session)
+        messageStore.sendMedia(data: data, mimeType: mimeType, preferredType: preferredType, localPreviewURL: localPreviewURL, channel: channel, displayText: displayText, session: session)
     }
 
     func sendSticker(url: String, channel: ChatChannel = .couple) {
         guard let session = auth.session else { return }
-        messages.sendSticker(url: url, channel: channel, session: session)
+        messageStore.sendSticker(url: url, channel: channel, session: session)
     }
 
     func uploadSticker(_ image: UIImage) async -> String? {
         guard let session = auth.session else { return nil }
-        return await messages.uploadSticker(image, session: session)
+        return await messageStore.uploadSticker(image, session: session)
     }
 
     func uploadAvatar(_ image: UIImage) async -> Bool {
         guard let session = auth.session,
               let data = image.jpegData(compressionQuality: 0.85) else { return false }
-        guard let uploaded = try? await messages.uploadMedia(data: data, mimeType: "image/jpeg", session: session) else { return false }
+        guard let uploaded = try? await messageStore.uploadMedia(data: data, mimeType: "image/jpeg", session: session) else { return false }
         if let url = ServerConfig.resolveMediaURL(uploaded.url) {
             ImageCache.shared.store(data: data, image: image, for: url)
         }
@@ -371,44 +369,44 @@ final class ChatStore: ObservableObject {
 
     func resend(_ message: ChatMessage) {
         guard let session = auth.session else { return }
-        messages.resend(message, session: session)
+        messageStore.resend(message, session: session)
     }
 
-    func markRead(_ channel: ChatChannel = .couple) { messages.markRead(channel) }
+    func markRead(_ channel: ChatChannel = .couple) { messageStore.markRead(channel) }
 
     func partnerHasRead(_ msg: ChatMessage) -> Bool {
-        messages.partnerHasRead(msg, username: auth.session?.username)
+        messageStore.partnerHasRead(msg, username: auth.session?.username)
     }
 
-    func recallMessage(_ message: ChatMessage, channel: ChatChannel) { messages.recallMessage(message, channel: channel) }
+    func recallMessage(_ message: ChatMessage, channel: ChatChannel) { messageStore.recallMessage(message, channel: channel) }
 
-    func confirmAction(messageId: String, decision: String) { messages.confirmAction(messageId: messageId, decision: decision) }
+    func confirmAction(messageId: String, decision: String) { messageStore.confirmAction(messageId: messageId, decision: decision) }
 
     func searchMessages(_ query: String, channel: ChatChannel) async -> [ChatMessage] {
-        await messages.searchMessages(query, channel: channel)
+        await messageStore.searchMessages(query, channel: channel)
     }
 
     func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) -> Bool {
-        messages.ensureMessageLoaded(target, channel: channel)
+        messageStore.ensureMessageLoaded(target, channel: channel)
     }
 
     func ensureDateLoaded(_ date: Date, channel: ChatChannel) -> ChatMessage? {
-        messages.ensureDateLoaded(date, channel: channel)
+        messageStore.ensureDateLoaded(date, channel: channel)
     }
 
-    func ensureLocalMessages(_ channel: ChatChannel) { messages.ensureLocalMessages(channel) }
+    func ensureLocalMessages(_ channel: ChatChannel) { messageStore.ensureLocalMessages(channel) }
 
-    func isLoadingOlder(_ channel: ChatChannel) -> Bool { messages.isLoadingOlder(channel) }
-    func isLoadingNewer(_ channel: ChatChannel) -> Bool { messages.isLoadingNewer(channel) }
-    func loadOlderAsync(_ channel: ChatChannel = .couple) async { await messages.loadOlderAsync(channel) }
-    func loadNewerAsync(_ channel: ChatChannel = .couple) async { await messages.loadNewerAsync(channel) }
+    func isLoadingOlder(_ channel: ChatChannel) -> Bool { messageStore.isLoadingOlder(channel) }
+    func isLoadingNewer(_ channel: ChatChannel) -> Bool { messageStore.isLoadingNewer(channel) }
+    func loadOlderAsync(_ channel: ChatChannel = .couple) async { await messageStore.loadOlderAsync(channel) }
+    func loadNewerAsync(_ channel: ChatChannel = .couple) async { await messageStore.loadNewerAsync(channel) }
 
     func mediaMessages(for channel: ChatChannel, includeFiles: Bool = false, limit: Int? = nil) -> [ChatMessage] {
-        messages.mediaMessages(for: channel, includeFiles: includeFiles, limit: limit)
+        messageStore.mediaMessages(for: channel, includeFiles: includeFiles, limit: limit)
     }
 
     func mediaItemCount(for channel: ChatChannel, includeFiles: Bool = false) -> Int {
-        messages.mediaItemCount(for: channel, includeFiles: includeFiles)
+        messageStore.mediaItemCount(for: channel, includeFiles: includeFiles)
     }
 
     func reportAway(_ away: Bool) { socket?.emit("away", away) }
@@ -424,8 +422,8 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if data.first is [String: Any] {
-                    self.messages.syncHistory(.couple)
-                    self.messages.syncHistory(.ai)
+                    self.messageStore.syncHistory(.couple)
+                    self.messageStore.syncHistory(.ai)
                 } else {
                     self.socket?.disconnect()
                     self.socket?.connect(withPayload: ["token": self.auth.session?.token ?? ""])
@@ -451,8 +449,8 @@ final class ChatStore: ObservableObject {
                     }
                     let ok = data.first is [String: Any]
                     if ok {
-                        self.messages.syncHistory(.couple)
-                        self.messages.syncHistory(.ai)
+                        self.messageStore.syncHistory(.couple)
+                        self.messageStore.syncHistory(.ai)
                     } else {
                         self.socket?.disconnect()
                         self.socket?.connect(withPayload: ["token": self.auth.session?.token ?? ""])
@@ -463,7 +461,7 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    // REST 桥接
+    // REST 妗ユ帴
     func fetchAccounts() async -> [Account] { await auth.fetchAccounts() }
     func fetchDaily() async -> DailyContent? {
         guard let token = auth.session?.token else { return nil }
@@ -506,7 +504,7 @@ final class ChatStore: ObservableObject {
 
     @discardableResult
     func syncAllHistory(_ channel: ChatChannel, onProgress: @escaping (Int) -> Void) async -> Int {
-        await messages.syncAllHistory(channel, onProgress: onProgress)
+        await messageStore.syncAllHistory(channel, onProgress: onProgress)
     }
 
     func cacheAllImages(_ channel: ChatChannel, onProgress: @escaping (Int, Int) -> Void) async {

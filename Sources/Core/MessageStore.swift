@@ -1,5 +1,6 @@
 import Foundation
 import SocketIO
+import UIKit
 
 /// 消息 CRUD、发送、搜索、历史同步，从 ChatStore 拆出。
 /// 通过 SocketProvider 访问 socket，不直接依赖 ChatStore。
@@ -622,7 +623,7 @@ final class MessageStore: ObservableObject {
         }
     }
 
-    func uploadMedia(data: Data, mimeType: String, session: Session) async throws -> (url: String, type: String) {
+    func uploadMedia(data: Data, mimeType: String, session: Session) async throws -> UploadResult {
         let boundary = "Boundary-\(UUID().uuidString)"
         var req = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/upload"))
         req.httpMethod = "POST"
@@ -634,7 +635,12 @@ final class MessageStore: ObservableObject {
             let msg = (try? JSONDecoder().decode([String: String].self, from: responseData))?["error"]
             throw NSError(domain: "upload", code: 1, userInfo: [NSLocalizedDescriptionKey: msg ?? "上传失败"])
         }
-        return try JSONDecoder().decode((url: String, type: String).self, from: responseData)
+        return try JSONDecoder().decode(UploadResult.self, from: responseData)
+    }
+
+    private struct UploadResult: Decodable {
+        let url: String
+        let type: String
     }
 
     static func mediaPlaceholderText(for type: String) -> String {
@@ -687,5 +693,11 @@ final class MessageStore: ObservableObject {
         let start = cal.startOfDay(for: date)
         let end = cal.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
         return (start.timeIntervalSince1970 * 1000, end.timeIntervalSince1970 * 1000)
+    }
+}
+
+private extension Data {
+    mutating func append(_ string: String) {
+        append(contentsOf: string.utf8)
     }
 }
