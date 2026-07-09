@@ -22,6 +22,9 @@ final class MessageStore: ObservableObject {
     private var lastLoadNewerAt: [String: Date] = [:]
     private let storeStartedAtMs = Date().timeIntervalSince1970 * 1000
 
+    /// 媒体发送失败后保留原始 Data，支持一键重传
+    private var pendingMediaData: [String: (data: Data, mimeType: String, preferredType: String, channel: ChatChannel)] = [:]
+
     private static let mediaTypes = ["image", "video"]
     private static let managedAttachmentTypes = ["image", "video", "file"]
 
@@ -360,6 +363,7 @@ final class MessageStore: ObservableObject {
             optimisticMedia: preferredType, text: outgoingText, localURL: localPreviewURL?.absoluteString,
             me: session, clientId: clientId, channel: channel.rawValue)
         updateMessages(channel) { $0.append(optimistic) }
+        pendingMediaData[clientId] = (data: data, mimeType: mimeType, preferredType: preferredType, channel: channel)
 
         guard socketProvider?.isConnected == true else {
             updateMessages(channel) { list in
@@ -373,6 +377,7 @@ final class MessageStore: ObservableObject {
         Task {
             do {
                 let uploaded = try await uploadMedia(data: data, mimeType: mimeType, session: session)
+                pendingMediaData.removeValue(forKey: clientId)
                 let type = preferredType == "file" ? "file" : (uploaded.type.isEmpty ? preferredType : uploaded.type)
                 updateMessages(channel) { list in
                     guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
@@ -432,10 +437,21 @@ final class MessageStore: ObservableObject {
     }
 
     func resend(_ message: ChatMessage, session: Session) {
-        guard message.failed, message.type == "text" else { return }
+        guard message.failed else { return }
         let channel = ChatChannel(rawValue: message.channel) ?? .couple
-        updateMessages(channel) { $0.removeAll { $0.id == message.id } }
-        sendText(message.text, channel: channel, session: session)
+        if message.type == "text" {
+            updateMessages(channel) { $0.removeAll { $0.id == message.id } }
+            sendText(message.text, channel: channel, session: session)
+        } else if let cached = pendingMediaData[message.id] {
+            updateMessages(channel) { $0.removeAll { $0.id == message.id } }
+            pendingMediaData.removeValue(forKey: message.id)
+            sendMedia(data: cached.data, mimeType: cached.mimeType, preferredType: cached.preferredType,
+                      localPreviewURL: nil, channel: cached.channel, session: session)
+        }
+    }
+
+    func hasPendingMedia(_ message: ChatMessage) -> Bool {
+        pendingMediaData[message.id] != nil
     }
 
     // MARK: - 已读
