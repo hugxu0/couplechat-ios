@@ -1,6 +1,5 @@
 import Foundation
 import SocketIO
-import SocketIO
 
 /// 子 store 通过此协议访问 socket，避免对 ChatStore 的直接依赖。
 protocol SocketProvider: AnyObject {
@@ -8,5 +7,4 @@ protocol SocketProvider: AnyObject {
     var isConnected: Bool { get }
     var sessionUsername: String? { get }
     func emit(_ event: String, _ items: SocketData...)
-    func emitWithAck(_ event: String, _ items: SocketData...) -> SocketAckManager
 }

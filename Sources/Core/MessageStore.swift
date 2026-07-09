@@ -638,7 +638,7 @@ final class MessageStore: ObservableObject {
         return try JSONDecoder().decode(UploadResult.self, from: responseData)
     }
 
-    private struct UploadResult: Decodable {
+    struct UploadResult: Decodable {
         let url: String
         let type: String
     }
