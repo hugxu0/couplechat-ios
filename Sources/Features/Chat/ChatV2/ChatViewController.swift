@@ -85,7 +85,10 @@ final class ChatViewController: UIViewController {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
-        stopVoicePlayback(deactivateSession: false)
+        voicePlayer?.pause()
+        if let observer = voicePlaybackEndObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     func updateEnvironment(
@@ -1076,7 +1079,9 @@ private extension ChatViewController {
             object: player.currentItem,
             queue: .main
         ) { [weak self] _ in
-            self?.stopVoicePlayback()
+            Task { @MainActor [weak self] in
+                self?.stopVoicePlayback()
+            }
         }
         player.play()
         reloadVoiceMessageCell(message.id)
