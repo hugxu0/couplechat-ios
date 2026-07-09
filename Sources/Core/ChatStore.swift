@@ -10,9 +10,9 @@ final class ChatStore: ObservableObject {
 
     // MARK: - 子 store
 
-    let auth = AuthStore()
-    let messageStore = MessageStore()
-    let shared = SharedStore()
+    let auth: AuthStore
+    let messageStore: MessageStore
+    let shared: SharedStore
 
     // MARK: - 对外聚合状态
 
@@ -133,7 +133,10 @@ final class ChatStore: ObservableObject {
 
     // MARK: - 初始化
 
-    init() {
+    init(httpClient: any HTTPClient = URLSessionHTTPClient()) {
+        auth = AuthStore(httpClient: httpClient)
+        messageStore = MessageStore(httpClient: httpClient)
+        shared = SharedStore(httpClient: httpClient)
         auth.socketProvider = self
         messageStore.socketProvider = self
         shared.socketProvider = self
@@ -206,12 +209,12 @@ final class ChatStore: ObservableObject {
         s.on(clientEvent: .error) { [weak self] data, _ in
             Task { @MainActor in self?.handleSocketError(data) }
         }
-        s.on("connect_error") { [weak self] data, _ in
+        s.on(SocketEvent.connectError.rawValue) { [weak self] data, _ in
             Task { @MainActor in self?.handleSocketError(data) }
         }
 
         // 消息事件 -> MessageStore
-        s.on("message:new") { [weak self] data, _ in
+        s.on(SocketEvent.messageNew.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let msg = MessageStore.parseMessage(dict, context: "message:new") else { return }
             Task { @MainActor in
@@ -225,41 +228,41 @@ final class ChatStore: ObservableObject {
                 }
             }
         }
-        s.on("read:init") { [weak self] data, _ in
+        s.on(SocketEvent.readInit.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any] else { return }
             Task { @MainActor in self?.handleReadInit(dict) }
         }
-        s.on("read:update") { [weak self] data, _ in
+        s.on(SocketEvent.readUpdate.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let user = dict["user"] as? String,
                   let ts = (dict["ts"] as? NSNumber)?.doubleValue else { return }
             let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "couple") ?? .couple
             Task { @MainActor in self?.messageStore.setReadState(channel, user: user, ts: ts) }
         }
-        s.on("message:recalled") { [weak self] data, _ in
+        s.on(SocketEvent.messageRecalled.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let id = dict["id"] as? String else { return }
             let byName = dict["byName"] as? String
             let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "")
             Task { @MainActor in self?.messageStore.applyRecall(id: id, byName: byName, channel: channel, myUsername: self?.auth.session?.username) }
         }
-        s.on("message:update") { [weak self] data, _ in
+        s.on(SocketEvent.messageUpdate.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let id = dict["id"] as? String else { return }
             let metaDict = dict["meta"] as? [String: Any]
             Task { @MainActor in self?.messageStore.applyMessageUpdate(id: id, meta: metaDict) }
         }
-        s.on("ai:typing") { [weak self] data, _ in
+        s.on(SocketEvent.aiTyping.rawValue) { [weak self] data, _ in
             let typing = (data.first as? Bool) ?? true
             Task { @MainActor in self?.messageStore.aiTyping = typing }
         }
-        s.on("ai:replying") { [weak self] data, _ in
+        s.on(SocketEvent.aiReplying.rawValue) { [weak self] data, _ in
             let replying = (data.first as? Bool) ?? true
             Task { @MainActor in self?.messageStore.aiReplying = replying }
         }
 
         // 在线状态 -> ConnectionStore
-        s.on("presence") { [weak self] data, _ in
+        s.on(SocketEvent.presence.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let online = dict["online"] as? [String] else { return }
             Task { @MainActor in
@@ -269,15 +272,15 @@ final class ChatStore: ObservableObject {
         }
 
         // 共享状态事件 -> SharedStore
-        s.on("shared:init") { [weak self] data, _ in
+        s.on(SocketEvent.sharedInit.rawValue) { [weak self] data, _ in
             guard let state = data.first as? [String: Any] else { return }
             Task { @MainActor in self?.shared.applySharedInit(state) }
         }
-        s.on("shared:update") { [weak self] data, _ in
+        s.on(SocketEvent.sharedUpdate.rawValue) { [weak self] data, _ in
             guard let update = data.first as? [String: Any] else { return }
             Task { @MainActor in self?.shared.applySharedUpdate(update) }
         }
-        s.on("personalItem:changed") { [weak self] data, _ in
+        s.on(SocketEvent.personalItemChanged.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let itemDict = dict["item"] as? [String: Any],
                   let action = dict["action"] as? String else { return }
@@ -394,8 +397,8 @@ final class ChatStore: ObservableObject {
         messageStore.ensureMessageLoaded(target, channel: channel)
     }
 
-    func ensureDateLoaded(_ date: Date, channel: ChatChannel) -> ChatMessage? {
-        messageStore.ensureDateLoaded(date, channel: channel)
+    func ensureDateLoaded(_ date: Date, channel: ChatChannel) async -> ChatMessage? {
+        await messageStore.ensureDateLoaded(date, channel: channel)
     }
 
     func ensureLocalMessages(_ channel: ChatChannel) { messageStore.ensureLocalMessages(channel) }
@@ -413,7 +416,7 @@ final class ChatStore: ObservableObject {
         messageStore.mediaItemCount(for: channel, includeFiles: includeFiles)
     }
 
-    func reportAway(_ away: Bool) { socket?.emit("away", away) }
+    func reportAway(_ away: Bool) { socket?.emit(SocketEvent.away.rawValue, away) }
 
     func recoverOnForeground() {
         guard let s = socket else { return }
@@ -422,7 +425,7 @@ final class ChatStore: ObservableObject {
             s.connect(withPayload: ["token": auth.session?.token ?? ""])
             return
         }
-        s.emitWithAck("health").timingOut(after: 2.5) { [weak self] data in
+        s.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 2.5) { [weak self] data in
             Task { @MainActor in
                 guard let self else { return }
                 if data.first is [String: Any] {
@@ -445,7 +448,7 @@ final class ChatStore: ObservableObject {
         }
         guard connected else { return false }
         return await withCheckedContinuation { continuation in
-            s.emitWithAck("health").timingOut(after: 2.5) { [weak self] data in
+            s.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 2.5) { [weak self] data in
                 Task { @MainActor in
                     guard let self else {
                         continuation.resume(returning: false)

@@ -7,6 +7,12 @@ final class SharedStore: ObservableObject {
 
     static let personalItemChangedNotification = Notification.Name("personalItemChanged")
 
+    private let httpClient: any HTTPClient
+
+    init(httpClient: any HTTPClient = URLSessionHTTPClient()) {
+        self.httpClient = httpClient
+    }
+
     weak var socketProvider: SocketProvider?
 
     // MARK: - 共享状态读写
@@ -21,7 +27,7 @@ final class SharedStore: ObservableObject {
                 updatedAt: Date().timeIntervalSince1970 * 1000)
         }
         guard let s = socketProvider?.socket, socketProvider?.isConnected == true else { return }
-        s.emit("shared:set", ["key": key, "value": value])
+        s.emit(SocketEvent.sharedSet.rawValue, ["key": key, "value": value])
     }
 
     func sharedValue(_ key: String) -> [String: Any]? {
@@ -131,7 +137,7 @@ final class SharedStore: ObservableObject {
             print("[SharedStore] ⚠️ fetchDaily: 未登录")
             return nil
         }
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await httpClient.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else {
             print("[SharedStore] ⚠️ fetchDaily: 请求失败")
             return nil
@@ -141,7 +147,7 @@ final class SharedStore: ObservableObject {
 
     func regenerateRecommendation(token: String) async -> Recommendation? {
         guard let req = authorizedRequest("api/daily/recommend", method: "POST", token: token) else { return nil }
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await httpClient.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         struct Wrapper: Decodable { let recommend: Recommendation? }
         return (try? JSONDecoder().decode(Wrapper.self, from: data))?.recommend
@@ -153,7 +159,7 @@ final class SharedStore: ObservableObject {
         components.append("scope=\(scope)")
         let path = "api/me/items?\(components.joined(separator: "&"))"
         guard let req = authorizedRequest(path, token: token) else { return [] }
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await httpClient.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
         return (try? JSONDecoder().decode(PersonalItemsResponse.self, from: data))?.items ?? []
     }
@@ -176,7 +182,7 @@ final class SharedStore: ObservableObject {
 
     func deletePersonalItem(_ item: PersonalItem, token: String) async -> Bool {
         guard let req = authorizedRequest("api/me/items/\(item.id)", method: "DELETE", token: token) else { return false }
-        guard let (_, resp) = try? await URLSession.shared.data(for: req) else { return false }
+        guard let (_, resp) = try? await httpClient.data(for: req) else { return false }
         return (resp as? HTTPURLResponse)?.statusCode == 200
     }
 
@@ -185,7 +191,7 @@ final class SharedStore: ObservableObject {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = ["barkKey": barkKey ?? NSNull()]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (_, resp) = try? await URLSession.shared.data(for: req),
+        guard let (_, resp) = try? await httpClient.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else {
             print("[SharedStore] ⚠️ saveBarkKey: 请求失败")
             return false
@@ -197,7 +203,7 @@ final class SharedStore: ObservableObject {
         guard var req = authorizedRequest(path, method: method, token: token) else { return nil }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await httpClient.data(for: req),
               let code = (resp as? HTTPURLResponse)?.statusCode,
               (200..<300).contains(code) else { return nil }
         return (try? JSONDecoder().decode(PersonalItemResponse.self, from: data))?.item

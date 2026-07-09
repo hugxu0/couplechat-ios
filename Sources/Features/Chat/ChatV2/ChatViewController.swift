@@ -146,15 +146,20 @@ final class ChatViewController: UIViewController {
     }
 
     func performJump(_ command: ChatV2JumpCommand) {
-        let target: ChatMessage?
         switch command.action {
         case .message(let message):
             store.ensureMessageLoaded(message, channel: channel)
-            target = message
+            completeJump(to: message)
         case .date(let date):
-            target = store.ensureDateLoaded(date, channel: channel)
+            Task { @MainActor [weak self] in
+                guard let self,
+                      let target = await self.store.ensureDateLoaded(date, channel: self.channel) else { return }
+                self.completeJump(to: target)
+            }
         }
-        guard let target else { return }
+    }
+
+    private func completeJump(to target: ChatMessage) {
         browsingHistoricalWindow = true
         reloadTimeline(animated: false)
         scrollToMessage(id: target.id, highlighted: true)

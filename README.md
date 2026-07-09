@@ -18,6 +18,7 @@
 **仍是占位**：大橘 tab 的宠物数值与 3D 模型。
 
 详细交接说明见 [`HANDOFF.md`](HANDOFF.md)。
+持续开发的协议、迁移与验证约定见 [`Docs/FOUNDATION.md`](Docs/FOUNDATION.md)。
 
 ## 架构
 
@@ -32,7 +33,13 @@ Sources/
 │   ├── SocketProvider.swift     协议：解耦子 store 对 socket 的依赖
 │   ├── ServerConfig.swift       服务端地址（支持 Info.plist 配置）
 │   ├── ChatLocalDatabase.swift  设备端 SQLite 缓存
-│   ├── Models.swift             数据模型
+│   ├── SocketContract.swift     Socket 事件与请求体契约
+│   ├── HTTPClient.swift          可注入的 HTTP 网络边界
+│   ├── ChatMessage.swift        消息模型
+│   ├── Account.swift            账号模型
+│   ├── CoupleDates.swift        纪念日模型
+│   ├── DailyContent.swift       每日内容模型
+│   ├── PersonalItem.swift       提醒/备忘模型
 │   ├── Keychain.swift           会话持久化
 │   ├── ImageCache.swift         图片磁盘/内存缓存
 │   ├── StickerStore.swift       本机贴纸库
@@ -48,6 +55,8 @@ Sources/
 
 server/                   Node.js + Fastify + Socket.IO + PostgreSQL
 ```
+
+持续开发时请先阅读 [`Docs/FOUNDATION.md`](Docs/FOUNDATION.md)，其中约定了 Socket 契约、异步加载、本地缓存迁移、服务端数据库迁移和验证门槛。
 
 **ChatStore 拆分**：原 1579 行的 God Object 已拆为 4 个职责单一的 store：
 - `AuthStore`（108 行）：登录/登出/session/partner

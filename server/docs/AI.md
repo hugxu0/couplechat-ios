@@ -815,7 +815,7 @@ AI 相关的 socket 事件（在 `socket/realtime.ts` 注册）：
 
 ## 十八、iOS 端
 
-### 18.1 数据模型（Models.swift）
+### 18.1 数据模型（ChatMessage.swift 等）
 
 `ChatMessage` 新增 `meta: ChatMessageMeta?` 字段：
 

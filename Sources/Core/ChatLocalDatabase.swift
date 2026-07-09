@@ -3,13 +3,17 @@ import SQLite3
 
 final class ChatLocalDatabase {
     static let shared = ChatLocalDatabase()
+    private static let schemaVersion: Int32 = 1
     private var db: OpaquePointer?
     private(set) var currentDatabaseURL: URL?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    private let databaseLock = NSRecursiveLock()
 
     private init() {}
 
     func open(username: String) -> Bool {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         if db != nil { close() }
         let fileManager = FileManager.default
         let appSupportDirs = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -27,11 +31,18 @@ final class ChatLocalDatabase {
         let dbURL = directoryURL.appendingPathComponent("\(safeUsername).sqlite")
         currentDatabaseURL = dbURL
 
-        if sqlite3_open(dbURL.path, &db) != SQLITE_OK {
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        if sqlite3_open_v2(dbURL.path, &db, flags, nil) != SQLITE_OK {
+            close()
             return false
         }
 
-        createTables()
+        sqlite3_busy_timeout(db, 5_000)
+        guard execute(sql: "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;"),
+              createTables() else {
+            close()
+            return false
+        }
         return true
     }
 
@@ -39,6 +50,8 @@ final class ChatLocalDatabase {
 
     /// 本地数据库文件大小（含 -wal / -shm）
     func databaseSizeBytes() -> Int64 {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         guard let url = currentDatabaseURL else { return 0 }
         let fm = FileManager.default
         var total: Int64 = 0
@@ -53,6 +66,8 @@ final class ChatLocalDatabase {
 
     /// 某频道已缓存的消息条数
     func messageCount(channel: String) -> Int {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         let sql = "SELECT COUNT(*) FROM messages WHERE channel = ?;"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
@@ -67,6 +82,8 @@ final class ChatLocalDatabase {
 
     /// 某频道内指定类型消息的媒体地址列表（去重、去空），用于「缓存全部图片」
     func mediaURLs(channel: String, types: [String]) -> [String] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         guard !types.isEmpty else { return [] }
         let placeholders = types.map { _ in "?" }.joined(separator: ",")
         let sql = """
@@ -88,13 +105,29 @@ final class ChatLocalDatabase {
     }
     
     func close() {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         if db != nil {
             sqlite3_close(db)
             db = nil
         }
+        currentDatabaseURL = nil
     }
     
-    private func createTables() {
+    private func createTables() -> Bool {
+        let currentVersion = schemaVersion()
+        guard currentVersion <= Self.schemaVersion else {
+            print("[ChatLocalDatabase] ⚠️ 本地数据库版本 \(currentVersion) 高于客户端支持的 \(Self.schemaVersion)")
+            return false
+        }
+        guard currentVersion < Self.schemaVersion else { return true }
+
+        guard execute(sql: "BEGIN IMMEDIATE TRANSACTION;") else { return false }
+        var committed = false
+        defer {
+            if !committed { _ = execute(sql: "ROLLBACK;") }
+        }
+
         let messagesSQL = """
         CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY,
@@ -134,18 +167,41 @@ final class ChatLocalDatabase {
         );
         """
         
-        execute(sql: messagesSQL)
-        execute(sql: readReceiptsSQL)
-        execute(sql: sharedStateSQL)
+        guard execute(sql: messagesSQL),
+              execute(sql: readReceiptsSQL),
+              execute(sql: sharedStateSQL),
+              execute(sql: "PRAGMA user_version = \(Self.schemaVersion);"),
+              execute(sql: "COMMIT;") else { return false }
+        committed = true
+        return true
     }
     
-    private func execute(sql: String) {
-        sqlite3_exec(db, sql, nil, nil, nil)
+    private func schemaVersion() -> Int32 {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return sqlite3_column_int(stmt, 0)
+    }
+
+    @discardableResult
+    private func execute(sql: String) -> Bool {
+        var errorMessage: UnsafeMutablePointer<Int8>?
+        let result = sqlite3_exec(db, sql, nil, nil, &errorMessage)
+        defer { sqlite3_free(errorMessage) }
+        guard result == SQLITE_OK else {
+            let detail = errorMessage.map(String.init(cString:)) ?? "SQLite error \(result)"
+            print("[ChatLocalDatabase] ⚠️ SQL 执行失败: \(detail)")
+            return false
+        }
+        return true
     }
     
     // MARK: - Message Operations
     
     func insertMessage(_ msg: ChatMessage) {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         // 乐观占位/发送失败的消息不落库：它们的 id 是临时的 tmp-xxx，
         // 重启后既发不出去也删不掉，只会在列表里留下幽灵消息。
         guard !msg.pending, !msg.failed, !msg.id.hasPrefix("tmp-") else { return }
@@ -186,6 +242,8 @@ final class ChatLocalDatabase {
     }
     
     func deleteMessage(id: String) {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         let sql = "DELETE FROM messages WHERE id = ?;"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
@@ -195,6 +253,8 @@ final class ChatLocalDatabase {
     }
     
     func fetchMessages(channel: String, beforeTimestamp: Double, limit: Int) -> [ChatMessage] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
         let sql = """
         SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson 
@@ -226,6 +286,8 @@ final class ChatLocalDatabase {
     /// 拉取某个时间区间内的全部消息（含端点），按时间正序。
     /// 用于「搜索结果跳转」把命中消息与当前已加载窗口之间的空档补齐，保证能定位。
     func fetchMessages(channel: String, fromTimestamp: Double, toTimestamp: Double) -> [ChatMessage] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
         let sql = """
         SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
@@ -255,6 +317,8 @@ final class ChatLocalDatabase {
 
     /// 拉取目标消息附近的一小段上下文，避免跳到很久以前的消息时把中间全部历史塞进 SwiftUI 列表。
     func fetchMessagesAround(channel: String, centerTimestamp: Double, beforeLimit: Int, afterLimit: Int) -> [ChatMessage] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         let before = fetchMessagesBeforeOrAt(channel: channel, timestamp: centerTimestamp, limit: beforeLimit)
         let after = fetchMessagesAfter(channel: channel, timestamp: centerTimestamp, limit: afterLimit)
         var seen = Set<String>()
@@ -268,6 +332,8 @@ final class ChatLocalDatabase {
     }
 
     func fetchMessages(channel: String, fromInclusive: Double, toExclusive: Double, limit: Int? = nil) -> [ChatMessage] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
         let limitClause = limit == nil ? "" : "LIMIT ?"
         let sql = """
@@ -301,6 +367,8 @@ final class ChatLocalDatabase {
     }
 
     func mediaMessages(channel: String, types: [String], limit: Int? = nil) -> [ChatMessage] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         guard !types.isEmpty else { return [] }
         var messages: [ChatMessage] = []
         let placeholders = types.map { _ in "?" }.joined(separator: ",")
@@ -334,6 +402,8 @@ final class ChatLocalDatabase {
     }
 
     func mediaCount(channel: String, types: [String]) -> Int {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         guard !types.isEmpty else { return 0 }
         let placeholders = types.map { _ in "?" }.joined(separator: ",")
         let sql = """
@@ -355,14 +425,20 @@ final class ChatLocalDatabase {
     }
 
     func dayCounts(channel: String) -> [(date: String, sender: String, count: Int)] {
-        groupedCounts(channel: channel, format: "%Y-%m-%d")
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        return groupedCounts(channel: channel, format: "%Y-%m-%d")
     }
 
     func monthCounts(channel: String) -> [(date: String, sender: String, count: Int)] {
-        groupedCounts(channel: channel, format: "%Y-%m")
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        return groupedCounts(channel: channel, format: "%Y-%m")
     }
 
     func fetchLatestMessages(channel: String, limit: Int) -> [ChatMessage] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
         let sql = """
         SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson 
@@ -467,6 +543,8 @@ final class ChatLocalDatabase {
     }
     
     func searchMessages(query: String, channel: String) -> [ChatMessage] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
         let sql = """
         SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson 
@@ -499,6 +577,8 @@ final class ChatLocalDatabase {
     // MARK: - Read Receipt Operations
     
     func saveReadReceipt(channel: String, username: String, ts: Double, updatedAt: Double) {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         let sql = """
         INSERT OR REPLACE INTO read_receipts (channel, username, ts, updatedAt)
         VALUES (?, ?, ?, ?);
@@ -516,6 +596,8 @@ final class ChatLocalDatabase {
     }
     
     func loadReadReceipts(channel: String) -> [String: Double] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         var receipts: [String: Double] = [:]
         let sql = "SELECT username, ts FROM read_receipts WHERE channel = ?;"
         var stmt: OpaquePointer?
@@ -537,6 +619,8 @@ final class ChatLocalDatabase {
     // MARK: - Shared State Operations
     
     func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double) {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         let sql = """
         INSERT OR REPLACE INTO shared_state (key, valueJson, updatedBy, updatedAt)
         VALUES (?, ?, ?, ?);
@@ -554,6 +638,8 @@ final class ChatLocalDatabase {
     }
     
     func loadSharedState() -> [String: Any] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         var state: [String: Any] = [:]
         let sql = "SELECT key, valueJson, updatedBy, updatedAt FROM shared_state;"
         var stmt: OpaquePointer?

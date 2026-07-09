@@ -1,4 +1,5 @@
 import type { Server } from "socket.io";
+import { socketEvents } from "../contracts/realtime";
 import type { AuthUser } from "../types";
 
 const socketsByUser = new Map<string, Set<string>>();
@@ -34,5 +35,5 @@ export function onlineUsers() {
 }
 
 export function broadcastPresence(io: Server) {
-  io.to("channel:couple").emit("presence", { online: onlineUsers() });
+  io.to("channel:couple").emit(socketEvents.presence, { online: onlineUsers() });
 }

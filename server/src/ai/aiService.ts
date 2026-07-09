@@ -2,6 +2,7 @@
 // 职责：入口分流（couple 召唤 / ai 私聊每条都答）、回复入库与广播、后台任务挂钩。
 
 import type { Server } from "socket.io";
+import { socketEvents } from "../contracts/realtime";
 import type { AuthUser, ClientMessage } from "../types";
 import { toStoredChannel, type StoredChannel } from "../types";
 import { createAiMessage } from "../chat/messageService";
@@ -57,9 +58,9 @@ function makeSink(io: Server): ReplySink {
     async emit(storedChannel, text, isFirst, meta) {
       const message = await createAiMessage(storedChannel as StoredChannel, text, meta);
       if (storedChannel.startsWith("ai:")) {
-        io.to(`user:${storedChannel.slice(3)}`).emit("message:new", message);
+        io.to(`user:${storedChannel.slice(3)}`).emit(socketEvents.messageNew, message);
       } else {
-        io.to("channel:couple").emit("message:new", message);
+        io.to("channel:couple").emit(socketEvents.messageNew, message);
         // couple 里大橘的发言也推给不在线的一方（只推第一条，不轰炸）。
         if (isFirst) void pushCoupleMessageToUnavailableRecipients(message);
       }
@@ -68,12 +69,12 @@ function makeSink(io: Server): ReplySink {
       // iOS 客户端把 ai:typing 当作 ai 私聊频道的输入指示（裸 bool），
       // couple 频道的回复不发 typing，避免错误点亮私聊气泡。
       if (storedChannel.startsWith("ai:")) {
-        io.to(`user:${storedChannel.slice(3)}`).emit("ai:typing", value);
+        io.to(`user:${storedChannel.slice(3)}`).emit(socketEvents.aiTyping, value);
       }
     },
     replying(storedChannel, value) {
       if (storedChannel.startsWith("ai:")) {
-        io.to(`user:${storedChannel.slice(3)}`).emit("ai:replying", value);
+        io.to(`user:${storedChannel.slice(3)}`).emit(socketEvents.aiReplying, value);
       }
     },
   };

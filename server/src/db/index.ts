@@ -156,8 +156,20 @@ export async function get<T extends object>(sql: string, params: any[] = []): Pr
   return rows[0];
 }
 
-async function migrate() {
-  await conn().query(`
+interface SchemaMigration {
+  version: number;
+  name: string;
+  sql: string;
+}
+
+// 迁移必须只追加，已发布的版本号与 SQL 不再修改。
+// 旧环境第一次升级时会安全地重跑 v1 中的 IF NOT EXISTS / ADD COLUMN IF NOT EXISTS，
+// 然后写入台账；之后每次启动只执行尚未应用的版本。
+const schemaMigrations: SchemaMigration[] = [
+  {
+    version: 1,
+    name: "initial_schema",
+    sql: `
     CREATE TABLE IF NOT EXISTS accounts (
       username TEXT PRIMARY KEY,
       display_name TEXT NOT NULL,
@@ -272,5 +284,43 @@ async function migrate() {
     );
 
     ALTER TABLE personal_items ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'personal';
+    `,
+  },
+];
+
+async function migrate() {
+  const database = conn();
+  await database.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at BIGINT NOT NULL
+    );
   `);
+
+  const appliedResult = await database.query<{ version: number }>("SELECT version FROM schema_migrations");
+  const appliedVersions = new Set(appliedResult.rows.map((row) => row.version));
+
+  for (const migration of schemaMigrations) {
+    if (appliedVersions.has(migration.version)) continue;
+
+    const client = await database.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(migration.sql);
+      await client.query(
+        "INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, $3)",
+        [migration.version, migration.name, Date.now()],
+      );
+      await client.query("COMMIT");
+      console.info(`[db] 已应用迁移 v${migration.version}: ${migration.name}`);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw new Error(
+        `[db] 迁移 v${migration.version} (${migration.name}) 失败: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      client.release();
+    }
+  }
 }

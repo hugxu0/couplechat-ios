@@ -18,7 +18,7 @@
 cd /opt
 git clone https://github.com/hugxu0/couplechat-ios.git couplechat-ios
 cd /opt/couplechat-ios
-git checkout codex/new-backend-ios-media
+git checkout main
 
 cd server
 cp .env.production.example .env
@@ -116,7 +116,7 @@ tail -f /root/.pm2/logs/couplechat-server-out-0.log   # 看有没有报错
 ```bash
 cd /opt/couplechat-ios
 git fetch
-git checkout codex/new-backend-ios-media
+git checkout main
 git pull
 cd server
 npm ci

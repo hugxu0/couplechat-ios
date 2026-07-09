@@ -15,7 +15,12 @@ final class AuthStore: ObservableObject {
     var loggedIn: Bool { session != nil }
 
     private var verifyingSession = false
+    private let httpClient: any HTTPClient
     weak var socketProvider: SocketProvider?
+
+    init(httpClient: any HTTPClient = URLSessionHTTPClient()) {
+        self.httpClient = httpClient
+    }
 
     // MARK: - 启动
 
@@ -32,7 +37,7 @@ final class AuthStore: ObservableObject {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(["username": username, "password": password])
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await httpClient.data(for: req)
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
             throw NSError(domain: "login", code: 1, userInfo: [NSLocalizedDescriptionKey: msg ?? "登录失败"])
@@ -55,8 +60,8 @@ final class AuthStore: ObservableObject {
     // MARK: - 账号
 
     func fetchAccounts() async -> [Account] {
-        guard let (data, _) = try? await URLSession.shared.data(
-            from: ServerConfig.baseURL.appendingPathComponent("api/accounts")) else {
+        let req = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/accounts"))
+        guard let (data, _) = try? await httpClient.data(for: req) else {
             print("[AuthStore] ⚠️ fetchAccounts 网络请求失败")
             return []
         }
@@ -85,7 +90,7 @@ final class AuthStore: ObservableObject {
             defer { verifyingSession = false }
             var req = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/me"))
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            guard let (_, resp) = try? await URLSession.shared.data(for: req),
+            guard let (_, resp) = try? await httpClient.data(for: req),
                   let http = resp as? HTTPURLResponse else { return }
             if http.statusCode == 401 {
                 logout()

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Server } from "socket.io";
 import { z } from "zod";
+import { socketEvents } from "../contracts/realtime";
 import { requireAuth } from "../auth/httpAuth";
 import {
   createPersonalItem,
@@ -20,7 +21,7 @@ function broadcastSharedChange(action: string, item: unknown) {
   if (!io) return;
   const it = item as { scope?: string } | null;
   if (!it || it.scope !== "shared") return;
-  io.to("channel:couple").emit("personalItem:changed", { action, item });
+  io.to("channel:couple").emit(socketEvents.personalItemChanged, { action, item });
 }
 
 const kindSchema = z.enum(["reminder", "memo"]);

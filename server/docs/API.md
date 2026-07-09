@@ -1,5 +1,7 @@
 # CoupleChat Backend Contract
 
+Socket.IO 事件名和入站 payload 的运行时校验统一维护在 `src/contracts/realtime.ts`；本文件用于客户端开发和人工调试。
+
 Base URL 示例：`https://hoo66.top`
 
 ## REST
@@ -389,6 +391,7 @@ Ack：
 支持：
 
 - `since`: 拉取指定时间戳之后的增量
+- `after` + `before`: 拉取时间范围内的消息（包含 `after`，不包含 `before`）
 - `before`: 上滑加载更早
 - `around`: 跳转到某个时间附近
 

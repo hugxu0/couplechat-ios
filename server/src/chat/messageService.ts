@@ -1,27 +1,11 @@
 import { nanoid } from "nanoid";
 import { all, get, run, type MessageRow, type ReadReceiptRow } from "../db";
+import type { FetchMessagesPayload, SendMessagePayload } from "../contracts/realtime";
 import type { AuthUser, ClientChannel, ClientMessage, MessageKind, MessageType, StoredChannel } from "../types";
 import { toClientChannel, toStoredChannel } from "../types";
 
-export interface SendMessageInput {
-  channel: ClientChannel;
-  type: MessageType;
-  text?: string;
-  url?: string;
-  replyTo?: string;
-  replyPreview?: string;
-  reply?: unknown;
-  meta?: unknown;
-  clientId?: string;
-}
-
-export interface FetchMessagesInput {
-  channel: ClientChannel;
-  since?: number;
-  before?: number;
-  around?: number;
-  limit?: number;
-}
+export type SendMessageInput = SendMessagePayload;
+export type FetchMessagesInput = FetchMessagesPayload;
 
 function safeJson(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -197,7 +181,15 @@ export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
   const storedChannel = toStoredChannel(input.channel, user.username);
   const limit = Math.min(Math.max(input.limit ?? 80, 1), 300);
 
-  if (input.before) {
+  if (input.after !== undefined && input.before !== undefined) {
+    const rows = await all<MessageRow>(
+      "SELECT * FROM messages WHERE channel = ? AND ts >= ? AND ts < ? ORDER BY ts ASC LIMIT ?",
+      [storedChannel, input.after, input.before, limit],
+    );
+    return rows.map((row) => mapMessage(row, input.channel));
+  }
+
+  if (input.before !== undefined) {
     const rows = await all<MessageRow>(
       "SELECT * FROM messages WHERE channel = ? AND ts < ? ORDER BY ts DESC LIMIT ?",
       [storedChannel, input.before, limit],
@@ -205,10 +197,18 @@ export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
     return rows.reverse().map((row) => mapMessage(row, input.channel));
   }
 
-  if (input.since) {
+  if (input.since !== undefined) {
     const rows = await all<MessageRow>(
       "SELECT * FROM messages WHERE channel = ? AND ts > ? ORDER BY ts ASC LIMIT ?",
       [storedChannel, input.since, limit],
+    );
+    return rows.map((row) => mapMessage(row, input.channel));
+  }
+
+  if (input.after !== undefined) {
+    const rows = await all<MessageRow>(
+      "SELECT * FROM messages WHERE channel = ? AND ts >= ? ORDER BY ts ASC LIMIT ?",
+      [storedChannel, input.after, limit],
     );
     return rows.map((row) => mapMessage(row, input.channel));
   }

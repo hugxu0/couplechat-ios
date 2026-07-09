@@ -9,6 +9,7 @@
 //   - 互斥锁防并发。
 
 import type { Server } from "socket.io";
+import { socketEvents } from "../contracts/realtime";
 import { chat, extractJson } from "./provider";
 import { recentMessages, compactLine, type LogMessage } from "./chatLog";
 import { createAiMessage } from "../chat/messageService";
@@ -112,7 +113,7 @@ export async function maybeCheck(io: Server, channel: string): Promise<void> {
 
     // 主动发出介入消息（不经 @召唤，直接在 couple 频道插话）
     const message = await createAiMessage("couple", reply);
-    io.to("channel:couple").emit("message:new", message);
+    io.to("channel:couple").emit(socketEvents.messageNew, message);
     void pushCoupleMessageToUnavailableRecipients(message);
   } catch (error) {
     console.warn("[ai] 冲突检测失败:", error instanceof Error ? error.message : error);

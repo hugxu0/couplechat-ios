@@ -67,12 +67,26 @@ async function main() {
       if (!cond) process.exitCode = 1;
     };
 
+    const migrations = await db.all<{ version: number; name: string }>(
+      "SELECT version, name FROM schema_migrations ORDER BY version ASC",
+    );
+    assertOk(
+      "schema_migrations 记录基线迁移",
+      migrations.length === 1 && migrations[0].version === 1 && migrations[0].name === "initial_schema",
+    );
+
+    const { fetchMessagesSchema } = await import("../src/contracts/realtime");
+    const rangeContract = fetchMessagesSchema.safeParse({
+      channel: "couple", after: 1, before: 2, limit: 80,
+    });
+    assertOk("Socket fetch 契约接受 after+before 范围", rangeContract.success);
+
     // 账号
     const { listPublicAccounts, authenticate } = await import("../src/auth/accounts");
     const accounts = await listPublicAccounts();
     assertOk(`listPublicAccounts → ${accounts.length} 个账号`, accounts.length === 2);
 
-    // 消息：分页 / since / around / 搜索 / LIKE
+    // 消息：分页 / since / after+before / around / 搜索 / LIKE
     const { fetchMessages, searchMessages, createMessage, upsertReadReceipt, getReadReceipts } = await import("../src/chat/messageService");
     const user = { username: accounts[0].username, name: accounts[0].name };
     const latest = await fetchMessages(user, { channel: "couple", limit: 50 });
@@ -80,6 +94,17 @@ async function main() {
     assertOk("ts 是 number", typeof latest[0].ts === "number" && latest[0].ts > 1e12);
     const before = await fetchMessages(user, { channel: "couple", before: latest[0].ts, limit: 20 });
     assertOk(`fetchMessages before → ${before.length} 条且时序正确`, before.length === 20 && before[19].ts <= latest[0].ts);
+    const range = await fetchMessages(user, {
+      channel: "couple",
+      after: latest[0].ts,
+      before: latest[latest.length - 1].ts + 1,
+      limit: 50,
+    });
+    assertOk(
+      `fetchMessages after+before → ${range.length} 条且在范围内`,
+      range.length > 0 &&
+        range.every((message) => message.ts >= latest[0].ts && message.ts < latest[latest.length - 1].ts + 1),
+    );
     const found = await searchMessages(user, "couple", "喵", 10);
     assertOk(`searchMessages "喵" → ${found.length} 条`, found.length > 0);
 

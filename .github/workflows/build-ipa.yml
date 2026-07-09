@@ -41,41 +41,6 @@ jobs:
         run: xcodegen generate
 
       # ============================================================
-      #  WSL / Windows 开发环境常见问题：URLSession / SocketIO
-      #  在 macOS 构建时会触发 App 内网络请求，证书不受信任。
-      #  将这些域名加入 ATS 例外可避免构建时 ITMS-90338 等 warning。
-      # ============================================================
-      - name: Patch ATS exceptions
-        run: |
-          PROJ="${{ runner.temp }}/patch_ats.py"
-          cat > "$PROJ" << 'PYEOF'
-          import plistlib, sys, pathlib
-
-          plist_path = pathlib.Path("Sources/App/Info.plist")
-          if not plist_path.exists():
-              plist = {}
-          else:
-              with open(plist_path, "rb") as f:
-                  plist = plistlib.load(f)
-
-          ats = plist.setdefault("NSAppTransportSecurity", {})
-          domains = ats.setdefault("NSExceptionDomains", {})
-
-          for host in ["hoo66.top", "localhost"]:
-              domains[host] = {
-                  "NSExceptionAllowsInsecureHTTPLoads": True,
-                  "NSIncludesSubdomains": True,
-                  "NSTemporaryExceptionAllowsInsecureHTTPLoads": True,
-              }
-
-          plist_path.parent.mkdir(parents=True, exist_ok=True)
-          with open(plist_path, "wb") as f:
-              plistlib.dump(plist, f)
-          print("✅ ATS exceptions patched for hoo66.top, localhost")
-          PYEOF
-          python3 "$PROJ"
-
-      # ============================================================
       #  自动签名（推荐）
       #
       #  在仓库 Settings → Secrets and variables → Actions 里设置：

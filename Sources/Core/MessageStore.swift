@@ -24,11 +24,16 @@ final class MessageStore: ObservableObject {
 
     /// 媒体发送失败后保留原始 Data，支持一键重传
     private var pendingMediaData: [String: (data: Data, mimeType: String, preferredType: String, channel: ChatChannel)] = [:]
+    private let httpClient: any HTTPClient
 
     private static let mediaTypes = ["image", "video"]
     private static let managedAttachmentTypes = ["image", "video", "file"]
 
     weak var socketProvider: SocketProvider?
+
+    init(httpClient: any HTTPClient = URLSessionHTTPClient()) {
+        self.httpClient = httpClient
+    }
 
     var messages: [ChatMessage] { messages(for: .couple) }
 
@@ -74,6 +79,9 @@ final class MessageStore: ObservableObject {
 
     func upsert(_ msg: ChatMessage, in channel: ChatChannel) {
         ChatLocalDatabase.shared.insertMessage(msg)
+        if !msg.pending, !msg.failed, let clientId = msg.clientId {
+            pendingMediaData.removeValue(forKey: clientId)
+        }
         updateMessages(channel) { list in
             if let i = list.firstIndex(where: { $0.id == msg.id || (msg.clientId != nil && $0.id == msg.clientId) }) {
                 list[i] = msg
@@ -157,19 +165,17 @@ final class MessageStore: ObservableObject {
     }
 
     @discardableResult
-    func ensureDateLoaded(_ date: Date, channel: ChatChannel) -> ChatMessage? {
+    func ensureDateLoaded(_ date: Date, channel: ChatChannel) async -> ChatMessage? {
         let range = Self.dayRange(for: date)
         var dayMessages = ChatLocalDatabase.shared.fetchMessages(
             channel: channel.rawValue, fromInclusive: range.start, toExclusive: range.end, limit: 80)
-        if dayMessages.isEmpty, let s = socketProvider?.socket, socketProvider?.isConnected == true {
-            s.emitWithAck("messages:fetch", [
-                "channel": channel.rawValue, "after": range.start, "before": range.end, "limit": 80,
-            ]).timingOut(after: 9) { data in
-                guard let dict = data.first as? [String: Any],
-                      let list = dict["list"] as? [[String: Any]] else { return }
-                let incoming = Self.parseMessages(list, context: "ensureDate:\(channel.rawValue)")
-                Task { @MainActor in incoming.forEach { ChatLocalDatabase.shared.insertMessage($0) } }
-            }
+        if dayMessages.isEmpty {
+            let incoming = await fetchRemoteMessages(
+                MessageFetchRequest(channel: channel, after: range.start, before: range.end, limit: 80),
+                context: "ensureDate:\(channel.rawValue)")
+            guard !incoming.isEmpty else { return nil }
+            upsertBatch(incoming, in: channel)
+            dayMessages = incoming
         }
         guard let target = dayMessages.first else { return nil }
         let context = ChatLocalDatabase.shared.fetchMessagesAround(
@@ -179,6 +185,21 @@ final class MessageStore: ObservableObject {
             list = Self.mergedWindow(dayMessages, with: list, around: target.id)
         }
         return target
+    }
+
+    private func fetchRemoteMessages(_ request: MessageFetchRequest, context: String) async -> [ChatMessage] {
+        guard let socket = socketProvider?.socket, socketProvider?.isConnected == true else { return [] }
+        let payload = SocketPayloadEncoder.encode(request)
+        return await withCheckedContinuation { continuation in
+            socket.emitWithAck(SocketEvent.messagesFetch.rawValue, payload).timingOut(after: 9) { data in
+                guard let dict = data.first as? [String: Any],
+                      let list = dict["list"] as? [[String: Any]] else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                continuation.resume(returning: Self.parseMessages(list, context: context))
+            }
+        }
     }
 
     func ensureLocalMessages(_ channel: ChatChannel) {
@@ -200,9 +221,8 @@ final class MessageStore: ObservableObject {
         let local = messages(for: channel)
         let lastTs = local.last(where: { !$0.pending && !$0.failed })?.ts ?? 0
         let limit = 100
-        var payload: [String: Any] = ["channel": channel.rawValue, "limit": limit]
-        if lastTs > 0 { payload["since"] = lastTs }
-        s.emitWithAck("messages:fetch", payload).timingOut(after: 9) { [weak self] data in
+        let request = MessageFetchRequest(channel: channel, since: lastTs > 0 ? lastTs : nil, limit: limit)
+        s.emitWithAck(SocketEvent.messagesFetch.rawValue, SocketPayloadEncoder.encode(request)).timingOut(after: 9) { [weak self] data in
             guard let dict = data.first as? [String: Any],
                   let list = dict["list"] as? [[String: Any]] else { return }
             let incoming = Self.parseMessages(list, context: "syncHistory:\(channel.rawValue)")
@@ -250,7 +270,9 @@ final class MessageStore: ObservableObject {
             return
         }
         let older: [ChatMessage] = await withCheckedContinuation { continuation in
-            s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": firstTs, "limit": limit])
+            s.emitWithAck(
+                SocketEvent.messagesFetch.rawValue,
+                SocketPayloadEncoder.encode(MessageFetchRequest(channel: channel, before: firstTs, limit: limit)))
                 .timingOut(after: 9) { data in
                     guard let dict = data.first as? [String: Any],
                           let list = dict["list"] as? [[String: Any]] else {
@@ -298,7 +320,9 @@ final class MessageStore: ObservableObject {
             return
         }
         let newer: [ChatMessage] = await withCheckedContinuation { continuation in
-            s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "after": lastTs, "limit": limit])
+            s.emitWithAck(
+                SocketEvent.messagesFetch.rawValue,
+                SocketPayloadEncoder.encode(MessageFetchRequest(channel: channel, since: lastTs, limit: limit)))
                 .timingOut(after: 9) { data in
                     guard let dict = data.first as? [String: Any],
                           let list = dict["list"] as? [[String: Any]] else {
@@ -339,15 +363,10 @@ final class MessageStore: ObservableObject {
             return
         }
 
-        var payload: [String: Any] = [
-            "type": "text", "text": text, "channel": channel.rawValue, "clientId": clientId,
-        ]
-        if let replyTo {
-            payload["replyTo"] = replyTo
-            payload["replyPreview"] = replyPreview ?? ""
-            payload["reply"] = ["id": replyTo, "preview": replyPreview ?? ""]
-        }
-        s.emitWithAck("message:send", payload).timingOut(after: 15) { [weak self] data in
+        let request = MessageSendRequest(
+            channel: channel, type: "text", text: text,
+            replyTo: replyTo, replyPreview: replyPreview, clientId: clientId)
+        s.emitWithAck(SocketEvent.messageSend.rawValue, SocketPayloadEncoder.encode(request)).timingOut(after: 15) { [weak self] data in
             Task { @MainActor in
                 self?.handleSendAck(data, clientId: clientId, channel: channel)
             }
@@ -377,18 +396,16 @@ final class MessageStore: ObservableObject {
         Task {
             do {
                 let uploaded = try await uploadMedia(data: data, mimeType: mimeType, session: session)
-                pendingMediaData.removeValue(forKey: clientId)
                 let type = preferredType == "file" ? "file" : (uploaded.type.isEmpty ? preferredType : uploaded.type)
                 updateMessages(channel) { list in
                     guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
                     list[i].type = type
                     list[i].url = uploaded.url
                 }
-                let payload: [String: Any] = [
-                    "type": type, "text": displayText ?? Self.mediaPlaceholderText(for: type),
-                    "url": uploaded.url, "channel": channel.rawValue, "clientId": clientId,
-                ]
-                s.emitWithAck("message:send", payload).timingOut(after: 15) { [weak self] data in
+                let request = MessageSendRequest(
+                    channel: channel, type: type, text: displayText ?? Self.mediaPlaceholderText(for: type),
+                    url: uploaded.url, clientId: clientId)
+                s.emitWithAck(SocketEvent.messageSend.rawValue, SocketPayloadEncoder.encode(request)).timingOut(after: 15) { [weak self] data in
                     Task { @MainActor in self?.handleSendAck(data, clientId: clientId, channel: channel) }
                 }
             } catch {
@@ -418,11 +435,9 @@ final class MessageStore: ObservableObject {
             return
         }
 
-        let payload: [String: Any] = [
-            "type": "sticker", "text": "[表情]", "url": url,
-            "channel": channel.rawValue, "clientId": clientId,
-        ]
-        s.emitWithAck("message:send", payload).timingOut(after: 15) { [weak self] data in
+        let request = MessageSendRequest(
+            channel: channel, type: "sticker", text: "[表情]", url: url, clientId: clientId)
+        s.emitWithAck(SocketEvent.messageSend.rawValue, SocketPayloadEncoder.encode(request)).timingOut(after: 15) { [weak self] data in
             Task { @MainActor in self?.handleSendAck(data, clientId: clientId, channel: channel) }
         }
     }
@@ -459,7 +474,7 @@ final class MessageStore: ObservableObject {
     func markRead(_ channel: ChatChannel = .couple) {
         guard let s = socketProvider?.socket, socketProvider?.isConnected == true,
               let lastTs = messages(for: channel).last(where: { !$0.pending })?.ts else { return }
-        s.emit("read", ["channel": channel.rawValue, "ts": lastTs])
+        s.emit(SocketEvent.read.rawValue, SocketPayloadEncoder.encode(ReadReceiptRequest(channel: channel, ts: lastTs)))
     }
 
     func partnerHasRead(_ msg: ChatMessage, username: String?) -> Bool {
@@ -505,7 +520,9 @@ final class MessageStore: ObservableObject {
             list[i] = m
             ChatLocalDatabase.shared.insertMessage(m)
         }
-        s.emitWithAck("message:recall", ["id": message.id]).timingOut(after: 9) { _ in }
+        s.emitWithAck(
+            SocketEvent.messageRecall.rawValue,
+            SocketPayloadEncoder.encode(MessageRecallRequest(id: message.id))).timingOut(after: 9) { _ in }
     }
 
     func applyRecall(id: String, byName: String?, channel: ChatChannel?, myUsername: String?) {
@@ -541,7 +558,9 @@ final class MessageStore: ObservableObject {
     }
 
     func confirmAction(messageId: String, decision: String) {
-        socketProvider?.socket?.emit("action:confirm", ["messageId": messageId, "decision": decision])
+        socketProvider?.socket?.emit(
+            SocketEvent.actionConfirm.rawValue,
+            SocketPayloadEncoder.encode(ActionConfirmRequest(messageId: messageId, decision: decision)))
     }
 
     // MARK: - 搜索
@@ -552,7 +571,9 @@ final class MessageStore: ObservableObject {
         let local = ChatLocalDatabase.shared.searchMessages(query: q, channel: channel.rawValue)
         guard let s = socketProvider?.socket, socketProvider?.isConnected == true else { return local }
         return await withCheckedContinuation { continuation in
-            s.emitWithAck("messages:search", ["channel": channel.rawValue, "query": q, "limit": 50])
+            s.emitWithAck(
+                SocketEvent.messagesSearch.rawValue,
+                SocketPayloadEncoder.encode(MessageSearchRequest(channel: channel, query: q, limit: 50)))
                 .timingOut(after: 9) { data in
                     guard let dict = data.first as? [String: Any],
                           let list = dict["list"] as? [[String: Any]] else {
@@ -585,9 +606,8 @@ final class MessageStore: ObservableObject {
         let pageLimit = 200
         while !Task.isCancelled {
             let batch: [ChatMessage] = await withCheckedContinuation { cont in
-                var payload: [String: Any] = ["channel": channel.rawValue, "limit": pageLimit]
-                if let oldest { payload["before"] = oldest }
-                s.emitWithAck("messages:fetch", payload).timingOut(after: 15) { data in
+                let request = MessageFetchRequest(channel: channel, before: oldest, limit: pageLimit)
+                s.emitWithAck(SocketEvent.messagesFetch.rawValue, SocketPayloadEncoder.encode(request)).timingOut(after: 15) { data in
                     guard let dict = data.first as? [String: Any],
                           let list = dict["list"] as? [[String: Any]] else {
                         cont.resume(returning: [])
@@ -631,6 +651,7 @@ final class MessageStore: ObservableObject {
                     payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
                 }
                 list[i] = ChatMessage(dict: payload) ?? old
+                pendingMediaData.removeValue(forKey: clientId)
                 ChatLocalDatabase.shared.insertMessage(list[i])
             } else {
                 list[i].pending = false
@@ -646,7 +667,7 @@ final class MessageStore: ObservableObject {
         req.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         req.httpBody = Self.multipartBody(data: data, mimeType: mimeType, boundary: boundary)
-        let (responseData, response) = try await URLSession.shared.data(for: req)
+        let (responseData, response) = try await httpClient.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: responseData))?["error"]
             throw NSError(domain: "upload", code: 1, userInfo: [NSLocalizedDescriptionKey: msg ?? "上传失败"])

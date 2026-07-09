@@ -3,6 +3,8 @@
 后端数据层已从 SQLite（`node:sqlite`）切换到 PostgreSQL（`pg` 连接池）。
 好处：可以用任意图形化客户端（DBeaver / TablePlus / pgAdmin / DataGrip）直连服务器查看和管理数据。
 
+服务启动时会执行 `src/db/index.ts` 中未应用的版本化迁移，并把结果记录在 `schema_migrations`。新增表或列时只追加新的迁移版本，不要修改已发布迁移。
+
 ## 一、服务器上安装 PostgreSQL（Ubuntu/Debian）
 
 ```bash
@@ -59,8 +61,8 @@ PostgreSQL 默认只监听本机。**推荐做法：不开公网端口，用 SSH
 npx tsx scripts/smoke-postgres.ts
 ```
 
-会起临时 PG → 建表 → 从 `.data/couplechat.sqlite` 全量迁移 → 跑消息分页/搜索/幂等发送/
-已读回执/shared/提醒备忘 CRUD/AI 记忆向量/统计聚合 共 15 项断言。
+也可以直接运行 `npm test`。它会起临时 PG → 执行迁移 → 从 `.data/couplechat.sqlite` 全量迁移 → 跑消息分页/搜索/幂等发送/
+已读回执/shared/提醒备忘 CRUD/AI 记忆向量/统计聚合与 Socket 契约断言。
 
 ## 实现说明
 

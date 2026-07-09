@@ -1,8 +1,9 @@
 // AI Actions 系统：大橘在回复里输出 actions（建提醒/备忘/删减/完成），
 // 先以「确认卡」挂在 AI 消息的 meta_json 上展示给主人，主人点确认后才真正写入 personal_items。
-// 移植自旧后端 chat/src/ai/actions.js，适配新的 itemService + SQLite + Socket.IO。
+// 移植自旧后端 chat/src/ai/actions.js，适配新的 itemService + PostgreSQL + Socket.IO。
 
 import type { Server } from "socket.io";
+import { socketEvents } from "../contracts/realtime";
 import { all, get, run, type AccountRow, type MessageRow } from "../db";
 import {
   createPersonalItem,
@@ -281,7 +282,7 @@ export async function confirmAction(
   if (decision === "cancel") {
     meta.confirm.status = "cancelled";
     await updateMessageMeta(messageId, meta);
-    io.emit("message:update", { id: messageId, meta });
+    io.emit(socketEvents.messageUpdate, { id: messageId, meta });
     return { ok: true };
   }
 
@@ -296,6 +297,6 @@ export async function confirmAction(
   meta.confirm.status = "confirmed";
   meta.confirm.failed = failed;
   await updateMessageMeta(messageId, meta);
-  io.emit("message:update", { id: messageId, meta });
+  io.emit(socketEvents.messageUpdate, { id: messageId, meta });
   return { ok: true };
 }

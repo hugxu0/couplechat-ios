@@ -4,6 +4,7 @@
 // 核心是「真的有话想说才开口」，不是定时巡逻找话题的客服。
 
 import type { Server } from "socket.io";
+import { socketEvents } from "../contracts/realtime";
 import { chat, extractJson } from "./provider";
 import { recentMessages, compactLine, type LogMessage } from "./chatLog";
 import { recallSafe } from "./recall";
@@ -112,7 +113,7 @@ export async function maybeInterject(io: Server, channel: string): Promise<void>
     // 模拟打字延迟，让回复不像被定时器吐出来的
     await sleep(700 + Math.floor(Math.random() * 700));
     const message = await createAiMessage("couple", reply);
-    io.to("channel:couple").emit("message:new", message);
+    io.to("channel:couple").emit(socketEvents.messageNew, message);
     void pushCoupleMessageToUnavailableRecipients(message);
   } catch (error) {
     console.warn("[ai] 插话失败:", error instanceof Error ? error.message : error);

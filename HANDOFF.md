@@ -2,10 +2,11 @@
 
 > 最后更新：2026-07-10（架构重构后）
 > 仓库：https://github.com/hugxu0/couplechat-ios
-> 当前工作分支：`refactor/architecture-improvements`（基于 `main` d5948a9）
-> 当前远端 main：`d5948a9`（已合并 Chat V2）
+> 当前主线：`main`（当前代码已合并架构重构与模型拆分）
+> 当前远端 main：`5a57410`（已合并 Chat V2 与模型拆分）
 > 旧网页版/旧后端：https://github.com/hugxu0/chat（`https://chat.huhuhu.top`，RackNerd `23.254.222.199`，跟新后端无关）
 > 新原生后端：本仓库 `server/`（`https://hoo66.top`，RFCHost `82.40.34.107`）
+> 持续开发规范：`Docs/FOUNDATION.md`（协议、异步、缓存迁移和验证门槛）
 
 ---
 
@@ -30,9 +31,13 @@ si = 小偲
 
 ### 当前代码状态
 
-- `refactor/architecture-improvements` 分支已通过 GitHub Actions 构建验证（SwiftLint + Archive 均通过）。
+- `main` 包含已验证通过的 SwiftLint + Archive 构建链路；Windows 开发机仍需通过 GitHub Actions 验证 iOS 构建。
 - **ChatStore 拆分**：原 1579 行 God Object 拆为 `AuthStore`（108 行）、`MessageStore`（622 行）、`SharedStore`（195 行）、`ChatStore`（454 行）+ `SocketProvider` 协议。
 - **错误处理**：消息解析、Keychain、提醒通知、贴纸存储、图片缓存、REST 调用均加入失败日志（`[模块名] ⚠️` 前缀）。
+- **协议契约**：Socket 事件名与入站 payload 集中在 `server/src/contracts/realtime.ts`；iOS 请求体和事件名集中在 `Sources/Core/SocketContract.swift`。
+- **持久化地基**：PostgreSQL 使用 `schema_migrations` 版本台账；iOS SQLite 使用 WAL、FULLMUTEX、递归锁和 `PRAGMA user_version`。
+- **网络可测试**：`AuthStore`、`MessageStore`、`SharedStore` 通过可注入的 `HTTPClient` 请求网络。
+- **异步边界**：日期历史跳转会等待远端数据加载完成后再刷新页面。
 - **SwiftLint CI**：`build-ios.yml` 在 Archive 前跑 SwiftLint 检查。
 - **ServerConfig 可配置**：`baseURL` 从 Info.plist 读取（`SERVER_BASE_URL`），换环境不改代码。
 - **测试框架**：`CoupleChatTests/` 含消息解析、ServerConfig、AccountPresentation、CoupleDates 基础测试。
@@ -66,11 +71,17 @@ couplechat-ios/
 │   │   ├── SharedStore.swift          # 共享状态/纪念日/REST 调用
 │   │   ├── ChatStore.swift            # 协调层：socket、事件分发、便捷转发
 │   │   ├── SocketProvider.swift       # 协议：解耦子 store 对 socket 的依赖
+│   │   ├── SocketContract.swift       # Socket 事件名与请求体契约
+│   │   ├── HTTPClient.swift           # 可注入的 HTTP 网络边界
 │   │   ├── ServerConfig.swift         # 服务端地址（支持 Info.plist 配置）
-│   │   ├── Models.swift               # 数据模型
+│   │   ├── ChatMessage.swift           # 消息模型
+│   │   ├── Account.swift               # 账号模型
+│   │   ├── CoupleDates.swift           # 纪念日模型
+│   │   ├── DailyContent.swift          # 每日内容模型
+│   │   ├── PersonalItem.swift          # 提醒/备忘模型
 │   │   ├── Keychain.swift             # 会话持久化
 │   │   ├── ChatLocalDatabase.swift    # 设备端 SQLite 缓存
-│   │   ├── ChatLocalCache.swift       # 旧 JSON 缓存（仅迁移用）
+│   │   ├── LegacyCacheMigration.swift # 旧 JSON 缓存迁移到 SQLite
 │   │   ├── InteractionPayload.swift   # 互动特效解析与 overlay
 │   │   ├── ReminderNotificationScheduler.swift
 │   │   ├── ImageCache.swift           # 图片磁盘/内存缓存
@@ -89,6 +100,7 @@ couplechat-ios/
 │       └── Profile/ProfileView.swift, ThemeStyleView.swift, StorageView.swift
 └── server/
     ├── src/
+    │   ├── contracts/realtime.ts      # Socket 事件、Zod schema 与推导类型
     ├── docs/API.md, AI.md, DEPLOY.md, POSTGRES.md
     ├── deploy/nginx-hoo66.top.conf
     └── ecosystem.config.cjs
@@ -103,12 +115,14 @@ couplechat-ios/
 | `Sources/Core/SharedStore.swift` | 共享状态（纪念日/头像/贴条）、REST 调用 |
 | `Sources/Core/ChatStore.swift` | 协调层：socket、bindEvents、便捷转发到子 store |
 | `Sources/Core/SocketProvider.swift` | 协议：子 store 通过此访问 socket，避免循环依赖 |
+| `Sources/Core/SocketContract.swift` | iOS Socket 事件名、消息请求、搜索和回执 payload |
+| `Sources/Core/HTTPClient.swift` | 可注入 HTTP 请求边界，测试不依赖真实网络 |
 | `Sources/Core/ServerConfig.swift` | `baseURL` 从 Info.plist 读取，支持多环境 |
 | `Sources/Core/ChatLocalDatabase.swift` | 设备端 SQLite：消息、已读、shared 状态；登录后先出本地再补增量 |
-| `Sources/Core/ChatLocalCache.swift` | 旧 JSON 快照，一次性迁移到 SQLite |
+| `Sources/Core/LegacyCacheMigration.swift` | 旧 JSON 快照，一次性迁移到 SQLite |
 | `Sources/Core/ImageCache.swift` | 全 App 图片缓存；存储空间页可统计/清理 |
 | `Sources/Core/StickerStore.swift` + `EmojiCatalog.swift` | 本机贴纸库、分组/收藏、emoji 数据 |
-| `Sources/Core/Models.swift` | 消息/提醒/纪念日模型 |
+| `Sources/Core/ChatMessage.swift`、`Account.swift`、`CoupleDates.swift`、`DailyContent.swift`、`PersonalItem.swift` | 消息、账号、提醒、纪念日和每日内容模型 |
 | `Sources/Features/Chat/ChatView.swift` | 会话入口，桥接到 Chat V2 |
 | `Sources/Features/Chat/ChatV2/ChatViewController.swift` | UIKit 会话核心：消息列表、输入栏、键盘、表情面板、附件、录音 |
 | `Sources/Features/Chat/UIKit/ChatTimelineCells.swift` | 原生消息 cell：文本、图片、视频、语音、文件、贴纸 |
@@ -127,7 +141,7 @@ couplechat-ios/
 |---|---|
 | `server/src/server.ts` | 启动 Fastify + Socket.IO |
 | `server/src/db/index.ts` | PostgreSQL 连接池与建表 |
-| `server/src/socket/realtime.ts` | Socket.IO 协议 |
+| `server/src/socket/realtime.ts` + `server/src/contracts/realtime.ts` | Socket.IO 事件注册、校验和协议契约 |
 | `server/src/chat/messageService.ts` | 消息 CRUD、搜索、撤回 |
 | `server/src/personalItems/*` | 提醒/备忘 REST + 共享广播 |
 | `server/src/ai/*` | 大橘 AI 全套（见 `docs/AI.md`） |
@@ -248,7 +262,7 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 | Bark deep link | 点击通知打开指定页面未接 |
 | 旧历史导入生产 | 38 万条消息只在本地开发库，生产库干净 |
 | 大橘 3D 模型 | SceneKit 加载 `cute_cat.glb` 未做 |
-| 媒体失败重传 | 媒体发送失败后无原始 Data 保留，不能一键重传 |
+| 媒体失败重传 | 已保留原始 Data，支持失败消息一键重传；进程退出后不保留内存中的待重传数据 |
 
 ---
 
@@ -267,6 +281,8 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 
 GitHub Actions：`.github/workflows/build-ios.yml`（push `main` 或手动触发）
 
+Windows 开发机不能本地运行 Xcode；Swift 改动必须通过该 workflow 的 SwiftLint 和 Archive。构建前应先确认 `cd server && npm test` 通过，再提交并触发 workflow。
+
 ```bash
 gh workflow run "Build iOS IPA (unsigned)" --ref main
 ```
@@ -284,7 +300,9 @@ gh workflow run "Build iOS IPA (unsigned)" --ref main
 ```bash
 curl https://hoo66.top/health
 curl https://hoo66.top/api/accounts   # 必须 xu, si
-cd server && npm run healthcheck
+cd server
+npm test                              # typecheck + PostgreSQL 冒烟
+npm run healthcheck -- https://hoo66.top
 ```
 
 ### App 基础
@@ -341,7 +359,7 @@ cd server && npm run healthcheck
 | 新后端 | `https://hoo66.top`，`root@82.40.34.107`，PM2 `couplechat-server` |
 | 旧网站 | `https://chat.huhuhu.top`，`root@23.254.222.199` |
 | 本地仓库 | `D:\Desktop\couplechat-ios` |
-| iOS 服务器地址 | 硬编码 `Sources/Core/Models.swift` → `https://hoo66.top` |
+| iOS 服务器地址 | `SERVER_BASE_URL` 写入 Info.plist，默认回退到 `https://hoo66.top`（见 `Sources/Core/ServerConfig.swift`） |
 
 ---
 
