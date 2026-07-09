@@ -86,6 +86,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
     private var grouped = false
     private var accentColor = UIColor.systemMint
     private var voicePlaying = false
+    private var voiceProgress: CGFloat = 0
     private var voiceWaveBars: [UIView] = []
 
     override init(frame: CGRect) {
@@ -189,13 +190,15 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         peerAvatarURL: URL?,
         myAvatarURL: URL?,
         accentColor: UIColor,
-        voicePlaying: Bool = false
+        voicePlaying: Bool = false,
+        voiceProgress: CGFloat = 0
     ) {
         self.message = message
         self.mine = mine
         self.grouped = groupedWithPrevious
         self.accentColor = accentColor
         self.voicePlaying = voicePlaying
+        self.voiceProgress = voiceProgress
 
         let avatarText = mine ? myAvatar : peerAvatar
         let avatarURL = mine ? myAvatarURL : peerAvatarURL
@@ -243,13 +246,11 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         if mine {
             let avatarX = bounds.width - ChatTimelineMetrics.horizontalInset - avatarSize
             avatarView.frame = CGRect(x: avatarX, y: avatarY, width: avatarSize, height: avatarSize)
-            let statusWidth = statusLabel.isHidden ? 0 : ChatTimelineMetrics.statusOutsideWidth
-            let usesOverlayStatus = isMediaMessage(message) && !statusLabel.isHidden
-            let statusSpace = statusLabel.isHidden || usesOverlayStatus ? 0 : statusWidth + ChatTimelineMetrics.statusOutsideGap
-            let x = avatarX - ChatTimelineMetrics.avatarGap - statusSpace - bubbleWidth
+            // 所有我方消息共用同一条右边线；回执叠在右下角，不再把图片单独推离头像。
+            let x = avatarX - ChatTimelineMetrics.avatarGap - bubbleWidth
             bubbleView.frame = CGRect(x: x, y: topGap, width: bubbleWidth, height: bubbleHeight)
             statusLabel.frame = statusLabel.isHidden ? .zero : CGRect(
-                x: usesOverlayStatus ? bubbleView.frame.maxX - 20 : bubbleView.frame.maxX + ChatTimelineMetrics.statusOutsideGap,
+                x: bubbleView.frame.maxX - 20,
                 y: bubbleView.frame.maxY - 25,
                 width: 16,
                 height: 16
@@ -348,7 +349,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             bodyLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
             bodyLabel.textColor = foreground
             bodyLabel.text = message.pending ? "···" : "0:01"
-            voiceWaveBars.forEach { $0.backgroundColor = foreground.withAlphaComponent(voicePlaying ? 1 : 0.72) }
+            updateVoiceWaveform(color: foreground)
             loadVoiceDuration(message)
         case "file":
             let text = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -439,13 +440,6 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         }
     }
 
-    private func isMediaMessage(_ message: ChatMessage) -> Bool {
-        switch message.type {
-        case "image", "video", "sticker": return true
-        default: return false
-        }
-    }
-
     private func statusText(message: ChatMessage, read: Bool) -> String {
         if message.pending { return "…" }
         if message.failed { return "" }
@@ -471,6 +465,22 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
+    func setVoicePlayback(progress: CGFloat, isPlaying: Bool) {
+        guard message?.type == "voice" else { return }
+        voicePlaying = isPlaying
+        voiceProgress = min(1, max(0, progress))
+        mediaIconView.image = UIImage(systemName: isPlaying ? "pause.fill" : "play.fill")
+        updateVoiceWaveform(color: mediaIconView.tintColor)
+    }
+
+    private func updateVoiceWaveform(color: UIColor) {
+        let completed = voicePlaying ? max(1, Int((voiceProgress * CGFloat(voiceWaveBars.count)).rounded(.up))) : 0
+        for (index, bar) in voiceWaveBars.enumerated() {
+            let alpha: CGFloat = voicePlaying && index < completed ? 1 : 0.30
+            bar.backgroundColor = color.withAlphaComponent(alpha)
+        }
+    }
+
     @objc private func handleBubbleTap() {
         guard let message else { return }
         if message.failed {
@@ -492,10 +502,12 @@ final class ChatNativeMessageCell: UICollectionViewCell {
     func bubbleTargetedPreview() -> UITargetedPreview {
         let parameters = UIPreviewParameters()
         parameters.backgroundColor = .clear
-        parameters.visiblePath = UIBezierPath(
+        let path = UIBezierPath(
             roundedRect: bubbleView.frame,
             cornerRadius: bubbleView.layer.cornerRadius
         )
+        path.append(UIBezierPath(ovalIn: avatarView.frame))
+        parameters.visiblePath = path
         return UITargetedPreview(view: contentView, parameters: parameters)
     }
 }

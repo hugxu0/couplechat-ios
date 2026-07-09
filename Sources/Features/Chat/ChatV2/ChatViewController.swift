@@ -56,7 +56,9 @@ final class ChatViewController: UIViewController {
 
     private var voicePlayer: AVPlayer?
     private var voicePlaybackEndObserver: NSObjectProtocol?
+    private var voicePlaybackTimeObserver: Any?
     private var playingVoiceMessageID: String?
+    private var playingVoiceProgress: CGFloat = 0
 
     private var replyTarget: ChatMessage?
 
@@ -92,6 +94,9 @@ final class ChatViewController: UIViewController {
         voicePlayer?.pause()
         if let observer = voicePlaybackEndObserver {
             NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = voicePlaybackTimeObserver {
+            voicePlayer?.removeTimeObserver(observer)
         }
     }
 
@@ -956,7 +961,8 @@ extension ChatViewController: UICollectionViewDataSource {
                     peerAvatarURL: peerAvatarURL,
                     myAvatarURL: myAvatarURL,
                     accentColor: theme.accent.uiColor,
-                    voicePlaying: playingVoiceMessageID == message.id
+                    voicePlaying: playingVoiceMessageID == message.id,
+                    voiceProgress: playingVoiceMessageID == message.id ? playingVoiceProgress : 0
                 )
             }
             return cell
@@ -1112,6 +1118,7 @@ private extension ChatViewController {
         let player = AVPlayer(url: url)
         voicePlayer = player
         playingVoiceMessageID = message.id
+        playingVoiceProgress = 0
         voicePlaybackEndObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: player.currentItem,
@@ -1121,15 +1128,34 @@ private extension ChatViewController {
                 self?.stopVoicePlayback()
             }
         }
+        voicePlaybackTimeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.12, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self] time in
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.playingVoiceMessageID == message.id,
+                      let duration = self.voicePlayer?.currentItem?.duration.seconds,
+                      duration.isFinite,
+                      duration > 0 else { return }
+                self.playingVoiceProgress = min(1, max(0, CGFloat(time.seconds / duration)))
+                self.updateVoiceMessageCell(message.id, isPlaying: true)
+            }
+        }
         player.play()
-        reloadVoiceMessageCell(message.id)
+        updateVoiceMessageCell(message.id, isPlaying: true)
     }
 
     func stopVoicePlayback(deactivateSession: Bool = true) {
         let previousID = playingVoiceMessageID
         voicePlayer?.pause()
+        if let observer = voicePlaybackTimeObserver {
+            voicePlayer?.removeTimeObserver(observer)
+            voicePlaybackTimeObserver = nil
+        }
         voicePlayer = nil
         playingVoiceMessageID = nil
+        playingVoiceProgress = 0
         if let observer = voicePlaybackEndObserver {
             NotificationCenter.default.removeObserver(observer)
             voicePlaybackEndObserver = nil
@@ -1137,15 +1163,14 @@ private extension ChatViewController {
         if deactivateSession {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
-        if let previousID { reloadVoiceMessageCell(previousID) }
+        if let previousID { updateVoiceMessageCell(previousID, isPlaying: false) }
     }
 
-    func reloadVoiceMessageCell(_ id: String) {
+    func updateVoiceMessageCell(_ id: String, isPlaying: Bool) {
         guard let indexPath = indexPath(forMessageId: id),
               collectionView.indexPathsForVisibleItems.contains(indexPath) else { return }
-        UIView.performWithoutAnimation {
-            collectionView.reloadItems(at: [indexPath])
-        }
+        (collectionView.cellForItem(at: indexPath) as? ChatNativeMessageCell)?
+            .setVoicePlayback(progress: playingVoiceProgress, isPlaying: isPlaying)
     }
 }
 

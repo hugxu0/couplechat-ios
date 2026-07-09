@@ -200,32 +200,16 @@ struct ChatV2Screen: View {
     }
 
     private func topSafeGlass(height: CGFloat) -> some View {
-        ZStack {
-            LiquidGlassBackground(
-                cornerRadius: 0,
-                tintColor: topBarUsesDarkText ? .white : .black,
-                tintAlpha: topBarUsesDarkText ? 0.045 : 0.26,
-                borderAlpha: 0,
-                gradientAlpha: topBarUsesDarkText ? 0.14 : 0.24
-            )
-            // 将系统材质本身也渐隐，避免在标题栏底部留下明显的横向分界线。
-            .mask(
-                LinearGradient(
-                    colors: [.black.opacity(0.92), .black.opacity(0.58), .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            LinearGradient(
-                colors: [
-                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.07 : 0.22),
-                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.02 : 0.08),
-                    .clear,
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
+        // 顶部只做颜色渐隐，玻璃只保留在可交互控件上；整片 material 会把深色壁纸洗成灰白。
+        LinearGradient(
+            colors: [
+                (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.12 : 0.42),
+                (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.035 : 0.14),
+                .clear,
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
         .frame(height: height)
         .allowsHitTesting(false)
     }
@@ -239,8 +223,9 @@ struct ChatV2Screen: View {
                 Image(uiImage: img)
                     .resizable()
                     .scaledToFill()
+            } else {
+                wallpaper.patternOverlay
             }
-            wallpaper.patternOverlay
         }
     }
 

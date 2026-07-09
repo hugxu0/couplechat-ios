@@ -167,78 +167,84 @@ enum WallpaperChoice: String, CaseIterable, Identifiable {
             let s = min(w, h)
             switch self {
             case .aurora:
-                // 柔光散布小星点
-                ForEach(0..<28, id: \.self) { i in
+                // 极光：细密的星尘与微光
+                ForEach(0..<64, id: \.self) { i in
                     let x = CGFloat((i * 73 + 17) % 100) / 100 * w
                     let y = CGFloat((i * 47 + 31) % 100) / 100 * h
-                    Image(systemName: "sparkle")
-                        .font(.system(size: s * 0.045))
+                    Image(systemName: i % 7 == 0 ? "sparkles" : "circle.fill")
+                        .font(.system(size: i % 7 == 0 ? s * 0.030 : s * 0.010))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
             case .peach:
-                // 蜜桃花瓣
-                ForEach(0..<16, id: \.self) { i in
+                // 蜜桃：飘落花瓣
+                ForEach(0..<48, id: \.self) { i in
                     let x = CGFloat((i * 89 + 11) % 100) / 100 * w
                     let y = CGFloat((i * 55 + 23) % 100) / 100 * h
-                    Image(systemName: "heart.fill")
-                        .font(.system(size: s * 0.04))
+                    Image(systemName: "leaf.fill")
+                        .font(.system(size: s * (i % 6 == 0 ? 0.036 : 0.018)))
                         .foregroundStyle(c)
                         .rotationEffect(.degrees(Double(i) * 41))
                         .position(x: x, y: y)
                 }
             case .mist:
-                ForEach(0..<10, id: \.self) { i in
+                // 晨雾：细小水汽叠成柔和雾团
+                ForEach(0..<42, id: \.self) { i in
                     let x = CGFloat((i * 67 + 5) % 100) / 100 * w
                     let y = CGFloat((i * 81 + 13) % 100) / 100 * h
                     Image(systemName: "circle.fill")
-                        .font(.system(size: s * 0.18))
+                        .font(.system(size: s * (i % 5 == 0 ? 0.085 : 0.030)))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
             case .cream:
-                ForEach(0..<24, id: \.self) { i in
+                // 奶油：细腻的蕾丝圆点
+                ForEach(0..<56, id: \.self) { i in
                     let x = CGFloat((i * 43 + 19) % 100) / 100 * w
                     let y = CGFloat((i * 61 + 7) % 100) / 100 * h
                     Circle()
                         .stroke(c, lineWidth: 1)
-                        .frame(width: s * 0.06, height: s * 0.06)
+                        .frame(width: s * (i % 4 == 0 ? 0.050 : 0.025), height: s * (i % 4 == 0 ? 0.050 : 0.025))
                         .position(x: x, y: y)
                 }
             case .sky:
-                ForEach(0..<22, id: \.self) { i in
+                // 天青：风吹云纹
+                ForEach(0..<44, id: \.self) { i in
                     let x = CGFloat((i * 77 + 29) % 100) / 100 * w
                     let y = CGFloat((i * 53 + 17) % 100) / 100 * h
-                    Image(systemName: "star.fill")
-                        .font(.system(size: s * 0.038))
+                    Image(systemName: i % 5 == 0 ? "cloud.fill" : "circle.fill")
+                        .font(.system(size: s * (i % 5 == 0 ? 0.040 : 0.012)))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
             case .lavender:
-                ForEach(0..<18, id: \.self) { i in
+                // 薰衣草：枝叶剪影
+                ForEach(0..<50, id: \.self) { i in
                     let x = CGFloat((i * 71 + 13) % 100) / 100 * w
                     let y = CGFloat((i * 59 + 37) % 100) / 100 * h
                     Image(systemName: "leaf.fill")
-                        .font(.system(size: s * 0.038))
+                        .font(.system(size: s * (i % 6 == 0 ? 0.034 : 0.017)))
                         .foregroundStyle(c)
                         .rotationEffect(.degrees(Double(i) * 57))
                         .position(x: x, y: y)
                 }
             case .night:
-                ForEach(0..<44, id: \.self) { i in
+                // 星夜：密集远星，间或一颗亮星
+                ForEach(0..<88, id: \.self) { i in
                     let x = CGFloat((i * 63 + 3) % 100) / 100 * w
                     let y = CGFloat((i * 41 + 11) % 100) / 100 * h
-                    Image(systemName: "sparkle")
-                        .font(.system(size: i % 5 == 0 ? s * 0.052 : s * 0.026))
+                    Image(systemName: i % 9 == 0 ? "sparkles" : (i % 4 == 0 ? "star.fill" : "circle.fill"))
+                        .font(.system(size: i % 9 == 0 ? s * 0.038 : (i % 4 == 0 ? s * 0.018 : s * 0.007)))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
             case .plain:
-                ForEach(0..<16, id: \.self) { i in
+                // 素色：克制的菱格点阵
+                ForEach(0..<44, id: \.self) { i in
                     let x = CGFloat((i * 59 + 7) % 100) / 100 * w
                     let y = CGFloat((i * 73 + 41) % 100) / 100 * h
                     Image(systemName: "diamond.fill")
-                        .font(.system(size: s * 0.038))
+                        .font(.system(size: s * (i % 5 == 0 ? 0.022 : 0.010)))
                         .foregroundStyle(c)
                         .position(x: x, y: y)
                 }
