@@ -2,22 +2,25 @@ import Foundation
 import SocketIO
 import SwiftUI
 
-/// 鍗忚皟灞傦細鎸佹湁 socket锛屽垎鍙戜簨浠剁粰瀛?store锛屽澶栨毚闇茬粺涓€鎺ュ彛銆?/// 瀛?store锛欰uthStore锛堢櫥褰曪級銆丮essageStore锛堟秷鎭級銆丼haredStore锛堝叡浜姸鎬侊級銆?@MainActor
+/// 协调层：持有 socket，分发事件给子 store，对外暴露统一接口。
+/// 子 store：AuthStore（登录）、MessageStore（消息）、SharedStore（共享状态）。
+@MainActor
 final class ChatStore: ObservableObject {
     static let baseURL = ServerConfig.baseURL
 
-    // MARK: - 瀛?store
+    // MARK: - 子 store
 
     let auth = AuthStore()
     let messageStore = MessageStore()
     let shared = SharedStore()
 
-    // MARK: - 瀵瑰鑱氬悎鐘舵€?
+    // MARK: - 对外聚合状态
+
     @Published var connected = false
     @Published var partnerOnline = false
     @Published var lastConnectionError: String?
 
-    // 渚挎嵎璁块棶锛堜繚鎸佸悜鍚庡吋瀹癸級
+    // 便捷访问（保持向后兼容）
     var session: Session? { auth.session }
     var loggedIn: Bool { auth.loggedIn }
     var partner: Account? { auth.partner }
@@ -27,7 +30,7 @@ final class ChatStore: ObservableObject {
     var aiTyping: Bool { messageStore.aiTyping }
     var aiReplying: Bool { messageStore.aiReplying }
 
-    /// 鍚戝悗鍏煎锛歴tore.messages 杩斿洖 couple 棰戦亾娑堟伅鏁扮粍
+    /// 向后兼容：store.messages 返回 couple 频道消息数组
     var messages: [ChatMessage] { messageStore.messages(for: .couple) }
 
     static let personalItemChangedNotification = SharedStore.personalItemChangedNotification
@@ -37,7 +40,8 @@ final class ChatStore: ObservableObject {
     var isConnected: Bool { connected }
     var sessionUsername: String? { auth.session?.username }
 
-    // MARK: - 缁熻/瀛樺偍锛堜繚鐣欎负闈欐€佹柟娉曚緵 SharedStore 璋冪敤锛?
+    // MARK: - 统计/存储
+
     struct LocalStatsBuckets {
         let days: [DayStat]
         let months: [MonthStat]
@@ -71,7 +75,7 @@ final class ChatStore: ObservableObject {
         return cal
     }()
 
-    private static let weekdayLabels = ["鏃?, "涓€", "浜?, "涓?, "鍥?, "浜?, "鍏?]
+    private static let weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"]
 
     static func computeLocalStats(for channel: ChatChannel = .couple) -> LocalStatsBuckets {
         let cal = shanghaiCalendar
@@ -108,7 +112,7 @@ final class ChatStore: ObservableObject {
         var cursor = earliestDay
         while cursor <= today {
             let key = statsDayFormatter.string(from: cursor)
-            let weekday = cal.isDate(cursor, inSameDayAs: today) ? "浠? : weekdayLabels[cal.component(.weekday, from: cursor) - 1]
+            let weekday = cal.isDate(cursor, inSameDayAs: today) ? "今" : weekdayLabels[cal.component(.weekday, from: cursor) - 1]
             days.append(DayStat(date: key, weekday: weekday, counts: dayCounts[key] ?? [:]))
             guard let next = cal.date(byAdding: .day, value: 1, to: cursor) else { break }
             cursor = next
@@ -127,14 +131,15 @@ final class ChatStore: ObservableObject {
         return LocalStatsBuckets(days: days, months: months)
     }
 
-    // MARK: - 鍒濆鍖?
+    // MARK: - 初始化
+
     init() {
         auth.socketProvider = self
         messageStore.socketProvider = self
         shared.socketProvider = self
     }
 
-    // MARK: - 鍚姩
+    // MARK: - 启动
 
     func bootstrap() {
         auth.bootstrap()
@@ -145,7 +150,7 @@ final class ChatStore: ObservableObject {
         connect()
     }
 
-    // MARK: - 鐧诲綍/鐧诲嚭
+    // MARK: - 登录/登出
 
     func login(username: String, password: String) async throws {
         try await auth.login(username: username, password: password)
@@ -164,10 +169,9 @@ final class ChatStore: ObservableObject {
         partnerOnline = false
         lastConnectionError = nil
         auth.logout()
-        // 瀛?store 涓嶉渶瑕佹墜鍔ㄦ竻鈥斺€攁uth.session = nil 鍚庯紝UI 鑷劧璧扮櫥褰曢〉
     }
 
-    // MARK: - Socket 杩炴帴
+    // MARK: - Socket 连接
 
     private func connect() {
         guard let session = auth.session else { return }
@@ -206,7 +210,7 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in self?.handleSocketError(data) }
         }
 
-        // 娑堟伅浜嬩欢 鈫?MessageStore
+        // 消息事件 -> MessageStore
         s.on("message:new") { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let msg = MessageStore.parseMessage(dict, context: "message:new") else { return }
@@ -254,7 +258,7 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in self?.messageStore.aiReplying = replying }
         }
 
-        // 鍦ㄧ嚎鐘舵€?鈫?ConnectionStore
+        // 在线状态 -> ConnectionStore
         s.on("presence") { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let online = dict["online"] as? [String] else { return }
@@ -264,7 +268,7 @@ final class ChatStore: ObservableObject {
             }
         }
 
-        // 鍏变韩鐘舵€佷簨浠?鈫?SharedStore
+        // 共享状态事件 -> SharedStore
         s.on("shared:init") { [weak self] data, _ in
             guard let state = data.first as? [String: Any] else { return }
             Task { @MainActor in self?.shared.applySharedInit(state) }
@@ -299,7 +303,7 @@ final class ChatStore: ObservableObject {
             if let dict = item as? [String: Any] { return dict.values.map { "\($0)" }.joined(separator: " ") }
             return "\(item)"
         }.joined(separator: " ")
-        lastConnectionError = message.isEmpty ? "杩炴帴澶辫触" : message
+        lastConnectionError = message.isEmpty ? "连接失败" : message
         connected = false
         if message.lowercased().contains("unauthorized") {
             auth.verifySessionOrLogout()
@@ -315,7 +319,7 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    // MARK: - 渚挎嵎鏂规硶锛堟ˉ鎺ュ埌瀛?store锛屼繚鎸佸悜鍚庡吋瀹癸級
+    // MARK: - 便捷方法（桥接到子 store）
 
     func messages(for channel: ChatChannel) -> [ChatMessage] { messageStore.messages(for: channel) }
 
@@ -334,7 +338,7 @@ final class ChatStore: ObservableObject {
 
     func partnerAlias(for username: String?) -> String? { auth.partnerAlias(for: username) }
     func setPartnerAlias(_ alias: String?, for username: String?) { auth.setPartnerAlias(alias, for: username) }
-    func partnerDisplayName(fallback: String = "瀵规柟") -> String { auth.partnerDisplayName(fallback: fallback) }
+    func partnerDisplayName(fallback: String = "对方") -> String { auth.partnerDisplayName(fallback: fallback) }
 
     func sendText(_ text: String, channel: ChatChannel = .couple, replyTo: String? = nil, replyPreview: String? = nil) {
         guard let session = auth.session else { return }
@@ -461,7 +465,7 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    // REST 妗ユ帴
+    // REST 桥接
     func fetchAccounts() async -> [Account] { await auth.fetchAccounts() }
     func fetchDaily() async -> DailyContent? {
         guard let token = auth.session?.token else { return nil }
