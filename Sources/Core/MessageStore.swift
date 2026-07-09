@@ -203,10 +203,12 @@ final class MessageStore: ObservableObject {
     }
 
     func ensureLocalMessages(_ channel: ChatChannel) {
+        let current = messages(for: channel)
+        // 登录恢复阶段已把最近消息放进内存。聊天转场时不应再同步访问 SQLite，
+        // 否则大量历史记录会让 push / interactive-pop 手势出现卡顿。
+        guard current.isEmpty else { return }
         let local = ChatLocalDatabase.shared.fetchLatestMessages(channel: channel.rawValue, limit: 50)
         guard !local.isEmpty else { return }
-        let current = messages(for: channel)
-        guard current.isEmpty || current.last?.id != local.last?.id else { return }
         let pendingOrFailed = current.filter { $0.pending || $0.failed }
         let knownIds = Set(local.map(\.id))
         updateMessages(channel) { list in

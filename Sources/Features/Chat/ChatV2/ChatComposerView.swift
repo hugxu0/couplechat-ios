@@ -45,6 +45,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private let emojiButton = UIButton(type: .system)
     private let attachmentButton = UIButton(type: .system)
     private let actionButton = UIButton(type: .system)
+    private let replyCloseButton = UIButton(type: .system)
     private let placeholderLabel = UILabel()
     private let recordingHintLabel = UILabel()
     private let recordingContainer = UIView()
@@ -85,6 +86,9 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         placeholderLabel.textColor = secondary
         replyTitleLabel.textColor = secondary
         replyBodyLabel.textColor = primary
+        replyCloseButton.tintColor = secondary
+        recordingLabel.textColor = recordingCancelled ? .systemRed : secondary
+        recordingHintLabel.textColor = recordingCancelled ? .systemRed : secondary
         textView.textColor = primary
         replyContainer.setGlassTone(dark: usesLightContent, tintAlpha: 0.18, borderAlpha: usesLightContent ? 0.18 : 0.22)
         catBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: 0.20, borderAlpha: usesLightContent ? 0.18 : 0.22)
@@ -251,15 +255,14 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         labels.spacing = 2
         labels.translatesAutoresizingMaskIntoConstraints = false
 
-        let close = UIButton(type: .system)
-        close.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
-        close.tintColor = .secondaryLabel
-        close.addAction(UIAction { [weak self] _ in self?.delegate?.composerDidCancelReply() }, for: .touchUpInside)
-        close.translatesAutoresizingMaskIntoConstraints = false
+        replyCloseButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+        replyCloseButton.tintColor = secondaryTextColor
+        replyCloseButton.addAction(UIAction { [weak self] _ in self?.delegate?.composerDidCancelReply() }, for: .touchUpInside)
+        replyCloseButton.translatesAutoresizingMaskIntoConstraints = false
 
         replyContainer.addSubview(marker)
         replyContainer.addSubview(labels)
-        replyContainer.addSubview(close)
+        replyContainer.addSubview(replyCloseButton)
 
         NSLayoutConstraint.activate([
             replyContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
@@ -268,12 +271,12 @@ final class ChatComposerView: UIView, UITextViewDelegate {
             marker.widthAnchor.constraint(equalToConstant: 3),
             marker.heightAnchor.constraint(equalToConstant: 28),
             labels.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 10),
-            labels.trailingAnchor.constraint(equalTo: close.leadingAnchor, constant: -8),
+            labels.trailingAnchor.constraint(equalTo: replyCloseButton.leadingAnchor, constant: -8),
             labels.centerYAnchor.constraint(equalTo: replyContainer.centerYAnchor),
-            close.trailingAnchor.constraint(equalTo: replyContainer.trailingAnchor, constant: -10),
-            close.centerYAnchor.constraint(equalTo: replyContainer.centerYAnchor),
-            close.widthAnchor.constraint(equalToConstant: 30),
-            close.heightAnchor.constraint(equalToConstant: 30)
+            replyCloseButton.trailingAnchor.constraint(equalTo: replyContainer.trailingAnchor, constant: -10),
+            replyCloseButton.centerYAnchor.constraint(equalTo: replyContainer.centerYAnchor),
+            replyCloseButton.widthAnchor.constraint(equalToConstant: 30),
+            replyCloseButton.heightAnchor.constraint(equalToConstant: 30)
         ])
     }
 
@@ -496,8 +499,10 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         placeholderLabel.isHidden = hasText || isRecording
     }
 
-    private var primaryTextColor: UIColor { usesLightContent ? .white : .label }
-    private var secondaryTextColor: UIColor { usesLightContent ? UIColor.white.withAlphaComponent(0.72) : .secondaryLabel }
+    // 壁纸明暗与系统模式是两个维度。这里必须使用确定的前景色，
+    // 不能用 .label/.secondaryLabel，否则暗色系统 + 浅壁纸会重新变成白字。
+    private var primaryTextColor: UIColor { usesLightContent ? .white : .black }
+    private var secondaryTextColor: UIColor { usesLightContent ? UIColor.white.withAlphaComponent(0.72) : UIColor.black.withAlphaComponent(0.58) }
     private var glassTintColor: UIColor { usesLightContent ? .black : .white }
 
     private func performActionButtonTap() {

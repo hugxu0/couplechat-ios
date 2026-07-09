@@ -45,15 +45,15 @@ struct ChatV2Screen: View {
     }
 
     private var topBarUsesDarkText: Bool {
-        if let image = theme.customWallpaperImage(for: channel) {
-            return Self.regionLuminance(of: image, region: .top) > 0.58
+        if let luminance = theme.customWallpaperLuminance(for: channel, region: .top) {
+            return luminance > 0.50
         }
         return displayedWallpaper != .night
     }
 
     private var composerUsesDarkText: Bool {
-        if let image = theme.customWallpaperImage(for: channel) {
-            return Self.regionLuminance(of: image, region: .bottom) > 0.58
+        if let luminance = theme.customWallpaperLuminance(for: channel, region: .bottom) {
+            return luminance > 0.50
         }
         return displayedWallpaper != .night
     }
@@ -120,8 +120,6 @@ struct ChatV2Screen: View {
         }
         .onAppear {
             app.pushSubpage()
-            store.ensureLocalMessages(channel)
-            store.markRead(channel)
         }
         .onDisappear { app.popSubpage() }
         .background(SwipeBackEnabler())
@@ -200,15 +198,31 @@ struct ChatV2Screen: View {
     }
 
     private func topSafeGlass(height: CGFloat) -> some View {
-        // 顶部只做颜色渐隐，玻璃只保留在可交互控件上；整片 material 会把深色壁纸洗成灰白。
-        LinearGradient(
-            colors: [
-                (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.12 : 0.42),
-                (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.035 : 0.14),
-                .clear,
-            ],
-            startPoint: .top,
-            endPoint: .bottom
+        // 整块雾白的 material 会压扁壁纸。这里保留原生模糊采样，再用渐隐蒙版
+        // 把它收在状态栏附近，形成 Telegram 式的透明玻璃过渡。
+        ZStack {
+            LiquidGlassBackground(
+                cornerRadius: 0,
+                tintColor: topBarUsesDarkText ? .white : .black,
+                tintAlpha: topBarUsesDarkText ? 0.12 : 0.22,
+                borderAlpha: 0,
+                gradientAlpha: topBarUsesDarkText ? 0.34 : 0.40
+            )
+            LinearGradient(
+                colors: [
+                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.06 : 0.12),
+                    .clear,
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .mask(
+            LinearGradient(
+                colors: [.white, .white.opacity(0.70), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
         )
         .frame(height: height)
         .allowsHitTesting(false)
@@ -236,57 +250,6 @@ struct ChatV2Screen: View {
         return theme.wallpaper(for: channel)
     }
 
-    private enum WallpaperRegion: Equatable {
-        case top
-        case bottom
-    }
-
-    private static func regionLuminance(of image: UIImage, region: WallpaperRegion) -> CGFloat {
-        guard image.size.width > 0, image.size.height > 0 else { return 0.7 }
-        let pixelWidth = 48
-        let pixelHeight = 104
-        let renderSize = CGSize(width: CGFloat(pixelWidth), height: CGFloat(pixelHeight))
-        let scale = max(renderSize.width / image.size.width, renderSize.height / image.size.height)
-        let drawnSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let drawRect = CGRect(
-            x: (renderSize.width - drawnSize.width) / 2,
-            y: (renderSize.height - drawnSize.height) / 2,
-            width: drawnSize.width,
-            height: drawnSize.height
-        )
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let sampleRange: Range<CGFloat> = region == .top ? 3..<25 : 78..<101
-        let sampleSize = CGSize(width: CGFloat(pixelWidth), height: sampleRange.upperBound - sampleRange.lowerBound)
-        let sampled = UIGraphicsImageRenderer(size: sampleSize, format: format).image { _ in
-            image.draw(in: drawRect.offsetBy(dx: 0, dy: -sampleRange.lowerBound))
-        }
-        guard let sampledCGImage = sampled.cgImage else { return 0.7 }
-        let sampleWidth = Int(sampleSize.width)
-        let sampleHeight = Int(sampleSize.height)
-        let bytesPerPixel = 4
-        var pixels = [UInt8](repeating: 0, count: sampleWidth * sampleHeight * bytesPerPixel)
-        guard let context = CGContext(
-            data: &pixels,
-            width: sampleWidth,
-            height: sampleHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: sampleWidth * bytesPerPixel,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
-        ) else { return 0.7 }
-        context.draw(sampledCGImage, in: CGRect(origin: .zero, size: sampleSize))
-        var luminances: [CGFloat] = []
-        luminances.reserveCapacity(sampleWidth * sampleHeight)
-        for index in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
-            let r = CGFloat(pixels[index]) / 255
-            let g = CGFloat(pixels[index + 1]) / 255
-            let b = CGFloat(pixels[index + 2]) / 255
-            luminances.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
-        }
-        return luminances.sorted()[luminances.count / 2]
-    }
 }
 
 private extension View {

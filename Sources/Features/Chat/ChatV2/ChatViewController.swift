@@ -39,6 +39,7 @@ final class ChatViewController: UIViewController {
     private var currentListBottomInset: CGFloat = 0
     private var topOverlayInset: CGFloat = 96
     private var composerUsesLightContent = false
+    private var appliedAccent: AccentChoice?
 
     private var cancellables: Set<AnyCancellable> = []
     private var timelineItems: [ChatTimelineItem] = []
@@ -108,12 +109,16 @@ final class ChatViewController: UIViewController {
         onMediaTap: @escaping (String) -> Void
     ) {
         let storeChanged = self.store !== store
+        let themeChanged = self.theme !== theme
+        let composerToneChanged = self.composerUsesLightContent != composerUsesLightContent
         self.store = store
         self.theme = theme
         self.composerUsesLightContent = composerUsesLightContent
         self.onMediaTap = onMediaTap
-        composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
-        applyAccentColor()
+        if themeChanged || composerToneChanged || appliedAccent != theme.accent {
+            composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
+            applyAccentColor()
+        }
         setTopOverlayInset(topOverlayInset)
         if storeChanged {
             bindStore()
@@ -310,6 +315,7 @@ final class ChatViewController: UIViewController {
     }
 
     private func applyAccentColor() {
+        appliedAccent = theme.accent
         jumpToBottomButton.tintColor = theme.accent.uiColor
         bottomRefreshIndicator.color = theme.accent.uiColor
     }

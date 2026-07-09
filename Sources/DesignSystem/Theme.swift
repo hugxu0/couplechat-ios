@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // =============================================================
 // 主题引擎：主题色 / 深浅模式 / 聊天壁纸。
@@ -268,6 +269,13 @@ enum WallpaperChoice: String, CaseIterable, Identifiable {
 
 // MARK: - ThemeManager
 
+/// 聊天界面需要分别判断顶栏与输入栏下方的壁纸明暗。
+/// 不使用系统的深浅模式作为前景色依据，避免自定义壁纸和系统模式相互打架。
+enum WallpaperSurfaceRegion: Hashable {
+    case top
+    case bottom
+}
+
 final class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
 
@@ -293,6 +301,11 @@ final class ThemeManager: ObservableObject {
         return dir
     }()
 
+    /// 自定义壁纸会在聊天视图频繁重绘时被读取。把解码和像素采样留在这里，
+    /// 让转场与侧滑返回不再触发磁盘 I/O 和重复绘制。
+    private var customWallpaperImageCache: [String: UIImage] = [:]
+    private var customWallpaperLuminanceCache: [String: [WallpaperSurfaceRegion: CGFloat]] = [:]
+
     private init() {
         accent = AccentChoice(rawValue: UserDefaults.standard.string(forKey: "theme.accent") ?? "") ?? .tangerine
         appearance = AppearanceChoice(rawValue: UserDefaults.standard.string(forKey: "theme.appearance") ?? "") ?? .system
@@ -313,20 +326,91 @@ final class ThemeManager: ObservableObject {
     }
 
     func customWallpaperImage(for channel: ChatChannel) -> UIImage? {
+        if let image = customWallpaperImageCache[channel.rawValue] {
+            return image
+        }
         let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return UIImage(data: data)
+        guard let image = UIImage(data: data) else { return nil }
+        customWallpaperImageCache[channel.rawValue] = image
+        return image
+    }
+
+    func customWallpaperLuminance(for channel: ChatChannel, region: WallpaperSurfaceRegion) -> CGFloat? {
+        let key = channel.rawValue
+        if let cached = customWallpaperLuminanceCache[key]?[region] {
+            return cached
+        }
+        guard let image = customWallpaperImage(for: channel) else { return nil }
+        let value = Self.regionLuminance(of: image, region: region)
+        customWallpaperLuminanceCache[key, default: [:]][region] = value
+        return value
     }
 
     func setCustomWallpaper(imageData: Data, for channel: ChatChannel) {
         let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
         try? imageData.write(to: url, options: .atomic)
+        if let image = UIImage(data: imageData) {
+            customWallpaperImageCache[channel.rawValue] = image
+        } else {
+            customWallpaperImageCache[channel.rawValue] = nil
+        }
+        customWallpaperLuminanceCache[channel.rawValue] = nil
         customWallpaperKeys.insert(channel.rawValue)
     }
 
     func removeCustomWallpaper(for channel: ChatChannel) {
         let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
         try? FileManager.default.removeItem(at: url)
+        customWallpaperImageCache[channel.rawValue] = nil
+        customWallpaperLuminanceCache[channel.rawValue] = nil
         customWallpaperKeys.remove(channel.rawValue)
+    }
+
+    private static func regionLuminance(of image: UIImage, region: WallpaperSurfaceRegion) -> CGFloat {
+        guard image.size.width > 0, image.size.height > 0 else { return 0.7 }
+        let pixelWidth = 48
+        let pixelHeight = 104
+        let renderSize = CGSize(width: CGFloat(pixelWidth), height: CGFloat(pixelHeight))
+        let scale = max(renderSize.width / image.size.width, renderSize.height / image.size.height)
+        let drawnSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let drawRect = CGRect(
+            x: (renderSize.width - drawnSize.width) / 2,
+            y: (renderSize.height - drawnSize.height) / 2,
+            width: drawnSize.width,
+            height: drawnSize.height
+        )
+        let sampleRange: Range<CGFloat> = region == .top ? 3..<25 : 78..<101
+        let sampleSize = CGSize(width: CGFloat(pixelWidth), height: sampleRange.upperBound - sampleRange.lowerBound)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let sampled = UIGraphicsImageRenderer(size: sampleSize, format: format).image { _ in
+            image.draw(in: drawRect.offsetBy(dx: 0, dy: -sampleRange.lowerBound))
+        }
+        guard let sampledCGImage = sampled.cgImage else { return 0.7 }
+        let sampleWidth = Int(sampleSize.width)
+        let sampleHeight = Int(sampleSize.height)
+        let bytesPerPixel = 4
+        var pixels = [UInt8](repeating: 0, count: sampleWidth * sampleHeight * bytesPerPixel)
+        guard let context = CGContext(
+            data: &pixels,
+            width: sampleWidth,
+            height: sampleHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: sampleWidth * bytesPerPixel,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ) else { return 0.7 }
+        context.draw(sampledCGImage, in: CGRect(origin: .zero, size: sampleSize))
+        var luminances: [CGFloat] = []
+        luminances.reserveCapacity(sampleWidth * sampleHeight)
+        for index in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
+            let red = CGFloat(pixels[index]) / 255
+            let green = CGFloat(pixels[index + 1]) / 255
+            let blue = CGFloat(pixels[index + 2]) / 255
+            luminances.append(0.2126 * red + 0.7152 * green + 0.0722 * blue)
+        }
+        return luminances.sorted()[luminances.count / 2]
     }
 }
