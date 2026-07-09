@@ -190,7 +190,7 @@ final class ChatLocalDatabase {
         let result = sqlite3_exec(db, sql, nil, nil, &errorMessage)
         defer { sqlite3_free(errorMessage) }
         guard result == SQLITE_OK else {
-            let detail = errorMessage.map(String.init(cString:)) ?? "SQLite error \(result)"
+            let detail = errorMessage.map { String(cString: $0) } ?? "SQLite error \(result)"
             print("[ChatLocalDatabase] ⚠️ SQL 执行失败: \(detail)")
             return false
         }
