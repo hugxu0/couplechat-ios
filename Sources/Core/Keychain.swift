@@ -17,7 +17,10 @@ enum Keychain {
     }
 
     static func saveSession(_ session: Session) {
-        guard let data = try? JSONEncoder().encode(session) else { return }
+        guard let data = try? JSONEncoder().encode(session) else {
+            print("[Keychain] ⚠️ Session 编码失败，无法保存")
+            return
+        }
         UserDefaults.standard.set(data, forKey: defaultsKey)
 
         let query = Self.query
@@ -29,7 +32,12 @@ enum Keychain {
             kSecValueData as String: data,
         ] as CFDictionary)
         if updateStatus == errSecItemNotFound {
-            SecItemAdd(attrs as CFDictionary, nil)
+            let addStatus = SecItemAdd(attrs as CFDictionary, nil)
+            if addStatus != errSecSuccess {
+                print("[Keychain] ⚠️ Session 写入失败 status=\(addStatus)")
+            }
+        } else if updateStatus != errSecSuccess {
+            print("[Keychain] ⚠️ Session 更新失败 status=\(updateStatus)")
         }
     }
 
@@ -62,9 +70,22 @@ enum Keychain {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return try? JSONDecoder().decode(Session.self, from: data)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess else {
+            if status != errSecItemNotFound {
+                print("[Keychain] ⚠️ 读取失败 status=\(status)")
+            }
+            return nil
+        }
+        guard let data = result as? Data else {
+            print("[Keychain] ⚠️ 读取结果非 Data 类型")
+            return nil
+        }
+        guard let session = try? JSONDecoder().decode(Session.self, from: data) else {
+            print("[Keychain] ⚠️ Session 解码失败，数据可能损坏")
+            return nil
+        }
+        return session
     }
 
     static func clearSession() {

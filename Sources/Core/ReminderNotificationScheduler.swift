@@ -6,7 +6,14 @@ enum ReminderNotificationScheduler {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .notDetermined else { return }
-        _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound])
+        do {
+            let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+            if !granted {
+                print("[Reminder] ⚠️ 用户拒绝了通知权限")
+            }
+        } catch {
+            print("[Reminder] ⚠️ 请求通知权限失败: \(error.localizedDescription)")
+        }
     }
 
     static func schedule(_ item: PersonalItem, account: String) async {
@@ -35,7 +42,11 @@ enum ReminderNotificationScheduler {
             content: content,
             trigger: trigger)
 
-        try? await UNUserNotificationCenter.current().add(request)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+        } catch {
+            print("[Reminder] ⚠️ 调度提醒失败 id=\(item.id) title=\(item.title): \(error.localizedDescription)")
+        }
     }
 
     static func cancel(_ item: PersonalItem, account: String) async {

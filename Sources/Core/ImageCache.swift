@@ -64,7 +64,13 @@ final class ImageCache {
         }.value
         guard let prepared else { return nil }
         memory.setObject(prepared, forKey: url.absoluteString as NSString)
-        ioQueue.async { try? data.write(to: file) }
+        ioQueue.async {
+            do {
+                try data.write(to: file)
+            } catch {
+                print("[ImageCache] ⚠️ 磁盘写入失败 url=\(file.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
         return prepared
     }
 
@@ -73,7 +79,13 @@ final class ImageCache {
         let img = image ?? UIImage(data: data)
         if let img { memory.setObject(img, forKey: url.absoluteString as NSString) }
         let file = fileURL(for: url)
-        ioQueue.async { try? data.write(to: file) }
+        ioQueue.async {
+            do {
+                try data.write(to: file)
+            } catch {
+                print("[ImageCache] ⚠️ 磁盘写入失败 url=\(file.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - 缓存管理（供存储空间页使用）

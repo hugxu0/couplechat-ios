@@ -140,8 +140,15 @@ final class ChatStore: ObservableObject {
 
     func fetchAccounts() async -> [Account] {
         guard let (data, _) = try? await URLSession.shared.data(
-            from: Self.baseURL.appendingPathComponent("api/accounts")) else { return [] }
-        return (try? JSONDecoder().decode([Account].self, from: data)) ?? []
+            from: Self.baseURL.appendingPathComponent("api/accounts")) else {
+            print("[ChatStore] ⚠️ fetchAccounts 网络请求失败")
+            return []
+        }
+        guard let accounts = try? JSONDecoder().decode([Account].self, from: data) else {
+            print("[ChatStore] ⚠️ fetchAccounts 解码失败")
+            return []
+        }
+        return accounts
     }
 
     /// 从账号表里找出「对方」
@@ -1314,16 +1321,32 @@ final class ChatStore: ObservableObject {
     }
 
     func fetchDaily() async -> DailyContent? {
-        guard let req = authorizedRequest("api/daily"),
-              let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return try? JSONDecoder().decode(DailyContent.self, from: data)
+        guard let req = authorizedRequest("api/daily") else {
+            print("[ChatStore] ⚠️ fetchDaily: 未登录")
+            return nil
+        }
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else {
+            print("[ChatStore] ⚠️ fetchDaily: 请求失败")
+            return nil
+        }
+        guard let content = try? JSONDecoder().decode(DailyContent.self, from: data) else {
+            print("[ChatStore] ⚠️ fetchDaily: 解码失败")
+            return nil
+        }
+        return content
     }
 
     func regenerateRecommendation() async -> Recommendation? {
-        guard let req = authorizedRequest("api/daily/recommend", method: "POST"),
-              let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        guard let req = authorizedRequest("api/daily/recommend", method: "POST") else {
+            print("[ChatStore] ⚠️ regenerateRecommendation: 未登录")
+            return nil
+        }
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else {
+            print("[ChatStore] ⚠️ regenerateRecommendation: 请求失败")
+            return nil
+        }
         struct Wrapper: Decodable { let recommend: Recommendation? }
         return (try? JSONDecoder().decode(Wrapper.self, from: data))?.recommend
     }
@@ -1333,8 +1356,11 @@ final class ChatStore: ObservableObject {
         if let kind { components.append("kind=\(kind.rawValue)") }
         components.append("scope=\(scope)")
         let path = "api/me/items?\(components.joined(separator: "&"))"
-        guard let req = authorizedRequest(path),
-              let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let req = authorizedRequest(path) else {
+            print("[ChatStore] ⚠️ fetchPersonalItems: 未登录")
+            return []
+        }
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
         return (try? JSONDecoder().decode(PersonalItemsResponse.self, from: data))?.items ?? []
     }
@@ -1364,29 +1390,55 @@ final class ChatStore: ObservableObject {
     }
 
     func deletePersonalItem(_ item: PersonalItem) async -> Bool {
-        guard let req = authorizedRequest("api/me/items/\(item.id)", method: "DELETE"),
-              let (_, resp) = try? await URLSession.shared.data(for: req) else { return false }
-        return (resp as? HTTPURLResponse)?.statusCode == 200
+        guard let req = authorizedRequest("api/me/items/\(item.id)", method: "DELETE") else {
+            print("[ChatStore] ⚠️ deletePersonalItem: 未登录")
+            return false
+        }
+        guard let (_, resp) = try? await URLSession.shared.data(for: req) else {
+            print("[ChatStore] ⚠️ deletePersonalItem: 网络失败 id=\(item.id)")
+            return false
+        }
+        let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+        if !ok {
+            print("[ChatStore] ⚠️ deletePersonalItem: 服务端拒绝 id=\(item.id) status=\((resp as? HTTPURLResponse)?.statusCode ?? 0)")
+        }
+        return ok
     }
 
     private func sendPersonalItemRequest(path: String, method: String, body: [String: Any]) async -> PersonalItem? {
-        guard var req = authorizedRequest(path, method: method) else { return nil }
+        guard var req = authorizedRequest(path, method: method) else {
+            print("[ChatStore] ⚠️ sendPersonalItemRequest: 未登录 path=\(path)")
+            return nil
+        }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let code = (resp as? HTTPURLResponse)?.statusCode,
-              (200..<300).contains(code) else { return nil }
-        return (try? JSONDecoder().decode(PersonalItemResponse.self, from: data))?.item
+              (200..<300).contains(code) else {
+            print("[ChatStore] ⚠️ sendPersonalItemRequest 失败 path=\(path) method=\(method)")
+            return nil
+        }
+        guard let item = (try? JSONDecoder().decode(PersonalItemResponse.self, from: data))?.item else {
+            print("[ChatStore] ⚠️ sendPersonalItemRequest 解码失败 path=\(path)")
+            return nil
+        }
+        return item
     }
 
     /// 保存/清空 Bark 推送 key（barkKey 为 nil 表示关闭离线通知）
     func saveBarkKey(_ barkKey: String?) async -> Bool {
-        guard var req = authorizedRequest("api/me/push/bark", method: "POST") else { return false }
+        guard var req = authorizedRequest("api/me/push/bark", method: "POST") else {
+            print("[ChatStore] ⚠️ saveBarkKey: 未登录")
+            return false
+        }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = ["barkKey": barkKey ?? NSNull()]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         guard let (_, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else { return false }
+              (resp as? HTTPURLResponse)?.statusCode == 200 else {
+            print("[ChatStore] ⚠️ saveBarkKey: 请求失败")
+            return false
+        }
         return true
     }
 

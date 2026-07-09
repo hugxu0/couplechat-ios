@@ -114,25 +114,35 @@ final class StickerStore: ObservableObject {
     // MARK: 持久化
 
     private func load() {
-        if let data = UserDefaults.standard.data(forKey: stickersKey),
-           let decoded = try? JSONDecoder().decode([Sticker].self, from: data) {
-            stickers = decoded
+        if let data = UserDefaults.standard.data(forKey: stickersKey) {
+            if let decoded = try? JSONDecoder().decode([Sticker].self, from: data) {
+                stickers = decoded
+            } else {
+                print("[StickerStore] ⚠️ 贴纸数据解码失败，保留空列表")
+            }
         }
-        if let data = UserDefaults.standard.data(forKey: groupsKey),
-           let decoded = try? JSONDecoder().decode([StickerGroup].self, from: data) {
-            groups = decoded
+        if let data = UserDefaults.standard.data(forKey: groupsKey) {
+            if let decoded = try? JSONDecoder().decode([StickerGroup].self, from: data) {
+                groups = decoded
+            } else {
+                print("[StickerStore] ⚠️ 分组数据解码失败，保留空列表")
+            }
         }
     }
 
     private func saveStickers() {
         if let data = try? JSONEncoder().encode(stickers) {
             UserDefaults.standard.set(data, forKey: stickersKey)
+        } else {
+            print("[StickerStore] ⚠️ 贴纸编码失败，数据未持久化")
         }
     }
 
     private func saveGroups() {
         if let data = try? JSONEncoder().encode(groups) {
             UserDefaults.standard.set(data, forKey: groupsKey)
+        } else {
+            print("[StickerStore] ⚠️ 分组编码失败，数据未持久化")
         }
     }
 }
