@@ -210,20 +210,22 @@ struct ChatV2Screen: View {
 
     @ViewBuilder
     private func topSafeGlass(height: CGFloat) -> some View {
-        if #available(iOS 26.0, *) {
-            // 顶部交给透明的系统导航环境与控件自身的 Liquid Glass；
-            // 不能在整个安全区再放一层自定义 material。
-            Color.clear
-        } else {
-            // 旧系统没有 Liquid Glass，仅保留不改变壁纸色相的细微可读性渐隐。
-            LinearGradient(
-                colors: [
-                    usesNightTopChrome ? .black.opacity(0.10) : .black.opacity(0.035),
-                    .clear,
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+        Group {
+            if #available(iOS 26.0, *) {
+                // 顶部交给透明的系统导航环境与控件自身的 Liquid Glass；
+                // 不能在整个安全区再放一层自定义 material。
+                Color.clear
+            } else {
+                // 旧系统没有 Liquid Glass，仅保留不改变壁纸色相的细微可读性渐隐。
+                LinearGradient(
+                    colors: [
+                        usesNightTopChrome ? .black.opacity(0.10) : .black.opacity(0.035),
+                        .clear,
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
         }
         .frame(height: height)
         .allowsHitTesting(false)
