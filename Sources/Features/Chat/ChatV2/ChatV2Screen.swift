@@ -210,35 +210,16 @@ struct ChatV2Screen: View {
 
     @ViewBuilder
     private func topSafeGlass(height: CGFloat) -> some View {
-        Group {
-            if #available(iOS 26.0, *) {
-                // 不加人工颜色，只把原生玻璃本身沿垂直方向羽化成顶部渐变模糊。
-                LiquidGlassBackground(
-                    cornerRadius: 0,
-                    tintColor: .clear,
-                    tintAlpha: 0,
-                    borderAlpha: 0,
-                    gradientAlpha: 0
-                )
-                .mask(
-                    LinearGradient(
-                        colors: [.white.opacity(0.88), .white.opacity(0.42), .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-            } else {
-                // 旧系统没有 Liquid Glass，仅保留不改变壁纸色相的细微可读性渐隐。
+        // 这是背景本身的模糊，而非会产生镜面高光的 Liquid Glass。
+        // 明亮壁纸用浅材质、深色壁纸用深材质，再由 mask 自然向下消退。
+        TopBackdropBlur(style: topBarUsesDarkText ? .systemUltraThinMaterialLight : .systemUltraThinMaterialDark)
+            .mask(
                 LinearGradient(
-                    colors: [
-                        usesNightTopChrome ? .black.opacity(0.10) : .black.opacity(0.035),
-                        .clear,
-                    ],
+                    colors: [.white.opacity(0.90), .white.opacity(0.46), .clear],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-            }
-        }
+            )
         .frame(height: height)
         .allowsHitTesting(false)
     }
@@ -302,6 +283,22 @@ private struct LiquidGlassBackground: UIViewRepresentable {
         view.update(cornerRadius: cornerRadius, tintAlpha: tintAlpha, borderAlpha: borderAlpha)
         view.setTintColor(tintColor, alpha: tintAlpha)
         view.setGradientAlpha(gradientAlpha)
+    }
+}
+
+/// 仅用于顶端背景：UIBlurEffect 会采样其后的真实壁纸，
+/// 不带 Liquid Glass 的折射高光，因此不会把浅色场景洗成白雾。
+private struct TopBackdropBlur: UIViewRepresentable {
+    let style: UIBlurEffect.Style
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: style))
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: UIVisualEffectView, context: Context) {
+        view.effect = UIBlurEffect(style: style)
     }
 }
 
