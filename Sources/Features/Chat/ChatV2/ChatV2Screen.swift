@@ -198,32 +198,34 @@ struct ChatV2Screen: View {
     }
 
     private func topSafeGlass(height: CGFloat) -> some View {
-        // 整块雾白的 material 会压扁壁纸。这里保留原生模糊采样，再用渐隐蒙版
-        // 把它收在状态栏附近，形成 Telegram 式的透明玻璃过渡。
+        // 保留最初的轻量渐变玻璃：材质只在状态栏附近轻轻取样，
+        // 由渐变自然消失，不能把整张深色壁纸洗成一层灰白色。
         ZStack {
             LiquidGlassBackground(
                 cornerRadius: 0,
                 tintColor: topBarUsesDarkText ? .white : .black,
-                tintAlpha: topBarUsesDarkText ? 0.12 : 0.22,
+                tintAlpha: topBarUsesDarkText ? 0.035 : 0.065,
                 borderAlpha: 0,
-                gradientAlpha: topBarUsesDarkText ? 0.34 : 0.40
+                gradientAlpha: topBarUsesDarkText ? 0.10 : 0.14
+            )
+            // 材质层本身也要淡出，避免标题栏底部出现硬边或雾状横带。
+            .mask(
+                LinearGradient(
+                    colors: [.black.opacity(0.92), .black.opacity(0.58), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             )
             LinearGradient(
                 colors: [
-                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.06 : 0.12),
+                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.06 : 0.10),
+                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.018 : 0.035),
                     .clear,
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
         }
-        .mask(
-            LinearGradient(
-                colors: [.white, .white.opacity(0.70), .clear],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
         .frame(height: height)
         .allowsHitTesting(false)
     }

@@ -246,11 +246,18 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         if mine {
             let avatarX = bounds.width - ChatTimelineMetrics.horizontalInset - avatarSize
             avatarView.frame = CGRect(x: avatarX, y: avatarY, width: avatarSize, height: avatarSize)
-            // 所有我方消息共用同一条右边线；回执叠在右下角，不再把图片单独推离头像。
-            let x = avatarX - ChatTimelineMetrics.avatarGap - bubbleWidth
+            // 图片贴近头像，回执叠在图片右下；文字消息维持原有的外置回执，
+            // 给正文留出完整的可读区域，绝不能把勾选标志压到文字上。
+            let usesOverlayStatus = isMediaMessage(message) && !statusLabel.isHidden
+            let statusSpace = statusLabel.isHidden || usesOverlayStatus
+                ? 0
+                : ChatTimelineMetrics.statusOutsideWidth + ChatTimelineMetrics.statusOutsideGap
+            let x = avatarX - ChatTimelineMetrics.avatarGap - statusSpace - bubbleWidth
             bubbleView.frame = CGRect(x: x, y: topGap, width: bubbleWidth, height: bubbleHeight)
             statusLabel.frame = statusLabel.isHidden ? .zero : CGRect(
-                x: bubbleView.frame.maxX - 20,
+                x: usesOverlayStatus
+                    ? bubbleView.frame.maxX - 20
+                    : bubbleView.frame.maxX + ChatTimelineMetrics.statusOutsideGap,
                 y: bubbleView.frame.maxY - 25,
                 width: 16,
                 height: 16
@@ -421,6 +428,13 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             return ChatTimelineMetrics.mediaBubbleWidth(for: message.type, containerWidth: contentView.bounds.width)
         default:
             return min(maxWidth, ChatTimelineMetrics.textBubbleWidth(for: message, containerWidth: contentView.bounds.width))
+        }
+    }
+
+    private func isMediaMessage(_ message: ChatMessage) -> Bool {
+        switch message.type {
+        case "image", "video", "sticker": return true
+        default: return false
         }
     }
 
