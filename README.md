@@ -24,7 +24,19 @@
 ```
 Sources/
 ├── App/                  入口、通知代理、自绘底部标签栏
-├── Core/                 ChatStore、Models、Keychain、本地 SQLite 缓存、贴纸/图片缓存
+├── Core/
+│   ├── AuthStore.swift          登录/登出/session/partner
+│   ├── MessageStore.swift       消息 CRUD/发送/搜索/历史同步
+│   ├── SharedStore.swift        共享状态/纪念日/REST 调用
+│   ├── ChatStore.swift          协调层：socket、事件分发、便捷转发
+│   ├── SocketProvider.swift     协议：解耦子 store 对 socket 的依赖
+│   ├── ServerConfig.swift       服务端地址（支持 Info.plist 配置）
+│   ├── ChatLocalDatabase.swift  设备端 SQLite 缓存
+│   ├── Models.swift             数据模型
+│   ├── Keychain.swift           会话持久化
+│   ├── ImageCache.swift         图片磁盘/内存缓存
+│   ├── StickerStore.swift       本机贴纸库
+│   └── ...
 ├── DesignSystem/         DS.swift + Theme.swift（设计令牌与主题）
 └── Features/
     ├── Auth/             登录
@@ -36,6 +48,14 @@ Sources/
 
 server/                   Node.js + Fastify + Socket.IO + PostgreSQL
 ```
+
+**ChatStore 拆分**：原 1579 行的 God Object 已拆为 4 个职责单一的 store：
+- `AuthStore`（108 行）：登录/登出/session/partner
+- `MessageStore`（622 行）：消息 CRUD/发送/搜索/历史同步
+- `SharedStore`（195 行）：共享状态/纪念日/REST 调用
+- `ChatStore`（454 行）：协调层，持有 socket，分发事件，便捷转发
+
+通过 `SocketProvider` 协议解耦子 store 对 socket 的依赖。所有 `@EnvironmentObject` 引用保持向后兼容。
 
 改全局风格（圆角、玻璃、动画）主要改 `Sources/DesignSystem/DS.swift`；主题色与壁纸改 `Theme.swift`。聊天会话页的重构说明见 `Docs/CHAT_V2_ARCHITECTURE.md`。
 

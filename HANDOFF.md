@@ -1,8 +1,9 @@
 # 悄悄话 · 原生 iOS 版 — 交接文档
 
-> 最后更新：2026-07-10（同步 Chat V2、贴纸、文件、头像与存储空间能力）
+> 最后更新：2026-07-10（架构重构后）
 > 仓库：https://github.com/hugxu0/couplechat-ios
-> 当前工作分支：`codex/chat-v2-uikit`
+> 当前工作分支：`refactor/architecture-improvements`（基于 `main` d5948a9）
+> 当前远端 main：`d5948a9`（已合并 Chat V2）
 > 旧网页版/旧后端：https://github.com/hugxu0/chat（`https://chat.huhuhu.top`，RackNerd `23.254.222.199`，跟新后端无关）
 > 新原生后端：本仓库 `server/`（`https://hoo66.top`，RFCHost `82.40.34.107`）
 
@@ -27,6 +28,17 @@ si = 小偲
 
 开发机是 Windows，没有 Mac。iOS 验证靠 GitHub Actions 生成未签名 ipa，再用 iloader/SideStore 装到真机。
 
+### 当前代码状态
+
+- `refactor/architecture-improvements` 分支已通过 GitHub Actions 构建验证（SwiftLint + Archive 均通过）。
+- **ChatStore 拆分**：原 1579 行 God Object 拆为 `AuthStore`（108 行）、`MessageStore`（622 行）、`SharedStore`（195 行）、`ChatStore`（454 行）+ `SocketProvider` 协议。
+- **错误处理**：消息解析、Keychain、提醒通知、贴纸存储、图片缓存、REST 调用均加入失败日志（`[模块名] ⚠️` 前缀）。
+- **SwiftLint CI**：`build-ios.yml` 在 Archive 前跑 SwiftLint 检查。
+- **ServerConfig 可配置**：`baseURL` 从 Info.plist 读取（`SERVER_BASE_URL`），换环境不改代码。
+- **测试框架**：`CoupleChatTests/` 含消息解析、ServerConfig、AccountPresentation、CoupleDates 基础测试。
+- 聊天会话页使用 UIKit Chat V2：`ChatView.swift` 只做入口桥接，滚动列表、cell、输入栏在 `ChatV2/` 与 `UIKit/` 下。
+- 记录页统计已改成本地 SQLite 聚合；前端不再调用 `/api/stats`。
+
 ---
 
 ## 二、目录结构
@@ -34,28 +46,40 @@ si = 小偲
 ```text
 couplechat-ios/
 ├── project.yml
-├── .github/workflows/build-ios.yml
+├── .swiftlint.yml
+├── .github/workflows/build-ios.yml    # SwiftLint + Archive
+├── .github/workflows/build-ipa.yml    # 手动签名 IPA
 ├── HANDOFF.md
 ├── README.md
+├── CoupleChatTests/                   # 单元测试
+│   ├── ChatMessageTests.swift
+│   ├── ServerConfigTests.swift
+│   └── UIKitBridgeTests.swift
 ├── Sources/
 │   ├── App/
 │   │   ├── CoupleChatApp.swift
 │   │   ├── RootTabView.swift
 │   │   └── AppNotificationDelegate.swift
 │   ├── Core/
-│   │   ├── Models.swift              # ServerConfig、数据模型
-│   │   ├── Keychain.swift
-│   │   ├── ChatStore.swift           # 数据中枢
-│   │   ├── ChatLocalDatabase.swift   # 设备端 SQLite 缓存
-│   │   ├── ChatLocalCache.swift      # 旧 JSON 缓存（仅迁移用）
-│   │   ├── InteractionPayload.swift  # 互动特效解析与 overlay
+│   │   ├── AuthStore.swift            # 登录/登出/session/partner
+│   │   ├── MessageStore.swift         # 消息 CRUD/发送/搜索/历史同步
+│   │   ├── SharedStore.swift          # 共享状态/纪念日/REST 调用
+│   │   ├── ChatStore.swift            # 协调层：socket、事件分发、便捷转发
+│   │   ├── SocketProvider.swift       # 协议：解耦子 store 对 socket 的依赖
+│   │   ├── ServerConfig.swift         # 服务端地址（支持 Info.plist 配置）
+│   │   ├── Models.swift               # 数据模型
+│   │   ├── Keychain.swift             # 会话持久化
+│   │   ├── ChatLocalDatabase.swift    # 设备端 SQLite 缓存
+│   │   ├── ChatLocalCache.swift       # 旧 JSON 缓存（仅迁移用）
+│   │   ├── InteractionPayload.swift   # 互动特效解析与 overlay
 │   │   ├── ReminderNotificationScheduler.swift
-│   │   ├── ImageCache.swift          # 图片磁盘/内存缓存
-│   │   ├── StickerStore.swift        # 本机贴纸库
-│   │   └── EmojiCatalog.swift        # 表情面板 emoji 数据
+│   │   ├── ImageCache.swift           # 图片磁盘/内存缓存
+│   │   ├── StickerStore.swift         # 本机贴纸库
+│   │   └── EmojiCatalog.swift         # 表情面板 emoji 数据
 │   ├── DesignSystem/
 │   │   ├── DS.swift
-│   │   └── Theme.swift
+│   │   ├── Theme.swift
+│   │   └── UIKitBridge.swift          # SwiftUI <-> UIKit 通用桥接
 │   └── Features/
 │       ├── Auth/LoginView.swift
 │       ├── Chat/ChatHomeView.swift, ChatView.swift, ChatV2/, UIKit/
@@ -74,12 +98,17 @@ couplechat-ios/
 
 | 文件 | 说明 |
 |---|---|
-| `Sources/Core/ChatStore.swift` | 登录、Socket、多频道消息、上传、已读、断线恢复、REST CRUD、shared 状态 |
+| `Sources/Core/AuthStore.swift` | 登录/登出/session/partner/token 核验 |
+| `Sources/Core/MessageStore.swift` | 消息 CRUD、发送、搜索、历史同步、上传 |
+| `Sources/Core/SharedStore.swift` | 共享状态（纪念日/头像/贴条）、REST 调用 |
+| `Sources/Core/ChatStore.swift` | 协调层：socket、bindEvents、便捷转发到子 store |
+| `Sources/Core/SocketProvider.swift` | 协议：子 store 通过此访问 socket，避免循环依赖 |
+| `Sources/Core/ServerConfig.swift` | `baseURL` 从 Info.plist 读取，支持多环境 |
 | `Sources/Core/ChatLocalDatabase.swift` | 设备端 SQLite：消息、已读、shared 状态；登录后先出本地再补增量 |
 | `Sources/Core/ChatLocalCache.swift` | 旧 JSON 快照，一次性迁移到 SQLite |
 | `Sources/Core/ImageCache.swift` | 全 App 图片缓存；存储空间页可统计/清理 |
 | `Sources/Core/StickerStore.swift` + `EmojiCatalog.swift` | 本机贴纸库、分组/收藏、emoji 数据 |
-| `Sources/Core/Models.swift` | `ServerConfig.baseURL = https://hoo66.top`；消息/提醒/纪念日模型 |
+| `Sources/Core/Models.swift` | 消息/提醒/纪念日模型 |
 | `Sources/Features/Chat/ChatView.swift` | 会话入口，桥接到 Chat V2 |
 | `Sources/Features/Chat/ChatV2/ChatViewController.swift` | UIKit 会话核心：消息列表、输入栏、键盘、表情面板、附件、录音 |
 | `Sources/Features/Chat/UIKit/ChatTimelineCells.swift` | 原生消息 cell：文本、图片、视频、语音、文件、贴纸 |
@@ -239,7 +268,7 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 GitHub Actions：`.github/workflows/build-ios.yml`（push `main` 或手动触发）
 
 ```bash
-gh workflow run "Build iOS IPA (unsigned)" --ref codex/chat-v2-uikit
+gh workflow run "Build iOS IPA (unsigned)" --ref main
 ```
 
 产物 artifact：`couplechat-native-ipa` → SideStore/iloader 安装。免费 Apple ID 签名 7 天过期。
