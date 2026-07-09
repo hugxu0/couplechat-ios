@@ -157,6 +157,21 @@ final class ChatViewController: UIViewController {
         scheduleInitialTimelinePositioning()
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
+        // 消息气泡使用已解析的静态前景/背景色；系统外观改变时必须重新配置单元，
+        // 避免保留浅色背景却让动态 .label 变成白字。
+        composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
+        layoutHeightCache.removeAll()
+        collectionView.collectionViewLayout.invalidateLayout()
+        UIView.performWithoutAnimation {
+            collectionView.reloadData()
+            collectionView.layoutIfNeeded()
+        }
+        applyInputLayout(duration: 0, curve: .curveEaseOut)
+    }
+
     func performJump(_ command: ChatV2JumpCommand) {
         guard activeJumpID != command.id else { return }
         activeJumpID = command.id

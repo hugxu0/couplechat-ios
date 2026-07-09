@@ -70,7 +70,7 @@ enum ChatTimelineMetrics {
     static let statusOutsideGap: CGFloat = 2
     static let mediaSize = CGSize(width: 230, height: 260)
     static let fileHeight: CGFloat = 58
-    static let voiceHeight: CGFloat = 44
+    static let voiceHeight: CGFloat = 36
     static let stickerSize = CGSize(width: 132, height: 132)
 
     static func messageHeight(
@@ -134,7 +134,7 @@ enum ChatTimelineMetrics {
         switch type {
         case "sticker": return stickerSize.width
         case "file": return min(containerWidth * bubbleMaxWidthRatio, 250)
-        case "voice": return 178
+        case "voice": return 146
         default: return mediaSize.width
         }
     }

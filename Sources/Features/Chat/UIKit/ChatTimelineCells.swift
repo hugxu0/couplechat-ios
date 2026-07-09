@@ -1,3 +1,4 @@
+import AVFoundation
 import UIKit
 
 protocol ChatTimelineCellDelegate: AnyObject {
@@ -73,16 +74,19 @@ final class ChatNativeMessageCell: UICollectionViewCell {
     private let bodyLabel = UILabel()
     private let mediaImageView = UIImageView()
     private let mediaIconView = UIImageView()
+    private let voiceWaveStack = UIStackView()
     private let statusLabel = UILabel()
     private let retryButton = UIButton(type: .system)
     private let highlightView = UIView()
 
     private var representedImageURL: URL?
+    private var representedVoiceURL: URL?
     private var message: ChatMessage?
     private var mine = false
     private var grouped = false
     private var accentColor = UIColor.systemMint
     private var voicePlaying = false
+    private var voiceWaveBars: [UIView] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -119,6 +123,20 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         mediaIconView.contentMode = .scaleAspectFit
         mediaIconView.tintColor = .secondaryLabel
 
+        voiceWaveStack.axis = .horizontal
+        voiceWaveStack.alignment = .center
+        voiceWaveStack.distribution = .equalSpacing
+        voiceWaveStack.spacing = 3
+        for height: CGFloat in [6, 11, 17, 10, 15, 8, 13] {
+            let bar = UIView()
+            bar.layer.cornerRadius = 1.25
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            bar.widthAnchor.constraint(equalToConstant: 2.5).isActive = true
+            bar.heightAnchor.constraint(equalToConstant: height).isActive = true
+            voiceWaveStack.addArrangedSubview(bar)
+            voiceWaveBars.append(bar)
+        }
+
         statusLabel.font = .systemFont(ofSize: 9, weight: .bold)
         statusLabel.textAlignment = .center
         statusLabel.layer.cornerCurve = .continuous
@@ -150,6 +168,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         super.prepareForReuse()
         message = nil
         representedImageURL = nil
+        representedVoiceURL = nil
         mediaImageView.image = nil
         mediaIconView.image = nil
         bodyLabel.text = nil
@@ -186,13 +205,13 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         let mediaOnly = Self.isStandaloneMedia(message)
         // Context-menu 预览可能在不同 trait 环境中重绘动态系统色，造成气泡翻色。
         // 这里在配置时固化当前外观下的颜色，让长按仅表现为系统的轻微抬起效果。
-        let incomingBubbleColor = UIColor.systemBackground
-            .resolvedColor(with: traitCollection)
-            .withAlphaComponent(0.94)
+        let incomingBubbleColor = UIColor.systemBackground.resolvedColor(with: traitCollection).withAlphaComponent(0.94)
+        let incomingTextColor = UIColor.label.resolvedColor(with: traitCollection)
+        let incomingSecondaryColor = UIColor.secondaryLabel.resolvedColor(with: traitCollection)
         bubbleView.backgroundColor = mediaOnly ? .clear : (mine ? accentColor : incomingBubbleColor)
-        bodyLabel.textColor = mine ? .white : .label
+        bodyLabel.textColor = mine ? .white : incomingTextColor
         replyMarker.backgroundColor = mine ? UIColor.white.withAlphaComponent(0.9) : accentColor
-        replyLabel.textColor = mine ? UIColor.white.withAlphaComponent(0.86) : .secondaryLabel
+        replyLabel.textColor = mine ? UIColor.white.withAlphaComponent(0.86) : incomingSecondaryColor
 
         retryButton.isHidden = !message.failed
         statusLabel.text = statusText(message: message, read: read)
@@ -265,13 +284,18 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             if let caption = ChatTimelineMetrics.mediaCaption(for: message) {
                 bodyLabel.text = caption
                 bodyLabel.font = .systemFont(ofSize: 15)
-                bodyLabel.textColor = mine ? .white : .label
+                bodyLabel.textColor = mine ? .white : UIColor.label.resolvedColor(with: traitCollection)
                 bubbleView.addSubview(bodyLabel)
             } else {
                 bodyLabel.font = .systemFont(ofSize: 17)
             }
             configureMedia(message)
-        case "voice", "file":
+        case "voice":
+            bubbleView.addSubview(mediaIconView)
+            bubbleView.addSubview(voiceWaveStack)
+            bubbleView.addSubview(bodyLabel)
+            configureAttachment(message)
+        case "file":
             bubbleView.addSubview(mediaIconView)
             bubbleView.addSubview(bodyLabel)
             configureAttachment(message)
@@ -317,10 +341,15 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             iconName = "doc.fill"
         }
         mediaIconView.image = UIImage(systemName: iconName)
-        mediaIconView.tintColor = mine ? .white : accentColor
+        let foreground = mine ? UIColor.white : accentColor
+        mediaIconView.tintColor = foreground
         switch message.type {
         case "voice":
-            bodyLabel.text = message.pending ? "语音上传中" : (voicePlaying ? "正在播放" : "点击播放语音")
+            bodyLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+            bodyLabel.textColor = foreground
+            bodyLabel.text = message.pending ? "···" : "0:01"
+            voiceWaveBars.forEach { $0.backgroundColor = foreground.withAlphaComponent(voicePlaying ? 1 : 0.72) }
+            loadVoiceDuration(message)
         case "file":
             let text = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
             bodyLabel.text = text.isEmpty ? "文件" : text
@@ -373,7 +402,11 @@ final class ChatNativeMessageCell: UICollectionViewCell {
                     height: captionHeight - 7
                 )
             }
-        case "voice", "file":
+        case "voice":
+            mediaIconView.frame = CGRect(x: paddingX, y: y + 8, width: 20, height: 20)
+            voiceWaveStack.frame = CGRect(x: paddingX + 30, y: y + 8, width: 50, height: 20)
+            bodyLabel.frame = CGRect(x: paddingX + 88, y: y + 9, width: 34, height: 18)
+        case "file":
             mediaIconView.frame = CGRect(x: paddingX, y: y + 6, width: 28, height: 28)
             bodyLabel.frame = CGRect(x: paddingX + 38, y: y, width: contentWidth - 38, height: bubbleView.bounds.height - y - paddingY)
         default:
@@ -417,6 +450,25 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         if message.pending { return "…" }
         if message.failed { return "" }
         return "✓"
+    }
+
+    private func loadVoiceDuration(_ message: ChatMessage) {
+        guard !message.pending, let url = message.mediaURL else { return }
+        representedVoiceURL = url
+        Task { [weak self, url] in
+            let asset = AVURLAsset(url: url)
+            let duration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
+            guard duration.isFinite, duration > 0 else { return }
+            await MainActor.run {
+                guard let self, self.representedVoiceURL == url else { return }
+                self.bodyLabel.text = Self.voiceDurationText(duration)
+            }
+        }
+    }
+
+    private static func voiceDurationText(_ duration: TimeInterval) -> String {
+        let seconds = max(1, Int(duration.rounded()))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     @objc private func handleBubbleTap() {

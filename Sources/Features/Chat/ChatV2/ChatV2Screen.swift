@@ -46,14 +46,14 @@ struct ChatV2Screen: View {
 
     private var topBarUsesDarkText: Bool {
         if let image = theme.customWallpaperImage(for: channel) {
-            return Self.regionLuminance(of: image, region: .top) > 0.74
+            return Self.regionLuminance(of: image, region: .top) > 0.58
         }
         return displayedWallpaper != .night
     }
 
     private var composerUsesDarkText: Bool {
         if let image = theme.customWallpaperImage(for: channel) {
-            return Self.regionLuminance(of: image, region: .bottom) > 0.74
+            return Self.regionLuminance(of: image, region: .bottom) > 0.58
         }
         return displayedWallpaper != .night
     }
@@ -204,9 +204,9 @@ struct ChatV2Screen: View {
             LiquidGlassBackground(
                 cornerRadius: 0,
                 tintColor: topBarUsesDarkText ? .white : .black,
-                tintAlpha: topBarUsesDarkText ? 0.035 : 0.065,
+                tintAlpha: topBarUsesDarkText ? 0.045 : 0.26,
                 borderAlpha: 0,
-                gradientAlpha: topBarUsesDarkText ? 0.10 : 0.14
+                gradientAlpha: topBarUsesDarkText ? 0.14 : 0.24
             )
             // 将系统材质本身也渐隐，避免在标题栏底部留下明显的横向分界线。
             .mask(
@@ -218,8 +218,8 @@ struct ChatV2Screen: View {
             )
             LinearGradient(
                 colors: [
-                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.06 : 0.10),
-                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.018 : 0.035),
+                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.07 : 0.22),
+                    (topBarUsesDarkText ? Color.white : Color.black).opacity(topBarUsesDarkText ? 0.02 : 0.08),
                     .clear,
                 ],
                 startPoint: .top,
@@ -257,31 +257,43 @@ struct ChatV2Screen: View {
     }
 
     private static func regionLuminance(of image: UIImage, region: WallpaperRegion) -> CGFloat {
-        guard let cgImage = image.cgImage else { return 0.7 }
-        let width = 12
-        let height = 12
+        guard image.size.width > 0, image.size.height > 0 else { return 0.7 }
+        let pixelWidth = 48
+        let pixelHeight = 104
+        let renderSize = CGSize(width: CGFloat(pixelWidth), height: CGFloat(pixelHeight))
+        let scale = max(renderSize.width / image.size.width, renderSize.height / image.size.height)
+        let drawnSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let drawRect = CGRect(
+            x: (renderSize.width - drawnSize.width) / 2,
+            y: (renderSize.height - drawnSize.height) / 2,
+            width: drawnSize.width,
+            height: drawnSize.height
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let sampleRange: Range<CGFloat> = region == .top ? 3..<25 : 78..<101
+        let sampleSize = CGSize(width: CGFloat(pixelWidth), height: sampleRange.upperBound - sampleRange.lowerBound)
+        let sampled = UIGraphicsImageRenderer(size: sampleSize, format: format).image { _ in
+            image.draw(in: drawRect.offsetBy(dx: 0, dy: -sampleRange.lowerBound))
+        }
+        guard let sampledCGImage = sampled.cgImage else { return 0.7 }
+        let sampleWidth = Int(sampleSize.width)
+        let sampleHeight = Int(sampleSize.height)
         let bytesPerPixel = 4
-        var pixels = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+        var pixels = [UInt8](repeating: 0, count: sampleWidth * sampleHeight * bytesPerPixel)
         guard let context = CGContext(
             data: &pixels,
-            width: width,
-            height: height,
+            width: sampleWidth,
+            height: sampleHeight,
             bitsPerComponent: 8,
-            bytesPerRow: width * bytesPerPixel,
+            bytesPerRow: sampleWidth * bytesPerPixel,
             space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
         ) else { return 0.7 }
-        let sourceHeight = CGFloat(cgImage.height)
-        let cropHeight = max(1, sourceHeight * 0.18)
-        let cropY = region == .top ? 0 : max(0, sourceHeight - cropHeight)
-        let cropRect = CGRect(x: 0, y: cropY, width: CGFloat(cgImage.width), height: cropHeight)
-        if let topImage = cgImage.cropping(to: cropRect) {
-            context.draw(topImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        } else {
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        }
+        context.draw(sampledCGImage, in: CGRect(origin: .zero, size: sampleSize))
         var luminances: [CGFloat] = []
-        luminances.reserveCapacity(width * height)
+        luminances.reserveCapacity(sampleWidth * sampleHeight)
         for index in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
             let r = CGFloat(pixels[index]) / 255
             let g = CGFloat(pixels[index + 1]) / 255
@@ -298,22 +310,15 @@ private extension View {
             .background {
                 ZStack {
                     LiquidGlassBackground(
-                        cornerRadius: cornerRadius + 10,
-                        tintColor: textIsDark ? .white : .black,
-                        tintAlpha: textIsDark ? 0.025 : 0.045,
-                        borderAlpha: 0.03,
-                        gradientAlpha: 0.18
-                    )
-                    .padding(-12)
-                    .opacity(0.52)
-
-                    LiquidGlassBackground(
                         cornerRadius: cornerRadius,
                         tintColor: textIsDark ? .white : .black,
-                        tintAlpha: textIsDark ? 0.16 : 0.12,
-                        borderAlpha: textIsDark ? 0.18 : 0.16,
-                        gradientAlpha: textIsDark ? 0.30 : 0.24
+                        tintAlpha: textIsDark ? 0.14 : 0.34,
+                        borderAlpha: textIsDark ? 0.18 : 0.20,
+                        gradientAlpha: textIsDark ? 0.22 : 0.30
                     )
+                    if !textIsDark {
+                        Color.black.opacity(0.12)
+                    }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
