@@ -1,21 +1,7 @@
 import Foundation
 
 // 数据模型：字段与新后端 server/docs/API.md 的契约对齐。
-
-/// 服务端地址（放在非隔离的全局枚举里，供模型层/视图层直接取用）
-enum ServerConfig {
-    static let baseURL = URL(string: "https://hoo66.top")!
-
-    /// 把服务端下发的媒体地址解析成可加载的绝对 URL。
-    /// 导入的历史消息存的是相对路径（如 /uploads/xx.png），需要拼上服务器域名。
-    static func resolveMediaURL(_ raw: String?) -> URL? {
-        guard let raw, !raw.isEmpty else { return nil }
-        if raw.hasPrefix("http://") || raw.hasPrefix("https://") || raw.hasPrefix("file://") {
-            return URL(string: raw)
-        }
-        return URL(string: raw, relativeTo: baseURL)?.absoluteURL
-    }
-}
+// ServerConfig 定义在 ServerConfig.swift（支持 Info.plist 配置 baseURL）。
 
 struct Account: Codable, Equatable {
     let username: String
@@ -43,7 +29,7 @@ enum ChatChannel: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - 统计 / 每日内容（对应 GET /api/stats、GET /api/daily）
+// MARK: - 本地统计 / 每日内容
 
 struct DayStat: Decodable, Equatable {
     let date: String        // "2026-07-07"
@@ -58,11 +44,6 @@ struct MonthStat: Decodable, Equatable {
     let counts: [String: Int]
 
     var total: Int { counts.values.reduce(0, +) }
-}
-
-struct StatsResponse: Decodable, Equatable {
-    let days: [DayStat]
-    let months: [MonthStat]
 }
 
 struct DiaryEntry: Decodable, Equatable {
@@ -197,7 +178,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var sender: String
     var senderName: String
     var kind: String        // user / system
-    var type: String        // text / image / video / sticker / voice
+    var type: String        // text / image / video / sticker / voice / file
     var text: String
     var url: String?
     var channel: String     // couple / ai

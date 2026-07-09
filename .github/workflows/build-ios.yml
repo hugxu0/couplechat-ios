@@ -4,10 +4,26 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-  build:
+  lint:
+    name: SwiftLint
     runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Run SwiftLint
+        run: swiftlint lint --strict --reporter github-actions-logging
+
+  build:
+    name: Build IPA
+    runs-on: macos-15
+    needs: lint
     steps:
       - uses: actions/checkout@v4
 

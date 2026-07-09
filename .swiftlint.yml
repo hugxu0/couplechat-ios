@@ -1,0 +1,55 @@
+disabled_rules:
+  - trailing_whitespace
+  - identifier_name
+  - line_length
+  - function_body_length
+  - type_body_length
+  - file_length
+  - large_tuple
+  - cyclomatic_complexity
+  - nesting
+  - force_cast
+  - force_try
+
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - contains_over_first_not_nil
+  - first_where
+  - modifier_order
+  - overridden_super_call
+  - private_action
+  - private_outlet
+  - prohibited_super_call
+  - redundant_nil_coalescing
+  - toggle_bool
+
+excluded:
+  - build
+  - build-artifacts
+  - DerivedData
+  - node_modules
+  - server
+  - .build
+
+identifier_name:
+  min_length:
+    warning: 2
+  max_length:
+    warning: 60
+  excluded:
+    - id
+    - i
+    - j
+    - x
+    - y
+    - to
+    - at
+
+type_body_length:
+  warning: 600
+  error: 1000
+
+function_body_length:
+  warning: 100
+  error: 200

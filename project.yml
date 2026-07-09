@@ -31,6 +31,7 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        SERVER_BASE_URL: https://hoo66.top
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hugxu0.couplechat.native
@@ -38,3 +39,16 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.9"
         INFOPLIST_KEY_UIUserInterfaceStyle: Light
+
+  CoupleChatTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - CoupleChatTests
+    dependencies:
+      - target: CoupleChat
+    settings:
+      base:
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        PRODUCT_BUNDLE_IDENTIFIER: com.hugxu0.couplechat.native.tests
+        SWIFT_VERSION: "5.9"
