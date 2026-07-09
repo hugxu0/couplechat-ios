@@ -325,16 +325,77 @@ private struct LiquidGlassBackground: UIViewRepresentable {
 }
 
 private struct SwipeBackEnabler: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> UIViewController {
-        UIViewController()
+    func makeUIViewController(context: Context) -> ChatNavigationChromeController {
+        ChatNavigationChromeController()
     }
 
-    func updateUIViewController(_ controller: UIViewController, context: Context) {
+    func updateUIViewController(_ controller: ChatNavigationChromeController, context: Context) {
         DispatchQueue.main.async {
-            guard let navigationController = controller.navigationController else { return }
-            navigationController.interactivePopGestureRecognizer?.isEnabled = true
-            navigationController.interactivePopGestureRecognizer?.delegate = nil
+            controller.applyChatNavigationChrome()
         }
+    }
+}
+
+/// 聊天画面自行绘制顶端渐变，不能再叠加 App 全局 UINavigationBar 的默认模糊。
+/// 仅在此页面透明化导航栏；离开聊天时立即恢复，避免影响聊天详情和其他普通列表页。
+private final class ChatNavigationChromeController: UIViewController {
+    private weak var observedNavigationController: UINavigationController?
+    private var savedStandardAppearance: UINavigationBarAppearance?
+    private var savedScrollEdgeAppearance: UINavigationBarAppearance?
+    private var savedCompactAppearance: UINavigationBarAppearance?
+    private var savedCompactScrollEdgeAppearance: UINavigationBarAppearance?
+    private var savedNavigationBarHidden = false
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        applyChatNavigationChrome()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        restoreNavigationChrome()
+    }
+
+    func applyChatNavigationChrome() {
+        guard let navigationController else { return }
+        if observedNavigationController !== navigationController {
+            restoreNavigationChrome()
+            observedNavigationController = navigationController
+            let navigationBar = navigationController.navigationBar
+            savedStandardAppearance = navigationBar.standardAppearance.copy() as? UINavigationBarAppearance
+            savedScrollEdgeAppearance = navigationBar.scrollEdgeAppearance?.copy() as? UINavigationBarAppearance
+            savedCompactAppearance = navigationBar.compactAppearance?.copy() as? UINavigationBarAppearance
+            savedCompactScrollEdgeAppearance = navigationBar.compactScrollEdgeAppearance?.copy() as? UINavigationBarAppearance
+            savedNavigationBarHidden = navigationController.isNavigationBarHidden
+        }
+
+        let transparent = UINavigationBarAppearance()
+        transparent.configureWithTransparentBackground()
+        transparent.backgroundColor = .clear
+        transparent.shadowColor = .clear
+        let navigationBar = navigationController.navigationBar
+        navigationBar.standardAppearance = transparent
+        navigationBar.scrollEdgeAppearance = transparent
+        navigationBar.compactAppearance = transparent
+        navigationBar.compactScrollEdgeAppearance = transparent
+        navigationController.setNavigationBarHidden(true, animated: false)
+        navigationController.interactivePopGestureRecognizer?.isEnabled = true
+        navigationController.interactivePopGestureRecognizer?.delegate = nil
+    }
+
+    private func restoreNavigationChrome() {
+        guard let navigationController = observedNavigationController else { return }
+        let navigationBar = navigationController.navigationBar
+        if let savedStandardAppearance { navigationBar.standardAppearance = savedStandardAppearance }
+        navigationBar.scrollEdgeAppearance = savedScrollEdgeAppearance
+        navigationBar.compactAppearance = savedCompactAppearance
+        navigationBar.compactScrollEdgeAppearance = savedCompactScrollEdgeAppearance
+        navigationController.setNavigationBarHidden(savedNavigationBarHidden, animated: false)
+        observedNavigationController = nil
+        savedStandardAppearance = nil
+        savedScrollEdgeAppearance = nil
+        savedCompactAppearance = nil
+        savedCompactScrollEdgeAppearance = nil
     }
 }
 
