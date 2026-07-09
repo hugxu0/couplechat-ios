@@ -25,6 +25,7 @@ targets:
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         UILaunchScreen: {}
+        NSCameraUsageDescription: 用于拍摄并上传头像
         NSPhotoLibraryAddUsageDescription: 保存聊天图片和视频到相册
         NSMicrophoneUsageDescription: 用于录制语音消息
         UISupportedInterfaceOrientations:
