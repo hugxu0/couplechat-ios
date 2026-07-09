@@ -635,6 +635,11 @@ final class ChatLocalDatabase {
             dict["meta"] = metaObj
         }
         
-        return ChatMessage(dict: dict)
+        if let msg = ChatMessage(dict: dict) {
+            return msg
+        }
+        let id = dict["id"] as? String ?? "?"
+        print("[ChatLocalDatabase] ⚠️ 消息解析失败 | id=\(id) source=SQLite")
+        return nil
     }
 }

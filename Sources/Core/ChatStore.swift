@@ -14,7 +14,6 @@ final class ChatStore: ObservableObject {
     @Published var connected = false
     @Published private(set) var messagesByChannel: [String: [ChatMessage]] = [:]
     @Published var partnerOnline = false
-    @Published var reachedOldestLocal: Set<String> = []
     @Published var partner: Account? {
         didSet {
             if let partner = partner,
@@ -34,7 +33,6 @@ final class ChatStore: ObservableObject {
 
     /// 兼容旧 UI：默认仍然表示 couple 频道。
     var messages: [ChatMessage] { messages(for: .couple) }
-    var readState: [String: Double] { readState(for: .couple) }
     var loggedIn: Bool { session != nil }
 
     private var manager: SocketManager?
@@ -49,6 +47,37 @@ final class ChatStore: ObservableObject {
 
     private static let mediaTypes = ["image", "video"]
     private static let managedAttachmentTypes = ["image", "video", "file"]
+
+    /// 消息解析计数：帮助追踪静默丢弃的消息
+    private static var parseFailureCount: Int = 0
+    private static var parseSuccessCount: Int = 0
+
+    /// 解析消息字典，失败时记录日志并返回 nil。
+    /// 比直接调用 ChatMessage(dict:) 多一步错误追踪，方便排查数据丢失。
+    static func parseMessage(_ dict: [String: Any], context: String = "") -> ChatMessage? {
+        if let msg = ChatMessage(dict: dict) {
+            parseSuccessCount += 1
+            return msg
+        }
+        parseFailureCount += 1
+        let id = dict["id"] as? String ?? "?"
+        let sender = dict["sender"] as? String ?? "?"
+        let channel = dict["channel"] as? String ?? "?"
+        let keys = dict.keys.joined(separator: ",")
+        print("[ChatStore] ⚠️ 消息解析失败 #\(parseFailureCount) | id=\(id) sender=\(sender) channel=\(channel) context=\(context) keys=[\(keys)]")
+        return nil
+    }
+
+    /// 批量解析消息列表，返回成功解析的消息并记录失败数。
+    static func parseMessages(_ list: [[String: Any]], context: String = "") -> [ChatMessage] {
+        let before = parseFailureCount
+        let result = list.compactMap { parseMessage($0, context: context) }
+        let failed = parseFailureCount - before
+        if failed > 0 {
+            print("[ChatStore] ⚠️ 批量解析完成: \(result.count)/\(list.count) 成功, \(failed) 失败 | context=\(context)")
+        }
+        return result
+    }
 
     private struct UploadResponse: Decodable {
         let url: String
@@ -150,7 +179,6 @@ final class ChatStore: ObservableObject {
                 guard let self else { return }
                 self.connected = true
                 self.lastConnectionError = nil
-                self.reachedOldestLocal.removeAll()
                 self.reportAway(false)
                 self.syncHistory(.couple)
                 self.syncHistory(.ai)
@@ -169,7 +197,7 @@ final class ChatStore: ObservableObject {
 
         s.on("message:new") { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
-                  let msg = ChatMessage(dict: dict) else { return }
+                  let msg = Self.parseMessage(dict, context: "message:new") else { return }
             Task { @MainActor in
                 guard let self else { return }
                 let channel = ChatChannel(rawValue: msg.channel) ?? .couple
@@ -470,7 +498,7 @@ final class ChatStore: ObservableObject {
             ]).timingOut(after: 9) { data in
                 guard let dict = data.first as? [String: Any],
                       let list = dict["list"] as? [[String: Any]] else { return }
-                let incoming = list.compactMap { ChatMessage(dict: $0) }
+                let incoming = Self.parseMessages(list, context: "ensureDate:\(channel.rawValue)")
                 Task { @MainActor in
                     incoming.forEach { ChatLocalDatabase.shared.insertMessage($0) }
                 }
@@ -523,7 +551,7 @@ final class ChatStore: ObservableObject {
         s.emitWithAck("messages:fetch", payload).timingOut(after: 9) { [weak self] data in
             guard let dict = data.first as? [String: Any],
                   let list = dict["list"] as? [[String: Any]] else { return }
-            let incoming = list.compactMap { ChatMessage(dict: $0) }
+            let incoming = Self.parseMessages(list, context: "syncHistory:\(channel.rawValue)")
             Task { @MainActor in
                 guard let self else { return }
                 self.upsertBatch(incoming, in: channel)
@@ -544,12 +572,7 @@ final class ChatStore: ObservableObject {
         loadingNewerChannels.contains(channel.rawValue)
     }
 
-    /// 供 `onAppear` 触发的即发即弃版本。
-    func loadOlder(_ channel: ChatChannel = .couple) {
-        Task { await loadOlderAsync(channel) }
-    }
-
-    /// 供 `.refreshable` 下拉手势调用的可等待版本，逻辑与 `loadOlder` 一致。
+    /// 拉取更早消息：先读本地 SQLite，缺口再访问服务端。
     func loadOlderAsync(_ channel: ChatChannel = .couple) async {
         guard let first = messages(for: channel).first else { return }
         guard !loadingOlderChannels.contains(channel.rawValue) else { return }
@@ -568,7 +591,6 @@ final class ChatStore: ObservableObject {
         }.value
 
         if !localOlder.isEmpty {
-            reachedOldestLocal.remove(channel.rawValue)
             updateMessages(channel) { current in
                 let known = Set(current.map(\.id))
                 current.insert(contentsOf: localOlder.filter { !known.contains($0.id) }, at: 0)
@@ -579,11 +601,9 @@ final class ChatStore: ObservableObject {
 
         // 本地库没有更早消息时再兜底访问网络。
         guard let s = socket, connected else {
-            reachedOldestLocal.insert(channel.rawValue)
             loadingOlderChannels.remove(channel.rawValue)
             return
         }
-        reachedOldestLocal.remove(channel.rawValue)
 
         let older: [ChatMessage] = await withCheckedContinuation { continuation in
             s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "before": firstTs, "limit": limit])
@@ -593,7 +613,7 @@ final class ChatStore: ObservableObject {
                         continuation.resume(returning: [])
                         return
                     }
-                    continuation.resume(returning: list.compactMap { ChatMessage(dict: $0) })
+                    continuation.resume(returning: Self.parseMessages(list, context: "loadOlder:\(channel.rawValue)"))
                 }
         }
         defer { loadingOlderChannels.remove(channel.rawValue) }
@@ -651,7 +671,7 @@ final class ChatStore: ObservableObject {
                         continuation.resume(returning: [])
                         return
                     }
-                    continuation.resume(returning: list.compactMap { ChatMessage(dict: $0) })
+                    continuation.resume(returning: Self.parseMessages(list, context: "loadNewer:\(channel.rawValue)"))
                 }
         }
         defer { loadingNewerChannels.remove(channel.rawValue) }
@@ -720,8 +740,7 @@ final class ChatStore: ObservableObject {
                             payload["replyPreview"] = old.replyPreview ?? ""
                             payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
                         }
-                        list[i] = ChatMessage(dict: payload) ?? old
-                        // ack 确认成功的消息立刻落本地库，不依赖服务端回显
+                        list[i] = Self.parseMessage(payload, context: "sendText:ack") ?? old
                         ChatLocalDatabase.shared.insertMessage(list[i])
                     } else {
                         list[i].pending = false
@@ -927,8 +946,7 @@ final class ChatStore: ObservableObject {
                     payload["replyPreview"] = old.replyPreview ?? ""
                     payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
                 }
-                list[i] = ChatMessage(dict: payload) ?? old
-                // ack 确认成功的媒体消息同样落本地库
+                list[i] = Self.parseMessage(payload, context: "sendMedia:ack") ?? old
                 ChatLocalDatabase.shared.insertMessage(list[i])
             } else {
                 list[i].pending = false
@@ -1055,7 +1073,7 @@ final class ChatStore: ObservableObject {
                     continuation.resume(returning: local)
                     return
                 }
-                let remote = list.compactMap { ChatMessage(dict: $0) }
+                let remote = Self.parseMessages(list, context: "search:\(channel.rawValue)")
                 continuation.resume(returning: Self.mergeSearchResults(remote, local))
             }
         }
@@ -1280,7 +1298,7 @@ final class ChatStore: ObservableObject {
         return LocalStatsBuckets(days: days, months: months)
     }
 
-    // MARK: REST（统计 / 每日内容 / Bark）
+    // MARK: REST（每日内容 / 提醒 / Bark）
     private func authorizedRequest(_ path: String, method: String = "GET") -> URLRequest? {
         guard let token = session?.token else { return nil }
         let url: URL
@@ -1293,13 +1311,6 @@ final class ChatStore: ObservableObject {
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return req
-    }
-
-    func fetchStats() async -> StatsResponse? {
-        guard let req = authorizedRequest("api/stats"),
-              let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return try? JSONDecoder().decode(StatsResponse.self, from: data)
     }
 
     func fetchDaily() async -> DailyContent? {
@@ -1470,7 +1481,7 @@ final class ChatStore: ObservableObject {
                         cont.resume(returning: [])
                         return
                     }
-                    cont.resume(returning: list.compactMap { ChatMessage(dict: $0) })
+                    cont.resume(returning: Self.parseMessages(list, context: "syncAll:\(channel.rawValue)"))
                 }
             }
             if batch.isEmpty { break }
