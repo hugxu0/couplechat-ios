@@ -69,6 +69,15 @@ struct ChatV2Screen: View {
         return displayedWallpaper != .night
     }
 
+    private var usesDarkChatSurface: Bool {
+        if theme.hasCustomWallpaper(for: channel) {
+            let top = theme.customWallpaperLuminance(for: channel, region: .topCenter) ?? 0.5
+            let composer = theme.customWallpaperLuminance(for: channel, region: .composerCenter) ?? 0.5
+            return (top + composer) / 2 < 0.47
+        }
+        return displayedWallpaper == .night
+    }
+
     private var topPrimaryColor: Color {
         topBarUsesDarkText ? Color.black.opacity(0.86) : .white
     }
@@ -102,6 +111,7 @@ struct ChatV2Screen: View {
                     channel: channel,
                     topOverlayInset: topOverlayInset,
                     composerUsesLightContent: !composerUsesDarkText,
+                    usesDarkChatSurface: usesDarkChatSurface,
                     jumpCommand: $jumpCommand,
                     onMediaTap: { mediaViewerMessageId = $0 }
                 )
@@ -330,6 +340,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
     let channel: ChatChannel
     let topOverlayInset: CGFloat
     let composerUsesLightContent: Bool
+    let usesDarkChatSurface: Bool
     @Binding var jumpCommand: ChatV2JumpCommand?
     let onMediaTap: (String) -> Void
 
@@ -342,6 +353,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             store: store,
             theme: theme,
             composerUsesLightContent: composerUsesLightContent,
+            usesDarkChatSurface: usesDarkChatSurface,
             onMediaTap: onMediaTap
         )
         controller.setTopOverlayInset(topOverlayInset)
@@ -354,6 +366,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             theme: theme,
             topOverlayInset: topOverlayInset,
             composerUsesLightContent: composerUsesLightContent,
+            usesDarkChatSurface: usesDarkChatSurface,
             onMediaTap: onMediaTap
         )
         if let command = jumpCommand {

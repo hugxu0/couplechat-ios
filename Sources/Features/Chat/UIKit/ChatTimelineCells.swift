@@ -87,6 +87,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
     private var accentColor = UIColor.systemMint
     private var voicePlaying = false
     private var voiceProgress: CGFloat = 0
+    private var usesDarkIncomingBubble = false
     private var voiceWaveBars: [UIView] = []
 
     override init(frame: CGRect) {
@@ -190,6 +191,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         peerAvatarURL: URL?,
         myAvatarURL: URL?,
         accentColor: UIColor,
+        usesDarkIncomingBubble: Bool = false,
         voicePlaying: Bool = false,
         voiceProgress: CGFloat = 0
     ) {
@@ -197,6 +199,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         self.mine = mine
         self.grouped = groupedWithPrevious
         self.accentColor = accentColor
+        self.usesDarkIncomingBubble = usesDarkIncomingBubble
         self.voicePlaying = voicePlaying
         self.voiceProgress = voiceProgress
 
@@ -208,9 +211,11 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         let mediaOnly = Self.isStandaloneMedia(message)
         // Context-menu 预览可能在不同 trait 环境中重绘动态系统色，造成气泡翻色。
         // 这里在配置时固化当前外观下的颜色，让长按仅表现为系统的轻微抬起效果。
-        let incomingBubbleColor = UIColor.systemBackground.resolvedColor(with: traitCollection).withAlphaComponent(0.94)
-        let incomingTextColor = UIColor.label.resolvedColor(with: traitCollection)
-        let incomingSecondaryColor = UIColor.secondaryLabel.resolvedColor(with: traitCollection)
+        let incomingBubbleColor = usesDarkIncomingBubble
+            ? UIColor.black.withAlphaComponent(0.92)
+            : UIColor.systemBackground.resolvedColor(with: traitCollection).withAlphaComponent(0.94)
+        let incomingTextColor = usesDarkIncomingBubble ? UIColor.white : UIColor.label.resolvedColor(with: traitCollection)
+        let incomingSecondaryColor = usesDarkIncomingBubble ? UIColor.white.withAlphaComponent(0.72) : UIColor.secondaryLabel.resolvedColor(with: traitCollection)
         bubbleView.backgroundColor = mediaOnly ? .clear : (mine ? accentColor : incomingBubbleColor)
         bodyLabel.textColor = mine ? .white : incomingTextColor
         replyMarker.backgroundColor = mine ? UIColor.white.withAlphaComponent(0.9) : accentColor
@@ -289,7 +294,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             if let caption = ChatTimelineMetrics.mediaCaption(for: message) {
                 bodyLabel.text = caption
                 bodyLabel.font = .systemFont(ofSize: 15)
-                bodyLabel.textColor = mine ? .white : UIColor.label.resolvedColor(with: traitCollection)
+                bodyLabel.textColor = mine ? .white : (usesDarkIncomingBubble ? .white : UIColor.label.resolvedColor(with: traitCollection))
                 bubbleView.addSubview(bodyLabel)
             } else {
                 bodyLabel.font = .systemFont(ofSize: 17)
@@ -346,7 +351,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             iconName = "doc.fill"
         }
         mediaIconView.image = UIImage(systemName: iconName)
-        let foreground = mine ? UIColor.white : accentColor
+        let foreground = mine ? UIColor.white : (usesDarkIncomingBubble ? .white : accentColor)
         mediaIconView.tintColor = foreground
         switch message.type {
         case "voice":

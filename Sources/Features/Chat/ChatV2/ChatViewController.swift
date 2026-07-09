@@ -39,6 +39,7 @@ final class ChatViewController: UIViewController {
     private var currentListBottomInset: CGFloat = 0
     private var topOverlayInset: CGFloat = 96
     private var composerUsesLightContent = false
+    private var usesDarkChatSurface = false
     private var appliedAccent: AccentChoice?
 
     private var cancellables: Set<AnyCancellable> = []
@@ -76,12 +77,14 @@ final class ChatViewController: UIViewController {
         store: ChatStore,
         theme: ThemeManager,
         composerUsesLightContent: Bool,
+        usesDarkChatSurface: Bool,
         onMediaTap: @escaping (String) -> Void
     ) {
         self.channel = channel
         self.store = store
         self.theme = theme
         self.composerUsesLightContent = composerUsesLightContent
+        self.usesDarkChatSurface = usesDarkChatSurface
         self.onMediaTap = onMediaTap
         super.init(nibName: nil, bundle: nil)
     }
@@ -106,18 +109,26 @@ final class ChatViewController: UIViewController {
         theme: ThemeManager,
         topOverlayInset: CGFloat,
         composerUsesLightContent: Bool,
+        usesDarkChatSurface: Bool,
         onMediaTap: @escaping (String) -> Void
     ) {
         let storeChanged = self.store !== store
         let themeChanged = self.theme !== theme
         let composerToneChanged = self.composerUsesLightContent != composerUsesLightContent
+        let chatSurfaceToneChanged = self.usesDarkChatSurface != usesDarkChatSurface
         self.store = store
         self.theme = theme
         self.composerUsesLightContent = composerUsesLightContent
+        self.usesDarkChatSurface = usesDarkChatSurface
         self.onMediaTap = onMediaTap
         if themeChanged || composerToneChanged || appliedAccent != theme.accent {
             composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
             applyAccentColor()
+        }
+        if chatSurfaceToneChanged, collectionView != nil {
+            UIView.performWithoutAnimation {
+                collectionView.reloadData()
+            }
         }
         setTopOverlayInset(topOverlayInset)
         if storeChanged {
@@ -967,6 +978,7 @@ extension ChatViewController: UICollectionViewDataSource {
                     peerAvatarURL: peerAvatarURL,
                     myAvatarURL: myAvatarURL,
                     accentColor: theme.accent.uiColor,
+                    usesDarkIncomingBubble: usesDarkChatSurface,
                     voicePlaying: playingVoiceMessageID == message.id,
                     voiceProgress: playingVoiceMessageID == message.id ? playingVoiceProgress : 0
                 )
