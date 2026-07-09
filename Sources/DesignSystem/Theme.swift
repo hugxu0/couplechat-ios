@@ -272,8 +272,8 @@ enum WallpaperChoice: String, CaseIterable, Identifiable {
 /// 聊天界面需要分别判断顶栏与输入栏下方的壁纸明暗。
 /// 不使用系统的深浅模式作为前景色依据，避免自定义壁纸和系统模式相互打架。
 enum WallpaperSurfaceRegion: Hashable {
-    case top
-    case bottom
+    case topCenter
+    case composerCenter
 }
 
 final class ThemeManager: ObservableObject {
@@ -380,13 +380,27 @@ final class ThemeManager: ObservableObject {
             width: drawnSize.width,
             height: drawnSize.height
         )
-        let sampleRange: Range<CGFloat> = region == .top ? 3..<25 : 78..<101
-        let sampleSize = CGSize(width: CGFloat(pixelWidth), height: sampleRange.upperBound - sampleRange.lowerBound)
+        // 采样点要与实际控件位置对应：顶部标题在中间，输入胶囊也只看中间区域。
+        // 整条边缘的天空、头像或消息不该干扰该控件的前景色决定。
+        let horizontalRange: Range<CGFloat>
+        let verticalRange: Range<CGFloat>
+        switch region {
+        case .topCenter:
+            horizontalRange = 12..<36
+            verticalRange = 3..<25
+        case .composerCenter:
+            horizontalRange = 8..<40
+            verticalRange = 76..<101
+        }
+        let sampleSize = CGSize(
+            width: horizontalRange.upperBound - horizontalRange.lowerBound,
+            height: verticalRange.upperBound - verticalRange.lowerBound
+        )
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
         let sampled = UIGraphicsImageRenderer(size: sampleSize, format: format).image { _ in
-            image.draw(in: drawRect.offsetBy(dx: 0, dy: -sampleRange.lowerBound))
+            image.draw(in: drawRect.offsetBy(dx: -horizontalRange.lowerBound, dy: -verticalRange.lowerBound))
         }
         guard let sampledCGImage = sampled.cgImage else { return 0.7 }
         let sampleWidth = Int(sampleSize.width)

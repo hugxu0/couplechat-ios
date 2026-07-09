@@ -90,6 +90,14 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         recordingLabel.textColor = recordingCancelled ? .systemRed : secondary
         recordingHintLabel.textColor = recordingCancelled ? .systemRed : secondary
         textView.textColor = primary
+        let keyboardAppearance: UIKeyboardAppearance = usesLightContent ? .dark : .light
+        if textView.keyboardAppearance != keyboardAppearance {
+            textView.keyboardAppearance = keyboardAppearance
+            // 系统键盘正在显示时，需要主动刷新输入视图才会切换深浅外观。
+            if textView.isFirstResponder {
+                textView.reloadInputViews()
+            }
+        }
         replyContainer.setGlassTone(dark: usesLightContent, tintAlpha: 0.18, borderAlpha: usesLightContent ? 0.18 : 0.22)
         catBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: 0.20, borderAlpha: usesLightContent ? 0.18 : 0.22)
         inputCapsule.setGlassTone(dark: usesLightContent, tintAlpha: 0.22, borderAlpha: usesLightContent ? 0.18 : 0.22)

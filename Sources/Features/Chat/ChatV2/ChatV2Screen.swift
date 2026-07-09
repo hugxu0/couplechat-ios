@@ -47,7 +47,7 @@ struct ChatV2Screen: View {
     /// 顶栏和输入栏是两块独立的“表面”：它们应该由实际壁纸采样决定，
     /// 而不是受系统深浅模式或同一段渐变的偶然观感影响。
     private var topSurfaceLuminance: CGFloat {
-        if let luminance = theme.customWallpaperLuminance(for: channel, region: .top) {
+        if let luminance = theme.customWallpaperLuminance(for: channel, region: .topCenter) {
             return luminance
         }
         return displayedWallpaper == .night ? 0.18 : 0.82
@@ -63,7 +63,7 @@ struct ChatV2Screen: View {
     }
 
     private var composerUsesDarkText: Bool {
-        if let luminance = theme.customWallpaperLuminance(for: channel, region: .bottom) {
+        if let luminance = theme.customWallpaperLuminance(for: channel, region: .composerCenter) {
             return luminance > 0.50
         }
         return displayedWallpaper != .night
