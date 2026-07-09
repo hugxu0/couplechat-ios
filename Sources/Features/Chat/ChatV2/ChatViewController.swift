@@ -38,6 +38,7 @@ final class ChatViewController: UIViewController {
     private var keyboardOverlap: CGFloat = 0
     private var currentListBottomInset: CGFloat = 0
     private var topOverlayInset: CGFloat = 96
+    private var composerUsesLightContent = false
 
     private var cancellables: Set<AnyCancellable> = []
     private var timelineItems: [ChatTimelineItem] = []
@@ -47,7 +48,7 @@ final class ChatViewController: UIViewController {
     private var highlightedMessageId: String?
     private var pendingTopAnchor: (itemId: String, offset: CGFloat)?
     private var didInitialScroll = false
-    private var hasPinnedInitialTimeline = false
+    private var initialPositioningScheduled = false
     private var inputState: ChatInputState = .idle
     private var browsingHistoricalWindow = false
     var stickToLatestAfterNextReload = false
@@ -71,11 +72,13 @@ final class ChatViewController: UIViewController {
         channel: ChatChannel,
         store: ChatStore,
         theme: ThemeManager,
+        composerUsesLightContent: Bool,
         onMediaTap: @escaping (String) -> Void
     ) {
         self.channel = channel
         self.store = store
         self.theme = theme
+        self.composerUsesLightContent = composerUsesLightContent
         self.onMediaTap = onMediaTap
         super.init(nibName: nil, bundle: nil)
     }
@@ -96,13 +99,15 @@ final class ChatViewController: UIViewController {
         store: ChatStore,
         theme: ThemeManager,
         topOverlayInset: CGFloat,
+        composerUsesLightContent: Bool,
         onMediaTap: @escaping (String) -> Void
     ) {
         let storeChanged = self.store !== store
         self.store = store
         self.theme = theme
+        self.composerUsesLightContent = composerUsesLightContent
         self.onMediaTap = onMediaTap
-        composer.applyTheme(theme)
+        composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
         applyAccentColor()
         setTopOverlayInset(topOverlayInset)
         if storeChanged {
@@ -120,7 +125,7 @@ final class ChatViewController: UIViewController {
         configureKeyboardObservers()
         bindStore()
         composer.delegate = self
-        composer.applyTheme(theme)
+        composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
         applyAccentColor()
         installStickerPanel()
         store.ensureLocalMessages(channel)
@@ -137,17 +142,8 @@ final class ChatViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if !didInitialScroll {
-            didInitialScroll = true
-            // 在安全区、输入栏高度都稳定后只贴底一次，避免首条渲染后再修正 inset
-            // 导致最后一个气泡轻微上弹。
-            applyInputLayout(duration: 0, curve: .curveEaseOut, forceBottom: true)
-            scrollToBottom(animated: false)
-            hasPinnedInitialTimeline = !timelineItems.isEmpty
-            updateJumpToBottomVisibility(animated: false)
-        } else {
-            applyInputLayout(duration: 0, curve: .curveEaseOut)
-        }
+        applyInputLayout(duration: 0, curve: .curveEaseOut)
+        scheduleInitialTimelinePositioning()
     }
 
     override func viewDidLayoutSubviews() {
@@ -158,6 +154,7 @@ final class ChatViewController: UIViewController {
             layoutHeightCache.removeAll()
             collectionView.collectionViewLayout.invalidateLayout()
         }
+        scheduleInitialTimelinePositioning()
     }
 
     func performJump(_ command: ChatV2JumpCommand) {
@@ -238,7 +235,8 @@ final class ChatViewController: UIViewController {
 
         panelHeightConstraint = panelContainer.heightAnchor.constraint(equalToConstant: 0)
         panelHeightConstraint.isActive = true
-        bottomConstraint = bottomStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+        // 系统原生键盘布局锚点，避免手动转换 SwiftUI/窗口坐标造成输入栏悬空。
+        bottomConstraint = bottomStack.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8)
 
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -321,9 +319,8 @@ final class ChatViewController: UIViewController {
         let curveRaw = (info[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? UIView.AnimationOptions.curveEaseOut.rawValue
         let curve = UIView.AnimationOptions(rawValue: curveRaw << 16)
         let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue ?? .zero
-        let frameInView = view.convert(endFrame, from: nil)
-        let safeBottom = view.bounds.height - view.safeAreaInsets.bottom
-        let overlap = max(0, safeBottom - frameInView.minY)
+        let frameInView = view.convert(endFrame, from: view.window)
+        let overlap = max(0, view.bounds.maxY - frameInView.minY)
 
         if case .emojiPanel = inputState, overlap > 0 {
             hidePanel(animated: false)
@@ -377,12 +374,7 @@ final class ChatViewController: UIViewController {
             UIView.performWithoutAnimation(reload)
         }
 
-        if !hasPinnedInitialTimeline && newMessageCount > 0 {
-            // 本地数据库在页面展示后才回填时，首批消息也必须无动画贴底，
-            // 否则会先显示在输入栏下方再弹回正确位置。
-            hasPinnedInitialTimeline = true
-            scrollToBottom(animated: false)
-        } else if stickToLatestAfterNextReload {
+        if stickToLatestAfterNextReload {
             stickToLatestAfterNextReload = false
             browsingHistoricalWindow = false
             scrollToBottom(animated: animated)
@@ -396,6 +388,7 @@ final class ChatViewController: UIViewController {
         } else if wasNearLatestBottom && oldLastMessageId != newLastMessageId && newMessageCount > oldMessageCount {
             scrollToBottom(animated: animated)
         }
+        scheduleInitialTimelinePositioning()
         updateJumpToBottomVisibility(animated: animated)
     }
 
@@ -493,6 +486,29 @@ final class ChatViewController: UIViewController {
         let minY = -collectionView.contentInset.top
         collectionView.setContentOffset(CGPoint(x: 0, y: max(minY, y)), animated: animated)
         updateJumpToBottomVisibility(animated: animated)
+    }
+
+    /// 只在「首批消息 + collection 尺寸 + 输入栏 inset」都稳定后贴底一次。
+    /// 这样不会先按旧 contentSize 显示，再随异步数据库结果或布局失效向上弹。
+    private func scheduleInitialTimelinePositioning() {
+        guard !didInitialScroll,
+              !initialPositioningScheduled,
+              !timelineItems.isEmpty,
+              viewIfLoaded?.window != nil else { return }
+        initialPositioningScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.initialPositioningScheduled = false
+            guard !self.didInitialScroll,
+                  !self.timelineItems.isEmpty,
+                  self.collectionView.bounds.height > 0 else { return }
+            self.applyInputLayout(duration: 0, curve: .curveEaseOut, forceBottom: true)
+            self.collectionView.collectionViewLayout.invalidateLayout()
+            self.collectionView.layoutIfNeeded()
+            self.scrollToBottom(animated: false)
+            self.didInitialScroll = true
+            self.updateJumpToBottomVisibility(animated: false)
+        }
     }
 
     private func updateJumpToBottomVisibility(animated: Bool) {
@@ -704,10 +720,10 @@ final class ChatViewController: UIViewController {
         let anchor = wasNearBottom ? nil : visibleTimelineAnchor()
         let panelHeight = panelContainer.isHidden ? 0 : panelHeightConstraint.constant
         let dockHeight = composerHeightConstraint.constant + panelHeight
-        let bottomInset = dockHeight + keyboardOverlap + view.safeAreaInsets.bottom + 8
+        let coveredBottom = max(keyboardOverlap, view.safeAreaInsets.bottom)
+        let bottomInset = dockHeight + coveredBottom + 8
         let bottomInsetDelta = bottomInset - currentListBottomInset
         currentListBottomInset = bottomInset
-        bottomConstraint.constant = -keyboardOverlap
 
         let updates = {
             self.collectionView.contentInset.top = self.topOverlayInset

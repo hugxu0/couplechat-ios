@@ -46,9 +46,14 @@ struct ChatV2Screen: View {
 
     private var topBarUsesDarkText: Bool {
         if let image = theme.customWallpaperImage(for: channel) {
-            // 自定义壁纸可能混有局部高光；用顶部控制区的中位亮度而非平均值，
-            // 避免深色壁纸被一小块亮图误判成浅色。
-            return Self.topRegionLuminance(of: image) > 0.62
+            return Self.regionLuminance(of: image, region: .top) > 0.74
+        }
+        return displayedWallpaper != .night
+    }
+
+    private var composerUsesDarkText: Bool {
+        if let image = theme.customWallpaperImage(for: channel) {
+            return Self.regionLuminance(of: image, region: .bottom) > 0.74
         }
         return displayedWallpaper != .night
     }
@@ -85,6 +90,7 @@ struct ChatV2Screen: View {
                 ChatUIKitHost(
                     channel: channel,
                     topOverlayInset: topOverlayInset,
+                    composerUsesLightContent: !composerUsesDarkText,
                     jumpCommand: $jumpCommand,
                     onMediaTap: { mediaViewerMessageId = $0 }
                 )
@@ -245,7 +251,12 @@ struct ChatV2Screen: View {
         return theme.wallpaper(for: channel)
     }
 
-    private static func topRegionLuminance(of image: UIImage) -> CGFloat {
+    private enum WallpaperRegion: Equatable {
+        case top
+        case bottom
+    }
+
+    private static func regionLuminance(of image: UIImage, region: WallpaperRegion) -> CGFloat {
         guard let cgImage = image.cgImage else { return 0.7 }
         let width = 12
         let height = 12
@@ -261,7 +272,9 @@ struct ChatV2Screen: View {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return 0.7 }
         let sourceHeight = CGFloat(cgImage.height)
-        let cropRect = CGRect(x: 0, y: 0, width: CGFloat(cgImage.width), height: max(1, sourceHeight * 0.18))
+        let cropHeight = max(1, sourceHeight * 0.18)
+        let cropY = region == .top ? 0 : max(0, sourceHeight - cropHeight)
+        let cropRect = CGRect(x: 0, y: cropY, width: CGFloat(cgImage.width), height: cropHeight)
         if let topImage = cgImage.cropping(to: cropRect) {
             context.draw(topImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         } else {
@@ -361,6 +374,7 @@ struct ChatV2JumpCommand: Identifiable {
 private struct ChatUIKitHost: UIViewControllerRepresentable {
     let channel: ChatChannel
     let topOverlayInset: CGFloat
+    let composerUsesLightContent: Bool
     @Binding var jumpCommand: ChatV2JumpCommand?
     let onMediaTap: (String) -> Void
 
@@ -372,6 +386,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             channel: channel,
             store: store,
             theme: theme,
+            composerUsesLightContent: composerUsesLightContent,
             onMediaTap: onMediaTap
         )
         controller.setTopOverlayInset(topOverlayInset)
@@ -379,7 +394,13 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: ChatViewController, context: Context) {
-        controller.updateEnvironment(store: store, theme: theme, topOverlayInset: topOverlayInset, onMediaTap: onMediaTap)
+        controller.updateEnvironment(
+            store: store,
+            theme: theme,
+            topOverlayInset: topOverlayInset,
+            composerUsesLightContent: composerUsesLightContent,
+            onMediaTap: onMediaTap
+        )
         if let command = jumpCommand {
             controller.performJump(command)
             DispatchQueue.main.async {

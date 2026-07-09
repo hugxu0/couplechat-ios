@@ -66,6 +66,24 @@ final class ChatGlassView: UIView {
         gradientLayer.opacity = Float(alpha)
     }
 
+    /// 原生模糊负责采样背景；根据背景选择深/浅玻璃以保持前景对比度。
+    func setGlassTone(dark: Bool, tintAlpha: CGFloat, borderAlpha: CGFloat = 0.16) {
+        let tint = dark ? UIColor.black : UIColor.white
+        tintView.backgroundColor = tint.withAlphaComponent(tintAlpha)
+        gradientLayer.colors = dark
+            ? [
+                UIColor.white.withAlphaComponent(0.10).cgColor,
+                UIColor.black.withAlphaComponent(0.10).cgColor,
+                UIColor.black.withAlphaComponent(0.28).cgColor
+            ]
+            : [
+                UIColor.white.withAlphaComponent(0.20).cgColor,
+                UIColor.white.withAlphaComponent(0.06).cgColor,
+                UIColor.black.withAlphaComponent(0.05).cgColor
+            ]
+        layer.borderColor = UIColor.white.withAlphaComponent(borderAlpha).cgColor
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         gradientLayer.frame = bounds

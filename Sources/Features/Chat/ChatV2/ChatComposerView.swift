@@ -56,6 +56,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private var isRecording = false
     private var recordingCancelled = false
     private var accentColor = UIColor.systemBlue
+    private var usesLightContent = false
     private var textHeightConstraint: NSLayoutConstraint?
     private var typingVisible = false
     private var replyVisible = false
@@ -72,15 +73,23 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         build()
     }
 
-    func applyTheme(_ theme: ThemeManager) {
+    func applyTheme(_ theme: ThemeManager, usesLightContent: Bool = false) {
         accentColor = theme.accent.uiColor
+        self.usesLightContent = usesLightContent
+        let primary = primaryTextColor
+        let secondary = secondaryTextColor
         catButton.tintColor = accentColor
-        attachmentButton.tintColor = .secondaryLabel
-        emojiButton.tintColor = .secondaryLabel
-        replyContainer.setTintColor(.white, alpha: 0.18)
-        catBackgroundView.setTintColor(.white, alpha: 0.20)
-        inputCapsule.setTintColor(.white, alpha: 0.22)
-        actionBackgroundView.setTintColor(.white, alpha: 0.20)
+        attachmentButton.tintColor = secondary
+        emojiButton.tintColor = secondary
+        typingLabel.textColor = secondary
+        placeholderLabel.textColor = secondary
+        replyTitleLabel.textColor = secondary
+        replyBodyLabel.textColor = primary
+        textView.textColor = primary
+        replyContainer.setGlassTone(dark: usesLightContent, tintAlpha: 0.18, borderAlpha: usesLightContent ? 0.18 : 0.22)
+        catBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: 0.20, borderAlpha: usesLightContent ? 0.18 : 0.22)
+        inputCapsule.setGlassTone(dark: usesLightContent, tintAlpha: 0.22, borderAlpha: usesLightContent ? 0.18 : 0.22)
+        actionBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: 0.20, borderAlpha: usesLightContent ? 0.18 : 0.22)
         updateWaveBars(level: 0.35, cancelled: recordingCancelled)
         updateActionButton()
     }
@@ -134,9 +143,9 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         recordingLabel.text = cancelled
             ? "取消"
             : String(format: "%02d:%02d", Int(elapsed) / 60, Int(elapsed) % 60)
-        recordingLabel.textColor = cancelled ? .systemRed : .secondaryLabel
+        recordingLabel.textColor = cancelled ? .systemRed : secondaryTextColor
         recordingHintLabel.text = cancelled ? "松开即可取消" : "松手发送 · 左滑取消"
-        recordingHintLabel.textColor = cancelled ? .systemRed : .secondaryLabel
+        recordingHintLabel.textColor = cancelled ? .systemRed : secondaryTextColor
         recordingHintLabel.isHidden = false
         updateWaveBars(level: level, cancelled: cancelled)
         textView.isEditable = false
@@ -151,7 +160,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         recordingContainer.isHidden = true
         recordingHintLabel.isHidden = true
         inputCapsuleRow.alpha = 1
-        textView.textColor = .label
+        textView.textColor = primaryTextColor
         textView.isEditable = true
         textViewDidChange(textView)
         updatePlaceholder()
@@ -475,7 +484,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
             actionButton.tintColor = .white
         } else {
             imageName = "mic"
-            actionBackgroundView.setTintColor(.white, alpha: 0.20)
+            actionBackgroundView.setTintColor(glassTintColor, alpha: 0.20)
             actionButton.tintColor = accentColor
         }
         actionButton.setImage(UIImage(systemName: imageName), for: .normal)
@@ -486,6 +495,10 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         let hasText = !(textView.text ?? "").isEmpty
         placeholderLabel.isHidden = hasText || isRecording
     }
+
+    private var primaryTextColor: UIColor { usesLightContent ? .white : .label }
+    private var secondaryTextColor: UIColor { usesLightContent ? UIColor.white.withAlphaComponent(0.72) : .secondaryLabel }
+    private var glassTintColor: UIColor { usesLightContent ? .black : .white }
 
     private func performActionButtonTap() {
         guard !isRecording else { return }
