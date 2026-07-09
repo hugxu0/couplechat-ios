@@ -25,6 +25,7 @@ targets:
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         UILaunchScreen: {}
+        NSCameraUsageDescription: 用于拍摄并上传头像
         NSPhotoLibraryAddUsageDescription: 保存聊天图片和视频到相册
         NSMicrophoneUsageDescription: 用于录制语音消息
         UISupportedInterfaceOrientations:
@@ -33,6 +34,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hugxu0.couplechat.native
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.9"
         INFOPLIST_KEY_UIUserInterfaceStyle: Light

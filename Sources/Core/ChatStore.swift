@@ -42,7 +42,10 @@ final class ChatStore: ObservableObject {
     private var restoringCache = false
     private var backfillingChannels = Set<String>()
     @Published private var loadingOlderChannels = Set<String>()
+    @Published private var loadingNewerChannels = Set<String>()
     private var lastLoadOlderAt: [String: Date] = [:]
+    private var lastLoadNewerAt: [String: Date] = [:]
+    private let storeStartedAtMs = Date().timeIntervalSince1970 * 1000
 
     private static let mediaTypes = ["image", "video"]
     private static let managedAttachmentTypes = ["image", "video", "file"]
@@ -537,6 +540,10 @@ final class ChatStore: ObservableObject {
         loadingOlderChannels.contains(channel.rawValue)
     }
 
+    func isLoadingNewer(_ channel: ChatChannel) -> Bool {
+        loadingNewerChannels.contains(channel.rawValue)
+    }
+
     /// 供 `onAppear` 触发的即发即弃版本。
     func loadOlder(_ channel: ChatChannel = .couple) {
         Task { await loadOlderAsync(channel) }
@@ -599,6 +606,64 @@ final class ChatStore: ObservableObject {
         updateMessages(channel) { current in
             let known = Set(current.map(\.id))
             current.insert(contentsOf: older.filter { !known.contains($0.id) }, at: 0)
+        }
+    }
+
+    func loadNewerAsync(_ channel: ChatChannel = .couple) async {
+        guard let last = messages(for: channel).last else { return }
+        guard !loadingNewerChannels.contains(channel.rawValue) else { return }
+        if let lastLoad = lastLoadNewerAt[channel.rawValue],
+           Date().timeIntervalSince(lastLoad) < 0.45 {
+            return
+        }
+        lastLoadNewerAt[channel.rawValue] = Date()
+        loadingNewerChannels.insert(channel.rawValue)
+        let limit = 24
+        let lastTs = last.ts
+
+        let localNewer = await Task.detached(priority: .utility) {
+            ChatLocalDatabase.shared.fetchMessages(
+                channel: channel.rawValue,
+                fromInclusive: lastTs + 0.001,
+                toExclusive: Double.greatestFiniteMagnitude,
+                limit: limit)
+        }.value
+
+        if !localNewer.isEmpty {
+            updateMessages(channel) { current in
+                let known = Set(current.map(\.id))
+                current.append(contentsOf: localNewer.filter { !known.contains($0.id) })
+            }
+            loadingNewerChannels.remove(channel.rawValue)
+            return
+        }
+
+        guard let s = socket, connected else {
+            loadingNewerChannels.remove(channel.rawValue)
+            return
+        }
+
+        let newer: [ChatMessage] = await withCheckedContinuation { continuation in
+            s.emitWithAck("messages:fetch", ["channel": channel.rawValue, "after": lastTs, "limit": limit])
+                .timingOut(after: 9) { data in
+                    guard let dict = data.first as? [String: Any],
+                          let list = dict["list"] as? [[String: Any]] else {
+                        continuation.resume(returning: [])
+                        return
+                    }
+                    continuation.resume(returning: list.compactMap { ChatMessage(dict: $0) })
+                }
+        }
+        defer { loadingNewerChannels.remove(channel.rawValue) }
+        guard !newer.isEmpty else { return }
+        await Task.detached(priority: .utility) {
+            for msg in newer {
+                ChatLocalDatabase.shared.insertMessage(msg)
+            }
+        }.value
+        updateMessages(channel) { current in
+            let known = Set(current.map(\.id))
+            current.append(contentsOf: newer.filter { !known.contains($0.id) })
         }
     }
 
@@ -890,6 +955,9 @@ final class ChatStore: ObservableObject {
         guard msg.channel == ChatChannel.couple.rawValue,
               let me = session?.username else { return false }
         let partnerTs = readState(for: .couple).first(where: { $0.key != me })?.value ?? 0
+        if partnerTs <= 0, msg.sender == me, !msg.pending, !msg.failed, msg.ts < storeStartedAtMs - 60_000 {
+            return true
+        }
         return msg.ts <= partnerTs
     }
 
@@ -1161,25 +1229,21 @@ final class ChatStore: ObservableObject {
         let now = Date()
         let today = cal.startOfDay(for: now)
 
-        // 至少铺满最近 10 天 / 12 个月（没聊天记录的日子留空心柱），
-        // 真实聊天记录更久才继续往前翻页。
-        let minRecentDays = 10
-        let minRecentMonths = 12
+        // 日统计只看最近 30 天；月度统计展示本地缓存里的完整月份序列。
+        let recentDayCount = 30
 
         var dayCounts: [String: [String: Int]] = [:]
-        var earliestDay = cal.date(byAdding: .day, value: -(minRecentDays - 1), to: today) ?? today
+        let earliestDay = cal.date(byAdding: .day, value: -(recentDayCount - 1), to: today) ?? today
         var monthCounts: [String: [String: Int]] = [:]
         let thisMonthStartInit = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
-        var earliestMonth = cal.date(byAdding: .month, value: -(minRecentMonths - 1), to: thisMonthStartInit) ?? thisMonthStartInit
+        var earliestMonth = thisMonthStartInit
 
         for row in ChatLocalDatabase.shared.dayCounts(channel: channel.rawValue) {
+            guard let date = Self.statsDayFormatter.date(from: row.date),
+                  cal.startOfDay(for: date) >= earliestDay else { continue }
             var counts = dayCounts[row.date] ?? [:]
             counts[row.sender] = row.count
             dayCounts[row.date] = counts
-            if let date = Self.statsDayFormatter.date(from: row.date) {
-                let dayStart = cal.startOfDay(for: date)
-                if dayStart < earliestDay { earliestDay = dayStart }
-            }
         }
 
         for row in ChatLocalDatabase.shared.monthCounts(channel: channel.rawValue) {

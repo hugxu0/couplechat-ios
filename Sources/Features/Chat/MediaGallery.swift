@@ -77,26 +77,13 @@ struct MediaGallerySheet: View {
             .clipped()
             .onTapGesture { selectedMedia = msg }
         } else if let url = msg.mediaURL {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .frame(minWidth: 0, maxWidth: .infinity)
-                        .frame(height: (UIScreen.main.bounds.width - 4) / 3)
-                        .clipped()
-                case .failure:
-                    fallbackThumb(msg)
-                case .empty:
-                    Color.gray.opacity(0.15)
-                        .frame(minWidth: 0, maxWidth: .infinity)
-                        .frame(height: (UIScreen.main.bounds.width - 4) / 3)
-                        .overlay(ProgressView().tint(DS.Palette.accent))
-                @unknown default:
-                    fallbackThumb(msg)
-                }
+            CachedImage(url: url) {
+                Color.gray.opacity(0.15)
+                    .overlay(ProgressView().tint(DS.Palette.accent))
             }
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+            .clipped()
             .onTapGesture { selectedMedia = msg }
         } else {
             fallbackThumb(msg)
@@ -163,24 +150,8 @@ struct MediaGallerySheet: View {
                     } else if msg.type == "video" {
                         VideoPlayer(player: AVPlayer(url: url))
                     } else {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .success(let image):
-                                image
-                                    .resizable()
-                                    .scaledToFit()
-                            case .failure:
-                                VStack(spacing: 12) {
-                                    Image(systemName: "exclamationmark.triangle")
-                                        .font(.system(size: 40))
-                                    Text("加载失败")
-                                }
-                                .foregroundStyle(DS.Palette.textSecondary)
-                            case .empty:
-                                ProgressView()
-                            @unknown default:
-                                EmptyView()
-                            }
+                        CachedImage(url: url, contentMode: .fit) {
+                            ProgressView()
                         }
                     }
                 }

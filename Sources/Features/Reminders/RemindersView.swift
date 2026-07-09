@@ -47,7 +47,7 @@ struct RemindersView: View {
                     .padding(.bottom, 96)
             }
             .scrollIndicators(.hidden)
-            .background(DS.Palette.bgGradient.ignoresSafeArea())
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .task { await reload() }
             .onReceive(NotificationCenter.default.publisher(for: ChatStore.personalItemChangedNotification)) { _ in
@@ -495,7 +495,7 @@ private struct PersonalItemEditor: View {
                 }
                 .padding(DS.Spacing.page)
             }
-            .background(DS.Palette.bgGradient.ignoresSafeArea())
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle(mode.item == nil ? "新建" : "编辑")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

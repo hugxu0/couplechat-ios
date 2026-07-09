@@ -7,21 +7,14 @@ struct DateJumpSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var theme: ThemeManager
     @State private var selectedDate = Date()
-    @State private var didAppear = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
                 DatePicker("选择日期", selection: $selectedDate, in: ...Date(), displayedComponents: .date)
-                    .datePickerStyle(.graphical)
+                    .datePickerStyle(.wheel)
                     .tint(theme.accent.color)
                     .padding(.horizontal, 8)
-                    .onChange(of: selectedDate) {
-                        guard didAppear else { return }
-                        Haptics.selection()
-                        onJump(selectedDate)
-                        dismiss()
-                    }
 
                 Button {
                     Haptics.light()
@@ -45,11 +38,6 @@ struct DateJumpSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
-                }
-            }
-            .onAppear {
-                DispatchQueue.main.async {
-                    didAppear = true
                 }
             }
         }
@@ -106,10 +94,13 @@ struct ChatSearchSheet: View {
             }
             .sheet(isPresented: $showDateJump) {
                 DateJumpSheet(channel: channel, onJump: { date in
+                    showDateJump = false
                     onJumpDate?(date)
-                    dismiss()
+                    DispatchQueue.main.async {
+                        dismiss()
+                    }
                 })
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.height(360)])
             }
         }
     }

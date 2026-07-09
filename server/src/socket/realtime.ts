@@ -27,7 +27,7 @@ const channelSchema = z.enum(["couple", "ai"]).default("couple");
 
 const sendMessageSchema = z.object({
   channel: channelSchema,
-  type: z.enum(["text", "image", "video", "sticker", "voice"]).default("text"),
+  type: z.enum(["text", "image", "video", "sticker", "voice", "file"]).default("text"),
   text: z.string().default(""),
   url: z.string().url().optional(),
   replyTo: z.string().min(1).optional(),

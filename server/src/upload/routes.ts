@@ -11,6 +11,15 @@ const allowedMime = new Set([
   "image/jpeg", "image/png", "image/gif", "image/webp",
   "video/mp4", "video/quicktime",
   "audio/m4a", "audio/x-m4a", "audio/mp4", "audio/aac",
+  "application/pdf", "application/zip", "application/x-zip-compressed",
+  "application/json", "application/octet-stream",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "text/plain", "text/markdown", "text/csv",
 ]);
 
 function extensionFor(mimeType: string) {
@@ -22,14 +31,27 @@ function extensionFor(mimeType: string) {
     case "video/mp4": return ".mp4";
     case "video/quicktime": return ".mov";
     case "audio/m4a": case "audio/x-m4a": case "audio/mp4": case "audio/aac": return ".m4a";
-    default: return "";
+    case "application/pdf": return ".pdf";
+    case "application/zip": case "application/x-zip-compressed": return ".zip";
+    case "application/json": return ".json";
+    case "application/msword": return ".doc";
+    case "application/vnd.openxmlformats-officedocument.wordprocessingml.document": return ".docx";
+    case "application/vnd.ms-excel": return ".xls";
+    case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": return ".xlsx";
+    case "application/vnd.ms-powerpoint": return ".ppt";
+    case "application/vnd.openxmlformats-officedocument.presentationml.presentation": return ".pptx";
+    case "text/plain": return ".txt";
+    case "text/markdown": return ".md";
+    case "text/csv": return ".csv";
+    default: return ".bin";
   }
 }
 
 function typeFor(mimeType: string) {
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType.startsWith("audio/")) return "voice";
-  return "image";
+  if (mimeType.startsWith("image/")) return "image";
+  return "file";
 }
 
 export async function registerUploadRoutes(app: FastifyInstance) {

@@ -1,8 +1,8 @@
 # 悄悄话 · 原生 iOS 版 — 交接文档
 
-> 最后更新：2026-07-08（对照代码全面修订文档）
+> 最后更新：2026-07-10（同步 Chat V2、贴纸、文件、头像与存储空间能力）
 > 仓库：https://github.com/hugxu0/couplechat-ios
-> 当前工作分支：`codex/new-backend-ios-media`
+> 当前工作分支：`codex/chat-v2-uikit`
 > 旧网页版/旧后端：https://github.com/hugxu0/chat（`https://chat.huhuhu.top`，RackNerd `23.254.222.199`，跟新后端无关）
 > 新原生后端：本仓库 `server/`（`https://hoo66.top`，RFCHost `82.40.34.107`）
 
@@ -10,7 +10,7 @@
 
 ## 一、项目定位
 
-双人私密聊天 App 的 SwiftUI 原生 iOS 版。旧项目是 Vue3 + Socket.IO 的 PWA。
+双人私密聊天 App 的原生 iOS 版：SwiftUI 负责 App 壳、导航和大部分页面，Chat V2 会话核心使用 UIKit。旧项目是 Vue3 + Socket.IO 的 PWA。
 **旧网站继续保留，原生 App 不再共用旧后端。**
 
 ```text
@@ -49,17 +49,20 @@ couplechat-ios/
 │   │   ├── ChatLocalDatabase.swift   # 设备端 SQLite 缓存
 │   │   ├── ChatLocalCache.swift      # 旧 JSON 缓存（仅迁移用）
 │   │   ├── InteractionPayload.swift  # 互动特效解析与 overlay
-│   │   └── ReminderNotificationScheduler.swift
+│   │   ├── ReminderNotificationScheduler.swift
+│   │   ├── ImageCache.swift          # 图片磁盘/内存缓存
+│   │   ├── StickerStore.swift        # 本机贴纸库
+│   │   └── EmojiCatalog.swift        # 表情面板 emoji 数据
 │   ├── DesignSystem/
 │   │   ├── DS.swift
 │   │   └── Theme.swift
 │   └── Features/
 │       ├── Auth/LoginView.swift
-│       ├── Chat/ChatHomeView.swift, ChatView.swift
+│       ├── Chat/ChatHomeView.swift, ChatView.swift, ChatV2/, UIKit/
 │       ├── Records/RecordsView.swift
 │       ├── Pet/PetView.swift
 │       ├── Reminders/RemindersView.swift
-│       └── Profile/ProfileView.swift, ThemeStyleView.swift
+│       └── Profile/ProfileView.swift, ThemeStyleView.swift, StorageView.swift
 └── server/
     ├── src/
     ├── docs/API.md, AI.md, DEPLOY.md, POSTGRES.md
@@ -74,13 +77,19 @@ couplechat-ios/
 | `Sources/Core/ChatStore.swift` | 登录、Socket、多频道消息、上传、已读、断线恢复、REST CRUD、shared 状态 |
 | `Sources/Core/ChatLocalDatabase.swift` | 设备端 SQLite：消息、已读、shared 状态；登录后先出本地再补增量 |
 | `Sources/Core/ChatLocalCache.swift` | 旧 JSON 快照，一次性迁移到 SQLite |
+| `Sources/Core/ImageCache.swift` | 全 App 图片缓存；存储空间页可统计/清理 |
+| `Sources/Core/StickerStore.swift` + `EmojiCatalog.swift` | 本机贴纸库、分组/收藏、emoji 数据 |
 | `Sources/Core/Models.swift` | `ServerConfig.baseURL = https://hoo66.top`；消息/提醒/纪念日模型 |
-| `Sources/Features/Chat/ChatView.swift` | couple/ai 会话页：文字/图片/视频/语音、引用/撤回/搜索/媒体库/壁纸/AI 确认卡 |
+| `Sources/Features/Chat/ChatView.swift` | 会话入口，桥接到 Chat V2 |
+| `Sources/Features/Chat/ChatV2/ChatViewController.swift` | UIKit 会话核心：消息列表、输入栏、键盘、表情面板、附件、录音 |
+| `Sources/Features/Chat/UIKit/ChatTimelineCells.swift` | 原生消息 cell：文本、图片、视频、语音、文件、贴纸 |
+| `Sources/Features/Chat/UIKit/ChatStickerPanelView.swift` | 原生 emoji/贴纸面板，支持收藏、分组、添加图片贴纸 |
 | `Sources/Features/Chat/ChatHomeView.swift` | 首页：状态、快捷互动、贴条、最近消息 |
 | `Sources/Features/Records/RecordsView.swift` | 在一起天数、纪念日、本地聊天统计、大橘日记/今日推荐 |
 | `Sources/Features/Reminders/RemindersView.swift` | 提醒/备忘 CRUD（个人+共享）、本地通知 |
 | `Sources/Features/Pet/PetView.swift` | 大橘 tab：**宠物数值与动作为占位**；「和大橘聊聊」进 ai 频道 |
-| `Sources/Features/Profile/ProfileView.swift` | 连接状态、外观、日期设置、Bark、退出登录 |
+| `Sources/Features/Profile/ProfileView.swift` | 连接状态、头像上传、外观、日期设置、Bark、存储空间、退出登录 |
+| `Sources/Features/Profile/StorageView.swift` | 本地占用、全量同步聊天记录、缓存图片、文件管理 |
 | `Sources/DesignSystem/DS.swift` + `Theme.swift` | 设计令牌、5 主题色、深浅模式、壁纸 |
 
 ### 后端关键文件
@@ -141,7 +150,7 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 | `GET /api/accounts` | ✅ 登录页 |
 | `POST /api/login` | ✅ |
 | `GET /api/me` | ✅ token 二次核实 |
-| `POST /api/upload` | ✅ 图片/视频/语音 |
+| `POST /api/upload` | ✅ 图片/视频/语音/文件/贴纸/头像 |
 | `GET/POST/PATCH/DELETE /api/me/items` | ✅ 提醒页 |
 | `POST /api/me/push/bark` | ✅ 我的页 |
 | `GET /api/daily`, `POST /api/daily/recommend` | ✅ 记录页 |
@@ -173,13 +182,15 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 
 **聊天**
 - couple / ai 双频道文字收发
-- 图片 / 视频 / 语音（按住说话、左滑取消）
+- UIKit Chat V2 会话页：`UICollectionView` 原生消息列表 + UIKit 输入栏
+- 图片 / 视频 / 语音（按住说话、左滑取消）/ 文件
+- emoji 面板 + 本机贴纸库：分组、收藏、添加图片贴纸、发送 `sticker` 消息
 - 乐观发送、失败重发（文字）、历史拉取、上滑加载更早
 - 已读回执、在线状态、前后台 away/health
 - 长按菜单：复制 / 引用 / 撤回（2 分钟内）
 - 引用回复 UI（replyTo + replyPreview）
 - 搜索 + 点击结果跳转到消息位置
-- 媒体库、图片/视频预览与保存
+- 媒体库、图片/视频预览与保存、文件打开
 - 8 款预设壁纸 + 自定义照片（couple/ai 独立）
 - 猫猫按钮 = 插入 `@大橘 `；大橘 tab 进 ai 私聊
 - AI 确认卡、联网来源卡片
@@ -188,12 +199,13 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 **本地**
 - SQLite 全量缓存（`ChatLocalDatabase`），离线可看历史
 - 记录页聊天统计从本地消息聚合（`localStats`），断网也能看
+- 图片磁盘缓存（`ImageCache`），存储空间页可统计/清理；可手动缓存全部图片/贴纸
 
 **其他页面**
 - 登录 + session 持久化（Keychain + UserDefaults 兜底）
 - 记录页：在一起天数、纪念日 CRUD、大橘日记/今日推荐
 - 提醒页：提醒/备忘 CRUD（个人+共享）、Markdown 编辑、本地通知
-- 我的页：连接状态、5 主题色、深浅模式、日期设置、Bark 配置、退出登录
+- 我的页：连接状态、头像上传、5 主题色、深浅模式、日期设置、Bark 配置、存储空间、退出登录
 
 **后端 AI**
 - 意图判断、记忆召回、识图、联网、确认卡、每日维护（配好 env 即生效）
@@ -203,7 +215,6 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 | 项 | 说明 |
 |---|---|
 | 大橘 tab 宠物 | 饱食/清洁等数值硬编码，互动按钮仅 haptic，🐱 emoji 占位 |
-| 表情选择器 | composer 笑脸按钮无 handler |
 | `needPetStatus` | 意图能识别，但服务端/iOS 均无真实宠物状态源 |
 | Bark deep link | 点击通知打开指定页面未接 |
 | 旧历史导入生产 | 38 万条消息只在本地开发库，生产库干净 |
@@ -228,10 +239,12 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 GitHub Actions：`.github/workflows/build-ios.yml`（push `main` 或手动触发）
 
 ```bash
-gh workflow run "Build iOS IPA (unsigned)" --ref codex/new-backend-ios-media
+gh workflow run "Build iOS IPA (unsigned)" --ref codex/chat-v2-uikit
 ```
 
 产物 artifact：`couplechat-native-ipa` → SideStore/iloader 安装。免费 Apple ID 签名 7 天过期。
+
+仓库里另有手动 workflow `Build IPA`：配置 Apple 签名 secret 后可导出签名 IPA；未配置签名时只上传 `.app` artifact。
 
 ---
 
@@ -256,8 +269,9 @@ cd server && npm run healthcheck
 
 1. 引用回复、长按复制/撤回
 2. 搜索关键词 → 点结果跳到消息
-3. 图片/视频/语音收发
-4. `@大橘` 召唤；大橘 tab 私聊每条都回
+3. 图片/视频/语音/文件收发
+4. emoji 插入、图片贴纸添加/收藏/发送
+5. `@大橘` 召唤；大橘 tab 私聊每条都回
 
 ### 提醒
 
@@ -269,6 +283,11 @@ cd server && npm run healthcheck
 1. 聊天统计左右翻页（断网也能看，来自本地缓存）
 2. 大橘日记/今日推荐（需 AI 配置）
 
+### 我的
+
+1. 头像从相册/相机上传后，聊天头像和首页头像刷新
+2. 存储空间页可同步全部聊天记录、缓存全部图片、清理图片缓存
+
 ---
 
 ## 九、已知坑
@@ -277,7 +296,7 @@ cd server && npm run healthcheck
 - 账号必须 `xu/si`，不是 `alice/bob`
 - `TOKEN_SECRET` 不能随意更换
 - iOS 本地不能编译 Swift；错误靠 Actions 或 Mac
-- `defaultScrollAnchor(.bottom)` 要求 iOS 17+（`project.yml` deployment target）
+- `project.yml` deployment target 是 iOS 17.0；改低版本前要重新验证 SwiftUI API 与 Chat V2 桥接
 - 时间戳统一毫秒，`Double` 承接
 - 根目录 `data/` 是未跟踪的**极敏感私人数据**（旧后端导出），**绝不能提交 git**
 - 后端数据在 PostgreSQL，备份用 `pg_dump`，不是拷 `.sqlite` 文件

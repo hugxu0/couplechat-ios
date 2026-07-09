@@ -140,6 +140,7 @@ Base URL 示例：`https://hoo66.top`
 | 图片 | jpeg, png, gif, webp | `image` |
 | 视频 | mp4, quicktime | `video` |
 | 语音 | m4a, x-m4a, mp4, aac | `voice` |
+| 文件 | pdf, zip, office, text, csv, json, octet-stream | `file` |
 
 响应：
 
@@ -349,7 +350,7 @@ AI 私聊频道输入中指示（仅 `ai:<username>` room，payload 为 `boolean
 
 #### `message:send`
 
-支持 `type`：`text` / `image` / `video` / `voice` / `sticker`
+支持 `type`：`text` / `image` / `video` / `voice` / `sticker` / `file`
 
 ```json
 {
