@@ -487,7 +487,7 @@ final class MessageStore: ObservableObject {
         }
         let text = displayText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? displayText!
-            : (assetCount > 1 ? "[\(assetCount)张图片]" : "[实况照片]")
+            : (assetCount > 1 ? "[\(assetCount)张图片]" : "[图片]")
         var optimistic = ChatMessage(
             optimisticMedia: "image", text: text,
             localURL: optimisticAttachments.first(where: { $0.role == "photo" })?.url,
@@ -957,6 +957,10 @@ final class MessageStore: ObservableObject {
             guard let index = list.firstIndex(where: { $0.id == clientId }) else { return }
             list[index].pending = false
             list[index].failed = true
+        }
+        if channel == .ai {
+            aiTyping = false
+            aiReplying = false
         }
         print("[MessageStore] ⚠️ 待发消息失败 clientId=\(clientId): \(error)")
     }

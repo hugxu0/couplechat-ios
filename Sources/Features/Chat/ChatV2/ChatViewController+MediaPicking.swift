@@ -20,9 +20,6 @@ extension ChatViewController: PHPickerViewControllerDelegate {
     }
 
     private func loadPickerResults(_ results: [PHPickerResult]) async {
-        if results.contains(where: { $0.assetIdentifier != nil }) {
-            _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-        }
         var loaded: [ChatPendingMedia] = []
         for result in results {
             if let item = await loadPendingMedia(from: result) {
@@ -46,24 +43,51 @@ extension ChatViewController: PHPickerViewControllerDelegate {
 
     private func loadPendingMedia(from result: PHPickerResult) async -> ChatPendingMedia? {
         let provider = result.itemProvider
-        if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
-            return await loadVideo(from: provider)
-        }
-        if let live = await loadLivePhoto(assetIdentifier: result.assetIdentifier) {
+        // Live Photo 的 provider 通常也声明自己可加载 movie。必须先识别 Live Photo，
+        // 否则会把配对视频误当成普通视频，甚至因为 movie representation 不可用而整项丢失。
+        if let live = await loadLivePhoto(from: result) {
             return live
+        }
+        if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier),
+           let video = await loadVideo(from: provider) {
+            return video
         }
         return await loadImage(from: provider)
     }
 
-    private func loadLivePhoto(assetIdentifier: String?) async -> ChatPendingMedia? {
-        guard let assetIdentifier,
-              PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
-                || PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited,
+    private func loadLivePhoto(from result: PHPickerResult) async -> ChatPendingMedia? {
+        let provider = result.itemProvider
+        if provider.canLoadObject(ofClass: PHLivePhoto.self),
+           let livePhoto = await provider.loadLivePhoto(),
+           let pending = await makePendingLivePhoto(
+               resources: PHAssetResource.assetResources(for: livePhoto)) {
+            return pending
+        }
+
+        // 少数旧系统/共享相册来源无法直接交付 PHLivePhoto。仅在用户早已授予权限时
+        // 才用 assetIdentifier 回退；PHPicker 本身不需要整库权限，因此这里绝不主动弹授权。
+        let authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard authorization == .authorized || authorization == .limited,
+              let assetIdentifier = result.assetIdentifier,
               let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil).firstObject,
               asset.mediaSubtypes.contains(.photoLive) else { return nil }
-        let resources = PHAssetResource.assetResources(for: asset)
-        guard let photo = resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto }),
-              let motion = resources.first(where: { $0.type == .pairedVideo || $0.type == .fullSizePairedVideo }),
+        return await makePendingLivePhoto(resources: PHAssetResource.assetResources(for: asset))
+    }
+
+    private func makePendingLivePhoto(resources: [PHAssetResource]) async -> ChatPendingMedia? {
+        // 已编辑的 Live Photo 必须成对选 current resources；混用原图和编辑后视频会破坏
+        // asset identifier 配对，接收端就无法重新构造 PHLivePhoto。
+        let currentPair = (
+            resources.first(where: { $0.type == .fullSizePhoto }),
+            resources.first(where: { $0.type == .fullSizePairedVideo })
+        )
+        let originalPair = (
+            resources.first(where: { $0.type == .photo }),
+            resources.first(where: { $0.type == .pairedVideo })
+        )
+        let pair = currentPair.0 != nil && currentPair.1 != nil ? currentPair : originalPair
+        guard let photo = pair.0,
+              let motion = pair.1,
               let photoData = await PHAssetResourceManager.default().data(for: photo),
               let motionData = await PHAssetResourceManager.default().data(for: motion),
               let image = UIImage(data: photoData) else { return nil }
@@ -157,6 +181,14 @@ extension ChatViewController: UIDocumentPickerDelegate {
 }
 
 private extension NSItemProvider {
+    func loadLivePhoto() async -> PHLivePhoto? {
+        await withCheckedContinuation { continuation in
+            loadObject(ofClass: PHLivePhoto.self) { object, _ in
+                continuation.resume(returning: object as? PHLivePhoto)
+            }
+        }
+    }
+
     func loadData(typeIdentifier: String) async -> Data? {
         await withCheckedContinuation { continuation in
             loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in

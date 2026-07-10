@@ -41,7 +41,7 @@ struct ChatV2Screen: View {
         case .couple:
             if !store.presenceKnown { return "正在获取在线状态" }
             return store.partnerOnline ? "在线" : "离线"
-        case .ai: return store.aiTyping ? "正在输入" : "陪你聊天"
+        case .ai: return store.isAIComposing(in: .ai) ? "正在输入" : "陪你聊天"
         }
     }
 

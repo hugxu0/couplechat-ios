@@ -196,7 +196,7 @@ private struct MediaPage: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 if item.isLivePhoto,
                    let photo = item.mediaURL,
                    let motion = item.pairedVideoMediaURL,
@@ -212,6 +212,16 @@ private struct MediaPage: View {
                     ProgressView().tint(.white.opacity(0.7))
                 } else {
                     failedView
+                }
+
+                if item.isLivePhoto {
+                    Image(uiImage: PHLivePhotoView.livePhotoBadgeImage(options: .overContent))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 38, height: 22)
+                        .padding(.leading, 12)
+                        .padding(.top, geometry.safeAreaInsets.top + 10)
+                        .accessibilityHidden(true)
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)

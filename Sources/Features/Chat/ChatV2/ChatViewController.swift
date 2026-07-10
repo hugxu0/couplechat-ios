@@ -434,8 +434,9 @@ final class ChatViewController: UIViewController {
             .sink { [weak self] _ in
                 guard let self else { return }
                 DispatchQueue.main.async {
-                    self.composer.setTypingVisible(self.channel == .ai && self.store.aiTyping)
-                    self.composer.setCatThinking(self.store.aiActivity(for: self.channel)?.isVisible == true)
+                    let visible = self.store.isAIComposing(in: self.channel)
+                    self.composer.setTypingVisible(visible)
+                    self.composer.setCatThinking(visible)
                     self.reloadTimeline(animated: true)
                 }
             }
@@ -443,7 +444,9 @@ final class ChatViewController: UIViewController {
     }
 
     private func handleStoreChange() {
-        composer.setTypingVisible(channel == .ai && store.aiTyping)
+        let visible = store.isAIComposing(in: channel)
+        composer.setTypingVisible(visible)
+        composer.setCatThinking(visible)
         reloadTimeline(animated: true)
         store.markRead(channel)
     }
@@ -514,7 +517,7 @@ final class ChatViewController: UIViewController {
                "senderName": "大橘",
                "kind": "user",
                "type": "text",
-               "text": activity.phase == "accepted" ? "🐾 收到啦，正在接住你的 @…" : "🐾 大橘正在认真想…",
+               "text": "大橘正在输入…",
                "channel": channel.rawValue,
                "ts": Date().timeIntervalSince1970 * 1000,
            ]) {
@@ -900,6 +903,8 @@ final class ChatViewController: UIViewController {
         var config = PHPickerConfiguration(photoLibrary: .shared())
         config.filter = .any(of: [.images, .videos])
         config.selectionLimit = 9
+        config.selection = .ordered
+        config.preferredAssetRepresentationMode = .current
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
         present(picker, animated: true)
@@ -925,15 +930,15 @@ final class ChatViewController: UIViewController {
         let items = pendingMedia
         guard !items.isEmpty else { return }
         let caption = composer.textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sendMode = composer.mediaSendMode
         pendingMedia = []
         composer.setMediaPreviews([])
         composer.clearText()
         stickToLatestAfterNextReload = true
         let images = items.filter { $0.messageType == "image" }
-        let videos = items.filter { $0.messageType == "video" }
-        let shouldCreateAlbum = images.count > 1 || images.contains(where: \.isLivePhoto)
         var captionConsumed = false
-        if shouldCreateAlbum {
+
+        if sendMode == .merged, images.count > 1 {
             var resources: [OutboundMediaResource] = []
             for (index, item) in images.enumerated() {
                 resources.append(OutboundMediaResource(
@@ -950,25 +955,45 @@ final class ChatViewController: UIViewController {
                 displayText: caption.isEmpty ? nil : caption,
                 channel: channel)
             captionConsumed = !caption.isEmpty
-        } else if let image = images.first {
-            store.sendMedia(
-                data: image.data,
-                mimeType: image.mimeType,
-                preferredType: image.messageType,
-                localPreviewURL: image.localPreviewURL,
-                channel: channel,
-                displayText: caption.isEmpty ? nil : caption
-            )
-            captionConsumed = !caption.isEmpty
-        }
-        for (index, item) in videos.enumerated() {
-            store.sendMedia(
-                data: item.data, mimeType: item.mimeType, preferredType: item.messageType,
-                localPreviewURL: item.localPreviewURL, channel: channel,
-                displayText: !captionConsumed && index == 0 && !caption.isEmpty ? caption : nil)
-            captionConsumed = captionConsumed || !caption.isEmpty
+            // 合并只针对图片；视频仍按选择顺序逐条发送。
+            for item in items where item.messageType == "video" {
+                sendSingleMedia(item, caption: captionConsumed ? nil : caption)
+                captionConsumed = captionConsumed || !caption.isEmpty
+            }
+        } else {
+            // 默认保持选择顺序逐条入发送队列。Live Photo 仍是“一条消息”，只是这条
+            // 消息内部原子携带静态图与 paired video 两个资源。
+            for item in items {
+                if item.isLivePhoto {
+                    var resources = [OutboundMediaResource(
+                        assetId: item.id, role: "photo", order: 0,
+                        data: item.data, mimeType: item.mimeType)]
+                    if let motion = item.pairedVideoData {
+                        resources.append(OutboundMediaResource(
+                            assetId: item.id, role: "pairedVideo", order: 0,
+                            data: motion, mimeType: item.pairedVideoMimeType ?? "video/quicktime"))
+                    }
+                    store.sendAlbum(
+                        resources: resources,
+                        displayText: captionConsumed || caption.isEmpty ? nil : caption,
+                        channel: channel)
+                } else {
+                    sendSingleMedia(item, caption: captionConsumed ? nil : caption)
+                }
+                captionConsumed = captionConsumed || !caption.isEmpty
+            }
         }
         reloadTimeline(animated: false)
+    }
+
+    private func sendSingleMedia(_ item: ChatPendingMedia, caption: String?) {
+        store.sendMedia(
+            data: item.data,
+            mimeType: item.mimeType,
+            preferredType: item.messageType,
+            localPreviewURL: item.localPreviewURL,
+            channel: channel,
+            displayText: caption?.isEmpty == false ? caption : nil)
     }
 
     func sendFile(_ url: URL) {

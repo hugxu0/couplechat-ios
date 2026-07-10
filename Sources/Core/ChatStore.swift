@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SocketIO
 import SwiftUI
@@ -80,6 +81,7 @@ final class ChatStore: ObservableObject {
     /// 健康检查失败时的受控重连。手动 disconnect 不会触发 Socket.IO 自动重连，
     /// 因而必须在 disconnect 回调中明确重新握手。
     private let httpClient: any HTTPClient
+    private var childStateCancellables = Set<AnyCancellable>()
     var isConnected: Bool { connected }
     var sessionUsername: String? { auth.session?.username }
     var currentSession: Session? { auth.session }
@@ -193,6 +195,14 @@ final class ChatStore: ObservableObject {
         auth.socketProvider = self
         messageStore.socketProvider = self
         shared.socketProvider = self
+
+        // ChatStore 暴露的是 MessageStore 的计算属性；子 ObservableObject 不会自动把
+        // objectWillChange 传给父对象。只转发 AI 状态，避免 SwiftUI 顶栏/大橘入口永远
+        // 看见旧值，同时不让普通消息更新产生重复的整页刷新。
+        Publishers.CombineLatest(messageStore.$aiTyping, messageStore.$aiReplying)
+            .dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &childStateCancellables)
     }
 
     // MARK: - 启动
@@ -296,6 +306,8 @@ final class ChatStore: ObservableObject {
         partnerOnline = false
         presenceKnown = false
         aiActivityByChannel.removeAll()
+        messageStore.aiTyping = false
+        messageStore.aiReplying = false
         connectionAttemptToken = UUID()
         reconnectAttempt = 0
         lastConnectionError = nil
@@ -544,11 +556,13 @@ final class ChatStore: ObservableObject {
 
     func sendText(_ text: String, channel: ChatChannel = .couple, replyTo: String? = nil, replyPreview: String? = nil) {
         guard let session = auth.session else { return }
+        if channel == .ai { messageStore.aiReplying = true }
         messageStore.sendText(text, channel: channel, replyTo: replyTo, replyPreview: replyPreview, session: session)
     }
 
     func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?, channel: ChatChannel = .couple, displayText: String? = nil) {
         guard let session = auth.session else { return }
+        if channel == .ai, preferredType == "image" { messageStore.aiReplying = true }
         messageStore.sendMedia(data: data, mimeType: mimeType, preferredType: preferredType, localPreviewURL: localPreviewURL, channel: channel, displayText: displayText, session: session)
     }
 
@@ -578,11 +592,18 @@ final class ChatStore: ObservableObject {
 
     func sendAlbum(resources: [OutboundMediaResource], displayText: String?, channel: ChatChannel = .couple) {
         guard let session = auth.session else { return }
+        if channel == .ai { messageStore.aiReplying = true }
         messageStore.sendAlbum(resources: resources, displayText: displayText, channel: channel, session: session)
     }
 
     func aiActivity(for channel: ChatChannel) -> AIActivity? {
         aiActivityByChannel[channel.rawValue]
+    }
+
+    func isAIComposing(in channel: ChatChannel) -> Bool {
+        let hasActivity = aiActivity(for: channel)?.isVisible == true
+        guard channel == .ai else { return hasActivity }
+        return hasActivity || messageStore.aiTyping || messageStore.aiReplying
     }
 
     func uploadDajuAvatar(_ image: UIImage) async -> Bool {

@@ -1,4 +1,5 @@
 import AVFoundation
+import PhotosUI
 import UIKit
 
 protocol ChatTimelineCellDelegate: AnyObject {
@@ -110,8 +111,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     private let mediaImageView = UIImageView()
     private let mediaIconView = UIImageView()
     private let albumScrollView = UIScrollView()
-    private let albumBadge = UILabel()
-    private let liveBadge = UILabel()
+    private let albumIndicator = ChatAlbumIndicatorView()
+    private let liveBadge = UIImageView(image: PHLivePhotoView.livePhotoBadgeImage(options: .overContent))
     private let voiceWaveStack = UIStackView()
     private let statusLabel = UILabel()
     private let retryButton = UIButton(type: .system)
@@ -128,6 +129,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     private var usesDarkIncomingBubble = false
     private var voiceWaveBars: [UIView] = []
     private var albumPhotos: [ChatAttachment] = []
+    private var albumPairedIDs = Set<String>()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -168,18 +170,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         albumScrollView.showsHorizontalScrollIndicator = false
         albumScrollView.delegate = self
         albumScrollView.clipsToBounds = true
-        albumBadge.font = .monospacedDigitSystemFont(ofSize: 11, weight: .bold)
-        albumBadge.textColor = .white
-        albumBadge.textAlignment = .center
-        albumBadge.backgroundColor = UIColor.black.withAlphaComponent(0.52)
-        albumBadge.layer.cornerRadius = 11
-        albumBadge.clipsToBounds = true
-        liveBadge.text = " LIVE "
-        liveBadge.font = .systemFont(ofSize: 10, weight: .heavy)
-        liveBadge.textColor = .white
-        liveBadge.backgroundColor = UIColor.black.withAlphaComponent(0.48)
-        liveBadge.layer.cornerRadius = 8
-        liveBadge.clipsToBounds = true
+        liveBadge.contentMode = .scaleAspectFit
+        liveBadge.isAccessibilityElement = false
 
         voiceWaveStack.axis = .horizontal
         voiceWaveStack.alignment = .center
@@ -236,6 +228,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         bubbleView.subviews.forEach { $0.removeFromSuperview() }
         albumScrollView.subviews.forEach { $0.removeFromSuperview() }
         albumPhotos = []
+        albumPairedIDs = []
     }
 
     func configure(
@@ -381,7 +374,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             albumPhotos = photos
             if photos.count > 1 {
                 bubbleView.addSubview(albumScrollView)
-                bubbleView.addSubview(albumBadge)
+                bubbleView.addSubview(albumIndicator)
                 configureAlbum(message)
                 if ChatTimelineMetrics.mediaCaption(for: message) != nil {
                     bodyLabel.text = ChatTimelineMetrics.mediaCaption(for: message)
@@ -390,14 +383,18 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
                 }
                 return
             }
-            if (message.attachments ?? []).contains(where: { $0.assetId == photos[0].assetId && $0.role == "pairedVideo" }) {
-                bubbleView.addSubview(liveBadge)
-            }
         }
 
         switch message.type {
         case "image", "video", "sticker":
             bubbleView.addSubview(mediaImageView)
+            if message.type == "image", photos.count == 1,
+               (message.attachments ?? []).contains(where: {
+                   $0.assetId == photos[0].assetId && $0.role == "pairedVideo"
+               }) {
+                // 必须在图片之后加入层级，否则角标会被 mediaImageView 完全盖住。
+                bubbleView.addSubview(liveBadge)
+            }
             bubbleView.addSubview(mediaIconView)
             if let caption = ChatTimelineMetrics.mediaCaption(for: message) {
                 bodyLabel.text = caption
@@ -467,8 +464,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     }
 
     private func configureAlbum(_ message: ChatMessage) {
-        albumBadge.text = "1 / \(albumPhotos.count)"
-        let pairedIDs = Set((message.attachments ?? []).filter { $0.role == "pairedVideo" }.map(\.assetId))
+        albumPairedIDs = Set((message.attachments ?? []).filter { $0.role == "pairedVideo" }.map(\.assetId))
+        albumIndicator.configure(
+            page: 1,
+            total: albumPhotos.count,
+            isLivePhoto: albumPhotos.first.map { albumPairedIDs.contains($0.assetId) } ?? false)
         for (index, attachment) in albumPhotos.enumerated() {
             let container = UIView()
             container.clipsToBounds = true
@@ -477,17 +477,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             imageView.clipsToBounds = true
             imageView.tag = 100
             container.addSubview(imageView)
-            if pairedIDs.contains(attachment.assetId) {
-                let badge = UILabel()
-                badge.text = " LIVE "
-                badge.font = .systemFont(ofSize: 10, weight: .heavy)
-                badge.textColor = .white
-                badge.backgroundColor = UIColor.black.withAlphaComponent(0.48)
-                badge.layer.cornerRadius = 8
-                badge.clipsToBounds = true
-                badge.tag = 101
-                container.addSubview(badge)
-            }
             container.tag = index + 1
             albumScrollView.addSubview(container)
             guard let url = attachment.mediaURL else { continue }
@@ -565,11 +554,10 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
                 for (index, container) in albumScrollView.subviews.enumerated() {
                     container.frame = CGRect(x: CGFloat(index) * mediaFrame.width, y: 0, width: mediaFrame.width, height: mediaFrame.height)
                     container.viewWithTag(100)?.frame = container.bounds
-                    container.viewWithTag(101)?.frame = CGRect(x: 10, y: 10, width: 42, height: 17)
                 }
-                albumBadge.frame = CGRect(x: mediaFrame.maxX - 58, y: mediaFrame.minY + 10, width: 48, height: 22)
+                albumIndicator.frame = CGRect(x: mediaFrame.maxX - 100, y: mediaFrame.minY + 9, width: 90, height: 26)
             } else if liveBadge.superview != nil {
-                liveBadge.frame = CGRect(x: mediaFrame.minX + 10, y: mediaFrame.minY + 10, width: 42, height: 17)
+                liveBadge.frame = CGRect(x: mediaFrame.minX + 9, y: mediaFrame.minY + 9, width: 32, height: 20)
             }
             mediaIconView.frame = CGRect(x: mediaImageView.frame.midX - 18, y: mediaImageView.frame.midY - 18, width: 36, height: 36)
             if caption != nil {
@@ -681,7 +669,10 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         guard scrollView === albumScrollView, scrollView.bounds.width > 0 else { return }
         let page = min(albumPhotos.count - 1, max(0, Int(round(scrollView.contentOffset.x / scrollView.bounds.width))))
-        albumBadge.text = "\(page + 1) / \(albumPhotos.count)"
+        albumIndicator.configure(
+            page: page + 1,
+            total: albumPhotos.count,
+            isLivePhoto: albumPairedIDs.contains(albumPhotos[page].assetId))
     }
 
     func containsBubble(point: CGPoint) -> Bool {
@@ -698,6 +689,105 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             cornerRadius: bubbleView.layer.cornerRadius
         )
         return UITargetedPreview(view: bubbleView, parameters: parameters)
+    }
+}
+
+/// 合并图片消息的原生状态层。iOS 26 把页码和 Live Photo 标识放进同一个
+/// UIGlassContainerEffect，两个胶囊会按系统规则自然融合；旧系统保持低调的深色胶囊。
+private final class ChatAlbumIndicatorView: UIView {
+    private let containerView: UIView
+    private let pageHost: UIView
+    private let liveHost: UIView
+    private let stack = UIStackView()
+    private let pageLabel = UILabel()
+    private let liveImageView = UIImageView(
+        image: PHLivePhotoView.livePhotoBadgeImage(options: .overContent))
+
+    override init(frame: CGRect) {
+        if #available(iOS 26.0, *) {
+            let containerEffect = UIGlassContainerEffect()
+            containerEffect.spacing = 7
+            containerView = UIVisualEffectView(effect: containerEffect)
+            pageHost = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+            liveHost = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+        } else {
+            containerView = UIView()
+            pageHost = UIView()
+            liveHost = UIView()
+        }
+        super.init(frame: frame)
+
+        isUserInteractionEnabled = false
+        isAccessibilityElement = false
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(containerView)
+
+        let containerContent = (containerView as? UIVisualEffectView)?.contentView ?? containerView
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 5
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        containerContent.addSubview(stack)
+
+        configureHost(pageHost, fallbackColor: UIColor.black.withAlphaComponent(0.54))
+        configureHost(liveHost, fallbackColor: UIColor.black.withAlphaComponent(0.42))
+        stack.addArrangedSubview(liveHost)
+        stack.addArrangedSubview(pageHost)
+
+        pageLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .bold)
+        pageLabel.textColor = .white
+        pageLabel.textAlignment = .center
+        pageLabel.translatesAutoresizingMaskIntoConstraints = false
+        hostContent(pageHost).addSubview(pageLabel)
+
+        liveImageView.contentMode = .scaleAspectFit
+        liveImageView.translatesAutoresizingMaskIntoConstraints = false
+        hostContent(liveHost).addSubview(liveImageView)
+
+        NSLayoutConstraint.activate([
+            containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            containerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            containerView.topAnchor.constraint(equalTo: topAnchor),
+            containerView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.trailingAnchor.constraint(equalTo: containerContent.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: containerContent.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: containerContent.bottomAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: containerContent.leadingAnchor),
+            pageHost.widthAnchor.constraint(equalToConstant: 48),
+            pageHost.heightAnchor.constraint(equalToConstant: 24),
+            liveHost.widthAnchor.constraint(equalToConstant: 34),
+            liveHost.heightAnchor.constraint(equalToConstant: 24),
+            pageLabel.leadingAnchor.constraint(equalTo: hostContent(pageHost).leadingAnchor, constant: 4),
+            pageLabel.trailingAnchor.constraint(equalTo: hostContent(pageHost).trailingAnchor, constant: -4),
+            pageLabel.topAnchor.constraint(equalTo: hostContent(pageHost).topAnchor),
+            pageLabel.bottomAnchor.constraint(equalTo: hostContent(pageHost).bottomAnchor),
+            liveImageView.leadingAnchor.constraint(equalTo: hostContent(liveHost).leadingAnchor, constant: 3),
+            liveImageView.trailingAnchor.constraint(equalTo: hostContent(liveHost).trailingAnchor, constant: -3),
+            liveImageView.topAnchor.constraint(equalTo: hostContent(liveHost).topAnchor, constant: 2),
+            liveImageView.bottomAnchor.constraint(equalTo: hostContent(liveHost).bottomAnchor, constant: -2)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(page: Int, total: Int, isLivePhoto: Bool) {
+        pageLabel.text = "\(page) / \(total)"
+        liveHost.isHidden = !isLivePhoto
+    }
+
+    private func configureHost(_ view: UIView, fallbackColor: UIColor) {
+        view.layer.cornerCurve = .continuous
+        view.layer.cornerRadius = 12
+        view.clipsToBounds = true
+        if #unavailable(iOS 26.0) {
+            view.backgroundColor = fallbackColor
+        }
+    }
+
+    private func hostContent(_ view: UIView) -> UIView {
+        (view as? UIVisualEffectView)?.contentView ?? view
     }
 }
 

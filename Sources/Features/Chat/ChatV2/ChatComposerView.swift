@@ -1,4 +1,10 @@
+import PhotosUI
 import UIKit
+
+enum ChatMediaSendMode: Int {
+    case separate
+    case merged
+}
 
 struct ChatPendingMedia: Identifiable {
     let id: String
@@ -54,6 +60,8 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private let replyContainer = ChatGlassView(style: .systemThinMaterial, cornerRadius: 16)
     private let replyTitleLabel = UILabel()
     private let replyBodyLabel = UILabel()
+    private let mediaPreviewContainer = UIStackView()
+    private let mediaModeControl = UISegmentedControl(items: ["逐张发送", "合并"])
     private let mediaScrollView = UIScrollView()
     private let mediaStack = UIStackView()
     private let inputRow = UIStackView()
@@ -80,10 +88,13 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private var accentColor = UIColor.systemBlue
     private var usesLightContent = false
     private var textHeightConstraint: NSLayoutConstraint?
+    private var mediaPreviewHeightConstraint: NSLayoutConstraint?
     private var typingVisible = false
     private var replyVisible = false
     private var mediaVisible = false
     private var waveBars: [UIView] = []
+
+    private(set) var mediaSendMode: ChatMediaSendMode = .separate
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -108,6 +119,9 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         replyTitleLabel.textColor = secondary
         replyBodyLabel.textColor = primary
         replyCloseButton.tintColor = secondary
+        mediaModeControl.selectedSegmentTintColor = accentColor
+        mediaModeControl.setTitleTextAttributes([.foregroundColor: primary], for: .normal)
+        mediaModeControl.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
         recordingLabel.textColor = recordingCancelled ? .systemRed : secondary
         recordingHintLabel.textColor = recordingCancelled ? .systemRed : secondary
         textView.textColor = primary
@@ -147,7 +161,14 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     func setMediaPreviews(_ items: [ChatPendingMedia]) {
         previewItems = items
         mediaVisible = !items.isEmpty
-        mediaScrollView.isHidden = items.isEmpty
+        mediaPreviewContainer.isHidden = items.isEmpty
+        let shouldShowMode = items.filter { $0.messageType == "image" }.count > 1
+        if !shouldShowMode {
+            mediaSendMode = .separate
+            mediaModeControl.selectedSegmentIndex = ChatMediaSendMode.separate.rawValue
+        }
+        mediaModeControl.isHidden = !shouldShowMode
+        mediaPreviewHeightConstraint?.constant = shouldShowMode ? 117 : 84
         mediaStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for item in items {
             mediaStack.addArrangedSubview(previewTile(for: item))
@@ -216,7 +237,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
-        typingLabel.text = "大橘正在输入..."
+        typingLabel.text = "大橘正在输入…"
         typingLabel.font = .systemFont(ofSize: 12, weight: .medium)
         typingLabel.textColor = .secondaryLabel
         typingLabel.isHidden = true
@@ -227,7 +248,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         stack.addArrangedSubview(replyContainer)
 
         buildMediaPreview()
-        stack.addArrangedSubview(mediaScrollView)
+        stack.addArrangedSubview(mediaPreviewContainer)
 
         recordingHintLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         recordingHintLabel.textAlignment = .center
@@ -246,7 +267,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         ])
 
         replyContainer.isHidden = true
-        mediaScrollView.isHidden = true
+        mediaPreviewContainer.isHidden = true
         updateActionButton()
         recalculateHeight()
     }
@@ -261,7 +282,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         var height: CGFloat = 12 + inputHeight
         if typingVisible { height += 18 + stack.spacing }
         if replyVisible { height += 50 + stack.spacing }
-        if mediaVisible { height += 84 + stack.spacing }
+        if mediaVisible { height += (mediaPreviewHeightConstraint?.constant ?? 84) + stack.spacing }
         if isRecording { height += 18 + stack.spacing }
         height = ceil(height)
         guard abs(preferredHeight - height) > 0.5 else { return }
@@ -317,21 +338,41 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     }
 
     private func buildMediaPreview() {
+        mediaPreviewContainer.axis = .vertical
+        mediaPreviewContainer.spacing = 5
+        mediaPreviewContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        mediaModeControl.selectedSegmentIndex = ChatMediaSendMode.separate.rawValue
+        mediaModeControl.accessibilityLabel = "多图发送方式"
+        mediaModeControl.addTarget(self, action: #selector(mediaModeChanged), for: .valueChanged)
+        mediaModeControl.translatesAutoresizingMaskIntoConstraints = false
+        let modeHeight = mediaModeControl.heightAnchor.constraint(equalToConstant: 28)
+        modeHeight.priority = .defaultHigh
+        modeHeight.isActive = true
+        mediaPreviewContainer.addArrangedSubview(mediaModeControl)
+
         mediaScrollView.showsHorizontalScrollIndicator = false
         mediaScrollView.translatesAutoresizingMaskIntoConstraints = false
         mediaStack.axis = .horizontal
         mediaStack.spacing = 8
         mediaStack.translatesAutoresizingMaskIntoConstraints = false
         mediaScrollView.addSubview(mediaStack)
+        mediaPreviewContainer.addArrangedSubview(mediaScrollView)
 
+        mediaPreviewHeightConstraint = mediaPreviewContainer.heightAnchor.constraint(equalToConstant: 84)
+        mediaPreviewHeightConstraint?.isActive = true
         NSLayoutConstraint.activate([
-            mediaScrollView.heightAnchor.constraint(equalToConstant: 84),
             mediaStack.leadingAnchor.constraint(equalTo: mediaScrollView.contentLayoutGuide.leadingAnchor),
             mediaStack.trailingAnchor.constraint(equalTo: mediaScrollView.contentLayoutGuide.trailingAnchor),
             mediaStack.topAnchor.constraint(equalTo: mediaScrollView.contentLayoutGuide.topAnchor),
             mediaStack.bottomAnchor.constraint(equalTo: mediaScrollView.contentLayoutGuide.bottomAnchor),
             mediaStack.heightAnchor.constraint(equalTo: mediaScrollView.frameLayoutGuide.heightAnchor)
         ])
+    }
+
+    @objc private func mediaModeChanged() {
+        mediaSendMode = ChatMediaSendMode(rawValue: mediaModeControl.selectedSegmentIndex) ?? .separate
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 
     private func buildInputRow() {
@@ -600,6 +641,19 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         close.addAction(UIAction { [weak self] _ in self?.delegate?.composerDidRemoveMedia(id: item.id) }, for: .touchUpInside)
 
         container.addSubview(imageView)
+        if item.isLivePhoto {
+            let badge = UIImageView(image: PHLivePhotoView.livePhotoBadgeImage(options: .overContent))
+            badge.contentMode = .scaleAspectFit
+            badge.isAccessibilityElement = false
+            badge.translatesAutoresizingMaskIntoConstraints = false
+            imageView.addSubview(badge)
+            NSLayoutConstraint.activate([
+                badge.leadingAnchor.constraint(equalTo: imageView.leadingAnchor, constant: 6),
+                badge.bottomAnchor.constraint(equalTo: imageView.bottomAnchor, constant: -6),
+                badge.widthAnchor.constraint(equalToConstant: 30),
+                badge.heightAnchor.constraint(equalToConstant: 18)
+            ])
+        }
         container.addSubview(close)
 
         NSLayoutConstraint.activate([

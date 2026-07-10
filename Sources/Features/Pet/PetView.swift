@@ -156,7 +156,7 @@ struct PetView: View {
                         Text("和大橘聊聊")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(DS.Palette.textPrimary)
-                        if store.aiTyping {
+                        if store.isAIComposing(in: .ai) {
                             Text("正在输入")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(DS.Palette.green)

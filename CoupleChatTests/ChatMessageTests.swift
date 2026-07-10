@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import CoupleChat
 
@@ -169,6 +170,40 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertEqual(message?.attachments?.count, 3)
         XCTAssertEqual(MediaBrowserItem.items(for: message!).count, 2)
         XCTAssertTrue(MediaBrowserItem.items(for: message!).first?.isLivePhoto == true)
+    }
+
+    func testMediaPlaceholdersNeverRenderAsImageCaptions() {
+        let session = Session(token: "tok", username: "xu", name: "小旭")
+        for (index, text) in ["[图片]", "[实况照片]", "[3张图片]"].enumerated() {
+            let message = ChatMessage(
+                optimisticMedia: "image",
+                text: text,
+                localURL: "file:///tmp/\(index).jpg",
+                me: session,
+                clientId: "tmp-placeholder-\(index)",
+                channel: "couple")
+            XCTAssertNil(ChatTimelineMetrics.mediaCaption(for: message))
+        }
+    }
+
+    func testAIActivityVisibilityPhases() {
+        XCTAssertTrue(AIActivity(channel: .ai, requestMessageId: nil, requesterUsername: nil, phase: "accepted").isVisible)
+        XCTAssertTrue(AIActivity(channel: .couple, requestMessageId: nil, requesterUsername: nil, phase: "generating").isVisible)
+        XCTAssertFalse(AIActivity(channel: .ai, requestMessageId: nil, requesterUsername: nil, phase: "finished").isVisible)
+    }
+
+    @MainActor
+    func testChatStoreForwardsAIReplyStateToViews() {
+        let store = ChatStore()
+        var changeCount = 0
+        let observation = store.objectWillChange.sink { changeCount += 1 }
+
+        store.messageStore.aiReplying = true
+
+        XCTAssertEqual(changeCount, 1)
+        XCTAssertTrue(store.isAIComposing(in: .ai))
+        XCTAssertFalse(store.isAIComposing(in: .couple))
+        withExtendedLifetime(observation) {}
     }
 
     func testInteractionMetaTakesPriorityOverLegacyText() {

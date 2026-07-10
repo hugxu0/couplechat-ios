@@ -146,7 +146,11 @@ enum ChatTimelineMetrics {
     static func mediaCaption(for message: ChatMessage) -> String? {
         guard message.type == "image" || message.type == "video" else { return nil }
         let text = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, text != "[图片]", text != "[视频]" else { return nil }
+        let isImagePlaceholder = text == "[图片]"
+            || text == "[实况照片]"
+            || (text.hasPrefix("[") && text.hasSuffix("张图片]")
+                && Int(text.dropFirst().dropLast(4)) != nil)
+        guard !text.isEmpty, !isImagePlaceholder, text != "[视频]" else { return nil }
         return text
     }
 
