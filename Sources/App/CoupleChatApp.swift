@@ -6,6 +6,7 @@ import UserNotifications
 struct CoupleChatApp: App {
     @StateObject private var store = ChatStore()
     @StateObject private var theme = ThemeManager.shared
+    @StateObject private var mediaFavorites = MediaFavoriteStore.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var bootstrapped = false
 
@@ -26,6 +27,7 @@ struct CoupleChatApp: App {
             }
             .environmentObject(store)
             .environmentObject(theme)
+            .environmentObject(mediaFavorites)
             .preferredColorScheme(theme.appearance.colorScheme)
             .tint(theme.accent.color)
             .task {

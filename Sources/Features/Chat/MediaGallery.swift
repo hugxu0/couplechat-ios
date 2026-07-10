@@ -8,13 +8,17 @@ struct MediaGallerySheet: View {
 
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedMedia: ChatMessage?
-    @State private var fullScreenImage: UIImage?
+    @State private var selectedFile: ChatMessage?
+    @State private var selectedMediaId: String?
 
     private let columns = [GridItem(.adaptive(minimum: 100), spacing: 2)]
 
     private var mediaMessages: [ChatMessage] {
         store.mediaMessages(for: channel, includeFiles: true)
+    }
+
+    private var previewableMessages: [ChatMessage] {
+        mediaMessages.filter { $0.type != "file" }
     }
 
     var body: some View {
@@ -51,10 +55,16 @@ struct MediaGallerySheet: View {
                         Button("关闭") { dismiss() }
                     }
                 }
-                .sheet(item: $selectedMedia) { msg in
+                .sheet(item: $selectedFile) { msg in
                     mediaDetail(msg)
                 }
             }
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { selectedMediaId != nil },
+            set: { if !$0 { selectedMediaId = nil } }
+        )) {
+            MediaPagerView(messages: previewableMessages, selectedId: $selectedMediaId)
         }
     }
 
@@ -62,7 +72,7 @@ struct MediaGallerySheet: View {
     private func mediaThumb(_ msg: ChatMessage) -> some View {
         if msg.type == "file" {
             fileThumb(msg)
-                .onTapGesture { selectedMedia = msg }
+                .onTapGesture { selectedFile = msg }
         } else if msg.type == "video", let url = msg.mediaURL {
             ZStack {
                 VideoThumbnailView(url: url)
@@ -75,7 +85,7 @@ struct MediaGallerySheet: View {
             .frame(minWidth: 0, maxWidth: .infinity)
             .frame(height: (UIScreen.main.bounds.width - 4) / 3)
             .clipped()
-            .onTapGesture { selectedMedia = msg }
+            .onTapGesture { selectedMediaId = msg.id }
         } else if let url = msg.mediaURL {
             CachedImage(url: url) {
                 Color.gray.opacity(0.15)
@@ -84,10 +94,10 @@ struct MediaGallerySheet: View {
             .frame(minWidth: 0, maxWidth: .infinity)
             .frame(height: (UIScreen.main.bounds.width - 4) / 3)
             .clipped()
-            .onTapGesture { selectedMedia = msg }
+            .onTapGesture { selectedMediaId = msg.id }
         } else {
             fallbackThumb(msg)
-                .onTapGesture { selectedMedia = msg }
+                .onTapGesture { selectedMediaId = msg.id }
         }
     }
 
@@ -168,7 +178,7 @@ struct MediaGallerySheet: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { selectedMedia = nil }
+                    Button("关闭") { selectedFile = nil }
                 }
             }
         }

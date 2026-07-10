@@ -494,15 +494,21 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         let imageName: String
         if isRecording {
             imageName = recordingCancelled ? "trash.fill" : "mic.fill"
-            actionBackgroundView.setTintColor(recordingCancelled ? .systemRed : accentColor, alpha: 1)
+            let color = recordingCancelled ? UIColor.systemRed : accentColor
+            actionBackgroundView.setTintColor(color, alpha: 1)
+            // 原生玻璃的 tint 在 alpha 为 1 时仍可能被材质提亮；把实色放在按钮本身，
+            // 保证录音/发送态的白色符号不会落在白底上而消失。
+            actionButton.backgroundColor = color
             actionButton.tintColor = .white
         } else if hasText || hasMedia {
             imageName = "arrow.up"
             actionBackgroundView.setTintColor(accentColor, alpha: 1)
+            actionButton.backgroundColor = accentColor
             actionButton.tintColor = .white
         } else {
             imageName = "mic"
             actionBackgroundView.setTintColor(glassTintColor, alpha: 0.20)
+            actionButton.backgroundColor = .clear
             actionButton.tintColor = accentColor
         }
         actionButton.setImage(UIImage(systemName: imageName), for: .normal)

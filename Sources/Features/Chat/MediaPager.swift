@@ -1,84 +1,65 @@
 import SwiftUI
 import AVKit
 import AVFoundation
+import UIKit
 
+/// 沉浸式媒体浏览：不显示页码或工具栏，操作只在手势和长按菜单中出现。
 struct MediaPagerView: View {
-    let messages: [ChatMessage]
+    let items: [MediaBrowserItem]
     @Binding var selectedId: String?
 
+    @EnvironmentObject private var favorites: MediaFavoriteStore
+    @GestureState private var dismissTranslation: CGSize = .zero
     @State private var saving = false
     @State private var toast: String?
 
+    init(messages: [ChatMessage], selectedId: Binding<String?>) {
+        self.items = messages.compactMap(MediaBrowserItem.init(message:))
+        _selectedId = selectedId
+    }
+
+    init(items: [MediaBrowserItem], selectedId: Binding<String?>) {
+        self.items = items
+        _selectedId = selectedId
+    }
+
     private var selection: Binding<String> {
         Binding(
-            get: { selectedId ?? messages.first?.id ?? "" },
+            get: { selectedId ?? items.first?.id ?? "" },
             set: { selectedId = $0 }
         )
     }
 
+    private var dismissProgress: CGFloat {
+        min(1, max(0, dismissTranslation.height / 260))
+    }
+
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black
+                .opacity(1 - dismissProgress * 0.72)
+                .ignoresSafeArea()
 
-            if messages.isEmpty {
+            if items.isEmpty {
                 Text("暂无媒体")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.white.opacity(0.72))
             } else {
                 TabView(selection: selection) {
-                    ForEach(messages) { message in
-                        MediaPage(message: message)
-                            .tag(message.id)
+                    ForEach(items) { item in
+                        MediaPage(
+                            item: item,
+                            isFavorite: favorites.contains(item),
+                            onSave: { save(item) },
+                            onToggleFavorite: { toggleFavorite(item) }
+                        )
+                        .tag(item.id)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
-            }
-
-            VStack {
-                HStack(spacing: 12) {
-                    Button {
-                        selectedId = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 42, height: 42)
-                            .background(.black.opacity(0.42), in: Circle())
-                    }
-
-                    Spacer()
-
-                    Text(positionText)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.86))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.black.opacity(0.38), in: Capsule())
-
-                    Spacer()
-
-                    Button {
-                        saveCurrent()
-                    } label: {
-                        Group {
-                            if saving {
-                                ProgressView()
-                                    .tint(.white)
-                            } else {
-                                Image(systemName: "square.and.arrow.down")
-                                    .font(.system(size: 17, weight: .semibold))
-                            }
-                        }
-                        .foregroundStyle(.white)
-                        .frame(width: 42, height: 42)
-                        .background(.black.opacity(0.42), in: Circle())
-                    }
-                    .disabled(saving || currentURL == nil)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-
-                Spacer()
+                .offset(y: max(0, dismissTranslation.height))
+                .scaleEffect(1 - dismissProgress * 0.08)
+                .simultaneousGesture(dismissGesture)
             }
 
             if let toast {
@@ -95,32 +76,30 @@ struct MediaPagerView: View {
                 .transition(.opacity)
             }
         }
+        .preferredColorScheme(.dark)
     }
 
-    private var currentMessage: ChatMessage? {
-        guard let selectedId else { return messages.first }
-        return messages.first { $0.id == selectedId } ?? messages.first
+    private var dismissGesture: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .updating($dismissTranslation) { value, state, _ in
+                guard value.translation.height > 0,
+                      abs(value.translation.height) > abs(value.translation.width) else { return }
+                state = value.translation
+            }
+            .onEnded { value in
+                guard value.translation.height > 110,
+                      abs(value.translation.height) > abs(value.translation.width) else { return }
+                selectedId = nil
+            }
     }
 
-    private var currentURL: URL? { currentMessage?.mediaURL }
-
-    private var positionText: String {
-        guard let currentMessage, let index = messages.firstIndex(where: { $0.id == currentMessage.id }) else {
-            return "0/0"
-        }
-        return "\(index + 1)/\(messages.count)"
-    }
-
-    private func saveCurrent() {
-        guard let currentMessage, let url = currentURL else { return }
+    private func save(_ item: MediaBrowserItem) {
+        guard let url = item.mediaURL, !saving else { return }
         saving = true
         Task {
-            let success: Bool
-            if currentMessage.type == "video" {
-                success = await MediaSaver.saveVideo(from: url)
-            } else {
-                success = await MediaSaver.saveImage(from: url)
-            }
+            let success = item.isVideo
+                ? await MediaSaver.saveVideo(from: url)
+                : await MediaSaver.saveImage(from: url)
             await MainActor.run {
                 saving = false
                 showToast(success ? "已保存到相册" : "保存失败")
@@ -128,11 +107,17 @@ struct MediaPagerView: View {
         }
     }
 
+    private func toggleFavorite(_ item: MediaBrowserItem) {
+        let added = favorites.toggle(item)
+        Haptics.light()
+        showToast(added ? "已收藏" : "已取消收藏")
+    }
+
     private func showToast(_ text: String) {
         withAnimation(DS.Anim.ease) {
             toast = text
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
             guard toast == text else { return }
             withAnimation(DS.Anim.ease) {
                 toast = nil
@@ -140,43 +125,42 @@ struct MediaPagerView: View {
         }
     }
 }
-struct MediaPage: View {
-    let message: ChatMessage
+
+private struct MediaPage: View {
+    let item: MediaBrowserItem
+    let isFavorite: Bool
+    let onSave: () -> Void
+    let onToggleFavorite: () -> Void
 
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                if message.type == "video", let url = mediaURL {
+                if item.isVideo, let url = item.mediaURL {
                     VideoPlayer(player: AVPlayer(url: url))
                         .frame(width: geometry.size.width, height: geometry.size.height)
-                } else if let url = mediaURL {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .empty:
-                            ProgressView()
-                                .tint(.white)
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFit()
-                                .frame(maxWidth: geometry.size.width, maxHeight: geometry.size.height)
-                        case .failure:
-                            failedView
-                        @unknown default:
-                            failedView
-                        }
-                    }
+                } else if let url = item.mediaURL {
+                    ZoomableRemoteImage(url: url, size: geometry.size)
                 } else {
                     failedView
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .contentShape(Rectangle())
+            .contextMenu {
+                Button {
+                    onSave()
+                } label: {
+                    Label("下载", systemImage: "arrow.down.to.line")
+                }
+                Button {
+                    onToggleFavorite()
+                } label: {
+                    Label(isFavorite ? "取消收藏" : "收藏", systemImage: isFavorite ? "heart.slash" : "heart")
+                }
+            }
         }
         .ignoresSafeArea()
     }
-
-    private var mediaURL: URL? { message.mediaURL }
 
     private var failedView: some View {
         VStack(spacing: 10) {
@@ -188,6 +172,57 @@ struct MediaPage: View {
         .foregroundStyle(.white.opacity(0.72))
     }
 }
+
+private struct ZoomableRemoteImage: View {
+    let url: URL
+    let size: CGSize
+
+    @State private var settledScale: CGFloat = 1
+    @GestureState private var magnification: CGFloat = 1
+
+    private var scale: CGFloat {
+        min(4, max(1, settledScale * magnification))
+    }
+
+    var body: some View {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .empty:
+                ProgressView().tint(.white)
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: size.width, maxHeight: size.height)
+                    .scaleEffect(scale)
+                    .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.86), value: scale)
+                    .gesture(magnifyGesture)
+                    .onTapGesture(count: 2) {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                            settledScale = settledScale > 1 ? 1 : 2
+                        }
+                    }
+            case .failure:
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.white.opacity(0.72))
+            @unknown default:
+                EmptyView()
+            }
+        }
+    }
+
+    private var magnifyGesture: some Gesture {
+        MagnificationGesture()
+            .updating($magnification) { value, state, _ in
+                state = value
+            }
+            .onEnded { value in
+                settledScale = min(4, max(1, settledScale * value))
+            }
+    }
+}
+
 enum MediaSaver {
     static func saveImage(from url: URL) async -> Bool {
         do {

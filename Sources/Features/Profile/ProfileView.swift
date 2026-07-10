@@ -203,6 +203,13 @@ struct ProfileView: View {
                 settingRowLabel(icon: "internaldrive", title: "存储空间", subtitle: "同步聊天记录 · 缓存管理")
             }
             .buttonStyle(PressableStyle())
+            divider
+            NavigationLink {
+                FavoriteMediaView()
+            } label: {
+                settingRowLabel(icon: "heart", title: "收藏", subtitle: "聊天图片与视频")
+            }
+            .buttonStyle(PressableStyle())
         }
         .padding(.vertical, 6)
         .dsCard()
