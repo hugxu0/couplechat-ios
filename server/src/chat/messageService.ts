@@ -77,16 +77,10 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
     let attachmentURL: string | null = input.url ?? null;
     let upload: UploadRow | undefined;
     if (requiresUpload) {
-      upload = input.uploadId
-        ? await db.get<UploadRow>(
-          "SELECT * FROM uploads WHERE id = ? AND owner = ? FOR UPDATE",
-          [input.uploadId, user.username],
-        )
-        // 兼容尚未升级的 iOS：它没有 uploadId，但也只能使用自己上传过的 URL。
-        : await db.get<UploadRow>(
-          "SELECT * FROM uploads WHERE owner = ? AND url = ? FOR UPDATE",
-          [user.username, input.url],
-        );
+      upload = await db.get<UploadRow>(
+        "SELECT * FROM uploads WHERE id = ? AND owner = ? FOR UPDATE",
+        [input.uploadId, user.username],
+      );
       if (!upload) throw new Error("upload_not_found");
       if (upload.message_id) throw new Error("upload_already_attached");
       if (input.url && input.url !== upload.url) throw new Error("upload_url_mismatch");

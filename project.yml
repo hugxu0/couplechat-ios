@@ -22,8 +22,8 @@ targets:
       path: Sources/App/Info.plist
       properties:
         CFBundleDisplayName: 悄悄话
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.2.0"
+        CFBundleVersion: "2"
         UILaunchScreen: {}
         NSCameraUsageDescription: 用于拍摄并上传头像
         NSPhotoLibraryAddUsageDescription: 保存聊天图片和视频到相册

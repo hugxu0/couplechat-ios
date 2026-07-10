@@ -32,7 +32,7 @@ export const sendMessageSchema = z.object({
   channel: clientChannelSchema.default("couple"),
   type: z.enum(["text", "image", "video", "sticker", "voice", "file"]).default("text"),
   text: z.string().max(8_000).default(""),
-  // url 由服务端按 uploadId 回填，客户端传它只用于兼容旧版本及交叉校验。
+  // url 仅用于交叉校验；服务端最终使用 uploadId 对应记录中的 URL。
   url: z.string().url().max(2_000).optional(),
   uploadId: z.string().regex(/^up_[A-Za-z0-9_-]{8,}$/).optional(),
   replyTo: z.string().min(1).max(128).optional(),
@@ -42,8 +42,7 @@ export const sendMessageSchema = z.object({
   clientId: z.string().min(1).max(128).optional(),
 }).superRefine((value, ctx) => {
   const requiresUpload = ["image", "video", "voice", "file"].includes(value.type);
-  // 新客户端必须发 uploadId；保留 url 是为了让旧版客户端可按“当前用户拥有的上传记录”安全回填。
-  if (requiresUpload && !value.uploadId && !value.url) {
+  if (requiresUpload && !value.uploadId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uploadId"], message: "upload_reference_required" });
   }
   if (!requiresUpload && value.uploadId) {

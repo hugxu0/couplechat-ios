@@ -49,6 +49,22 @@ Base URL 示例：`https://hoo66.top`
 { "username": "xu", "name": "小旭" }
 ```
 
+### `GET /api/bootstrap`
+
+鉴权：`Authorization: Bearer <token>`
+
+首次登录和恢复会话的有界快照。固定返回账号、每频道最近最多 40 条消息、已读状态和归一化后的共享状态。Socket 不再发送初始化快照。
+
+### `GET /api/messages`
+
+鉴权：`Authorization: Bearer <token>`
+
+Query：`channel=couple|ai`，以及可选的 `since`、`after`、`before`、`around`、`limit`（最大 300）。响应：
+
+```json
+{ "ok": true, "list": [], "total": 389059 }
+```
+
 ### `POST /api/me/push/bark`
 
 鉴权：`Authorization: Bearer <token>`
@@ -135,7 +151,7 @@ Base URL 示例：`https://hoo66.top`
 
 `multipart/form-data`，字段名不限，单文件，最大 50MB。
 
-新版客户端必须标明 `purpose`。未传时按 `legacy` 兼容；只有 `purpose=message` 且超过 24 小时仍未绑定消息的文件会被定时清理，头像、贴纸和旧客户端上传不会误删。
+客户端必须标明 `purpose=message|avatar|sticker`。只有 `purpose=message` 且超过 24 小时仍未绑定消息的文件会被定时清理，头像和贴纸不会误删。
 
 支持 MIME：
 
@@ -284,35 +300,10 @@ io("https://hoo66.top", {
 
 AI 私聊频道输入中指示（仅 `ai:<username>` room，payload 为 `boolean`）。
 
-#### `read:init`
-
-```json
-{ "channel": "couple", "state": { "xu": 1710000000000 } }
-```
-
 #### `read:update`
 
 ```json
 { "channel": "couple", "user": "xu", "ts": 1710000000000 }
-```
-
-#### `shared:init`
-
-连接时服务端主动推送全量 shared 状态。客户端也可 emit `shared:init` 请求刷新，Ack 为 `{ ok, state }`。
-
-```json
-{
-  "dates": {
-    "value": { "togetherSince": "2020-01-01" },
-    "updatedBy": "xu",
-    "updatedAt": 1710000000000
-  },
-  "anniversaries": {
-    "value": { "items": [] },
-    "updatedBy": "si",
-    "updatedAt": 1710000000000
-  }
-}
 ```
 
 常用 key（客户端约定，服务端只存 JSON blob）：
@@ -373,7 +364,7 @@ Ack：
 { "ok": true, "id": "msg_xxx", "message": { "id": "msg_xxx", "clientId": "tmp-xxx", "ts": 1710000000000, "...": "完整消息" } }
 ```
 
-新版客户端直接使用 ACK 中的完整 `message` 替换乐观气泡；旧客户端可继续只读取 `id`。
+客户端使用 ACK 中的完整 `message` 替换乐观气泡。
 
 媒体消息先走 `/api/upload`，再发送：
 
@@ -387,26 +378,7 @@ Ack：
 }
 ```
 
-新版 `image` / `video` / `voice` / `file` 必须携带 `uploadId`。服务端会校验该上传记录归当前用户所有、尚未绑定到其他消息，并以记录中的 URL 为准；为了滚动升级，旧版仅传 URL 时也只会匹配当前用户自己的上传记录。`clientId` 可安全地用于重试。
-
-#### `messages:fetch`
-
-```json
-{ "channel": "couple", "limit": 80 }
-```
-
-支持：
-
-- `since`: 拉取指定时间戳之后的增量
-- `after` + `before`: 拉取时间范围内的消息（包含 `after`，不包含 `before`）
-- `before`: 上滑加载更早
-- `around`: 跳转到某个时间附近
-
-Ack：
-
-```json
-{ "ok": true, "list": [], "replace": true }
-```
+`image` / `video` / `voice` / `file` 必须携带 `uploadId`。服务端会校验该上传记录归当前用户所有、尚未绑定到其他消息，并以记录中的 URL 为准；`clientId` 可安全地用于重试。
 
 #### `messages:search`
 

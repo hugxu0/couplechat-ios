@@ -210,12 +210,12 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 | 事件 | iOS |
 |---|---|
 | `message:send` / `message:new` | ✅ |
-| `messages:fetch` / `messages:search` | ✅ |
+| `GET /api/bootstrap` / `GET /api/messages` / `messages:search` | ✅ |
 | `message:recall` / `message:recalled` | ✅ |
 | `message:update` / `action:confirm` | ✅ AI 确认卡 |
-| `read` / `read:init` / `read:update` | ✅ |
+| `read` / `read:update` | ✅ |
 | `presence` / `away` / `health` | ✅ |
-| `shared:init/update/set` | ✅ |
+| `shared:update/set` | ✅ |
 | `ai:typing` | ✅ |
 | `personalItem:changed` | ✅ 共享提醒刷新 |
 

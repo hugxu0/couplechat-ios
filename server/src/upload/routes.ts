@@ -25,8 +25,7 @@ const allowedMime = new Set([
 ]);
 
 const uploadQuerySchema = z.object({
-  // legacy 保证旧客户端滚动升级安全；只有明确标记为 message 的未绑定上传会被定期清理。
-  purpose: z.enum(["message", "avatar", "sticker", "legacy"]).default("legacy"),
+  purpose: z.enum(["message", "avatar", "sticker"]),
 });
 
 function extensionFor(mimeType: string) {

@@ -2,8 +2,10 @@
 
 本项目优先保证聊天、离线缓存和服务端数据的一致性；新功能应在既有边界内扩展，而不是直接跨层读写状态。
 
-## 1. 实时协议
+## 1. 启动同步与实时协议
 
+- 首次登录/恢复会话通过鉴权 REST `GET /api/bootstrap` 获取固定上限快照；Socket 连接回调禁止加载历史或推送初始化大包。
+- 历史分页、日期跳转和全量同步统一使用 `GET /api/messages`。Socket 只承载新消息、在线状态、已读和共享状态增量。
 - 服务端 Socket.IO 事件名、Zod 校验和推导类型统一维护在 `server/src/contracts/realtime.ts`。
 - iOS 事件名和可编码请求体统一维护在 `Sources/Core/SocketContract.swift`。
 - 新增或修改 Socket 字段时，必须同时更新两份契约、`server/docs/API.md` 和至少一条冒烟测试断言。
@@ -12,7 +14,7 @@
 ## 2. 异步加载
 
 - 只要需要网络结果，API 就必须是 `async`，不能“发请求后立即返回本地空值”。
-- 消息列表先读本地 SQLite，再按需从 Socket 补齐；网络返回后统一通过 `MessageStore.upsertBatch` 写入内存与本地库。
+- 消息列表先读本地 SQLite，再按需从 REST 分页补齐；网络数据使用后台 SQLite 事务落盘，主线程只接收有界列表快照。
 - UIKit/SwiftUI 只负责触发和渲染，历史加载、分页、重试逻辑留在 `MessageStore`。
 
 ## 3. 本地 SQLite

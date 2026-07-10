@@ -89,12 +89,6 @@ async function main() {
       "媒体消息要求 uploadId",
       !sendMessageSchema.safeParse({ channel: "couple", type: "image", text: "[图片]" }).success,
     );
-    assertOk(
-      "旧版媒体 URL 在滚动升级期间兼容",
-      sendMessageSchema.safeParse({
-        channel: "couple", type: "image", text: "[图片]", url: "https://example.com/uploads/up_legacy.jpg",
-      }).success,
-    );
 
     // AI 可靠性：超时必须发兜底；队列过载必须保留最新请求而不是静默丢弃。
     const { ReplyQueue, runReplyTaskWithTimeout } = await import("../src/ai/replyEngine");
@@ -208,18 +202,7 @@ async function main() {
       "撤回媒体消息同时删除附件",
       recalledMedia?.id === media.id && !recalledUpload && !fs.existsSync(mediaPath),
     );
-    const legacyUploadId = "up_smoke_legacy_123";
-    const legacyUploadURL = "https://example.com/uploads/up_smoke_legacy_123.jpg";
-    await db.run(
-      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [legacyUploadId, user.username, "/tmp/up_smoke_legacy_123.jpg", legacyUploadURL, "image/jpeg", 123, Date.now()],
-    );
-    const legacyMedia = await createMessage(user, {
-      channel: "couple", type: "image", text: "[图片]", url: legacyUploadURL, clientId: "smoke-legacy-media-1",
-    });
-    assertOk("旧版媒体按 owner + url 安全绑定", legacyMedia.url === legacyUploadURL);
-
-    // 只清理明确用于消息且超过 24h 仍未绑定的文件；头像/贴纸/旧客户端上传不误删。
+    // 只清理明确用于消息且超过 24h 仍未绑定的文件；头像/贴纸不误删。
     const abandonedPath = path.join(dataDir, "abandoned-message.jpg");
     const avatarPath = path.join(dataDir, "keep-avatar.jpg");
     fs.writeFileSync(abandonedPath, "abandoned");
