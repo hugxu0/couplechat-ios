@@ -144,4 +144,47 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertNotNil(url)
         XCTAssertTrue(url?.absoluteString.contains("hoo66.top") ?? false)
     }
+
+    func testAttachmentAlbumAndLivePhotoPairParsing() {
+        let dict: [String: Any] = [
+            "id": "msg_album",
+            "sender": "xu",
+            "senderName": "小旭",
+            "kind": "user",
+            "type": "image",
+            "text": "周末",
+            "url": "/media/up_photo",
+            "channel": "couple",
+            "ts": 1_710_000_000_000,
+            "attachments": [
+                ["id": "up_photo", "assetId": "asset1", "role": "photo", "order": 0,
+                 "url": "/media/up_photo", "mimeType": "image/jpeg", "size": 100],
+                ["id": "up_motion", "assetId": "asset1", "role": "pairedVideo", "order": 0,
+                 "url": "/media/up_motion", "mimeType": "video/quicktime", "size": 200],
+                ["id": "up_photo2", "assetId": "asset2", "role": "photo", "order": 1,
+                 "url": "/media/up_photo2", "mimeType": "image/jpeg", "size": 120],
+            ],
+        ]
+        let message = ChatMessage(dict: dict)
+        XCTAssertEqual(message?.attachments?.count, 3)
+        XCTAssertEqual(MediaBrowserItem.items(for: message!).count, 2)
+        XCTAssertTrue(MediaBrowserItem.items(for: message!).first?.isLivePhoto == true)
+    }
+
+    func testInteractionMetaTakesPriorityOverLegacyText() {
+        let dict: [String: Any] = [
+            "id": "msg_fx",
+            "sender": "si",
+            "senderName": "小偲",
+            "kind": "user",
+            "type": "text",
+            "text": "兼容正文",
+            "channel": "couple",
+            "ts": 1_710_000_000_000,
+            "meta": ["interaction": ["id": "fx1", "kind": "flower", "text": "🌸 送你一朵花花"]],
+        ]
+        let payload = ChatMessage(dict: dict)?.interactionPayload
+        XCTAssertEqual(payload?.id, "fx1")
+        XCTAssertEqual(payload?.kind, .flower)
+    }
 }

@@ -16,6 +16,8 @@ struct MediaPagerView: View {
     @State private var toast: String?
     @State private var closingProgress: CGFloat = 0
     @State private var closingOffset: CGFloat = 0
+    @State private var appeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(messages: [ChatMessage], selectedId: Binding<String?>) {
         self.items = messages.flatMap(MediaBrowserItem.items(for:))
@@ -51,7 +53,7 @@ struct MediaPagerView: View {
     var body: some View {
         ZStack {
             Color.black
-                .opacity(Double(CGFloat(1) - dismissProgress))
+                .opacity(appeared ? Double(CGFloat(1) - dismissProgress) : 0)
                 .ignoresSafeArea()
 
             if items.isEmpty {
@@ -77,7 +79,8 @@ struct MediaPagerView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .offset(y: dismissOffset)
                 .scaleEffect(CGFloat(1) - dismissProgress * 0.12)
-                .opacity(Double(CGFloat(1) - dismissProgress * 0.76))
+                .scaleEffect(appeared ? 1 : (reduceMotion ? 1 : 0.92))
+                .opacity(appeared ? Double(CGFloat(1) - dismissProgress * 0.76) : 0)
                 .simultaneousGesture(dismissGesture)
                 .task(id: selectedId) {
                     prefetchAroundSelection()
@@ -102,6 +105,9 @@ struct MediaPagerView: View {
         .onAppear {
             closingProgress = 0
             closingOffset = 0
+            withAnimation(reduceMotion ? .easeOut(duration: 0.14) : .spring(response: 0.34, dampingFraction: 0.88)) {
+                appeared = true
+            }
         }
     }
 

@@ -116,6 +116,8 @@ struct IncomingInteractionOverlay: View {
         ZStack {
             Color.clear
 
+            signatureEffect(in: size)
+
             ForEach(0..<(reduceMotion ? 7 : 26), id: \.self) { index in
                 Text(effectEmoji)
                     .font(.system(size: CGFloat(20 + (index % 4) * 8)))
@@ -149,6 +151,44 @@ struct IncomingInteractionOverlay: View {
             .opacity(appeared ? 1 : 0)
         }
         .background(effectColor.opacity(appeared ? 0.10 : 0))
+    }
+
+    @ViewBuilder
+    private func signatureEffect(in size: CGSize) -> some View {
+        switch payload.kind {
+        case .pat:
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .stroke(effectColor.opacity(appeared ? 0 : 0.52), lineWidth: 5 - CGFloat(index))
+                    .frame(width: 90, height: 90)
+                    .scaleEffect(appeared ? 2.8 + CGFloat(index) * 0.5 : 0.35)
+                    .animation(.easeOut(duration: 1.05).delay(Double(index) * 0.12), value: appeared)
+            }
+        case .miss:
+            Image(systemName: "heart.fill")
+                .font(.system(size: 180, weight: .black))
+                .foregroundStyle(effectColor.opacity(appeared ? 0.08 : 0))
+                .scaleEffect(appeared ? 1.18 : 0.5)
+                .blur(radius: 2)
+        case .flower:
+            Circle()
+                .fill(effectColor.opacity(appeared ? 0.14 : 0))
+                .frame(width: min(size.width, size.height) * 0.72)
+                .blur(radius: 24)
+                .scaleEffect(appeared ? 1 : 0.35)
+        case .poop:
+            HStack(spacing: 34) {
+                Text("💩").rotationEffect(.degrees(-18))
+                Text("💩").offset(y: -38)
+                Text("💩").rotationEffect(.degrees(18))
+            }
+            .font(.system(size: 42))
+            .offset(y: appeared ? 150 : size.height * 0.55)
+            .opacity(appeared ? 0.72 : 0)
+            .animation(.spring(response: 0.58, dampingFraction: 0.55), value: appeared)
+        case .note:
+            EmptyView()
+        }
     }
 
     private func noteLayer(in size: CGSize) -> some View {

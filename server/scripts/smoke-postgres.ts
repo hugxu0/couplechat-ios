@@ -204,6 +204,45 @@ async function main() {
       "撤回媒体消息同时删除附件",
       recalledMedia?.id === media.id && !recalledUpload && !fs.existsSync(mediaPath),
     );
+
+    // 相册/Live Photo：一条逻辑消息原子绑定静态图与 paired video，撤回整组清理。
+    const albumPhotoId = "up_smoke_album_photo";
+    const albumMotionId = "up_smoke_album_motion";
+    const albumPhotoPath = path.join(dataDir, "smoke-album.jpg");
+    const albumMotionPath = path.join(dataDir, "smoke-album.mov");
+    fs.writeFileSync(albumPhotoPath, "photo");
+    fs.writeFileSync(albumMotionPath, "motion");
+    await db.run(
+      `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        albumPhotoId, user.username, albumPhotoPath, "https://example.com/album.jpg", "image/jpeg", 5, Date.now(), "message",
+        albumMotionId, user.username, albumMotionPath, "https://example.com/album.mov", "video/quicktime", 6, Date.now(), "message",
+      ],
+    );
+    const album = await createMessage(user, {
+      channel: "couple", type: "image", text: "[实况照片]", clientId: "smoke-album-1",
+      attachments: [
+        { assetId: "asset_live_1", role: "photo", uploadId: albumPhotoId, order: 0 },
+        { assetId: "asset_live_1", role: "pairedVideo", uploadId: albumMotionId, order: 0 },
+      ],
+    });
+    const albumBindings = await db.all<{ message_id: string }>(
+      "SELECT message_id FROM uploads WHERE id IN (?, ?) ORDER BY id", [albumPhotoId, albumMotionId],
+    );
+    assertOk(
+      "相册消息原子绑定多附件",
+      album.attachments?.length === 2 && album.url === "https://example.com/album.jpg" &&
+        albumBindings.length === 2 && albumBindings.every((row) => row.message_id === album.id),
+    );
+    await recallMessage(user, album.id);
+    const remainingAlbumUploads = await db.all<{ id: string }>(
+      "SELECT id FROM uploads WHERE id IN (?, ?)", [albumPhotoId, albumMotionId],
+    );
+    assertOk(
+      "撤回相册消息清理整组附件",
+      remainingAlbumUploads.length === 0 && !fs.existsSync(albumPhotoPath) && !fs.existsSync(albumMotionPath),
+    );
     // 只清理明确用于消息且超过 24h 仍未绑定的文件；头像/贴纸不误删。
     const abandonedPath = path.join(dataDir, "abandoned-message.jpg");
     const avatarPath = path.join(dataDir, "keep-avatar.jpg");

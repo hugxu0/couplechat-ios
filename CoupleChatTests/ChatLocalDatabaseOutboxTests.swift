@@ -44,4 +44,21 @@ final class ChatLocalDatabaseOutboxTests: XCTestCase {
         ChatLocalDatabase.shared.deletePendingOutbound(clientId: item.clientId)
         XCTAssertNil(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId))
     }
+
+    func testAlbumAttachmentOutboxRoundTrip() {
+        let username = "album-outbox-test-\(UUID().uuidString)"
+        XCTAssertTrue(ChatLocalDatabase.shared.open(username: username))
+        databaseURL = ChatLocalDatabase.shared.currentDatabaseURL
+        let attachment = PendingOutboundAttachment(
+            assetId: "asset-1", role: "photo", order: 0,
+            localFilePath: "/tmp/album.jpg", mimeType: "image/jpeg",
+            uploadId: "up_12345678", uploadURL: "/media/up_12345678")
+        let item = PendingOutboundMessage(
+            clientId: "tmp-album", channel: "couple", type: "image", text: "[实况照片]",
+            replyTo: nil, replyPreview: nil, localFilePath: nil, mimeType: nil,
+            uploadId: nil, uploadURL: nil, createdAt: 1_710_000_000_000,
+            attempts: 0, lastError: nil, attachments: [attachment])
+        XCTAssertTrue(ChatLocalDatabase.shared.upsertPendingOutbound(item))
+        XCTAssertEqual(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId), item)
+    }
 }
