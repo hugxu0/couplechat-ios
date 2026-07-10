@@ -30,8 +30,7 @@ final class CoupleDatesTests: XCTestCase {
         let dateString = formatter.string(from: thirtyDaysAgo)
 
         let days = CoupleDates.daysSince(dateString)
-        XCTAssertNotNil(days)
-        XCTAssertEqual(days, 30, accuracy: 1)
+        XCTAssertEqual(days, 30)
     }
 
     func testDaysSinceNilDate() {
@@ -47,7 +46,6 @@ final class CoupleDatesTests: XCTestCase {
         let dateString = formatter.string(from: tomorrow)
 
         let days = CoupleDates.daysUntil(dateString)
-        XCTAssertNotNil(days)
-        XCTAssertEqual(days, 1, accuracy: 1)
+        XCTAssertEqual(days, 1)
     }
 }
