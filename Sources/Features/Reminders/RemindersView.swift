@@ -435,32 +435,7 @@ private struct PersonalItemCard: View {
     }
 
     private var displayMarkdown: String {
-        guard item.kind == .memo else { return item.bodyMarkdown }
-        var lines = item.bodyMarkdown.components(separatedBy: .newlines)
-        while lines.first?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { lines.removeFirst() }
-        if let first = lines.first?.trimmingCharacters(in: .whitespaces),
-           first.hasPrefix("# "), normalized(first.dropFirst(2)) == normalized(item.title) {
-            lines.removeFirst()
-        }
-        while lines.first?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { lines.removeFirst() }
-        if let first = lines.first?.trimmingCharacters(in: .whitespacesAndNewlines), isDuplicateDateLine(first) {
-            lines.removeFirst()
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private func normalized<S: StringProtocol>(_ value: S) -> String {
-        String(value).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    private func isDuplicateDateLine(_ line: String) -> Bool {
-        let date = Date(timeIntervalSince1970: Double(item.updatedAt) / 1000)
-        return ["yyyy年M月d日", "yyyy-MM-dd", "yyyy/MM/dd"].contains { format in
-            let formatter = DateFormatter()
-            formatter.dateFormat = format
-            let value = formatter.string(from: date)
-            return line == value || line == "更新于 \(value)" || line == "日期：\(value)"
-        }
+        MemoDisplayFormatter.body(for: item)
     }
 }
 

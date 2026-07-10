@@ -10,7 +10,7 @@ import { requireAuth } from "../auth/httpAuth";
 import { signedMediaURL } from "./mediaAccess";
 
 const allowedMime = new Set([
-  "image/jpeg", "image/png", "image/gif", "image/webp",
+  "image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif",
   "video/mp4", "video/quicktime",
   "audio/m4a", "audio/x-m4a", "audio/mp4", "audio/aac",
   "application/pdf", "application/zip", "application/x-zip-compressed",
@@ -34,6 +34,8 @@ function extensionFor(mimeType: string) {
     case "image/png": return ".png";
     case "image/gif": return ".gif";
     case "image/webp": return ".webp";
+    case "image/heic": return ".heic";
+    case "image/heif": return ".heif";
     case "video/mp4": return ".mp4";
     case "video/quicktime": return ".mov";
     case "audio/m4a": case "audio/x-m4a": case "audio/mp4": case "audio/aac": return ".m4a";
@@ -77,6 +79,7 @@ function hasExpectedSignature(filePath: string, mimeType: string): boolean {
   if (mimeType === "image/png") return bytesRead >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   if (mimeType === "image/gif") return ascii.startsWith("GIF87a") || ascii.startsWith("GIF89a");
   if (mimeType === "image/webp") return ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP";
+  if (mimeType === "image/heic" || mimeType === "image/heif") return ascii.slice(4, 8) === "ftyp";
   if (mimeType === "video/mp4" || mimeType === "video/quicktime") return ascii.slice(4, 8) === "ftyp";
   if (mimeType === "application/pdf") return ascii.startsWith("%PDF-");
   if (isZipBased) return bytesRead >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b && [0x03, 0x05, 0x07].includes(buffer[2]);

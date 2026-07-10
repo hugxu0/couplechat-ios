@@ -452,6 +452,10 @@ final class ChatViewController: UIViewController {
         guard collectionView != nil else { return }
         let wasNearLatestBottom = isNearBottom() && isNearLatestWindow()
         let oldAnchor = visibleTimelineAnchor()
+        let wasShowingAIActivity = timelineItems.contains { item in
+            if case .message(let id) = item { return id.hasPrefix("__ai_activity__") }
+            return false
+        }
         let oldLastMessageId = lastMessageId(in: timelineItems)
         let oldMessageCount = messageCount(in: timelineItems)
         timelineItems = makeTimelineItems()
@@ -480,7 +484,8 @@ final class ChatViewController: UIViewController {
            indexPath(forItemId: anchor.itemId) != nil {
             restoreTimelineAnchor(anchor)
             pendingTopAnchor = nil
-        } else if wasNearLatestBottom && oldLastMessageId != newLastMessageId && newMessageCount > oldMessageCount {
+        } else if wasNearLatestBottom && oldLastMessageId != newLastMessageId &&
+                    (newMessageCount > oldMessageCount || wasShowingAIActivity) {
             scrollToBottom(animated: animated)
         }
         scheduleInitialTimelinePositioning()

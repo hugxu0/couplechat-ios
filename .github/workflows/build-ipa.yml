@@ -31,8 +31,11 @@ jobs:
 
       - name: Select Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.app
+          XCODE_PATH=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' ! -name '*beta*' | sort -V | tail -1)
+          test -n "$XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH"
           xcodebuild -version
+          xcodebuild -showsdks
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -81,6 +84,7 @@ jobs:
 
       - name: Run iOS unit tests
         run: |
+          set -o pipefail
           DEVICE_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for runtime in d.values() for x in runtime if x["name"].startswith("iPhone")))')
           xcodebuild test \
             -project "$PROJECT" \
@@ -91,6 +95,7 @@ jobs:
 
       - name: Archive
         run: |
+          set -o pipefail
           xcodebuild archive \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
@@ -116,6 +121,7 @@ jobs:
       - name: Export IPA
         if: steps.sign.outputs.SIGNING_STYLE == 'automatic'
         run: |
+          set -o pipefail
           mkdir -p "$EXPORT_DIR"
           xcodebuild -exportArchive \
             -archivePath "$ARCHIVE_PATH" \
