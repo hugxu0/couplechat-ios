@@ -82,8 +82,8 @@ struct StorageView: View {
                     connectionBadge
                 }
 
-                if store.auth.recoveredLocalCache {
-                    Label("检测到旧缓存异常，已安全隔离并新建本地数据库。云端记录可重新同步。", systemImage: "wrench.and.screwdriver.fill")
+                if !store.localCacheAvailable {
+                    Label("本地缓存暂不可用，当前仍可使用云端聊天。", systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 12))
                         .foregroundStyle(Color.orange)
                 }
@@ -155,12 +155,12 @@ struct StorageView: View {
                 Button { runFullSync() } label: {
                     Label("同步全部聊天记录", systemImage: "arrow.triangle.2.circlepath")
                 }
-                .disabled(!store.connected)
+                .disabled(!store.loggedIn)
 
                 Button { runCacheImages() } label: {
                     Label("下载全部聊天图片", systemImage: "icloud.and.arrow.down")
                 }
-                .disabled(!store.connected)
+                .disabled(!store.loggedIn)
             }
         } header: {
             Text("本地同步")
@@ -270,7 +270,7 @@ struct StorageView: View {
     }
 
     private func runFullSync() {
-        guard !operation.isRunning, store.connected else { return }
+        guard !operation.isRunning, store.loggedIn else { return }
         statusText = nil
         statusIsError = false
         operationTask = Task {
@@ -302,7 +302,7 @@ struct StorageView: View {
     }
 
     private func runCacheImages() {
-        guard !operation.isRunning, store.connected else { return }
+        guard !operation.isRunning, store.loggedIn else { return }
         statusText = nil
         statusIsError = false
         operationTask = Task {

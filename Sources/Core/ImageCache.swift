@@ -1,5 +1,6 @@
 import UIKit
 import CryptoKit
+import ImageIO
 
 // 全 App 共用的图片缓存：内存（NSCache）+ 磁盘（Caches/MediaCache）。
 // 头像、聊天图片都走这里，避免每次滚动 / 进页面重复下载。
@@ -12,6 +13,8 @@ final class ImageCache {
     private let fileManager = FileManager.default
     let directory: URL
     private let ioQueue = DispatchQueue(label: "image-cache-io", qos: .utility)
+    private static let maxDownloadBytes: Int64 = 25 * 1024 * 1024
+    private static let maxDecodedPixelSize = 2_400
 
     private init() {
         let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -50,8 +53,8 @@ final class ImageCache {
         // 直接后台解码才能让点开本人刚发的图立即看到原图。
         if url.isFileURL {
             let decoded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
-                guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return nil }
-                return image.preparingForDisplay() ?? image
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return Self.decodeForDisplay(data)
             }.value
             if let decoded {
                 memory.setObject(decoded, forKey: url.absoluteString as NSString)
@@ -62,18 +65,22 @@ final class ImageCache {
         let file = fileURL(for: url)
         // 磁盘命中：后台读 + 解码
         if let decoded = await Task.detached(priority: .utility) { () -> UIImage? in
-            guard let data = try? Data(contentsOf: file), let img = UIImage(data: data) else { return nil }
-            return img.preparingForDisplay() ?? img
+            guard let data = try? Data(contentsOf: file) else { return nil }
+            return Self.decodeForDisplay(data)
         }.value {
             memory.setObject(decoded, forKey: url.absoluteString as NSString)
             return decoded
         }
 
         // 网络：下载后仍在后台解码
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              Int64(data.count) <= Self.maxDownloadBytes else { return nil }
         let prepared = await Task.detached(priority: .utility) { () -> UIImage? in
-            guard let img = UIImage(data: data) else { return nil }
-            return img.preparingForDisplay() ?? img
+            Self.decodeForDisplay(data)
         }.value
         guard let prepared else { return nil }
         memory.setObject(prepared, forKey: url.absoluteString as NSString)
@@ -89,7 +96,7 @@ final class ImageCache {
 
     /// 已经拿到 Data（比如自己刚上传的图）时直接落缓存，省一次下载。
     func store(data: Data, image: UIImage? = nil, for url: URL) {
-        let img = image ?? UIImage(data: data)
+        let img = image ?? Self.decodeForDisplay(data)
         if let img { memory.setObject(img, forKey: url.absoluteString as NSString) }
         let file = fileURL(for: url)
         ioQueue.async {
@@ -127,5 +134,18 @@ final class ImageCache {
                 try? fileManager.removeItem(at: directory.appendingPathComponent(name))
             }
         }
+    }
+
+    private static func decodeForDisplay(_ data: Data) -> UIImage? {
+        guard Int64(data.count) <= maxDownloadBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDecodedPixelSize,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage).preparingForDisplay() ?? UIImage(cgImage: cgImage)
     }
 }

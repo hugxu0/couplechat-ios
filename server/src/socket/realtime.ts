@@ -3,7 +3,6 @@ import { verifyToken } from "../auth/token";
 import type { AuthUser, ClientChannel } from "../types";
 import {
   confirmActionSchema,
-  fetchMessagesSchema,
   readReceiptSchema,
   recallMessageSchema,
   searchMessagesSchema,
@@ -12,17 +11,14 @@ import {
   socketEvents,
 } from "../contracts/realtime";
 import {
-  countMessages,
   createMessage,
-  fetchMessages,
-  getReadReceipts,
   recallMessage,
   searchMessages,
   upsertReadReceipt,
 } from "../chat/messageService";
 import { handleUserMessage } from "../ai/aiService";
 import { confirmAction } from "../ai/actionService";
-import { getSharedState, setSharedItem } from "../shared/sharedService";
+import { setSharedItem } from "../shared/sharedService";
 import {
   broadcastPresence,
   markConnected,
@@ -61,19 +57,13 @@ export function registerRealtime(io: Server) {
     next();
   });
 
-  io.on("connection", async (socket) => {
+  io.on("connection", (socket) => {
     const user = userFrom(socket);
     socket.join("channel:couple");
     socket.join(`user:${user.username}`);
 
     markConnected(user, socket.id);
     broadcastPresence(io);
-
-    socket.emit(socketEvents.readInit, {
-      channel: "couple",
-      state: await getReadReceipts(user, "couple"),
-    });
-    socket.emit(socketEvents.sharedInit, await getSharedState());
 
     socket.on("disconnect", () => {
       markDisconnected(user, socket.id);
@@ -88,17 +78,6 @@ export function registerRealtime(io: Server) {
       setAway(user, Boolean(away));
       broadcastPresence(io);
     });
-
-    socket.on(socketEvents.messagesFetch, (payload: unknown, ack?: Ack) =>
-      safeAck(async () => {
-        const input = fetchMessagesSchema.parse(payload ?? {});
-        const [list, total] = await Promise.all([
-          fetchMessages(user, input),
-          countMessages(user, input.channel),
-        ]);
-        return { ok: true, list, total, replace: !input.since && !input.after && !input.before };
-      }, ack),
-    );
 
     socket.on(socketEvents.messagesSearch, (payload: unknown, ack?: Ack) =>
       safeAck(async () => {
@@ -145,10 +124,6 @@ export function registerRealtime(io: Server) {
         });
       });
     });
-
-    socket.on(socketEvents.sharedInit, (_payload?: unknown, ack?: Ack) =>
-      safeAck(async () => ({ ok: true, state: await getSharedState() }), ack),
-    );
 
     socket.on(socketEvents.sharedSet, (payload: unknown, ack?: Ack) =>
       safeAck(async () => {

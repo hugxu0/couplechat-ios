@@ -6,4 +6,5 @@ protocol SocketProvider: AnyObject {
     var socket: SocketIOClient? { get }
     var isConnected: Bool { get }
     var sessionUsername: String? { get }
+    var currentSession: Session? { get }
 }

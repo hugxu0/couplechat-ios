@@ -11,7 +11,7 @@ function parse(value: string): unknown {
 
 export async function getSharedState() {
   const rows = await all<SharedItemRow>("SELECT * FROM shared_items ORDER BY key ASC");
-  return Object.fromEntries(
+  const state = Object.fromEntries(
     rows.map((row) => [
       row.key,
       {
@@ -20,7 +20,65 @@ export async function getSharedState() {
         updatedAt: row.updated_at,
       },
     ]),
-  );
+  ) as Record<string, { value: unknown; updatedBy: string; updatedAt: number }>;
+
+  // 将旧网页端的聚合键在 API 边界归一化为原生客户端模型；数据库原值保留，便于审计。
+  const avatars = state.avatars?.value;
+  if (avatars && typeof avatars === "object" && !Array.isArray(avatars)) {
+    for (const [username, url] of Object.entries(avatars as Record<string, unknown>)) {
+      if (typeof url === "string" && !state[`avatar_${username}`]) {
+        state[`avatar_${username}`] = { ...state.avatars, value: { url } };
+      }
+    }
+  }
+
+  const statuses = state.statuses?.value;
+  if (!state.chat_statuses && statuses && typeof statuses === "object" && !Array.isArray(statuses)) {
+    const normalized = Object.fromEntries(
+      Object.entries(statuses as Record<string, unknown>).flatMap(([username, value]) => {
+        if (typeof value === "string") return [[username, value]];
+        if (value && typeof value === "object" && typeof (value as Record<string, unknown>).text === "string") {
+          return [[username, (value as Record<string, unknown>).text as string]];
+        }
+        return [];
+      }),
+    );
+    state.chat_statuses = { ...state.statuses, value: normalized };
+  }
+
+  const legacyAnniversaries = Array.isArray(state.anniversaries?.value)
+    ? state.anniversaries.value as Array<Record<string, unknown>>
+    : null;
+  if (legacyAnniversaries) {
+    const items = legacyAnniversaries.flatMap((item, index) => {
+      const title = typeof item.title === "string" ? item.title : typeof item.name === "string" ? item.name : null;
+      const date = typeof item.date === "string" ? item.date : null;
+      if (!title || !date) return [];
+      return [{
+        id: typeof item.id === "string" ? item.id : `legacy-${index}`,
+        title,
+        date,
+        direction: item.direction === "down" || item.mode === "countdown" ? "down" : "up",
+        icon: typeof item.icon === "string" ? item.icon : "heart",
+      }];
+    });
+    state.anniversaries = { ...state.anniversaries, value: { items } };
+
+    if (!state.dates) {
+      const lastMeet = items.find((item) => item.title.includes("见面"))?.date;
+      const lastFight = items.find((item) => item.title.includes("吵架"))?.date;
+      state.dates = {
+        ...state.anniversaries,
+        value: {
+          together: typeof state.loveDate?.value === "string" ? state.loveDate.value : undefined,
+          lastMeet,
+          lastFight,
+        },
+      };
+    }
+  }
+
+  return state;
 }
 
 export async function setSharedItem(user: AuthUser, key: string, value: unknown) {

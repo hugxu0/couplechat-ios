@@ -8,14 +8,12 @@ final class ChatLocalDatabase {
     private(set) var currentDatabaseURL: URL?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private let databaseLock = NSRecursiveLock()
-    private(set) var lastOpenRecoveredCache = false
 
     private init() {}
 
     func open(username: String) -> Bool {
         databaseLock.lock()
         defer { databaseLock.unlock() }
-        lastOpenRecoveredCache = false
         if db != nil { close() }
         let fileManager = FileManager.default
         let appSupportDirs = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -232,44 +230,6 @@ final class ChatLocalDatabase {
         return columns
     }
 
-    /// 打开失败时保留原数据库副本并创建干净缓存。聊天真源在服务器，
-    /// 因此损坏的本地缓存不应该阻止 App 启动；副本仍留在磁盘便于诊断/恢复。
-    func openRecoveringIfNeeded(username: String) -> Bool {
-        if open(username: username) { return true }
-
-        databaseLock.lock()
-        defer { databaseLock.unlock() }
-        let fileManager = FileManager.default
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let directory = appSupport.appendingPathComponent("ChatCache", isDirectory: true)
-        let safeUsername = username
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        let databaseURL = directory.appendingPathComponent("\(safeUsername).sqlite")
-        let stamp = Int(Date().timeIntervalSince1970)
-
-        var movedAnyFile = false
-        for suffix in ["", "-wal", "-shm"] {
-            let source = URL(fileURLWithPath: databaseURL.path + suffix)
-            guard fileManager.fileExists(atPath: source.path) else { continue }
-            let destination = URL(fileURLWithPath: databaseURL.path + ".recovered-\(stamp)" + suffix)
-            do {
-                try fileManager.moveItem(at: source, to: destination)
-                movedAnyFile = true
-            } catch {
-                print("[ChatLocalDatabase] ⚠️ 无法隔离异常缓存: \(error.localizedDescription)")
-                return false
-            }
-        }
-
-        guard open(username: username) else { return false }
-        lastOpenRecoveredCache = movedAnyFile
-        if movedAnyFile {
-            print("[ChatLocalDatabase] 已隔离异常缓存并创建新数据库")
-        }
-        return true
-    }
-    
     private func schemaVersion() -> Int32 {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &stmt, nil) == SQLITE_OK else { return 0 }

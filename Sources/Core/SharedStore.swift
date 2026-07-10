@@ -95,6 +95,7 @@ final class SharedStore: ObservableObject {
 
     func applySharedInit(_ state: [String: Any]) {
         sharedState = state
+        var persisted: [(String, String, String, Double)] = []
         for (key, val) in state {
             if let dict = val as? [String: Any],
                let value = dict["value"],
@@ -102,7 +103,13 @@ final class SharedStore: ObservableObject {
                let valueJson = String(data: valueData, encoding: .utf8) {
                 let updatedBy = dict["updatedBy"] as? String ?? ""
                 let updatedAt = (dict["updatedAt"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
-                ChatLocalDatabase.shared.saveSharedState(key: key, valueJson: valueJson, updatedBy: updatedBy, updatedAt: updatedAt)
+                persisted.append((key, valueJson, updatedBy, updatedAt))
+            }
+        }
+        Task.detached(priority: .utility) {
+            for row in persisted {
+                ChatLocalDatabase.shared.saveSharedState(
+                    key: row.0, valueJson: row.1, updatedBy: row.2, updatedAt: row.3)
             }
         }
     }

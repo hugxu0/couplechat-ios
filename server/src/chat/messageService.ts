@@ -1,12 +1,19 @@
 import fs from "node:fs/promises";
 import { nanoid } from "nanoid";
 import { all, get, run, transaction, type MessageRow, type ReadReceiptRow, type UploadRow } from "../db";
-import type { FetchMessagesPayload, SendMessagePayload } from "../contracts/realtime";
+import type { SendMessagePayload } from "../contracts/realtime";
 import type { AuthUser, ClientChannel, ClientMessage, MessageKind, MessageType, StoredChannel } from "../types";
 import { toClientChannel, toStoredChannel } from "../types";
 
 export type SendMessageInput = SendMessagePayload;
-export type FetchMessagesInput = FetchMessagesPayload;
+export interface FetchMessagesInput {
+  channel: ClientChannel;
+  since?: number;
+  after?: number;
+  before?: number;
+  around?: number;
+  limit?: number;
+}
 
 function safeJson(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -211,10 +218,7 @@ export async function createAiMessage(channel: StoredChannel, text: string, meta
 
 export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
   const storedChannel = toStoredChannel(input.channel, user.username);
-  const requestedLimit = Math.min(Math.max(input.limit ?? 80, 1), 300);
-  // 旧版 iOS 自动补同步固定请求 100 条，并逐条在主线程提交 SQLite；
-  // 大迁移后的首次连接可能触发 watchdog。仅对该旧请求形状限流，300 条手动全量同步不受影响。
-  const limit = requestedLimit === 100 ? 30 : requestedLimit;
+  const limit = Math.min(Math.max(input.limit ?? 80, 1), 300);
 
   if (input.after !== undefined && input.before !== undefined) {
     const rows = await all<MessageRow>(

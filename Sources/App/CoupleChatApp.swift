@@ -32,7 +32,7 @@ struct CoupleChatApp: App {
             .tint(theme.accent.color)
             .task {
                 guard !bootstrapped else { return }
-                store.bootstrap()
+                await store.bootstrap()
                 try? await Task.sleep(nanoseconds: 650_000_000)
                 await MainActor.run {
                     withAnimation(.easeOut(duration: 0.24)) {

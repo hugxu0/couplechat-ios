@@ -20,6 +20,12 @@ final class MessageStore: ObservableObject {
         let error: String?
     }
 
+    private struct LocalCacheSnapshot {
+        let messagesByChannel: [String: [ChatMessage]]
+        let readStates: [String: [String: Double]]
+        let pending: [PendingOutboundMessage]
+    }
+
     enum UploadPurpose: String {
         case message
         case avatar
@@ -32,7 +38,6 @@ final class MessageStore: ObservableObject {
     @Published var aiReplying = false
     @Published private var loadingOlderChannels = Set<String>()
     @Published private var loadingNewerChannels = Set<String>()
-    private var syncingHistoryChannels = Set<String>()
 
     /// 消息解析计数：帮助追踪静默丢弃的消息
     private static var parseFailureCount: Int = 0
@@ -151,17 +156,28 @@ final class MessageStore: ObservableObject {
 
     // MARK: - 本地缓存
 
-    func restoreLocalCache(for session: Session) {
+    func restoreLocalCache(for session: Session) async {
         restoringCache = true
-        migrateLegacyCacheIfNeeded(for: session)
-        messagesByChannel[ChatChannel.couple.rawValue] = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.couple.rawValue, limit: 50)
-        messagesByChannel[ChatChannel.ai.rawValue] = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.ai.rawValue, limit: 50)
-        readStates = [
-            ChatChannel.couple.rawValue: ChatLocalDatabase.shared.loadReadReceipts(channel: ChatChannel.couple.rawValue),
-            ChatChannel.ai.rawValue: ChatLocalDatabase.shared.loadReadReceipts(channel: ChatChannel.ai.rawValue),
-        ]
+        let snapshot = await Task.detached(priority: .utility) {
+            LocalCacheSnapshot(
+                messagesByChannel: [
+                    ChatChannel.couple.rawValue: ChatLocalDatabase.shared.fetchLatestMessages(
+                        channel: ChatChannel.couple.rawValue, limit: 50),
+                    ChatChannel.ai.rawValue: ChatLocalDatabase.shared.fetchLatestMessages(
+                        channel: ChatChannel.ai.rawValue, limit: 50),
+                ],
+                readStates: [
+                    ChatChannel.couple.rawValue: ChatLocalDatabase.shared.loadReadReceipts(
+                        channel: ChatChannel.couple.rawValue),
+                    ChatChannel.ai.rawValue: ChatLocalDatabase.shared.loadReadReceipts(
+                        channel: ChatChannel.ai.rawValue),
+                ],
+                pending: ChatLocalDatabase.shared.loadPendingOutbounds())
+        }.value
+        messagesByChannel = snapshot.messagesByChannel
+        readStates = snapshot.readStates
         // 正式消息和待发消息分表存储；重启后把 outbox 重新投影成聊天气泡。
-        for item in ChatLocalDatabase.shared.loadPendingOutbounds() {
+        for item in snapshot.pending {
             let channel = ChatChannel(rawValue: item.channel) ?? .couple
             let optimistic = item.optimisticMessage(session: session)
             updateMessages(channel) { list in
@@ -173,21 +189,34 @@ final class MessageStore: ObservableObject {
         restoringCache = false
     }
 
-    private func migrateLegacyCacheIfNeeded(for session: Session) {
-        let existing = ChatLocalDatabase.shared.fetchLatestMessages(channel: ChatChannel.couple.rawValue, limit: 1)
-        guard existing.isEmpty,
-              let snapshot = LegacyCacheMigration.load(for: session.username) else { return }
-        for (_, list) in snapshot.messagesByChannel {
-            for msg in list where !msg.pending && !msg.failed {
-                ChatLocalDatabase.shared.insertMessage(msg)
+    func applyBootstrap(_ snapshot: AppBootstrapSnapshot, session: Session) async {
+        let remote = snapshot.messagesByChannel
+        let receipts = snapshot.readStates
+        await Task.detached(priority: .utility) {
+            for messages in remote.values {
+                _ = ChatLocalDatabase.shared.insertMessages(messages)
             }
-        }
-        for (channel, state) in snapshot.readStates {
-            for (user, ts) in state {
-                ChatLocalDatabase.shared.saveReadReceipt(channel: channel, username: user, ts: ts, updatedAt: snapshot.savedAt)
+            let now = Date().timeIntervalSince1970 * 1000
+            for (channel, state) in receipts {
+                for (username, ts) in state {
+                    ChatLocalDatabase.shared.saveReadReceipt(
+                        channel: channel, username: username, ts: ts, updatedAt: now)
+                }
             }
+        }.value
+
+        var next = remote
+        for item in ChatLocalDatabase.shared.loadPendingOutbounds() {
+            let channel = ChatChannel(rawValue: item.channel) ?? .couple
+            var list = next[channel.rawValue] ?? []
+            if !list.contains(where: { $0.id == item.clientId || $0.clientId == item.clientId }) {
+                list.append(item.optimisticMessage(session: session))
+                list.sort { $0.ts < $1.ts }
+            }
+            next[channel.rawValue] = list
         }
-        LegacyCacheMigration.clear(for: session.username)
+        messagesByChannel = next
+        readStates = receipts
     }
 
     // MARK: - 搜索跳转
@@ -215,7 +244,7 @@ final class MessageStore: ObservableObject {
             channel: channel.rawValue, fromInclusive: range.start, toExclusive: range.end, limit: 80)
         if dayMessages.isEmpty {
             let incoming = await fetchRemoteMessages(
-                MessageFetchRequest(channel: channel, after: range.start, before: range.end, limit: 80),
+                MessagePageRequest(channel: channel, after: range.start, before: range.end, limit: 80),
                 context: "ensureDate:\(channel.rawValue)")
             guard !incoming.isEmpty else { return nil }
             await upsertBatch(incoming, in: channel)
@@ -231,19 +260,32 @@ final class MessageStore: ObservableObject {
         return target
     }
 
-    private func fetchRemoteMessages(_ request: MessageFetchRequest, context: String) async -> [ChatMessage] {
-        guard let socket = socketProvider?.socket, socketProvider?.isConnected == true else { return [] }
-        let payload = SocketPayloadEncoder.encode(request)
-        return await withCheckedContinuation { continuation in
-            socket.emitWithAck(SocketEvent.messagesFetch.rawValue, payload).timingOut(after: 9) { data in
-                guard let dict = data.first as? [String: Any],
-                      let list = dict["list"] as? [[String: Any]] else {
-                    continuation.resume(returning: [])
-                    return
-                }
-                continuation.resume(returning: Self.parseMessages(list, context: context))
-            }
+    private func fetchRemoteMessages(_ request: MessagePageRequest, context: String) async -> [ChatMessage] {
+        guard let session = socketProvider?.currentSession else { return [] }
+        var components = URLComponents(
+            url: ServerConfig.baseURL.appendingPathComponent("api/messages"),
+            resolvingAgainstBaseURL: false)
+        var query = [
+            URLQueryItem(name: "channel", value: request.channel),
+            URLQueryItem(name: "limit", value: String(request.limit)),
+        ]
+        let optionalItems: [(String, Double?)] = [
+            ("since", request.since), ("after", request.after), ("before", request.before), ("around", request.around),
+        ]
+        for (name, value) in optionalItems {
+            if let value { query.append(URLQueryItem(name: name, value: String(value))) }
         }
+        components?.queryItems = query
+        guard let url = components?.url else { return [] }
+        var urlRequest = URLRequest(url: url)
+        urlRequest.timeoutInterval = 15
+        urlRequest.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await httpClient.data(for: urlRequest),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = root["list"] as? [[String: Any]] else { return [] }
+        return Self.parseMessages(list, context: context)
     }
 
     func ensureLocalMessages(_ channel: ChatChannel) {
@@ -257,29 +299,6 @@ final class MessageStore: ObservableObject {
         let knownIds = Set(local.map(\.id))
         updateMessages(channel) { list in
             list = local + pendingOrFailed.filter { !knownIds.contains($0.id) }
-        }
-    }
-
-    // MARK: - 历史同步
-
-    func syncHistory(_ channel: ChatChannel, roundsLeft: Int = 5) async {
-        guard !syncingHistoryChannels.contains(channel.rawValue) else { return }
-        syncingHistoryChannels.insert(channel.rawValue)
-        defer { syncingHistoryChannels.remove(channel.rawValue) }
-        await syncHistoryPages(channel, roundsLeft: roundsLeft)
-    }
-
-    private func syncHistoryPages(_ channel: ChatChannel, roundsLeft: Int) async {
-        guard socketProvider?.socket != nil, roundsLeft > 0 else { return }
-        let local = messages(for: channel)
-        let lastTs = local.last(where: { !$0.pending && !$0.failed })?.ts ?? 0
-        let limit = 50
-        let request = MessageFetchRequest(channel: channel, since: lastTs > 0 ? lastTs : nil, limit: limit)
-        let incoming = await fetchRemoteMessages(request, context: "syncHistory:\(channel.rawValue)")
-        await upsertBatch(incoming, in: channel)
-        if channel == .couple { markRead(.couple) }
-        if lastTs > 0, incoming.count >= limit {
-            await syncHistoryPages(channel, roundsLeft: roundsLeft - 1)
         }
     }
 
@@ -311,27 +330,13 @@ final class MessageStore: ObservableObject {
             loadingOlderChannels.remove(channel.rawValue)
             return
         }
-        guard let s = socketProvider?.socket, socketProvider?.isConnected == true else {
-            loadingOlderChannels.remove(channel.rawValue)
-            return
-        }
-        let older: [ChatMessage] = await withCheckedContinuation { continuation in
-            s.emitWithAck(
-                SocketEvent.messagesFetch.rawValue,
-                SocketPayloadEncoder.encode(MessageFetchRequest(channel: channel, before: firstTs, limit: limit)))
-                .timingOut(after: 9) { data in
-                    guard let dict = data.first as? [String: Any],
-                          let list = dict["list"] as? [[String: Any]] else {
-                        continuation.resume(returning: [])
-                        return
-                    }
-                    continuation.resume(returning: Self.parseMessages(list, context: "loadOlder:\(channel.rawValue)"))
-                }
-        }
+        let older = await fetchRemoteMessages(
+            MessagePageRequest(channel: channel, before: firstTs, limit: limit),
+            context: "loadOlder:\(channel.rawValue)")
         defer { loadingOlderChannels.remove(channel.rawValue) }
         guard !older.isEmpty else { return }
         await Task.detached(priority: .utility) {
-            for msg in older { ChatLocalDatabase.shared.insertMessage(msg) }
+            _ = ChatLocalDatabase.shared.insertMessages(older)
         }.value
         updateMessages(channel) { current in
             let known = Set(current.map(\.id))
@@ -361,27 +366,13 @@ final class MessageStore: ObservableObject {
             loadingNewerChannels.remove(channel.rawValue)
             return
         }
-        guard let s = socketProvider?.socket, socketProvider?.isConnected == true else {
-            loadingNewerChannels.remove(channel.rawValue)
-            return
-        }
-        let newer: [ChatMessage] = await withCheckedContinuation { continuation in
-            s.emitWithAck(
-                SocketEvent.messagesFetch.rawValue,
-                SocketPayloadEncoder.encode(MessageFetchRequest(channel: channel, since: lastTs, limit: limit)))
-                .timingOut(after: 9) { data in
-                    guard let dict = data.first as? [String: Any],
-                          let list = dict["list"] as? [[String: Any]] else {
-                        continuation.resume(returning: [])
-                        return
-                    }
-                    continuation.resume(returning: Self.parseMessages(list, context: "loadNewer:\(channel.rawValue)"))
-                }
-        }
+        let newer = await fetchRemoteMessages(
+            MessagePageRequest(channel: channel, since: lastTs, limit: limit),
+            context: "loadNewer:\(channel.rawValue)")
         defer { loadingNewerChannels.remove(channel.rawValue) }
         guard !newer.isEmpty else { return }
         await Task.detached(priority: .utility) {
-            for msg in newer { ChatLocalDatabase.shared.insertMessage(msg) }
+            _ = ChatLocalDatabase.shared.insertMessages(newer)
         }.value
         updateMessages(channel) { current in
             let known = Set(current.map(\.id))
@@ -651,10 +642,10 @@ final class MessageStore: ObservableObject {
         _ channel: ChatChannel,
         onProgress: @escaping (_ localCount: Int, _ remoteTotal: Int?) -> Void
     ) async -> HistorySyncResult {
-        guard let s = socketProvider?.socket, socketProvider?.isConnected == true else {
+        guard let session = socketProvider?.currentSession else {
             return HistorySyncResult(
                 localCount: ChatLocalDatabase.shared.messageCount(channel: channel.rawValue),
-                remoteTotal: nil, downloaded: 0, completed: false, error: "当前未连接服务器")
+                remoteTotal: nil, downloaded: 0, completed: false, error: "当前未登录")
         }
         // 以数据库最早记录作为断点，而不是内存中最近 50 条；重启后会从上次位置继续。
         var oldest = ChatLocalDatabase.shared.oldestMessageTimestamp(channel: channel.rawValue)
@@ -666,22 +657,8 @@ final class MessageStore: ObservableObject {
         let pageLimit = 300
         onProgress(localCount, nil)
         while !Task.isCancelled {
-            let page: HistoryPage = await withCheckedContinuation { cont in
-                let request = MessageFetchRequest(channel: channel, before: oldest, limit: pageLimit)
-                s.emitWithAck(SocketEvent.messagesFetch.rawValue, SocketPayloadEncoder.encode(request)).timingOut(after: 15) { data in
-                    guard let dict = data.first as? [String: Any],
-                           let list = dict["list"] as? [[String: Any]] else {
-                        let message = (data.first as? [String: Any])?["error"] as? String ?? "服务器响应超时"
-                        cont.resume(returning: HistoryPage(messages: [], total: nil, error: message))
-                        return
-                    }
-                    let total = (dict["total"] as? NSNumber)?.intValue ?? dict["total"] as? Int
-                    cont.resume(returning: HistoryPage(
-                        messages: Self.parseMessages(list, context: "syncAll:\(channel.rawValue)"),
-                        total: total,
-                        error: nil))
-                }
-            }
+            let page = await fetchHistoryPageREST(
+                channel: channel, before: oldest, limit: pageLimit, session: session)
             if let total = page.total { remoteTotal = total }
             onProgress(localCount, remoteTotal)
             if let error = page.error {
@@ -693,7 +670,10 @@ final class MessageStore: ObservableObject {
                 completed = true
                 break
             }
-            guard ChatLocalDatabase.shared.insertMessages(batch) == batch.count else {
+            let persisted = await Task.detached(priority: .utility) {
+                ChatLocalDatabase.shared.insertMessages(batch)
+            }.value
+            guard persisted == batch.count else {
                 lastError = "写入本地数据库失败"
                 break
             }
@@ -719,6 +699,40 @@ final class MessageStore: ObservableObject {
         return HistorySyncResult(
             localCount: localCount, remoteTotal: remoteTotal, downloaded: downloaded,
             completed: completed && lastError == nil, error: lastError)
+    }
+
+    private func fetchHistoryPageREST(
+        channel: ChatChannel, before: Double?, limit: Int, session: Session
+    ) async -> HistoryPage {
+        var components = URLComponents(
+            url: ServerConfig.baseURL.appendingPathComponent("api/messages"),
+            resolvingAgainstBaseURL: false)
+        var query = [
+            URLQueryItem(name: "channel", value: channel.rawValue),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        if let before { query.append(URLQueryItem(name: "before", value: String(before))) }
+        components?.queryItems = query
+        guard let url = components?.url else {
+            return HistoryPage(messages: [], total: nil, error: "同步地址无效")
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, response) = try await httpClient.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let rows = root["list"] as? [[String: Any]] else {
+                return HistoryPage(messages: [], total: nil, error: "服务器同步响应无效")
+            }
+            let total = (root["total"] as? NSNumber)?.intValue ?? root["total"] as? Int
+            return HistoryPage(
+                messages: Self.parseMessages(rows, context: "syncAllREST:\(channel.rawValue)"),
+                total: total, error: nil)
+        } catch {
+            return HistoryPage(messages: [], total: nil, error: error.localizedDescription)
+        }
     }
 
     func clearLocalHistory() {

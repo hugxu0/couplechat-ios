@@ -78,11 +78,7 @@ async function main() {
         migrations[2].version === 3 && migrations[2].name === "classify_upload_purpose",
     );
 
-    const { fetchMessagesSchema, readReceiptSchema } = await import("../src/contracts/realtime");
-    const rangeContract = fetchMessagesSchema.safeParse({
-      channel: "couple", after: 1, before: 2, limit: 80,
-    });
-    assertOk("Socket fetch 契约接受 after+before 范围", rangeContract.success);
+    const { readReceiptSchema } = await import("../src/contracts/realtime");
     const fractionalRead = readReceiptSchema.safeParse({ channel: "couple", ts: 1783653931714.444 });
     assertOk(
       "iOS 小数毫秒已读回执会归一化为 BIGINT",
@@ -274,13 +270,29 @@ async function main() {
       ],
     );
     const { buildApp } = await import("../src/app");
+    const { createToken } = await import("../src/auth/token");
     const app = await buildApp();
+    const authorization = `Bearer ${createToken(user)}`;
     const healthResponse = await app.inject({ method: "GET", url: "/health" });
+    const bootstrapResponse = await app.inject({
+      method: "GET", url: "/api/bootstrap", headers: { authorization },
+    });
+    const messagePageResponse = await app.inject({
+      method: "GET", url: "/api/messages?channel=couple&limit=20", headers: { authorization },
+    });
     const signedResponse = await app.inject({ method: "GET", url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search });
     const legacyRouteResponse = await app.inject({ method: "GET", url: `/uploads/${legacyRouteFilename}` });
     const invalidSignatureResponse = await app.inject({ method: "GET", url: `/media/${routeMediaId}?sig=invalid-signature-value-000000000000` });
     const bypassResponse = await app.inject({ method: "GET", url: `/uploads/${path.basename(routeMediaPath)}` });
     await app.close();
+    assertOk(
+      "REST bootstrap 与消息分页返回有界快照",
+      bootstrapResponse.statusCode === 200 &&
+        bootstrapResponse.json().messages.couple.length <= 40 &&
+        messagePageResponse.statusCode === 200 &&
+        messagePageResponse.json().list.length <= 20 &&
+        typeof messagePageResponse.json().total === "number",
+    );
     assertOk(
       "签名媒体路由拒绝伪造签名和裸路径旁路",
       healthResponse.statusCode === 200 && healthResponse.json().database === "ok" &&

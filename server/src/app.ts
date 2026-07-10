@@ -7,6 +7,7 @@ import { registerAuthRoutes } from "./auth/routes";
 import { registerUploadRoutes } from "./upload/routes";
 import { registerStatsRoutes } from "./stats/routes";
 import { registerPersonalItemRoutes } from "./personalItems/routes";
+import { registerSyncRoutes } from "./sync/routes";
 import { registerMediaAccessRoutes } from "./upload/mediaAccess";
 import { pingDatabase } from "./db";
 
@@ -40,6 +41,7 @@ export async function buildApp() {
   await registerUploadRoutes(app);
   await registerStatsRoutes(app);
   await registerPersonalItemRoutes(app);
+  await registerSyncRoutes(app);
 
   return app;
 }

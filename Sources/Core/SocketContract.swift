@@ -13,12 +13,9 @@ enum SocketEvent: String {
     case messageRecall = "message:recall"
     case messageRecalled = "message:recalled"
     case messageUpdate = "message:update"
-    case messagesFetch = "messages:fetch"
     case messagesSearch = "messages:search"
     case read
-    case readInit = "read:init"
     case readUpdate = "read:update"
-    case sharedInit = "shared:init"
     case sharedSet = "shared:set"
     case sharedUpdate = "shared:update"
     case actionConfirm = "action:confirm"
@@ -27,7 +24,7 @@ enum SocketEvent: String {
     case personalItemChanged = "personalItem:changed"
 }
 
-struct MessageFetchRequest: Encodable {
+struct MessagePageRequest {
     let channel: String
     let since: Double?
     let after: Double?

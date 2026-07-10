@@ -15,12 +15,9 @@ export const socketEvents = {
   messageRecall: "message:recall",
   messageRecalled: "message:recalled",
   messageUpdate: "message:update",
-  messagesFetch: "messages:fetch",
   messagesSearch: "messages:search",
   read: "read",
-  readInit: "read:init",
   readUpdate: "read:update",
-  sharedInit: "shared:init",
   sharedSet: "shared:set",
   sharedUpdate: "shared:update",
   actionConfirm: "action:confirm",
@@ -54,15 +51,6 @@ export const sendMessageSchema = z.object({
   }
 });
 
-export const fetchMessagesSchema = z.object({
-  channel: clientChannelSchema.default("couple"),
-  since: z.number().optional(),
-  after: z.number().optional(),
-  before: z.number().optional(),
-  around: z.number().optional(),
-  limit: z.number().int().min(1).max(300).optional(),
-});
-
 export const readReceiptSchema = z.object({
   channel: clientChannelSchema.default("couple"),
   // Swift 的 Date.timeIntervalSince1970 * 1000 可能带小数；PostgreSQL BIGINT
@@ -91,5 +79,4 @@ export const confirmActionSchema = z.object({
 });
 
 export type SendMessagePayload = z.infer<typeof sendMessageSchema>;
-export type FetchMessagesPayload = z.infer<typeof fetchMessagesSchema>;
 export type ReadReceiptPayload = z.infer<typeof readReceiptSchema>;

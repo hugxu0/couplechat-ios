@@ -37,6 +37,7 @@ final class ChatStore: ObservableObject {
     @Published private(set) var connectionState: RealtimeConnectionState = .disconnected
     @Published var partnerOnline = false
     @Published var lastConnectionError: String?
+    @Published private(set) var localCacheAvailable = true
 
     // 便捷访问（保持向后兼容）
     var session: Session? { auth.session }
@@ -59,9 +60,10 @@ final class ChatStore: ObservableObject {
     private var connectionAttemptInFlight = false
     /// 健康检查失败时的受控重连。手动 disconnect 不会触发 Socket.IO 自动重连，
     /// 因而必须在 disconnect 回调中明确重新握手。
-    private var reconnectAfterDisconnect = false
+    private let httpClient: any HTTPClient
     var isConnected: Bool { connected }
     var sessionUsername: String? { auth.session?.username }
+    var currentSession: Session? { auth.session }
 
     // MARK: - 统计/存储
 
@@ -165,6 +167,7 @@ final class ChatStore: ObservableObject {
     // MARK: - 初始化
 
     init(httpClient: any HTTPClient = URLSessionHTTPClient()) {
+        self.httpClient = httpClient
         auth = AuthStore(httpClient: httpClient)
         messageStore = MessageStore(httpClient: httpClient)
         shared = SharedStore(httpClient: httpClient)
@@ -175,24 +178,79 @@ final class ChatStore: ObservableObject {
 
     // MARK: - 启动
 
-    func bootstrap() {
-        auth.bootstrap()
-        guard let session = auth.session else { return }
-        messageStore.restoreLocalCache(for: session)
-        shared.restoreCachedSharedState()
-        auth.restoreCachedPartner()
-        connect()
+    func bootstrap() async {
+        guard let session = auth.savedSession() else { return }
+        localCacheAvailable = await openLocalDatabase(username: session.username)
+        if localCacheAvailable {
+            await messageStore.restoreLocalCache(for: session)
+            shared.restoreCachedSharedState()
+        }
+        do {
+            let snapshot = try await fetchBootstrap(session: session)
+            await messageStore.applyBootstrap(snapshot, session: session)
+            shared.applySharedInit(snapshot.sharedState)
+            auth.activate(session, accounts: snapshot.accounts, persist: false)
+            connect()
+        } catch BootstrapError.unauthorized {
+            auth.logout()
+        } catch {
+            // 已登录用户离线启动时仍可查看有界本地缓存；连接恢复后前台刷新会补最新快照。
+            auth.activate(session, accounts: [], persist: false)
+            auth.restoreCachedPartner()
+            connect()
+            lastConnectionError = error.localizedDescription
+        }
     }
 
     // MARK: - 登录/登出
 
     func login(username: String, password: String) async throws {
-        try await auth.login(username: username, password: password)
-        guard let session = auth.session else { return }
-        messageStore.restoreLocalCache(for: session)
-        shared.restoreCachedSharedState()
-        auth.resolvePartner()
+        let session = try await auth.authenticate(username: username, password: password)
+        localCacheAvailable = await openLocalDatabase(username: session.username)
+        let snapshot = try await fetchBootstrap(session: session)
+        await messageStore.applyBootstrap(snapshot, session: session)
+        shared.applySharedInit(snapshot.sharedState)
+        auth.activate(session, accounts: snapshot.accounts, persist: true)
         connect()
+    }
+
+    private func openLocalDatabase(username: String) async -> Bool {
+        await Task.detached(priority: .utility) {
+            ChatLocalDatabase.shared.open(username: username)
+        }.value
+    }
+
+    private func fetchBootstrap(session: Session) async throws -> AppBootstrapSnapshot {
+        var request = URLRequest(url: Self.baseURL.appendingPathComponent("api/bootstrap"))
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await httpClient.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw BootstrapError.invalidResponse }
+        if http.statusCode == 401 { throw BootstrapError.unauthorized }
+        guard (200..<300).contains(http.statusCode) else {
+            let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            throw BootstrapError.server(detail ?? "初始化失败（\(http.statusCode)）")
+        }
+        return try AppBootstrapSnapshot.decode(data)
+    }
+
+    @discardableResult
+    private func refreshBootstrap() async -> Bool {
+        guard let session = auth.session else { return false }
+        do {
+            let snapshot = try await fetchBootstrap(session: session)
+            await messageStore.applyBootstrap(snapshot, session: session)
+            shared.applySharedInit(snapshot.sharedState)
+            auth.activate(session, accounts: snapshot.accounts, persist: false)
+            lastConnectionError = nil
+            return true
+        } catch BootstrapError.unauthorized {
+            logout()
+            return false
+        } catch {
+            lastConnectionError = error.localizedDescription
+            return false
+        }
     }
 
     func logout() {
@@ -201,7 +259,6 @@ final class ChatStore: ObservableObject {
         socket = nil
         connected = false
         connectionAttemptInFlight = false
-        reconnectAfterDisconnect = false
         connectionState = .disconnected
         partnerOnline = false
         lastConnectionError = nil
@@ -242,9 +299,6 @@ final class ChatStore: ObservableObject {
                 self.connectionState = .connected
                 self.lastConnectionError = nil
                 self.reportAway(false)
-                await self.messageStore.syncHistory(.couple)
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                await self.messageStore.syncHistory(.ai)
                 if let session = self.auth.session {
                     self.messageStore.flushOutbox(session: session)
                 }
@@ -254,13 +308,6 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.connected = false
-                if self.reconnectAfterDisconnect {
-                    self.reconnectAfterDisconnect = false
-                    self.connectionAttemptInFlight = false
-                    self.connectionState = .reconnecting
-                    self.connect()
-                    return
-                }
                 guard self.auth.loggedIn else {
                     self.connectionAttemptInFlight = false
                     self.connectionState = .disconnected
@@ -292,10 +339,6 @@ final class ChatStore: ObservableObject {
                     self.messageStore.aiReplying = false
                 }
             }
-        }
-        s.on(SocketEvent.readInit.rawValue) { [weak self] data, _ in
-            guard let dict = data.first as? [String: Any] else { return }
-            Task { @MainActor in self?.handleReadInit(dict) }
         }
         s.on(SocketEvent.readUpdate.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
@@ -337,10 +380,6 @@ final class ChatStore: ObservableObject {
         }
 
         // 共享状态事件 -> SharedStore
-        s.on(SocketEvent.sharedInit.rawValue) { [weak self] data, _ in
-            guard let state = data.first as? [String: Any] else { return }
-            Task { @MainActor in self?.shared.applySharedInit(state) }
-        }
         s.on(SocketEvent.sharedUpdate.rawValue) { [weak self] data, _ in
             guard let update = data.first as? [String: Any] else { return }
             Task { @MainActor in self?.shared.applySharedUpdate(update) }
@@ -382,15 +421,6 @@ final class ChatStore: ObservableObject {
             connectionAttemptInFlight = true
             connectionState = .reconnecting
             lastConnectionError = nil
-        }
-    }
-
-    private func handleReadInit(_ dict: [String: Any]) {
-        if let state = dict["state"] as? [String: Any] {
-            let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "couple") ?? .couple
-            messageStore.setReadState(channel, state: state.compactMapValues { ($0 as? NSNumber)?.doubleValue })
-        } else {
-            messageStore.setReadState(.couple, state: dict.compactMapValues { ($0 as? NSNumber)?.doubleValue })
         }
     }
 
@@ -499,72 +529,22 @@ final class ChatStore: ObservableObject {
 
     func reportAway(_ away: Bool) { socket?.emit(SocketEvent.away.rawValue, away) }
 
-    private func reconnectAfterFailedHealthCheck() {
-        guard socket != nil else {
-            connectionAttemptInFlight = false
-            connect()
-            return
-        }
-        connected = false
-        connectionState = .reconnecting
-        reconnectAfterDisconnect = true
-        connectionAttemptInFlight = true
-        socket?.disconnect()
-    }
-
     func recoverOnForeground() {
         guard auth.session != nil else { return }
         reportAway(false)
-        guard connected else {
-            connect()
-            return
-        }
-        guard let s = socket else { return }
-        s.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 2.5) { [weak self] data in
-            Task { @MainActor in
-                guard let self else { return }
-                if data.first is [String: Any] {
-                    await self.messageStore.syncHistory(.couple)
-                    await self.messageStore.syncHistory(.ai)
-                    if let session = self.auth.session {
-                        self.messageStore.flushOutbox(session: session)
-                    }
-                } else {
-                    self.reconnectAfterFailedHealthCheck()
-                }
+        if !connected { connect() }
+        Task {
+            _ = await refreshBootstrap()
+            if connected, let session = auth.session {
+                messageStore.flushOutbox(session: session)
             }
         }
     }
 
     func refreshHomeData() async -> Bool {
         reportAway(false)
-        if !connected {
-            connect()
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-        guard connected else { return false }
-        guard let s = socket else { return false }
-        return await withCheckedContinuation { continuation in
-            s.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 2.5) { [weak self] data in
-                Task { @MainActor in
-                    guard let self else {
-                        continuation.resume(returning: false)
-                        return
-                    }
-                    let ok = data.first is [String: Any]
-                    if ok {
-                        await self.messageStore.syncHistory(.couple)
-                        await self.messageStore.syncHistory(.ai)
-                        if let session = self.auth.session {
-                            self.messageStore.flushOutbox(session: session)
-                        }
-                    } else {
-                        self.reconnectAfterFailedHealthCheck()
-                    }
-                    continuation.resume(returning: ok)
-                }
-            }
-        }
+        if !connected { connect() }
+        return await refreshBootstrap()
     }
 
     // REST 桥接
@@ -641,12 +621,7 @@ final class ChatStore: ObservableObject {
 
     func clearLocalHistory() {
         messageStore.clearLocalHistory()
-        if connected {
-            Task {
-                await messageStore.syncHistory(.couple, roundsLeft: 1)
-                await messageStore.syncHistory(.ai, roundsLeft: 1)
-            }
-        }
+        Task { _ = await refreshBootstrap() }
     }
 }
 

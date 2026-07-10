@@ -4,7 +4,6 @@ import Foundation
 @MainActor
 final class AuthStore: ObservableObject {
     @Published var session: Session?
-    @Published private(set) var recoveredLocalCache = false
     @Published private(set) var accounts: [Account] = []
     @Published var partner: Account? {
         didSet {
@@ -26,17 +25,13 @@ final class AuthStore: ObservableObject {
 
     // MARK: - 启动
 
-    func bootstrap() {
-        guard session == nil, let saved = Keychain.loadSession() else { return }
-        session = saved
-        _ = ChatLocalDatabase.shared.openRecoveringIfNeeded(username: saved.username)
-        recoveredLocalCache = ChatLocalDatabase.shared.lastOpenRecoveredCache
-    }
+    func savedSession() -> Session? { Keychain.loadSession() }
 
     // MARK: - 登录
 
-    func login(username: String, password: String) async throws {
+    func authenticate(username: String, password: String) async throws -> Session {
         var req = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/login"))
+        req.timeoutInterval = 15
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(["username": username, "password": password])
@@ -45,11 +40,14 @@ final class AuthStore: ObservableObject {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
             throw NSError(domain: "login", code: 1, userInfo: [NSLocalizedDescriptionKey: msg ?? "登录失败"])
         }
-        let s = try JSONDecoder().decode(Session.self, from: data)
-        Keychain.saveSession(s)
-        session = s
-        _ = ChatLocalDatabase.shared.openRecoveringIfNeeded(username: s.username)
-        recoveredLocalCache = ChatLocalDatabase.shared.lastOpenRecoveredCache
+        return try JSONDecoder().decode(Session.self, from: data)
+    }
+
+    func activate(_ newSession: Session, accounts: [Account], persist: Bool) {
+        if persist { Keychain.saveSession(newSession) }
+        session = newSession
+        self.accounts = accounts
+        partner = accounts.first { $0.username != newSession.username }
     }
 
     // MARK: - 登出
@@ -59,7 +57,6 @@ final class AuthStore: ObservableObject {
         session = nil
         partner = nil
         accounts = []
-        recoveredLocalCache = false
         ChatLocalDatabase.shared.close()
     }
 
