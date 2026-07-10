@@ -13,8 +13,6 @@ struct MediaPagerView: View {
     @GestureState private var dismissTranslation: CGSize = .zero
     @State private var saving = false
     @State private var toast: String?
-    @State private var closingProgress: CGFloat = 0
-    @State private var closingOffset: CGFloat = 0
     @State private var appeared = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -29,11 +27,11 @@ struct MediaPagerView: View {
     }
 
     private var dismissProgress: CGFloat {
-        max(closingProgress, min(1, max(0, dismissTranslation.height / 260)))
+        min(1, max(0, dismissTranslation.height / 260))
     }
 
     private var dismissOffset: CGFloat {
-        closingProgress > 0 ? closingOffset : max(0, dismissTranslation.height)
+        max(0, dismissTranslation.height)
     }
 
     private var selectedIndex: Int {
@@ -77,8 +75,6 @@ struct MediaPagerView: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .offset(y: dismissOffset)
-                .scaleEffect(CGFloat(1) - dismissProgress * 0.12)
-                .scaleEffect(appeared ? 1 : (reduceMotion ? 1 : 0.92))
                 .opacity(appeared ? Double(CGFloat(1) - dismissProgress * 0.76) : 0)
                 .simultaneousGesture(dismissGesture)
                 .task(id: selectedId) {
@@ -102,9 +98,7 @@ struct MediaPagerView: View {
         }
         .preferredColorScheme(.dark)
         .onAppear {
-            closingProgress = 0
-            closingOffset = 0
-            withAnimation(reduceMotion ? .easeOut(duration: 0.14) : .spring(response: 0.34, dampingFraction: 0.88)) {
+            withAnimation(.easeOut(duration: reduceMotion ? 0.10 : 0.16)) {
                 appeared = true
             }
         }
@@ -121,16 +115,15 @@ struct MediaPagerView: View {
             .onEnded { value in
                 guard (value.translation.height > 90 || value.predictedEndTranslation.height > 190),
                       abs(value.translation.height) > abs(value.translation.width) else { return }
-                dismiss(with: value.translation.height)
+                dismissPreview()
             }
     }
 
-    private func dismiss(with translation: CGFloat) {
-        closingOffset = max(translation, 150)
-        withAnimation(.spring(response: 0.26, dampingFraction: 0.88)) {
-            closingProgress = 1
+    private func dismissPreview() {
+        withAnimation(.easeOut(duration: 0.14)) {
+            appeared = false
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
             selectedId = nil
         }
     }

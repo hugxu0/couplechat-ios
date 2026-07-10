@@ -764,6 +764,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     func bubbleTargetedPreview() -> UITargetedPreview {
         let parameters = UIPreviewParameters()
         parameters.backgroundColor = .clear
+        // 系统上下文菜单的默认投影偶发会在收起快照后残留，气泡本身已有描边，
+        // 因此预览不再额外绘制阴影。
+        parameters.shadowPath = UIBezierPath()
         // 只让系统提升气泡。头像继续留在 collection cell 中，不参与坐标系转换，
         // 这样长按不会把整格内容与头像一起抖动或造成滚动位置跳变。
         parameters.visiblePath = UIBezierPath(

@@ -307,34 +307,47 @@ struct ChatHomeView: View {
 
     private func statusChip(_ status: StatusOption) -> some View {
         let selected = statusMap[myUsername] == status.title
-        return HStack(spacing: 6) {
-            if selected {
-                Circle()
-                    .fill(status.color)
-                    .frame(width: 6, height: 6)
+        return Button {
+            toggleStatus(status)
+        } label: {
+            HStack(spacing: 6) {
+                if selected {
+                    Circle()
+                        .fill(status.color)
+                        .frame(width: 6, height: 6)
+                }
+                Text(status.title)
+                    .lineLimit(1)
             }
-            Text(status.title)
-                .lineLimit(1)
-        }
-        .font(.system(size: 13, weight: .bold, design: .rounded))
-        .foregroundStyle(selected ? status.color : DS.Palette.textPrimary.opacity(0.72))
-        .padding(.horizontal, 14)
-        .frame(height: 36)
-        .background(
-            Capsule().fill(
-                selected
-                    ? AnyShapeStyle(status.color.opacity(0.14))
-                    : AnyShapeStyle(.white.opacity(0.52))
+            .font(.system(size: 13, weight: .bold, design: .rounded))
+            .foregroundStyle(selected ? status.color : DS.Palette.textPrimary.opacity(0.72))
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background(
+                Capsule().fill(
+                    selected
+                        ? AnyShapeStyle(status.color.opacity(0.14))
+                        : AnyShapeStyle(.white.opacity(0.52))
+                )
             )
-        )
-        .overlay(Capsule().stroke(selected ? status.color.opacity(0.22) : .white.opacity(0.72), lineWidth: 1))
-        .shadow(color: selected ? status.color.opacity(0.12) : .clear, radius: 7, y: 3)
-        .contentShape(Capsule())
-        .onTapGesture { toggleStatus(status) }
-        .onLongPressGesture(minimumDuration: 0.42) { beginEditingStatus(status) }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint("点按切换状态，长按编辑")
+            .overlay(Capsule().stroke(selected ? status.color.opacity(0.22) : .white.opacity(0.72), lineWidth: 1))
+            .shadow(color: selected ? status.color.opacity(0.12) : .clear, radius: 7, y: 3)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PressableStyle())
+        .contextMenu {
+            Button {
+                beginEditingStatus(status)
+            } label: {
+                Label("编辑状态", systemImage: "pencil")
+            }
+            Button(role: .destructive) {
+                deleteStatus(id: status.id)
+            } label: {
+                Label("删除状态", systemImage: "trash")
+            }
+        }
+        .accessibilityHint("点按切换状态，长按可编辑或删除")
     }
 
     private var actionStrip: some View {
