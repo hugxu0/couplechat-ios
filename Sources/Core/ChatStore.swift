@@ -339,6 +339,7 @@ final class ChatStore: ObservableObject {
             self.reconnectAttempt += 1
             let delay = min(5.0, pow(1.7, Double(self.reconnectAttempt)) * 0.35)
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            self.connectionAttemptInFlight = false
             self.connect()
         }
     }
@@ -347,6 +348,7 @@ final class ChatStore: ObservableObject {
         s.on(clientEvent: .connect) { [weak self] _, _ in
             Task { @MainActor in
                 guard let self else { return }
+                guard self.socket === s else { return }
                 self.connected = true
                 self.connectionAttemptInFlight = false
                 self.connectionState = .connected
@@ -362,6 +364,7 @@ final class ChatStore: ObservableObject {
         s.on(clientEvent: .disconnect) { [weak self] _, _ in
             Task { @MainActor in
                 guard let self else { return }
+                guard self.socket === s else { return }
                 self.connected = false
                 guard self.auth.loggedIn else {
                     self.connectionAttemptInFlight = false
@@ -374,10 +377,16 @@ final class ChatStore: ObservableObject {
             }
         }
         s.on(clientEvent: .error) { [weak self] data, _ in
-            Task { @MainActor in self?.handleSocketError(data) }
+            Task { @MainActor in
+                guard let self, self.socket === s else { return }
+                self.handleSocketError(data)
+            }
         }
         s.on(SocketEvent.connectError.rawValue) { [weak self] data, _ in
-            Task { @MainActor in self?.handleSocketError(data) }
+            Task { @MainActor in
+                guard let self, self.socket === s else { return }
+                self.handleSocketError(data)
+            }
         }
 
         // 消息事件 -> MessageStore
@@ -439,6 +448,7 @@ final class ChatStore: ObservableObject {
                 phase: phase)
             Task { @MainActor in
                 guard let self else { return }
+                guard self.socket === s else { return }
                 if activity.isVisible {
                     self.aiActivityByChannel[channel.rawValue] = activity
                 } else {

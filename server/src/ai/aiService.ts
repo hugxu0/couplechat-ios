@@ -111,9 +111,18 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
     if (!aiEnabled()) {
       // 配置缺失或部署切换期间，明确召唤也必须有反馈，不能静默。
       if (triggered) {
-        void sink.emit(storedChannel, fallbackReply(stripTrigger(message.text)), true).catch((error) => {
-          console.warn("[ai] couple 本地兜底发送失败:", error instanceof Error ? error.message : error);
-        });
+        const trigger = {
+          storedChannel, question: stripTrigger(message.text), requesterName: user.name,
+          requesterUsername: user.username, messageId: message.id,
+        };
+        sink.activity?.(trigger, "accepted");
+        sink.activity?.(trigger, "generating");
+        void sink.emit(storedChannel, fallbackReply(trigger.question), true)
+          .then(() => sink.activity?.(trigger, "finished"))
+          .catch((error) => {
+            sink.activity?.(trigger, "failed");
+            console.warn("[ai] couple 本地兜底发送失败:", error instanceof Error ? error.message : error);
+          });
       }
       return;
     }
@@ -138,10 +147,17 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
   // ai 私聊：每条文本 / 图片都答，不需要召唤。
   if (!aiEnabled()) {
     void (async () => {
+      const trigger = {
+        storedChannel, question: isText ? message.text.trim() : "", requesterName: user.name,
+        requesterUsername: user.username, messageId: message.id,
+      };
+      sink.activity?.(trigger, "accepted");
+      sink.activity?.(trigger, "generating");
       sink.typing(storedChannel, true);
       await new Promise((resolve) => setTimeout(resolve, 550));
       await sink.emit(storedChannel, fallbackReply(isText ? message.text.trim() : ""), true);
       sink.typing(storedChannel, false);
+      sink.activity?.(trigger, "finished");
     })().catch(() => {});
     return;
   }

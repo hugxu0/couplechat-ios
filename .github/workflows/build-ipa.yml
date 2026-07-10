@@ -132,10 +132,18 @@ jobs:
           path: ${{ env.EXPORT_DIR }}/*.ipa
           retention-days: 30
 
-      - name: Upload .app artifact (unsigned)
+      - name: Package unsigned IPA
+        if: steps.sign.outputs.SIGNING_STYLE != 'automatic'
+        run: |
+          mkdir -p "$EXPORT_DIR/Payload"
+          cp -R "$ARCHIVE_PATH/Products/Applications/CoupleChat.app" "$EXPORT_DIR/Payload/"
+          cd "$EXPORT_DIR"
+          zip -qry "CoupleChat-unsigned-${{ github.run_number }}.ipa" Payload
+
+      - name: Upload unsigned IPA artifact
         if: steps.sign.outputs.SIGNING_STYLE != 'automatic'
         uses: actions/upload-artifact@v4
         with:
           name: CoupleChat-unsigned-${{ github.run_number }}
-          path: ${{ env.ARCHIVE_PATH }}/Products/Applications/CoupleChat.app
-          retention-days: 7
+          path: ${{ env.EXPORT_DIR }}/CoupleChat-unsigned-${{ github.run_number }}.ipa
+          retention-days: 30
