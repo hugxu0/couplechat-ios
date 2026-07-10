@@ -6,6 +6,7 @@ struct AppBootstrapSnapshot {
     let readStates: [String: [String: Double]]
     let sharedState: [String: Any]
 
+    @MainActor
     static func decode(_ data: Data) throws -> AppBootstrapSnapshot {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               root["ok"] as? Bool == true else {
