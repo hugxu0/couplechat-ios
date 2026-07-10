@@ -211,9 +211,9 @@ struct ChatHomeView: View {
                     refreshingHome = true
                     pullProgress = 1
                     Task {
-                        let success = await store.refreshHomeData()
+                        let result = await store.refreshHomeData()
                         await MainActor.run {
-                            flashRefreshResult(success)
+                            flashRefreshResult(result)
                             refreshingHome = false
                             pullProgress = 0
                         }
@@ -282,7 +282,7 @@ struct ChatHomeView: View {
                                 .stroke(DS.Palette.pink.opacity(0.22), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
                         )
                 }
-                Text(store.partnerOnline ? "都在线" : "等 TA 出现")
+                Text(connectionSummary)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(DS.Palette.textSecondary)
             }
@@ -323,6 +323,21 @@ struct ChatHomeView: View {
                 }
                 .buttonStyle(PressableStyle())
 
+                if !statusEditMode {
+                    Button {
+                        Haptics.medium()
+                        withAnimation(DS.Anim.springFast) { statusEditMode = true }
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(DS.Palette.textSecondary)
+                            .frame(width: 34, height: 34)
+                            .background(DS.Palette.innerSurface, in: Capsule())
+                    }
+                    .buttonStyle(PressableStyle())
+                    .accessibilityLabel("管理状态")
+                }
+
                 if statusEditMode {
                     Button {
                         withAnimation(DS.Anim.springFast) { statusEditMode = false }
@@ -356,23 +371,31 @@ struct ChatHomeView: View {
     private func statusChip(_ status: StatusOption) -> some View {
         let selected = statusMap[myUsername] == status.title
         return ZStack(alignment: .topTrailing) {
-            Text(status.title)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(selected && !statusEditMode ? status.color : status.color)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule()
-                        .fill(
-                            selected && !statusEditMode
-                                ? AnyShapeStyle(status.color.opacity(0.18))
-                                : AnyShapeStyle(DS.Palette.innerSurface)
-                        )
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(selected && !statusEditMode ? status.color.opacity(0.28) : Color.clear, lineWidth: 1)
-                )
+            Button {
+                guard !statusEditMode else { return }
+                setStatus(status)
+            } label: {
+                Text(status.title)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(status.color)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule()
+                            .fill(
+                                selected && !statusEditMode
+                                    ? AnyShapeStyle(status.color.opacity(0.18))
+                                    : AnyShapeStyle(DS.Palette.innerSurface)
+                            )
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(selected && !statusEditMode ? status.color.opacity(0.28) : Color.clear, lineWidth: 1)
+                    )
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(PressableStyle())
+            .disabled(statusEditMode)
 
             if statusEditMode {
                 Button {
@@ -389,20 +412,6 @@ struct ChatHomeView: View {
                 .offset(x: 6, y: -7)
             }
         }
-        .contentShape(Capsule())
-        // 显式并行处理点击与长按，避免长按手势吞掉原有状态胶囊的点击。
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                guard !statusEditMode else { return }
-                setStatus(status)
-            }
-        )
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
-                Haptics.medium()
-                withAnimation(DS.Anim.springFast) { statusEditMode = true }
-            }
-        )
     }
 
     private var actionStrip: some View {
@@ -491,6 +500,13 @@ struct ChatHomeView: View {
         )
     }
 
+    private var connectionSummary: String {
+        if store.connectionState.isTransient { return "正在连接" }
+        if !store.connected { return "实时连接不可用" }
+        if !store.presenceKnown { return "正在获取在线状态" }
+        return store.partnerOnline ? "都在线" : "等 TA 出现"
+    }
+
     private var conversationWindowBackground: some View {
         ZStack(alignment: .bottomTrailing) {
             LinearGradient(
@@ -548,9 +564,10 @@ struct ChatHomeView: View {
 
     private func latestAvatar(for message: ChatMessage) -> some View {
         let mine = message.sender == store.session?.username
+        let username = mine ? myUsername : message.sender
         return AvatarBadge(
-            url: store.avatarURL(for: mine ? myUsername : partnerUsername),
-            fallbackEmoji: mine ? myAvatar : partnerAvatar,
+            url: store.avatarURL(for: username),
+            fallbackEmoji: store.avatarText(for: username),
             size: 31,
             background: .white.opacity(0.7))
     }
@@ -579,9 +596,15 @@ struct ChatHomeView: View {
     }
 
     /// 刷新结束后弹一条结果提示，1.8s 后自动消失（独立于下拉手势的生命周期）
-    private func flashRefreshResult(_ success: Bool) {
+    private func flashRefreshResult(_ result: HomeRefreshResult) {
         withAnimation(DS.Anim.ease) {
-            refreshMessage = success ? "已更新" : "刷新失败，稍后再试"
+            if result.dataUpdated && result.realtimeConnected {
+                refreshMessage = "已更新并连接"
+            } else if result.dataUpdated {
+                refreshMessage = "内容已更新，实时连接恢复中"
+            } else {
+                refreshMessage = "刷新失败，稍后再试"
+            }
         }
         Task {
             try? await Task.sleep(nanoseconds: 1_800_000_000)
@@ -609,8 +632,7 @@ struct ChatHomeView: View {
             showNotePrompt = true
             return
         }
-        let text = InteractionPayload.encode(kind: action.kind, text: action.message)
-        store.sendText(text, channel: .couple)
+        store.sendInteraction(kind: action.kind, text: action.message, channel: .couple)
         withAnimation(DS.Anim.springFast) { sentAction = action.id }
         Task {
             try? await Task.sleep(nanoseconds: 1_300_000_000)
@@ -626,13 +648,7 @@ struct ChatHomeView: View {
         let raw = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = raw.isEmpty ? Self.randomNoteText() : String(raw.prefix(36))
         let message = "🪧 \(body)"
-        store.setShared("screen_note", value: [
-            "id": UUID().uuidString,
-            "from": myUsername,
-            "fromName": myName,
-            "text": message,
-            "ts": Date().timeIntervalSince1970 * 1000,
-        ])
+        store.sendInteraction(kind: .note, text: message, channel: .couple)
         withAnimation(DS.Anim.springFast) { sentAction = "note" }
         noteText = ""
         Task {

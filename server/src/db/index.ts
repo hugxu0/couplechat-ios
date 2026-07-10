@@ -31,6 +31,7 @@ export interface MessageRow {
   url: string | null;
   reply_json: string | null;
   meta_json: string | null;
+  attachments_json: string | null;
   recalled_text: string | null;
   ts: number;
   client_id: string | null;
@@ -367,6 +368,26 @@ const schemaMigrations: SchemaMigration[] = [
     name: "preserve_recalled_text",
     sql: `
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS recalled_text TEXT;
+    `,
+  },
+  {
+    version: 5,
+    name: "message_attachments",
+    sql: `
+    DROP INDEX IF EXISTS uploads_message_id_idx;
+    CREATE INDEX IF NOT EXISTS uploads_message_id_idx ON uploads(message_id)
+      WHERE message_id IS NOT NULL;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachments_json TEXT;
+    CREATE TABLE IF NOT EXISTS message_attachments (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      upload_id TEXT NOT NULL UNIQUE REFERENCES uploads(id) ON DELETE CASCADE,
+      asset_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      sort_order INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS message_attachments_message_idx
+      ON message_attachments(message_id, sort_order);
     `,
   },
 ];

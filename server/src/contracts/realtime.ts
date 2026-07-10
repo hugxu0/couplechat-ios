@@ -23,10 +23,28 @@ export const socketEvents = {
   actionConfirm: "action:confirm",
   aiTyping: "ai:typing",
   aiReplying: "ai:replying",
+  aiActivity: "ai:activity",
   personalItemChanged: "personalItem:changed",
 } as const;
 
 export const clientChannelSchema = z.enum(["couple", "ai"]);
+
+const messageAttachmentSchema = z.object({
+  assetId: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/),
+  role: z.enum(["photo", "pairedVideo"]),
+  uploadId: z.string().regex(/^up_[A-Za-z0-9_-]{8,}$/),
+  order: z.number().int().min(0).max(8),
+});
+
+const interactionSchema = z.object({
+  id: z.string().min(1).max(64),
+  kind: z.enum(["miss", "pat", "flower", "poop", "note"]),
+  text: z.string().max(200),
+});
+
+const messageMetaSchema = z.object({
+  interaction: interactionSchema.optional(),
+}).passthrough();
 
 export const sendMessageSchema = z.object({
   channel: clientChannelSchema.default("couple"),
@@ -38,10 +56,39 @@ export const sendMessageSchema = z.object({
   replyTo: z.string().min(1).max(128).optional(),
   replyPreview: z.string().max(500).optional(),
   reply: z.unknown().optional(),
-  meta: z.unknown().optional(),
+  meta: messageMetaSchema.optional(),
+  attachments: z.array(messageAttachmentSchema).min(1).max(18).optional(),
   clientId: z.string().min(1).max(128).optional(),
 }).superRefine((value, ctx) => {
-  const requiresUpload = ["image", "video", "voice", "file"].includes(value.type);
+  const hasAttachments = Boolean(value.attachments?.length);
+  const requiresUpload = ["image", "video", "voice", "file"].includes(value.type) && !hasAttachments;
+  if (hasAttachments) {
+    if (value.type !== "image") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["attachments"], message: "attachments_require_image_type" });
+    }
+    if (value.uploadId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uploadId"], message: "legacy_upload_conflicts_with_attachments" });
+    }
+    const assets = new Map<string, Set<string>>();
+    const uploadIds = new Set<string>();
+    for (const attachment of value.attachments ?? []) {
+      const roles = assets.get(attachment.assetId) ?? new Set<string>();
+      roles.add(attachment.role);
+      assets.set(attachment.assetId, roles);
+      if (uploadIds.has(attachment.uploadId)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["attachments"], message: "duplicate_upload_reference" });
+      }
+      uploadIds.add(attachment.uploadId);
+    }
+    if (assets.size < 1 || assets.size > 9) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["attachments"], message: "asset_count_out_of_range" });
+    }
+    for (const roles of assets.values()) {
+      if (!roles.has("photo") || roles.size > 2) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["attachments"], message: "invalid_live_photo_pair" });
+      }
+    }
+  }
   if (requiresUpload && !value.uploadId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uploadId"], message: "upload_reference_required" });
   }

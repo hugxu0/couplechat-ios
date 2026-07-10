@@ -19,6 +19,20 @@ enum RealtimeConnectionState: Equatable {
     }
 }
 
+struct AIActivity: Equatable {
+    let channel: ChatChannel
+    let requestMessageId: String?
+    let requesterUsername: String?
+    let phase: String
+
+    var isVisible: Bool { phase == "accepted" || phase == "generating" }
+}
+
+struct HomeRefreshResult: Equatable {
+    let dataUpdated: Bool
+    let realtimeConnected: Bool
+}
+
 /// 协调层：持有 socket，分发事件给子 store，对外暴露统一接口。
 /// 子 store：AuthStore（登录）、MessageStore（消息）、SharedStore（共享状态）。
 @MainActor
@@ -36,6 +50,9 @@ final class ChatStore: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var connectionState: RealtimeConnectionState = .disconnected
     @Published var partnerOnline = false
+    @Published private(set) var presenceKnown = false
+    @Published private(set) var aiActivityByChannel: [String: AIActivity] = [:]
+    @Published private(set) var localInteractionPresentation: InteractionPresentation?
     @Published var lastConnectionError: String?
     @Published private(set) var localCacheAvailable = true
 
@@ -58,6 +75,8 @@ final class ChatStore: ObservableObject {
     private(set) var socket: SocketIOClient?
     /// Socket.IO 自己会在意外断开后重连；这个标志只负责避免前台恢复等调用重复发起握手。
     private var connectionAttemptInFlight = false
+    private var connectionAttemptToken = UUID()
+    private var reconnectAttempt = 0
     /// 健康检查失败时的受控重连。手动 disconnect 不会触发 Socket.IO 自动重连，
     /// 因而必须在 disconnect 回调中明确重新握手。
     private let httpClient: any HTTPClient
@@ -180,24 +199,24 @@ final class ChatStore: ObservableObject {
 
     func bootstrap() async {
         guard let session = auth.savedSession() else { return }
+        let snapshotTask = Task { try await fetchBootstrap(session: session) }
         localCacheAvailable = await openLocalDatabase(username: session.username)
         if localCacheAvailable {
             await messageStore.restoreLocalCache(for: session)
             shared.restoreCachedSharedState()
         }
+        auth.activate(session, accounts: [], persist: false)
+        auth.restoreCachedPartner()
+        connect()
         do {
-            let snapshot = try await fetchBootstrap(session: session)
+            let snapshot = try await snapshotTask.value
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
             auth.activate(session, accounts: snapshot.accounts, persist: false)
-            connect()
         } catch BootstrapError.unauthorized {
             auth.logout()
         } catch {
             // 已登录用户离线启动时仍可查看有界本地缓存；连接恢复后前台刷新会补最新快照。
-            auth.activate(session, accounts: [], persist: false)
-            auth.restoreCachedPartner()
-            connect()
             lastConnectionError = error.localizedDescription
         }
     }
@@ -206,12 +225,26 @@ final class ChatStore: ObservableObject {
 
     func login(username: String, password: String) async throws {
         let session = try await auth.authenticate(username: username, password: password)
+        let snapshotTask = Task { try await fetchBootstrap(session: session) }
         localCacheAvailable = await openLocalDatabase(username: session.username)
-        let snapshot = try await fetchBootstrap(session: session)
-        await messageStore.applyBootstrap(snapshot, session: session)
-        shared.applySharedInit(snapshot.sharedState)
-        auth.activate(session, accounts: snapshot.accounts, persist: true)
+        if localCacheAvailable {
+            await messageStore.restoreLocalCache(for: session)
+            shared.restoreCachedSharedState()
+        }
+        auth.activate(session, accounts: [], persist: true)
+        auth.restoreCachedPartner()
         connect()
+        do {
+            let snapshot = try await snapshotTask.value
+            await messageStore.applyBootstrap(snapshot, session: session)
+            shared.applySharedInit(snapshot.sharedState)
+            auth.activate(session, accounts: snapshot.accounts, persist: false)
+        } catch BootstrapError.unauthorized {
+            logout()
+            throw BootstrapError.unauthorized
+        } catch {
+            lastConnectionError = error.localizedDescription
+        }
     }
 
     private func openLocalDatabase(username: String) async -> Bool {
@@ -261,6 +294,10 @@ final class ChatStore: ObservableObject {
         connectionAttemptInFlight = false
         connectionState = .disconnected
         partnerOnline = false
+        presenceKnown = false
+        aiActivityByChannel.removeAll()
+        connectionAttemptToken = UUID()
+        reconnectAttempt = 0
         lastConnectionError = nil
         auth.logout()
     }
@@ -286,8 +323,24 @@ final class ChatStore: ObservableObject {
         guard !connected, !connectionAttemptInFlight, let s = socket else { return }
         connectionAttemptInFlight = true
         connectionState = createdSocket ? .connecting : .reconnecting
+        let attemptToken = UUID()
+        connectionAttemptToken = attemptToken
         // 认证只随 Socket.IO auth payload 发送，不放入 URL 查询参数，避免 token 落入代理访问日志。
         s.connect(withPayload: ["token": session.token])
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self, self.connectionAttemptToken == attemptToken, !self.connected,
+                  self.auth.session != nil else { return }
+            self.connectionAttemptInFlight = false
+            self.socket?.disconnect()
+            self.manager = nil
+            self.socket = nil
+            self.connectionState = .reconnecting
+            self.reconnectAttempt += 1
+            let delay = min(5.0, pow(1.7, Double(self.reconnectAttempt)) * 0.35)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            self.connect()
+        }
     }
 
     private func bindEvents(_ s: SocketIOClient) {
@@ -297,6 +350,8 @@ final class ChatStore: ObservableObject {
                 self.connected = true
                 self.connectionAttemptInFlight = false
                 self.connectionState = .connected
+                self.reconnectAttempt = 0
+                self.connectionAttemptToken = UUID()
                 self.lastConnectionError = nil
                 self.reportAway(false)
                 if let session = self.auth.session {
@@ -333,6 +388,9 @@ final class ChatStore: ObservableObject {
                 guard let self else { return }
                 let channel = ChatChannel(rawValue: msg.channel) ?? .couple
                 self.messageStore.upsert(msg, in: channel)
+                if msg.sender == "ai" {
+                    self.aiActivityByChannel.removeValue(forKey: channel.rawValue)
+                }
                 if channel == .couple { self.messageStore.markRead(.couple) }
                 if channel == .ai {
                     self.messageStore.aiTyping = false
@@ -369,6 +427,25 @@ final class ChatStore: ObservableObject {
             let replying = (data.first as? Bool) ?? true
             Task { @MainActor in self?.messageStore.aiReplying = replying }
         }
+        s.on(SocketEvent.aiActivity.rawValue) { [weak self] data, _ in
+            guard let dict = data.first as? [String: Any],
+                  let rawChannel = dict["channel"] as? String,
+                  let channel = ChatChannel(rawValue: rawChannel),
+                  let phase = dict["phase"] as? String else { return }
+            let activity = AIActivity(
+                channel: channel,
+                requestMessageId: dict["requestMessageId"] as? String,
+                requesterUsername: dict["requesterUsername"] as? String,
+                phase: phase)
+            Task { @MainActor in
+                guard let self else { return }
+                if activity.isVisible {
+                    self.aiActivityByChannel[channel.rawValue] = activity
+                } else {
+                    self.aiActivityByChannel.removeValue(forKey: channel.rawValue)
+                }
+            }
+        }
 
         // 在线状态 -> ConnectionStore
         s.on(SocketEvent.presence.rawValue) { [weak self] data, _ in
@@ -377,6 +454,7 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in
                 guard let self, let me = self.auth.session else { return }
                 self.partnerOnline = online.contains { $0 != me.username }
+                self.presenceKnown = true
             }
         }
 
@@ -478,6 +556,25 @@ final class ChatStore: ObservableObject {
         await uploadAvatar(image, for: auth.session?.username)
     }
 
+    func sendInteraction(kind: InteractionEffectKind, text: String, channel: ChatChannel = .couple) {
+        guard let session = auth.session else { return }
+        let id = UUID().uuidString
+        messageStore.sendInteraction(id: id, kind: kind, text: text, channel: channel, session: session)
+        localInteractionPresentation = InteractionPresentation(
+            payload: InteractionPayload(id: id, kind: kind, text: text),
+            senderName: "已送达",
+            duration: kind == .note ? 2.1 : 1.15)
+    }
+
+    func sendAlbum(resources: [OutboundMediaResource], displayText: String?, channel: ChatChannel = .couple) {
+        guard let session = auth.session else { return }
+        messageStore.sendAlbum(resources: resources, displayText: displayText, channel: channel, session: session)
+    }
+
+    func aiActivity(for channel: ChatChannel) -> AIActivity? {
+        aiActivityByChannel[channel.rawValue]
+    }
+
     func uploadDajuAvatar(_ image: UIImage) async -> Bool {
         await uploadAvatar(image, for: "ai")
     }
@@ -545,16 +642,44 @@ final class ChatStore: ObservableObject {
         if !connected { connect() }
         Task {
             _ = await refreshBootstrap()
+            _ = await verifyRealtimeHealth()
             if connected, let session = auth.session {
                 messageStore.flushOutbox(session: session)
             }
         }
     }
 
-    func refreshHomeData() async -> Bool {
+    func refreshHomeData() async -> HomeRefreshResult {
         reportAway(false)
         if !connected { connect() }
-        return await refreshBootstrap()
+        async let refreshed = refreshBootstrap()
+        async let realtime = verifyRealtimeHealth()
+        let result = await (refreshed, realtime)
+        return HomeRefreshResult(dataUpdated: result.0, realtimeConnected: result.1)
+    }
+
+    private func verifyRealtimeHealth() async -> Bool {
+        if !connected { connect() }
+        let deadline = Date().addingTimeInterval(2.2)
+        while !connected, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 80_000_000)
+        }
+        guard connected, let socket else { return false }
+        let result: [Any] = await withCheckedContinuation { continuation in
+            socket.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 1.5) {
+                continuation.resume(returning: $0)
+            }
+        }
+        let healthy = (result.first as? [String: Any])?["ok"] as? Bool == true
+        if !healthy {
+            connected = false
+            connectionAttemptInFlight = false
+            connectionState = .reconnecting
+            manager = nil
+            self.socket = nil
+            connect()
+        }
+        return healthy
     }
 
     // REST 桥接

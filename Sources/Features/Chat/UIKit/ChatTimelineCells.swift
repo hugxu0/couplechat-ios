@@ -45,6 +45,9 @@ final class ChatTimeCell: UICollectionViewCell {
 final class ChatSystemCell: UICollectionViewCell {
     static let reuseId = "ChatSystemCell"
     private let label = UILabel()
+    private let editButton = UIButton(type: .system)
+    private let stack = UIStackView()
+    private var reeditAction: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -53,7 +56,15 @@ final class ChatSystemCell: UICollectionViewCell {
         label.textColor = .secondaryLabel
         label.textAlignment = .center
         label.numberOfLines = 0
-        contentView.addSubview(label)
+        editButton.setTitle("重新编辑", for: .normal)
+        editButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
+        editButton.addAction(UIAction { [weak self] _ in self?.reeditAction?() }, for: .touchUpInside)
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 5
+        stack.addArrangedSubview(label)
+        stack.addArrangedSubview(editButton)
+        contentView.addSubview(stack)
     }
 
     required init?(coder: NSCoder) {
@@ -62,15 +73,30 @@ final class ChatSystemCell: UICollectionViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        label.frame = contentView.bounds.insetBy(dx: 24, dy: 4)
+        let size = stack.systemLayoutSizeFitting(
+            CGSize(width: max(0, contentView.bounds.width - 48), height: contentView.bounds.height))
+        stack.frame = CGRect(
+            x: (contentView.bounds.width - size.width) / 2,
+            y: (contentView.bounds.height - size.height) / 2,
+            width: size.width,
+            height: size.height)
     }
 
-    func configure(text: String) {
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        reeditAction = nil
+        editButton.isHidden = true
+    }
+
+    func configure(text: String, onReedit: (() -> Void)? = nil) {
         label.text = text
+        reeditAction = onReedit
+        editButton.isHidden = onReedit == nil
+        setNeedsLayout()
     }
 }
 
-final class ChatNativeMessageCell: UICollectionViewCell {
+final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     static let reuseId = "ChatNativeMessageCell"
 
     weak var delegate: ChatTimelineCellDelegate?
@@ -83,6 +109,9 @@ final class ChatNativeMessageCell: UICollectionViewCell {
     private let bodyLabel = UILabel()
     private let mediaImageView = UIImageView()
     private let mediaIconView = UIImageView()
+    private let albumScrollView = UIScrollView()
+    private let albumBadge = UILabel()
+    private let liveBadge = UILabel()
     private let voiceWaveStack = UIStackView()
     private let statusLabel = UILabel()
     private let retryButton = UIButton(type: .system)
@@ -98,6 +127,7 @@ final class ChatNativeMessageCell: UICollectionViewCell {
     private var voiceProgress: CGFloat = 0
     private var usesDarkIncomingBubble = false
     private var voiceWaveBars: [UIView] = []
+    private var albumPhotos: [ChatAttachment] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -133,6 +163,23 @@ final class ChatNativeMessageCell: UICollectionViewCell {
 
         mediaIconView.contentMode = .scaleAspectFit
         mediaIconView.tintColor = .secondaryLabel
+
+        albumScrollView.isPagingEnabled = true
+        albumScrollView.showsHorizontalScrollIndicator = false
+        albumScrollView.delegate = self
+        albumScrollView.clipsToBounds = true
+        albumBadge.font = .monospacedDigitSystemFont(ofSize: 11, weight: .bold)
+        albumBadge.textColor = .white
+        albumBadge.textAlignment = .center
+        albumBadge.backgroundColor = UIColor.black.withAlphaComponent(0.52)
+        albumBadge.layer.cornerRadius = 11
+        albumBadge.clipsToBounds = true
+        liveBadge.text = " LIVE "
+        liveBadge.font = .systemFont(ofSize: 10, weight: .heavy)
+        liveBadge.textColor = .white
+        liveBadge.backgroundColor = UIColor.black.withAlphaComponent(0.48)
+        liveBadge.layer.cornerRadius = 8
+        liveBadge.clipsToBounds = true
 
         voiceWaveStack.axis = .horizontal
         voiceWaveStack.alignment = .center
@@ -187,6 +234,8 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         statusLabel.text = nil
         retryButton.isHidden = true
         bubbleView.subviews.forEach { $0.removeFromSuperview() }
+        albumScrollView.subviews.forEach { $0.removeFromSuperview() }
+        albumPhotos = []
     }
 
     func configure(
@@ -225,7 +274,14 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             : UIColor.systemBackground.resolvedColor(with: traitCollection).withAlphaComponent(0.94)
         let incomingTextColor = usesDarkIncomingBubble ? UIColor.white : UIColor.label.resolvedColor(with: traitCollection)
         let incomingSecondaryColor = usesDarkIncomingBubble ? UIColor.white.withAlphaComponent(0.72) : UIColor.secondaryLabel.resolvedColor(with: traitCollection)
-        bubbleView.backgroundColor = mediaOnly ? .clear : (mine ? accentColor : incomingBubbleColor)
+        let isInteraction = message.interactionPayload != nil
+        bubbleView.backgroundColor = mediaOnly ? .clear : (isInteraction
+            ? (mine ? accentColor.withAlphaComponent(0.90) : UIColor.systemPink.withAlphaComponent(0.13))
+            : (mine ? accentColor : incomingBubbleColor))
+        bubbleView.layer.borderWidth = isInteraction ? 1 : 0
+        bubbleView.layer.borderColor = isInteraction
+            ? (mine ? UIColor.white.withAlphaComponent(0.32) : UIColor.systemPink.withAlphaComponent(0.24)).cgColor
+            : UIColor.clear.cgColor
         bodyLabel.textColor = mine ? .white : incomingTextColor
         replyMarker.backgroundColor = mine ? UIColor.white.withAlphaComponent(0.9) : accentColor
         replyLabel.textColor = mine ? UIColor.white.withAlphaComponent(0.86) : incomingSecondaryColor
@@ -242,6 +298,17 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         highlightView.backgroundColor = highlighted ? accentColor.withAlphaComponent(0.12) : .clear
 
         installContent(for: message)
+        if message.id.hasPrefix("__ai_activity__") {
+            let animation = CABasicAnimation(keyPath: "opacity")
+            animation.fromValue = 0.52
+            animation.toValue = 1.0
+            animation.duration = 0.72
+            animation.autoreverses = true
+            animation.repeatCount = .infinity
+            bodyLabel.layer.add(animation, forKey: "ai-breathing")
+        } else {
+            bodyLabel.layer.removeAnimation(forKey: "ai-breathing")
+        }
         setNeedsLayout()
     }
 
@@ -291,9 +358,41 @@ final class ChatNativeMessageCell: UICollectionViewCell {
 
     private func installContent(for message: ChatMessage) {
         bodyLabel.font = .systemFont(ofSize: 17)
+        bodyLabel.numberOfLines = 0
+        bodyLabel.textAlignment = .natural
         if let reply = message.replyPreview, !reply.isEmpty {
             replyLabel.text = reply
             bubbleView.addSubview(replyView)
+        }
+
+        if let interaction = message.interactionPayload {
+            bodyLabel.text = interactionCardText(interaction)
+            bodyLabel.font = .systemFont(ofSize: 15, weight: .bold)
+            bodyLabel.numberOfLines = 2
+            bodyLabel.textAlignment = .center
+            bubbleView.addSubview(bodyLabel)
+            return
+        }
+
+        let photos = (message.attachments ?? [])
+            .filter { $0.role == "photo" }
+            .sorted { $0.order < $1.order }
+        if message.type == "image", !photos.isEmpty {
+            albumPhotos = photos
+            if photos.count > 1 {
+                bubbleView.addSubview(albumScrollView)
+                bubbleView.addSubview(albumBadge)
+                configureAlbum(message)
+                if ChatTimelineMetrics.mediaCaption(for: message) != nil {
+                    bodyLabel.text = ChatTimelineMetrics.mediaCaption(for: message)
+                    bodyLabel.font = .systemFont(ofSize: 15)
+                    bubbleView.addSubview(bodyLabel)
+                }
+                return
+            }
+            if (message.attachments ?? []).contains(where: { $0.assetId == photos[0].assetId && $0.role == "pairedVideo" }) {
+                bubbleView.addSubview(liveBadge)
+            }
         }
 
         switch message.type {
@@ -324,6 +423,21 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         }
     }
 
+    private func interactionCardText(_ payload: InteractionPayload) -> String {
+        let title: String
+        switch payload.kind {
+        case .miss: title = "💗  想你了"
+        case .pat: title = "🖐️  拍一拍"
+        case .flower: title = "🌸  送你一朵花"
+        case .poop: title = "💩  调皮一下"
+        case .note:
+            let note = payload.text.replacingOccurrences(of: "🪧", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            title = "🪧  \(note)"
+        }
+        return "互动消息\n\(title)"
+    }
+
     private func configureMedia(_ message: ChatMessage) {
         mediaImageView.backgroundColor = .clear
         mediaIconView.image = UIImage(systemName: message.type == "video" ? "play.fill" : "photo")
@@ -348,6 +462,38 @@ final class ChatNativeMessageCell: UICollectionViewCell {
                 guard let self, self.representedImageURL == url else { return }
                 self.mediaImageView.image = image
                 self.mediaIconView.isHidden = message.type != "video" && image != nil
+            }
+        }
+    }
+
+    private func configureAlbum(_ message: ChatMessage) {
+        albumBadge.text = "1 / \(albumPhotos.count)"
+        let pairedIDs = Set((message.attachments ?? []).filter { $0.role == "pairedVideo" }.map(\.assetId))
+        for (index, attachment) in albumPhotos.enumerated() {
+            let container = UIView()
+            container.clipsToBounds = true
+            let imageView = UIImageView()
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
+            imageView.tag = 100
+            container.addSubview(imageView)
+            if pairedIDs.contains(attachment.assetId) {
+                let badge = UILabel()
+                badge.text = " LIVE "
+                badge.font = .systemFont(ofSize: 10, weight: .heavy)
+                badge.textColor = .white
+                badge.backgroundColor = UIColor.black.withAlphaComponent(0.48)
+                badge.layer.cornerRadius = 8
+                badge.clipsToBounds = true
+                badge.tag = 101
+                container.addSubview(badge)
+            }
+            container.tag = index + 1
+            albumScrollView.addSubview(container)
+            guard let url = attachment.mediaURL else { continue }
+            Task { [weak imageView] in
+                let image = await ImageCache.shared.image(for: url)
+                await MainActor.run { imageView?.image = image }
             }
         }
     }
@@ -406,12 +552,25 @@ final class ChatNativeMessageCell: UICollectionViewCell {
             } else {
                 captionHeight = 0
             }
-            mediaImageView.frame = CGRect(
+            let mediaFrame = CGRect(
                 x: inset,
                 y: y,
                 width: bubbleView.bounds.width - inset * 2,
                 height: bubbleView.bounds.height - y - inset - captionHeight
             )
+            mediaImageView.frame = mediaFrame
+            if !albumPhotos.isEmpty, albumPhotos.count > 1 {
+                albumScrollView.frame = mediaFrame
+                albumScrollView.contentSize = CGSize(width: mediaFrame.width * CGFloat(albumPhotos.count), height: mediaFrame.height)
+                for (index, container) in albumScrollView.subviews.enumerated() {
+                    container.frame = CGRect(x: CGFloat(index) * mediaFrame.width, y: 0, width: mediaFrame.width, height: mediaFrame.height)
+                    container.viewWithTag(100)?.frame = container.bounds
+                    container.viewWithTag(101)?.frame = CGRect(x: 10, y: 10, width: 42, height: 17)
+                }
+                albumBadge.frame = CGRect(x: mediaFrame.maxX - 58, y: mediaFrame.minY + 10, width: 48, height: 22)
+            } else if liveBadge.superview != nil {
+                liveBadge.frame = CGRect(x: mediaFrame.minX + 10, y: mediaFrame.minY + 10, width: 42, height: 17)
+            }
             mediaIconView.frame = CGRect(x: mediaImageView.frame.midX - 18, y: mediaImageView.frame.midY - 18, width: 36, height: 36)
             if caption != nil {
                 bodyLabel.frame = CGRect(
@@ -511,6 +670,18 @@ final class ChatNativeMessageCell: UICollectionViewCell {
         default:
             break
         }
+    }
+
+    var selectedMediaIdentifier: String? {
+        guard albumPhotos.count > 1, albumScrollView.bounds.width > 0 else { return message?.id }
+        let index = min(albumPhotos.count - 1, max(0, Int(round(albumScrollView.contentOffset.x / albumScrollView.bounds.width))))
+        return albumPhotos[index].id
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === albumScrollView, scrollView.bounds.width > 0 else { return }
+        let page = min(albumPhotos.count - 1, max(0, Int(round(scrollView.contentOffset.x / scrollView.bounds.width))))
+        albumBadge.text = "\(page + 1) / \(albumPhotos.count)"
     }
 
     func containsBubble(point: CGPoint) -> Bool {

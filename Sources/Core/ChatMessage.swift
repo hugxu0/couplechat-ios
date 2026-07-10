@@ -15,6 +15,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var replyTo: String?
     var replyPreview: String?
     var meta: ChatMessageMeta?
+    var attachments: [ChatAttachment]?
     var pending = false
     var failed = false
 
@@ -51,10 +52,16 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         } else {
             self.meta = nil
         }
+        if let attachmentList = dict["attachments"] as? [[String: Any]] {
+            let parsed = attachmentList.compactMap(ChatAttachment.init(dict:))
+            attachments = parsed.isEmpty ? nil : parsed
+        } else {
+            attachments = nil
+        }
     }
 
     init(optimisticText text: String, me: Session, clientId: String, channel: String,
-         replyTo: String? = nil, replyPreview: String? = nil) {
+         replyTo: String? = nil, replyPreview: String? = nil, meta: ChatMessageMeta? = nil) {
         self.id = clientId
         self.clientId = clientId
         self.sender = me.username
@@ -68,10 +75,12 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.pending = true
         self.replyTo = replyTo
         self.replyPreview = replyPreview
-        self.meta = nil
+        self.meta = meta
+        self.attachments = nil
     }
 
-    init(optimisticMedia type: String, text: String, localURL: String?, me: Session, clientId: String, channel: String) {
+    init(optimisticMedia type: String, text: String, localURL: String?, me: Session, clientId: String, channel: String,
+         attachments: [ChatAttachment]? = nil, meta: ChatMessageMeta? = nil) {
         self.id = clientId
         self.clientId = clientId
         self.sender = me.username
@@ -83,7 +92,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.channel = channel
         self.ts = Date().timeIntervalSince1970 * 1000
         self.pending = true
-        self.meta = nil
+        self.meta = meta
+        self.attachments = attachments
     }
 
     var date: Date { Date(timeIntervalSince1970: ts / 1000) }
@@ -100,6 +110,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
 struct ChatMessageMeta: Codable, Equatable {
     var confirm: ActionConfirm?
     var search: SearchMeta?
+    var interaction: ChatInteractionMeta?
 
     init?(dict: [String: Any]) {
         var hasAny = false
@@ -115,8 +126,78 @@ struct ChatMessageMeta: Codable, Equatable {
         } else {
             self.search = nil
         }
+        if let interactionDict = dict["interaction"] as? [String: Any] {
+            self.interaction = ChatInteractionMeta(dict: interactionDict)
+            hasAny = self.interaction != nil || hasAny
+        } else {
+            self.interaction = nil
+        }
         guard hasAny else { return nil }
     }
+
+    init(interaction: ChatInteractionMeta) {
+        confirm = nil
+        search = nil
+        self.interaction = interaction
+    }
+}
+
+struct ChatInteractionMeta: Codable, Equatable {
+    let id: String
+    let kind: String
+    let text: String
+
+    init?(dict: [String: Any]) {
+        guard let id = dict["id"] as? String,
+              let kind = dict["kind"] as? String,
+              let text = dict["text"] as? String else { return nil }
+        self.id = id
+        self.kind = kind
+        self.text = text
+    }
+
+    init(id: String, kind: String, text: String) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+    }
+}
+
+struct ChatAttachment: Identifiable, Codable, Equatable {
+    let id: String
+    let assetId: String
+    let role: String
+    let order: Int
+    let url: String
+    let mimeType: String
+    let size: Int
+
+    init?(dict: [String: Any]) {
+        guard let id = dict["id"] as? String,
+              let assetId = dict["assetId"] as? String,
+              let role = dict["role"] as? String,
+              let url = dict["url"] as? String else { return nil }
+        self.id = id
+        self.assetId = assetId
+        self.role = role
+        self.order = (dict["order"] as? NSNumber)?.intValue ?? dict["order"] as? Int ?? 0
+        self.url = url
+        self.mimeType = dict["mimeType"] as? String ?? "application/octet-stream"
+        self.size = (dict["size"] as? NSNumber)?.intValue ?? dict["size"] as? Int ?? 0
+    }
+
+    init(id: String, assetId: String, role: String, order: Int, url: String, mimeType: String, size: Int = 0) {
+        self.id = id
+        self.assetId = assetId
+        self.role = role
+        self.order = order
+        self.url = url
+        self.mimeType = mimeType
+        self.size = size
+    }
+
+    var mediaURL: URL? { ServerConfig.resolveMediaURL(url) }
+    var isPairedVideo: Bool { role == "pairedVideo" }
 }
 
 struct ActionConfirm: Codable, Equatable {

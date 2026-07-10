@@ -394,6 +394,14 @@ final class ChatViewController: UIViewController {
     private func configureKeyboardObservers() {
         NotificationCenter.default.addObserver(self, selector: #selector(handleKeyboardNotification(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleKeyboardNotification(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleRecallFailure), name: MessageStore.recallFailedNotification, object: nil)
+    }
+
+    @objc private func handleRecallFailure() {
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "撤回失败", message: "消息已恢复，请检查连接后重试。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        present(alert, animated: true)
     }
 
     @objc private func handleKeyboardNotification(_ notification: Notification) {
@@ -425,7 +433,11 @@ final class ChatViewController: UIViewController {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.composer.setTypingVisible(self.channel == .ai && self.store.aiTyping)
+                DispatchQueue.main.async {
+                    self.composer.setTypingVisible(self.channel == .ai && self.store.aiTyping)
+                    self.composer.setCatThinking(self.store.aiActivity(for: self.channel)?.isVisible == true)
+                    self.reloadTimeline(animated: true)
+                }
             }
             .store(in: &cancellables)
     }
@@ -489,6 +501,20 @@ final class ChatViewController: UIViewController {
             } else {
                 items.append(.message(id: message.id))
             }
+        }
+        if let activity = store.aiActivity(for: channel), activity.isVisible,
+           let message = ChatMessage(dict: [
+               "id": "__ai_activity__\(channel.rawValue)",
+               "sender": "ai",
+               "senderName": "大橘",
+               "kind": "user",
+               "type": "text",
+               "text": activity.phase == "accepted" ? "🐾 收到啦，正在接住你的 @…" : "🐾 大橘正在认真想…",
+               "channel": channel.rawValue,
+               "ts": Date().timeIntervalSince1970 * 1000,
+           ]) {
+            messagesById[message.id] = message
+            items.append(.message(id: message.id))
         }
         return items
     }
@@ -898,15 +924,44 @@ final class ChatViewController: UIViewController {
         composer.setMediaPreviews([])
         composer.clearText()
         stickToLatestAfterNextReload = true
-        for (index, item) in items.enumerated() {
+        let images = items.filter { $0.messageType == "image" }
+        let videos = items.filter { $0.messageType == "video" }
+        let shouldCreateAlbum = images.count > 1 || images.contains(where: \.isLivePhoto)
+        var captionConsumed = false
+        if shouldCreateAlbum {
+            var resources: [OutboundMediaResource] = []
+            for (index, item) in images.enumerated() {
+                resources.append(OutboundMediaResource(
+                    assetId: item.id, role: "photo", order: index,
+                    data: item.data, mimeType: item.mimeType))
+                if let motion = item.pairedVideoData {
+                    resources.append(OutboundMediaResource(
+                        assetId: item.id, role: "pairedVideo", order: index,
+                        data: motion, mimeType: item.pairedVideoMimeType ?? "video/quicktime"))
+                }
+            }
+            store.sendAlbum(
+                resources: resources,
+                displayText: caption.isEmpty ? nil : caption,
+                channel: channel)
+            captionConsumed = !caption.isEmpty
+        } else if let image = images.first {
             store.sendMedia(
-                data: item.data,
-                mimeType: item.mimeType,
-                preferredType: item.messageType,
-                localPreviewURL: item.localPreviewURL,
+                data: image.data,
+                mimeType: image.mimeType,
+                preferredType: image.messageType,
+                localPreviewURL: image.localPreviewURL,
                 channel: channel,
-                displayText: index == 0 && !caption.isEmpty ? caption : nil
+                displayText: caption.isEmpty ? nil : caption
             )
+            captionConsumed = !caption.isEmpty
+        }
+        for (index, item) in videos.enumerated() {
+            store.sendMedia(
+                data: item.data, mimeType: item.mimeType, preferredType: item.messageType,
+                localPreviewURL: item.localPreviewURL, channel: channel,
+                displayText: !captionConsumed && index == 0 && !caption.isEmpty ? caption : nil)
+            captionConsumed = captionConsumed || !caption.isEmpty
         }
         reloadTimeline(animated: false)
     }
@@ -1018,9 +1073,15 @@ extension ChatViewController: UICollectionViewDataSource {
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ChatTimeCell.reuseId, for: indexPath) as! ChatTimeCell
             cell.configure(text: text, usesLightContent: timelineUsesLightContent)
             return cell
-        case .system(_, let text):
+        case .system(let systemID, let text):
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ChatSystemCell.reuseId, for: indexPath) as! ChatSystemCell
-            cell.configure(text: text)
+            let messageID = systemID.hasPrefix("system-") ? String(systemID.dropFirst("system-".count)) : ""
+            let message = messagesById[messageID]
+            let canReedit = message?.sender == store.session?.username && message?.recalledText?.isEmpty == false
+            cell.configure(text: text, onReedit: canReedit ? { [weak self] in
+                guard let self, let message else { return }
+                self.beginEditingRecalledMessage(message)
+            } : nil)
             return cell
         case .message(let id):
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ChatNativeMessageCell.reuseId, for: indexPath) as! ChatNativeMessageCell
@@ -1033,9 +1094,9 @@ extension ChatViewController: UICollectionViewDataSource {
                     groupedWithPrevious: groupedWithPrevious(message),
                     read: store.partnerHasRead(message),
                     highlighted: highlightedMessageId == message.id,
-                    peerAvatar: peerAvatar,
+                    peerAvatar: store.avatarText(for: message.sender),
                     myAvatar: myAvatar,
-                    peerAvatarURL: peerAvatarURL,
+                    peerAvatarURL: store.avatarURL(for: message.sender),
                     myAvatarURL: myAvatarURL,
                     accentColor: theme.accent.uiColor,
                     usesDarkIncomingBubble: usesDarkChatSurface,
@@ -1114,6 +1175,7 @@ extension ChatViewController: UICollectionViewDelegateFlowLayout {
         switch timelineItems[indexPath.item] {
         case .message(let id):
             guard let value = messagesById[id],
+                  !id.hasPrefix("__ai_activity__"),
                   let cell = collectionView.cellForItem(at: indexPath) as? ChatNativeMessageCell else { return nil }
             let convertedPoint = collectionView.convert(point, to: cell)
             guard cell.containsBubble(point: point) || cell.containsBubble(point: convertedPoint) else { return nil }
@@ -1181,7 +1243,7 @@ extension ChatViewController: ChatTimelineCellDelegate {
         } else if message.type == "file", let url = message.mediaURL {
             UIApplication.shared.open(url)
         } else {
-            onMediaTap(id)
+            onMediaTap(cell.selectedMediaIdentifier ?? id)
         }
     }
 

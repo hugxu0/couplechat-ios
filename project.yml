@@ -27,6 +27,7 @@ targets:
         UILaunchScreen: {}
         NSCameraUsageDescription: 用于拍摄并上传头像
         NSPhotoLibraryAddUsageDescription: 保存聊天图片和视频到相册
+        NSPhotoLibraryUsageDescription: 用于读取并发送照片和实况照片
         NSMicrophoneUsageDescription: 用于录制语音消息
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

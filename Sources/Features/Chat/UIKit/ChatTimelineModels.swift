@@ -83,7 +83,9 @@ enum ChatTimelineMetrics {
         let contentWidth = maxBubbleWidth - bubbleHorizontalPadding * 2
         var contentHeight: CGFloat
 
-        switch message.type {
+        if message.interactionPayload != nil {
+            contentHeight = 44
+        } else { switch message.type {
         case "image", "video":
             contentHeight = mediaSize.height
             if let caption = mediaCaption(for: message) {
@@ -102,7 +104,7 @@ enum ChatTimelineMetrics {
                 width: contentWidth
             )
             contentHeight = bodyHeight
-        }
+        } }
 
         if let reply = message.replyPreview, !reply.isEmpty {
             contentHeight += 36 + 7
@@ -124,7 +126,9 @@ enum ChatTimelineMetrics {
         let minBubbleWidth: CGFloat = 58
         let available = maxBubbleWidth - bubbleHorizontalPadding * 2
         let text = message.displayText.isEmpty ? " " : message.displayText
-        let bodyWidth = measureTextWidth(text, font: .systemFont(ofSize: 17), maxWidth: available)
+        let bodyWidth = message.interactionPayload == nil
+            ? measureTextWidth(text, font: .systemFont(ofSize: 17), maxWidth: available)
+            : min(170, available)
         let replyWidth = measureTextWidth(message.replyPreview ?? "", font: .systemFont(ofSize: 13), maxWidth: available)
         let contentWidth = min(maxBubbleWidth, max(bodyWidth, replyWidth) + bubbleHorizontalPadding * 2)
         return ceil(max(minBubbleWidth, contentWidth))

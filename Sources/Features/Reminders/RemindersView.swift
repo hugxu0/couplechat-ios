@@ -349,6 +349,7 @@ private enum EditorMode: Identifiable {
 }
 
 private struct PersonalItemCard: View {
+    @EnvironmentObject private var store: ChatStore
     let item: PersonalItem
     let onEdit: () -> Void
     let onToggleDone: () -> Void
@@ -374,8 +375,11 @@ private struct PersonalItemCard: View {
                             .strikethrough(item.isDone)
 
                         if item.scope == "shared" {
-                            Text(AccountPresentation.avatar(for: item.owner))
-                                .font(.system(size: 14))
+                            AvatarBadge(
+                                url: store.avatarURL(for: item.owner),
+                                fallbackEmoji: store.avatarText(for: item.owner),
+                                size: 20,
+                                background: DS.Palette.innerSurface)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -384,6 +388,11 @@ private struct PersonalItemCard: View {
                         Label(dueDate.smartLabel, systemImage: item.isOverdue ? "exclamationmark.circle.fill" : "clock.fill")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(item.isOverdue ? DS.Palette.pink : DS.Palette.textSecondary)
+                    }
+                    if item.kind == .memo {
+                        Text("更新于 \(updatedDateText)")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.Palette.textSecondary)
                     }
                 }
 
@@ -401,8 +410,8 @@ private struct PersonalItemCard: View {
                 }
             }
 
-            if !item.bodyMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                MarkdownPreview(markdown: item.bodyMarkdown)
+            if !displayMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                MarkdownPreview(markdown: displayMarkdown)
                     .font(.system(size: 15))
                     .foregroundStyle(DS.Palette.textPrimary)
                     .lineLimit(item.kind == .memo ? 8 : 3)
@@ -416,6 +425,42 @@ private struct PersonalItemCard: View {
         .opacity(item.isDone ? 0.68 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .onTapGesture(perform: onEdit)
+    }
+
+    private var updatedDateText: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日 HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: Double(item.updatedAt) / 1000))
+    }
+
+    private var displayMarkdown: String {
+        guard item.kind == .memo else { return item.bodyMarkdown }
+        var lines = item.bodyMarkdown.components(separatedBy: .newlines)
+        while lines.first?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { lines.removeFirst() }
+        if let first = lines.first?.trimmingCharacters(in: .whitespaces),
+           first.hasPrefix("# "), normalized(first.dropFirst(2)) == normalized(item.title) {
+            lines.removeFirst()
+        }
+        while lines.first?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { lines.removeFirst() }
+        if let first = lines.first?.trimmingCharacters(in: .whitespacesAndNewlines), isDuplicateDateLine(first) {
+            lines.removeFirst()
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func normalized<S: StringProtocol>(_ value: S) -> String {
+        String(value).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func isDuplicateDateLine(_ line: String) -> Bool {
+        let date = Date(timeIntervalSince1970: Double(item.updatedAt) / 1000)
+        return ["yyyy年M月d日", "yyyy-MM-dd", "yyyy/MM/dd"].contains { format in
+            let formatter = DateFormatter()
+            formatter.dateFormat = format
+            let value = formatter.string(from: date)
+            return line == value || line == "更新于 \(value)" || line == "日期：\(value)"
+        }
     }
 }
 

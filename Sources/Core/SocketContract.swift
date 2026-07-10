@@ -21,6 +21,7 @@ enum SocketEvent: String {
     case actionConfirm = "action:confirm"
     case aiTyping = "ai:typing"
     case aiReplying = "ai:replying"
+    case aiActivity = "ai:activity"
     case personalItemChanged = "personalItem:changed"
 }
 
@@ -64,9 +65,12 @@ struct MessageSendRequest: Encodable {
     let replyTo: String?
     let replyPreview: String?
     let clientId: String
+    let meta: MessageSendMeta?
+    let attachments: [MessageAttachmentRequest]?
 
     init(channel: ChatChannel, type: String, text: String, url: String? = nil, uploadId: String? = nil,
-         replyTo: String? = nil, replyPreview: String? = nil, clientId: String) {
+         replyTo: String? = nil, replyPreview: String? = nil, clientId: String,
+         meta: MessageSendMeta? = nil, attachments: [MessageAttachmentRequest]? = nil) {
         self.channel = channel.rawValue
         self.type = type
         self.text = text
@@ -75,7 +79,20 @@ struct MessageSendRequest: Encodable {
         self.replyTo = replyTo
         self.replyPreview = replyPreview
         self.clientId = clientId
+        self.meta = meta
+        self.attachments = attachments
     }
+}
+
+struct MessageSendMeta: Encodable {
+    let interaction: ChatInteractionMeta?
+}
+
+struct MessageAttachmentRequest: Encodable {
+    let assetId: String
+    let role: String
+    let uploadId: String
+    let order: Int
 }
 
 struct MessageRecallRequest: Encodable {

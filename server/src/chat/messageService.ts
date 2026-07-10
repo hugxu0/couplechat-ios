@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import { nanoid } from "nanoid";
 import { all, get, run, transaction, type MessageRow, type ReadReceiptRow, type UploadRow } from "../db";
 import type { SendMessagePayload } from "../contracts/realtime";
-import type { AuthUser, ClientChannel, ClientMessage, MessageKind, MessageType, StoredChannel } from "../types";
+import type { AuthUser, ClientChannel, ClientMessage, ClientMessageAttachment, MessageKind, MessageType, StoredChannel } from "../types";
 import { toClientChannel, toStoredChannel } from "../types";
 
 export type SendMessageInput = SendMessagePayload;
@@ -44,6 +44,7 @@ function mapMessage(row: MessageRow, clientChannel?: ClientChannel): ClientMessa
     replyPreview: typeof replyObject?.preview === "string" ? replyObject.preview : undefined,
     reply,
     meta: readJson(row.meta_json),
+    attachments: (readJson(row.attachments_json) as ClientMessageAttachment[] | undefined) ?? undefined,
     recalledText: row.recalled_text ?? undefined,
     channel: clientChannel ?? toClientChannel(row.channel as StoredChannel),
     ts: row.ts,
@@ -74,9 +75,10 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
       if (existing) return mapMessage(existing, input.channel);
     }
 
-    const requiresUpload = ["image", "video", "voice", "file"].includes(input.type);
+    const requiresUpload = ["image", "video", "voice", "file"].includes(input.type) && !input.attachments?.length;
     let attachmentURL: string | null = input.url ?? null;
     let upload: UploadRow | undefined;
+    const attachmentUploads: Array<{ upload: UploadRow; attachment: NonNullable<SendMessageInput["attachments"]>[number] }> = [];
     if (requiresUpload) {
       upload = await db.get<UploadRow>(
         "SELECT * FROM uploads WHERE id = ? AND owner = ? FOR UPDATE",
@@ -87,6 +89,41 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
       if (input.url && input.url !== upload.url) throw new Error("upload_url_mismatch");
       attachmentURL = upload.url;
     }
+    if (input.attachments?.length) {
+      for (const attachment of input.attachments) {
+        const selected = await db.get<UploadRow>(
+          "SELECT * FROM uploads WHERE id = ? AND owner = ? FOR UPDATE",
+          [attachment.uploadId, user.username],
+        );
+        if (!selected) throw new Error("upload_not_found");
+        if (selected.message_id) throw new Error("upload_already_attached");
+        if (attachment.role === "photo" && !selected.mime_type.startsWith("image/")) {
+          throw new Error("attachment_photo_type_mismatch");
+        }
+        if (attachment.role === "pairedVideo" && !selected.mime_type.startsWith("video/")) {
+          throw new Error("attachment_video_type_mismatch");
+        }
+        attachmentUploads.push({ upload: selected, attachment });
+      }
+      const firstPhoto = attachmentUploads
+        .filter((item) => item.attachment.role === "photo")
+        .sort((a, b) => a.attachment.order - b.attachment.order)[0];
+      attachmentURL = firstPhoto?.upload.url ?? null;
+    }
+
+    const clientAttachments: ClientMessageAttachment[] | undefined = attachmentUploads.length
+      ? attachmentUploads
+        .map(({ upload: selected, attachment }) => ({
+          id: selected.id,
+          assetId: attachment.assetId,
+          role: attachment.role,
+          order: attachment.order,
+          url: selected.url,
+          mimeType: selected.mime_type,
+          size: selected.size,
+        }))
+        .sort((a, b) => a.order - b.order || a.role.localeCompare(b.role))
+      : undefined;
 
     const row: MessageRow = {
       id: `msg_${nanoid(16)}`,
@@ -99,6 +136,7 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
       url: attachmentURL,
       reply_json: safeJson(normalizedReply(input)),
       meta_json: safeJson(input.meta),
+      attachments_json: safeJson(clientAttachments),
       recalled_text: null,
       ts,
       client_id: input.clientId ?? null,
@@ -106,8 +144,8 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
 
     await db.run(
       `INSERT INTO messages
-        (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, ts, client_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, attachments_json, ts, client_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.channel,
@@ -119,6 +157,7 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
         row.url,
         row.reply_json,
         row.meta_json,
+        row.attachments_json,
         row.ts,
         row.client_id,
       ],
@@ -130,6 +169,18 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
         [row.id, upload.id, user.username],
       );
       if (bound !== 1) throw new Error("upload_already_attached");
+    }
+    for (const { upload: selected, attachment } of attachmentUploads) {
+      const bound = await db.run(
+        "UPDATE uploads SET message_id = ?, purpose = 'message' WHERE id = ? AND owner = ? AND message_id IS NULL",
+        [row.id, selected.id, user.username],
+      );
+      if (bound !== 1) throw new Error("upload_already_attached");
+      await db.run(
+        `INSERT INTO message_attachments (id, message_id, upload_id, asset_id, role, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [`att_${nanoid(16)}`, row.id, selected.id, attachment.assetId, attachment.role, attachment.order],
+      );
     }
     return mapMessage(row, input.channel);
   });
@@ -147,14 +198,15 @@ export async function createSystemMessage(channel: StoredChannel, text: string):
     url: null,
     reply_json: null,
     meta_json: null,
+    attachments_json: null,
     recalled_text: null,
     ts: Date.now(),
     client_id: null,
   };
   await run(
     `INSERT INTO messages
-      (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, ts, client_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, attachments_json, ts, client_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       row.id,
       row.channel,
@@ -166,6 +218,7 @@ export async function createSystemMessage(channel: StoredChannel, text: string):
       row.url,
       row.reply_json,
       row.meta_json,
+      row.attachments_json,
       row.ts,
       row.client_id,
     ],
@@ -186,6 +239,7 @@ export async function createAiMessage(channel: StoredChannel, text: string, meta
     url: null,
     reply_json: null,
     meta_json: metaJson,
+    attachments_json: null,
     recalled_text: null,
     ts: Date.now(),
     client_id: null,
@@ -193,8 +247,8 @@ export async function createAiMessage(channel: StoredChannel, text: string, meta
 
   await run(
     `INSERT INTO messages
-      (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, ts, client_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, attachments_json, ts, client_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       row.id,
       row.channel,
@@ -206,6 +260,7 @@ export async function createAiMessage(channel: StoredChannel, text: string, meta
       row.url,
       row.reply_json,
       row.meta_json,
+      row.attachments_json,
       row.ts,
       row.client_id,
     ],
@@ -296,19 +351,21 @@ export async function recallMessage(user: AuthUser, id: string) {
     );
     if (!existing) return null;
 
-    const upload = existing.url
-      ? await db.get<UploadRow>(
-        "SELECT * FROM uploads WHERE message_id = ? OR (url = ? AND purpose = 'message') LIMIT 1 FOR UPDATE",
-        [id, existing.url],
-      )
-      : undefined;
+    const uploads = await db.all<UploadRow>(
+      "SELECT * FROM uploads WHERE message_id = ? OR (url = ? AND purpose = 'message') FOR UPDATE",
+      [id, existing.url ?? ""],
+    );
     await db.run(
       `UPDATE messages
-       SET kind = 'system', type = 'text', text = ?, recalled_text = ?, url = NULL, reply_json = NULL, meta_json = NULL
+       SET kind = 'system', type = 'text', text = ?, recalled_text = ?, url = NULL,
+           reply_json = NULL, meta_json = NULL, attachments_json = NULL
        WHERE id = ?`,
       ["你撤回了一条消息", existing.type === "text" ? existing.text : null, id],
     );
-    if (upload) await db.run("DELETE FROM uploads WHERE id = ?", [upload.id]);
+    await db.run("DELETE FROM message_attachments WHERE message_id = ?", [id]);
+    for (const uploadItem of uploads) {
+      await db.run("DELETE FROM uploads WHERE id = ?", [uploadItem.id]);
+    }
 
     return {
       recalled: {
@@ -318,12 +375,12 @@ export async function recallMessage(user: AuthUser, id: string) {
         byName: user.name,
         recalledText: existing.type === "text" ? existing.text : undefined,
       },
-      uploadPath: upload?.path,
+      uploadPaths: uploads.map((item) => item.path),
     };
   });
   if (!result) return null;
-  if (result.uploadPath) {
-    await fs.rm(result.uploadPath, { force: true }).catch((error) => {
+  for (const uploadPath of result.uploadPaths) {
+    await fs.rm(uploadPath, { force: true }).catch((error) => {
       console.warn(`[upload] 撤回消息后删除文件失败 id=${id}: ${error instanceof Error ? error.message : String(error)}`);
     });
   }

@@ -38,7 +38,9 @@ struct ChatV2Screen: View {
             break
         }
         switch channel {
-        case .couple: return store.partnerOnline ? "在线" : "离线"
+        case .couple:
+            if !store.presenceKnown { return "正在获取在线状态" }
+            return store.partnerOnline ? "在线" : "离线"
         case .ai: return store.aiTyping ? "正在输入" : "陪你聊天"
         }
     }
@@ -159,6 +161,7 @@ struct ChatV2Screen: View {
             set: { if !$0 { mediaViewerMessageId = nil } }
         )) {
             MediaPagerView(messages: mediaMessages, selectedId: $mediaViewerMessageId)
+                .presentationBackground(.clear)
         }
         .onAppear {
             app.pushSubpage()

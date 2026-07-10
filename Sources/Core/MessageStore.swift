@@ -6,6 +6,7 @@ import UIKit
 /// 通过 SocketProvider 访问 socket，不直接依赖 ChatStore。
 @MainActor
 final class MessageStore: ObservableObject {
+    static let recallFailedNotification = Notification.Name("MessageStoreRecallFailed")
     struct HistorySyncResult: Equatable {
         let localCount: Int
         let remoteTotal: Int?
@@ -384,10 +385,11 @@ final class MessageStore: ObservableObject {
 
     func sendText(_ text: String, channel: ChatChannel = .couple,
                   replyTo: String? = nil, replyPreview: String? = nil,
-                  session: Session) {
+                  meta: ChatMessageMeta? = nil, session: Session) {
         let clientId = "tmp-" + UUID().uuidString
         let optimistic = ChatMessage(optimisticText: text, me: session, clientId: clientId,
-                                     channel: channel.rawValue, replyTo: replyTo, replyPreview: replyPreview)
+                                     channel: channel.rawValue, replyTo: replyTo, replyPreview: replyPreview,
+                                     meta: meta)
         updateMessages(channel) { $0.append(optimistic) }
         let item = PendingOutboundMessage(
             clientId: clientId,
@@ -402,12 +404,20 @@ final class MessageStore: ObservableObject {
             uploadURL: nil,
             createdAt: optimistic.ts,
             attempts: 0,
-            lastError: nil)
+            lastError: nil,
+            metaJSON: meta.flatMap { value in
+                (try? JSONEncoder().encode(value)).flatMap { String(data: $0, encoding: .utf8) }
+            })
         guard ChatLocalDatabase.shared.upsertPendingOutbound(item) else {
             markPendingFailed(clientId: clientId, channel: channel, error: "本地保存失败")
             return
         }
         flushOutbox(session: session)
+    }
+
+    func sendInteraction(id: String, kind: InteractionEffectKind, text: String, channel: ChatChannel = .couple, session: Session) {
+        let interaction = ChatInteractionMeta(id: id, kind: kind.rawValue, text: text)
+        sendText(text, channel: channel, meta: ChatMessageMeta(interaction: interaction), session: session)
     }
 
     func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?,
@@ -446,6 +456,52 @@ final class MessageStore: ObservableObject {
             lastError: nil)
         guard ChatLocalDatabase.shared.upsertPendingOutbound(item) else {
             try? FileManager.default.removeItem(at: durableURL)
+            markPendingFailed(clientId: clientId, channel: channel, error: "本地保存失败")
+            return
+        }
+        flushOutbox(session: session)
+    }
+
+    func sendAlbum(resources: [OutboundMediaResource], displayText: String?, channel: ChatChannel = .couple,
+                   session: Session) {
+        let assetCount = Set(resources.map(\.assetId)).count
+        guard !resources.isEmpty, (1...9).contains(assetCount) else { return }
+        let clientId = "tmp-" + UUID().uuidString
+        let createdAt = Date().timeIntervalSince1970 * 1000
+        var pendingAttachments: [PendingOutboundAttachment] = []
+        var optimisticAttachments: [ChatAttachment] = []
+        for resource in resources {
+            let fileId = "\(clientId)-\(resource.assetId)-\(resource.role)"
+            guard let url = persistOutboundMedia(
+                data: resource.data, mimeType: resource.mimeType, clientId: fileId, username: session.username)
+            else {
+                pendingAttachments.forEach { try? FileManager.default.removeItem(atPath: $0.localFilePath) }
+                return
+            }
+            pendingAttachments.append(PendingOutboundAttachment(
+                assetId: resource.assetId, role: resource.role, order: resource.order,
+                localFilePath: url.path, mimeType: resource.mimeType, uploadId: nil, uploadURL: nil))
+            optimisticAttachments.append(ChatAttachment(
+                id: "pending-\(resource.assetId)-\(resource.role)", assetId: resource.assetId,
+                role: resource.role, order: resource.order, url: url.absoluteString, mimeType: resource.mimeType))
+        }
+        let text = displayText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? displayText!
+            : (assetCount > 1 ? "[\(assetCount)张图片]" : "[实况照片]")
+        var optimistic = ChatMessage(
+            optimisticMedia: "image", text: text,
+            localURL: optimisticAttachments.first(where: { $0.role == "photo" })?.url,
+            me: session, clientId: clientId, channel: channel.rawValue,
+            attachments: optimisticAttachments)
+        optimistic.ts = createdAt
+        updateMessages(channel) { $0.append(optimistic) }
+        let item = PendingOutboundMessage(
+            clientId: clientId, channel: channel.rawValue, type: "image", text: text,
+            replyTo: nil, replyPreview: nil, localFilePath: nil, mimeType: nil,
+            uploadId: nil, uploadURL: nil, createdAt: createdAt, attempts: 0, lastError: nil,
+            attachments: pendingAttachments)
+        guard ChatLocalDatabase.shared.upsertPendingOutbound(item) else {
+            pendingAttachments.forEach { try? FileManager.default.removeItem(atPath: $0.localFilePath) }
             markPendingFailed(clientId: clientId, channel: channel, error: "本地保存失败")
             return
         }
@@ -561,7 +617,19 @@ final class MessageStore: ObservableObject {
         }
         s.emitWithAck(
             SocketEvent.messageRecall.rawValue,
-            SocketPayloadEncoder.encode(MessageRecallRequest(id: message.id))).timingOut(after: 9) { _ in }
+            SocketPayloadEncoder.encode(MessageRecallRequest(id: message.id))).timingOut(after: 9) { [weak self] response in
+                let ok = (response.first as? [String: Any])?["ok"] as? Bool == true
+                guard !ok else { return }
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.updateMessages(channel) { list in
+                        guard let index = list.firstIndex(where: { $0.id == message.id }) else { return }
+                        list[index] = message
+                        ChatLocalDatabase.shared.insertMessage(message)
+                    }
+                    NotificationCenter.default.post(name: Self.recallFailedNotification, object: nil)
+                }
+            }
     }
 
     func applyRecall(id: String, byName: String?, channel: ChatChannel?, myUsername: String?, recalledText: String? = nil) {
@@ -776,7 +844,39 @@ final class MessageStore: ObservableObject {
         var item = original
         let channel = ChatChannel(rawValue: item.channel) ?? .couple
 
-        if item.isMedia, item.uploadId == nil {
+        if !item.attachments.isEmpty {
+            for index in item.attachments.indices where item.attachments[index].uploadId == nil {
+                let attachment = item.attachments[index]
+                guard FileManager.default.fileExists(atPath: attachment.localFilePath) else {
+                    recordPendingFailure(item, channel: channel, message: "相册资源不可用")
+                    return false
+                }
+                do {
+                    let uploaded = try await uploadMedia(
+                        fileURL: URL(fileURLWithPath: attachment.localFilePath),
+                        mimeType: attachment.mimeType, purpose: .message, session: session)
+                    item.attachments[index].uploadId = uploaded.id
+                    item.attachments[index].uploadURL = uploaded.url
+                    item.lastError = nil
+                    _ = ChatLocalDatabase.shared.upsertPendingOutbound(item)
+                    updateMessages(channel) { list in
+                        guard let messageIndex = list.firstIndex(where: { $0.id == item.clientId }),
+                              let attachmentIndex = list[messageIndex].attachments?.firstIndex(where: {
+                                  $0.assetId == attachment.assetId && $0.role == attachment.role
+                              }) else { return }
+                        list[messageIndex].attachments?[attachmentIndex] = ChatAttachment(
+                            id: uploaded.id, assetId: attachment.assetId, role: attachment.role,
+                            order: attachment.order, url: uploaded.url, mimeType: attachment.mimeType)
+                        if attachment.role == "photo", attachment.order == 0 {
+                            list[messageIndex].url = uploaded.url
+                        }
+                    }
+                } catch {
+                    recordPendingFailure(item, channel: channel, message: error.localizedDescription)
+                    return false
+                }
+            }
+        } else if item.isMedia, item.uploadId == nil {
             guard let path = item.localFilePath,
                   let mimeType = item.mimeType,
                   FileManager.default.fileExists(atPath: path) else {
@@ -809,6 +909,16 @@ final class MessageStore: ObservableObject {
             }
         }
 
+        let interactionMeta: ChatInteractionMeta? = item.metaJSON.flatMap { raw in
+            guard let data = raw.data(using: .utf8),
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let interaction = dict["interaction"] as? [String: Any] else { return nil }
+            return ChatInteractionMeta(dict: interaction)
+        }
+        let attachmentRequests: [MessageAttachmentRequest]? = item.attachments.isEmpty ? nil : item.attachments.compactMap {
+            guard let uploadId = $0.uploadId else { return nil }
+            return MessageAttachmentRequest(assetId: $0.assetId, role: $0.role, uploadId: uploadId, order: $0.order)
+        }
         let request = MessageSendRequest(
             channel: channel,
             type: item.type,
@@ -817,7 +927,9 @@ final class MessageStore: ObservableObject {
             uploadId: item.uploadId,
             replyTo: item.replyTo,
             replyPreview: item.replyPreview,
-            clientId: item.clientId)
+            clientId: item.clientId,
+            meta: interactionMeta.map { MessageSendMeta(interaction: $0) },
+            attachments: attachmentRequests)
         let ack: [Any] = await withCheckedContinuation { continuation in
             socket.emitWithAck(SocketEvent.messageSend.rawValue, SocketPayloadEncoder.encode(request))
                 .timingOut(after: 15) { continuation.resume(returning: $0) }
@@ -858,9 +970,13 @@ final class MessageStore: ObservableObject {
     }
 
     private func completePendingOutbound(clientId: String) {
-        if let item = ChatLocalDatabase.shared.pendingOutbound(clientId: clientId),
-           let path = item.localFilePath {
-            try? FileManager.default.removeItem(at: URL(fileURLWithPath: path))
+        if let item = ChatLocalDatabase.shared.pendingOutbound(clientId: clientId) {
+            if let path = item.localFilePath {
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: path))
+            }
+            for attachment in item.attachments {
+                try? FileManager.default.removeItem(atPath: attachment.localFilePath)
+            }
         }
         ChatLocalDatabase.shared.deletePendingOutbound(clientId: clientId)
     }

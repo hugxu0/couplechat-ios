@@ -6,6 +6,18 @@ export type StoredChannel = "couple" | `ai:${Username}`;
 export type MessageType = "text" | "image" | "video" | "sticker" | "voice" | "file";
 export type MessageKind = "user" | "system";
 
+export type MessageAttachmentRole = "photo" | "pairedVideo";
+
+export interface ClientMessageAttachment {
+  id: string;
+  assetId: string;
+  role: MessageAttachmentRole;
+  order: number;
+  url: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface AuthUser {
   username: string;
   name: string;
@@ -23,6 +35,7 @@ export interface ClientMessage {
   replyPreview?: string;
   reply?: unknown;
   meta?: unknown;
+  attachments?: ClientMessageAttachment[];
   recalledText?: string;
   channel: ClientChannel;
   ts: number;

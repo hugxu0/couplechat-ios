@@ -43,8 +43,8 @@ struct RootTabView: View {
     @EnvironmentObject private var theme: ThemeManager
     @State private var lastSeenEffectMessageId: String?
     @State private var lastSeenNoteId: String?
-    @State private var activeEffect: InteractionPayload?
-    @State private var activeEffectSender = ""
+    @State private var activePresentation: InteractionPresentation?
+    @State private var effectQueue: [InteractionPresentation] = []
 
     private var screenNoteId: String? {
         store.sharedValue("screen_note")?["id"] as? String
@@ -89,17 +89,16 @@ struct RootTabView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            if let activeEffect {
+            if let presentation = activePresentation {
                 IncomingInteractionOverlay(
-                    payload: activeEffect,
-                    senderName: activeEffectSender,
+                    payload: presentation.payload,
+                    senderName: presentation.senderName,
                     onDismiss: {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            self.activeEffect = nil
-                        }
-                    }
+                        finishActiveEffect()
+                    },
+                    duration: presentation.duration
                 )
-                .allowsHitTesting(activeEffect.kind == .note)
+                .allowsHitTesting(presentation.payload.kind == .note)
                 .zIndex(10)
             }
         }
@@ -110,6 +109,10 @@ struct RootTabView: View {
         }
         .onChange(of: store.messages.last?.id) {
             handleIncomingInteraction()
+        }
+        .onChange(of: store.localInteractionPresentation?.id) {
+            guard let presentation = store.localInteractionPresentation else { return }
+            enqueueEffect(presentation)
         }
         .onChange(of: screenNoteId) {
             handleIncomingNote()
@@ -125,10 +128,10 @@ struct RootTabView: View {
               message.sender != store.session?.username,
               Date().timeIntervalSince1970 * 1000 - message.ts < 20_000,
               let payload = message.interactionPayload else { return }
-        activeEffectSender = message.senderName.isEmpty ? "TA" : message.senderName
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-            activeEffect = payload
-        }
+        enqueueEffect(InteractionPresentation(
+            payload: payload,
+            senderName: message.senderName.isEmpty ? "TA" : message.senderName,
+            duration: payload.kind == .note ? 2.8 : 2.1))
     }
 
     private func handleIncomingNote() {
@@ -140,9 +143,32 @@ struct RootTabView: View {
               let text = value["text"] as? String,
               let ts = (value["ts"] as? NSNumber)?.doubleValue ?? (value["ts"] as? Double),
               Date().timeIntervalSince1970 * 1000 - ts < 300_000 else { return }
-        activeEffectSender = value["fromName"] as? String ?? "TA"
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-            activeEffect = InteractionPayload(id: "note-\(id)", kind: .note, text: text)
+        enqueueEffect(InteractionPresentation(
+            payload: InteractionPayload(id: "note-\(id)", kind: .note, text: text),
+            senderName: value["fromName"] as? String ?? "TA",
+            duration: 2.8))
+    }
+
+    private func enqueueEffect(_ presentation: InteractionPresentation) {
+        guard activePresentation?.id != presentation.id,
+              !effectQueue.contains(where: { $0.id == presentation.id }) else { return }
+        guard activePresentation != nil else {
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                activePresentation = presentation
+            }
+            return
+        }
+        effectQueue.append(presentation)
+    }
+
+    private func finishActiveEffect() {
+        withAnimation(.easeOut(duration: 0.2)) { activePresentation = nil }
+        guard !effectQueue.isEmpty else { return }
+        let next = effectQueue.removeFirst()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                activePresentation = next
+            }
         }
     }
 

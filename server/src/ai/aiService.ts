@@ -54,6 +54,9 @@ function isTriggered(text: string): boolean {
 }
 
 function makeSink(io: Server): ReplySink {
+  const activityRoom = (storedChannel: string) => storedChannel.startsWith("ai:")
+    ? `user:${storedChannel.slice(3)}`
+    : "channel:couple";
   return {
     async emit(storedChannel, text, isFirst, meta) {
       const message = await createAiMessage(storedChannel as StoredChannel, text, meta);
@@ -76,6 +79,14 @@ function makeSink(io: Server): ReplySink {
       if (storedChannel.startsWith("ai:")) {
         io.to(`user:${storedChannel.slice(3)}`).emit(socketEvents.aiReplying, value);
       }
+    },
+    activity(trigger, phase) {
+      io.to(activityRoom(trigger.storedChannel)).emit(socketEvents.aiActivity, {
+        channel: trigger.storedChannel.startsWith("ai:") ? "ai" : "couple",
+        requestMessageId: trigger.messageId,
+        requesterUsername: trigger.requesterUsername,
+        phase,
+      });
     },
   };
 }
@@ -111,16 +122,15 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
     void maybeCheckConflict(io, storedChannel).catch(() => {});
     void maybeInterject(io, storedChannel).catch(() => {});
     if (triggered) {
-      queueRespond(
-        {
+      const trigger = {
           storedChannel,
           question: stripTrigger(message.text),
           requesterName: user.name,
           requesterUsername: user.username,
           messageId: message.id,
-        },
-        sink,
-      );
+        };
+      sink.activity?.(trigger, "accepted");
+      queueRespond(trigger, sink);
     }
     return;
   }
@@ -138,8 +148,7 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
 
   // 文本 / 图片统一走一条流水线：图片消息此时已经落库，回复引擎里的意图判断
   // 会自己决定要不要识图（needImages 命中才去看最近这张图，不强求）。
-  queueRespond(
-    {
+  const trigger = {
       storedChannel,
       question: message.text.trim(),
       requesterName: user.name,
@@ -147,7 +156,7 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
       messageId: message.id,
       currentImageUrl: isImage ? message.url : undefined,
       currentImageSenderName: isImage ? message.senderName : undefined,
-    },
-    sink,
-  );
+    };
+  sink.activity?.(trigger, "accepted");
+  queueRespond(trigger, sink);
 }

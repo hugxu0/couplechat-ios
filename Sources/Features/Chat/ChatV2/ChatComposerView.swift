@@ -7,6 +7,10 @@ struct ChatPendingMedia: Identifiable {
     let mimeType: String
     let messageType: String
     let localPreviewURL: URL?
+    var pairedVideoData: Data? = nil
+    var pairedVideoMimeType: String? = nil
+
+    var isLivePhoto: Bool { pairedVideoData != nil }
 }
 
 protocol ChatComposerViewDelegate: AnyObject {
@@ -26,6 +30,23 @@ protocol ChatComposerViewDelegate: AnyObject {
 final class ChatComposerView: UIView, UITextViewDelegate {
     weak var delegate: ChatComposerViewDelegate?
     var heightDidChange: ((CGFloat) -> Void)?
+
+    func setCatThinking(_ thinking: Bool) {
+        if thinking {
+            guard catButton.layer.animation(forKey: "cat-thinking") == nil else { return }
+            let pulse = CABasicAnimation(keyPath: "transform.scale")
+            pulse.fromValue = 0.92
+            pulse.toValue = 1.12
+            pulse.duration = 0.62
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            catButton.layer.add(pulse, forKey: "cat-thinking")
+            catButton.tintColor = .systemPink
+        } else {
+            catButton.layer.removeAnimation(forKey: "cat-thinking")
+            catButton.tintColor = usesLightContent ? .white : .secondaryLabel
+        }
+    }
     private(set) var preferredHeight: CGFloat = 58
 
     private let stack = UIStackView()

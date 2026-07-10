@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import PhotosUI
+import Photos
 import UIKit
 import UniformTypeIdentifiers
 
@@ -19,9 +20,12 @@ extension ChatViewController: PHPickerViewControllerDelegate {
     }
 
     private func loadPickerResults(_ results: [PHPickerResult]) async {
+        if results.contains(where: { $0.assetIdentifier != nil }) {
+            _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        }
         var loaded: [ChatPendingMedia] = []
         for result in results {
-            if let item = await loadPendingMedia(from: result.itemProvider) {
+            if let item = await loadPendingMedia(from: result) {
                 loaded.append(item)
             }
         }
@@ -40,11 +44,36 @@ extension ChatViewController: PHPickerViewControllerDelegate {
         }
     }
 
-    private func loadPendingMedia(from provider: NSItemProvider) async -> ChatPendingMedia? {
+    private func loadPendingMedia(from result: PHPickerResult) async -> ChatPendingMedia? {
+        let provider = result.itemProvider
         if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
             return await loadVideo(from: provider)
         }
+        if let live = await loadLivePhoto(assetIdentifier: result.assetIdentifier) {
+            return live
+        }
         return await loadImage(from: provider)
+    }
+
+    private func loadLivePhoto(assetIdentifier: String?) async -> ChatPendingMedia? {
+        guard let assetIdentifier,
+              PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
+                || PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil).firstObject,
+              asset.mediaSubtypes.contains(.photoLive) else { return nil }
+        let resources = PHAssetResource.assetResources(for: asset)
+        guard let photo = resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto }),
+              let motion = resources.first(where: { $0.type == .pairedVideo || $0.type == .fullSizePairedVideo }),
+              let photoData = await PHAssetResourceManager.default().data(for: photo),
+              let motionData = await PHAssetResourceManager.default().data(for: motion),
+              let image = UIImage(data: photoData) else { return nil }
+        let photoMime = photo.contentType.preferredMIMEType ?? "image/jpeg"
+        let motionMime = motion.contentType.preferredMIMEType ?? "video/quicktime"
+        let previewURL = writeTemporaryPreview(data: photoData, preferredExtension: photo.contentType.preferredFilenameExtension ?? "jpg")
+        return ChatPendingMedia(
+            id: UUID().uuidString, image: image, data: photoData, mimeType: photoMime,
+            messageType: "image", localPreviewURL: previewURL,
+            pairedVideoData: motionData, pairedVideoMimeType: motionMime)
     }
 
     private func loadImage(from provider: NSItemProvider) async -> ChatPendingMedia? {
@@ -146,6 +175,22 @@ private extension NSItemProvider {
                     .appendingPathExtension(url.pathExtension.isEmpty ? "mov" : url.pathExtension)
                 try? FileManager.default.copyItem(at: url, to: destination)
                 continuation.resume(returning: destination)
+            }
+        }
+    }
+}
+
+
+private extension PHAssetResourceManager {
+    func data(for resource: PHAssetResource) async -> Data? {
+        await withCheckedContinuation { continuation in
+            var data = Data()
+            let options = PHAssetResourceRequestOptions()
+            options.isNetworkAccessAllowed = true
+            requestData(for: resource, options: options) { chunk in
+                data.append(chunk)
+            } completionHandler: { error in
+                continuation.resume(returning: error == nil ? data : nil)
             }
         }
     }

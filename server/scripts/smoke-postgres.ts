@@ -72,10 +72,12 @@ async function main() {
     );
     assertOk(
       "schema_migrations 记录全部迁移",
-      migrations.length === 3 &&
+      migrations.length === 5 &&
         migrations[0].version === 1 && migrations[0].name === "initial_schema" &&
         migrations[1].version === 2 && migrations[1].name === "bind_uploads_to_messages" &&
-        migrations[2].version === 3 && migrations[2].name === "classify_upload_purpose",
+        migrations[2].version === 3 && migrations[2].name === "classify_upload_purpose" &&
+        migrations[3].version === 4 && migrations[3].name === "preserve_recalled_text" &&
+        migrations[4].version === 5 && migrations[4].name === "message_attachments",
     );
 
     const { readReceiptSchema } = await import("../src/contracts/realtime");

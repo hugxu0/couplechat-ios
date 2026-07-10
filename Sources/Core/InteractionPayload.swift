@@ -17,7 +17,7 @@ struct InteractionPayload: Identifiable, Equatable {
     private static let suffix = "]]"
 
     static func encode(kind: InteractionEffectKind, text: String) -> String {
-        text
+        "\(prefix)\(kind.rawValue)\(suffix)\(text)"
     }
 
     static func parse(id: String, text: String) -> InteractionPayload? {
@@ -54,14 +54,28 @@ extension ChatMessage {
     }
 
     var interactionPayload: InteractionPayload? {
+        if let interaction = meta?.interaction,
+           let kind = InteractionEffectKind(rawValue: interaction.kind) {
+            return InteractionPayload(id: interaction.id, kind: kind, text: interaction.text)
+        }
         InteractionPayload.parse(id: id, text: text)
     }
+}
+
+struct InteractionPresentation: Identifiable, Equatable {
+    var id: String { payload.id }
+    let payload: InteractionPayload
+    let senderName: String
+    let duration: Double
 }
 
 struct IncomingInteractionOverlay: View {
     let payload: InteractionPayload
     let senderName: String
     let onDismiss: () -> Void
+    var duration: Double = 2.1
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var appeared = false
     @State private var torn = false
@@ -80,12 +94,12 @@ struct IncomingInteractionOverlay: View {
         }
         .ignoresSafeArea()
         .onAppear {
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.16) : .spring(response: 0.42, dampingFraction: 0.78)) {
                 appeared = true
             }
             if payload.kind != .note {
                 Task {
-                    try? await Task.sleep(nanoseconds: 2_100_000_000)
+                    try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
                     await MainActor.run {
                         withAnimation(.easeOut(duration: 0.24)) {
                             appeared = false
@@ -102,7 +116,7 @@ struct IncomingInteractionOverlay: View {
         ZStack {
             Color.clear
 
-            ForEach(0..<26, id: \.self) { index in
+            ForEach(0..<(reduceMotion ? 7 : 26), id: \.self) { index in
                 Text(effectEmoji)
                     .font(.system(size: CGFloat(20 + (index % 4) * 8)))
                     .opacity(appeared ? 0.88 : 0)

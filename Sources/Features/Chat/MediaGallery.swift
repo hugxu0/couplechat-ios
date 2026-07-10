@@ -65,6 +65,7 @@ struct MediaGallerySheet: View {
             set: { if !$0 { selectedMediaId = nil } }
         )) {
             MediaPagerView(messages: previewableMessages, selectedId: $selectedMediaId)
+                .presentationBackground(.clear)
         }
     }
 
@@ -85,7 +86,7 @@ struct MediaGallerySheet: View {
             .frame(minWidth: 0, maxWidth: .infinity)
             .frame(height: (UIScreen.main.bounds.width - 4) / 3)
             .clipped()
-            .onTapGesture { selectedMediaId = msg.id }
+            .onTapGesture { selectedMediaId = MediaBrowserItem.items(for: msg).first?.id ?? msg.id }
         } else if let url = msg.mediaURL {
             CachedImage(url: url) {
                 Color.gray.opacity(0.15)
@@ -94,10 +95,10 @@ struct MediaGallerySheet: View {
             .frame(minWidth: 0, maxWidth: .infinity)
             .frame(height: (UIScreen.main.bounds.width - 4) / 3)
             .clipped()
-            .onTapGesture { selectedMediaId = msg.id }
+            .onTapGesture { selectedMediaId = MediaBrowserItem.items(for: msg).first?.id ?? msg.id }
         } else {
             fallbackThumb(msg)
-                .onTapGesture { selectedMediaId = msg.id }
+                .onTapGesture { selectedMediaId = MediaBrowserItem.items(for: msg).first?.id ?? msg.id }
         }
     }
 

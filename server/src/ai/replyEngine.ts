@@ -43,6 +43,7 @@ export interface ReplySink {
   typing(storedChannel: string, value: boolean): void;
   // 「正在回复」开始时通知客户端，便于更稳地显示回复中的状态。
   replying?(storedChannel: string, value: boolean): void;
+  activity?(trigger: Trigger, phase: "accepted" | "generating" | "finished" | "failed"): void;
 }
 
 export interface Trigger {
@@ -188,6 +189,8 @@ function normalizeReplies(out: string | null): string[] {
 
 async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunState): Promise<void> {
   const isPrivate = trigger.storedChannel.startsWith("ai:");
+  let failed = false;
+  sink.activity?.(trigger, "generating");
   sink.typing(trigger.storedChannel, true);
   sink.replying?.(trigger.storedChannel, true);
   const trace = traceBegin(trigger.storedChannel, trigger.requesterName, trigger.question);
@@ -328,6 +331,8 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
       console.log(`[ai] 联网搜索返回 ${searchResult.annotations.length} 条来源`);
     }
   } catch (error) {
+    failed = true;
+    sink.activity?.(trigger, "failed");
     const message = error instanceof Error ? error.message : String(error);
     traceError(trace, message);
     console.warn("[ai] respond 失败:", message);
@@ -349,6 +354,7 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
   } finally {
     sink.typing(trigger.storedChannel, false);
     sink.replying?.(trigger.storedChannel, false);
+    if (!failed && !state.cancelled) sink.activity?.(trigger, "finished");
     traceFlush(trace);
   }
 }
@@ -402,6 +408,7 @@ export async function runReplyTaskWithTimeout(
         }
         sink.typing(trigger.storedChannel, false);
         sink.replying?.(trigger.storedChannel, false);
+        sink.activity?.(trigger, "failed");
         resolve();
       })();
     }, timeoutMs);
