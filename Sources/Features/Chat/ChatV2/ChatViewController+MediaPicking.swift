@@ -67,9 +67,11 @@ extension ChatViewController: PHPickerViewControllerDelegate {
               let photoData = await PHAssetResourceManager.default().data(for: photo),
               let motionData = await PHAssetResourceManager.default().data(for: motion),
               let image = UIImage(data: photoData) else { return nil }
-        let photoMime = photo.contentType.preferredMIMEType ?? "image/jpeg"
-        let motionMime = motion.contentType.preferredMIMEType ?? "video/quicktime"
-        let previewURL = writeTemporaryPreview(data: photoData, preferredExtension: photo.contentType.preferredFilenameExtension ?? "jpg")
+        let photoType = UTType(identifier: photo.uniformTypeIdentifier)
+        let motionType = UTType(identifier: motion.uniformTypeIdentifier)
+        let photoMime = photoType?.preferredMIMEType ?? "image/jpeg"
+        let motionMime = motionType?.preferredMIMEType ?? "video/quicktime"
+        let previewURL = writeTemporaryPreview(data: photoData, preferredExtension: photoType?.preferredFilenameExtension ?? "jpg")
         return ChatPendingMedia(
             id: UUID().uuidString, image: image, data: photoData, mimeType: photoMime,
             messageType: "image", localPreviewURL: previewURL,
