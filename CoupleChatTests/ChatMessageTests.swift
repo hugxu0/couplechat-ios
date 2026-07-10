@@ -146,7 +146,7 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertTrue(url?.absoluteString.contains("hoo66.top") ?? false)
     }
 
-    func testAttachmentAlbumAndLivePhotoPairParsing() {
+    func testLegacyAttachmentMetadataFallsBackToSingleStaticMedia() {
         let dict: [String: Any] = [
             "id": "msg_album",
             "sender": "xu",
@@ -168,8 +168,7 @@ final class ChatMessageTests: XCTestCase {
         ]
         let message = ChatMessage(dict: dict)
         XCTAssertEqual(message?.attachments?.count, 3)
-        XCTAssertEqual(MediaBrowserItem.items(for: message!).count, 2)
-        XCTAssertTrue(MediaBrowserItem.items(for: message!).first?.isLivePhoto == true)
+        XCTAssertEqual(MediaBrowserItem.items(for: message!).count, 1)
     }
 
     func testMediaPlaceholdersNeverRenderAsImageCaptions() {

@@ -10,7 +10,6 @@ struct MediaBrowserItem: Identifiable, Codable, Equatable {
     let senderName: String
     let sentAt: Double
     let channel: String
-    let pairedVideoURL: String?
 
     init?(message: ChatMessage) {
         guard let url = message.url, !url.isEmpty else { return nil }
@@ -21,36 +20,14 @@ struct MediaBrowserItem: Identifiable, Codable, Equatable {
         senderName = message.senderName
         sentAt = message.ts
         channel = message.channel
-        pairedVideoURL = nil
-    }
-
-    init(message: ChatMessage, attachment: ChatAttachment, pairedVideo: ChatAttachment?) {
-        id = attachment.id
-        type = "image"
-        url = attachment.url
-        text = message.text
-        senderName = message.senderName
-        sentAt = message.ts
-        channel = message.channel
-        pairedVideoURL = pairedVideo?.url
     }
 
     static func items(for message: ChatMessage) -> [MediaBrowserItem] {
-        let attachments = message.attachments ?? []
-        let photos = attachments.filter { $0.role == "photo" }.sorted { $0.order < $1.order }
-        guard !photos.isEmpty else { return MediaBrowserItem(message: message).map { [$0] } ?? [] }
-        return photos.map { photo in
-            MediaBrowserItem(
-                message: message,
-                attachment: photo,
-                pairedVideo: attachments.first { $0.assetId == photo.assetId && $0.role == "pairedVideo" })
-        }
+        MediaBrowserItem(message: message).map { [$0] } ?? []
     }
 
     var mediaURL: URL? { ServerConfig.resolveMediaURL(url) }
     var isVideo: Bool { type == "video" }
-    var isLivePhoto: Bool { pairedVideoURL != nil }
-    var pairedVideoMediaURL: URL? { ServerConfig.resolveMediaURL(pairedVideoURL) }
 }
 
 @MainActor

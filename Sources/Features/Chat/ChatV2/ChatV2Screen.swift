@@ -37,11 +37,12 @@ struct ChatV2Screen: View {
         case .connected:
             break
         }
+        if store.isAIComposing(in: channel) { return "大橘正在输入" }
         switch channel {
         case .couple:
             if !store.presenceKnown { return "正在获取在线状态" }
             return store.partnerOnline ? "在线" : "离线"
-        case .ai: return store.isAIComposing(in: .ai) ? "正在输入" : "陪你聊天"
+        case .ai: return "陪你聊天"
         }
     }
 
@@ -192,20 +193,35 @@ struct ChatV2Screen: View {
 
             Spacer(minLength: 0)
 
-            VStack(spacing: 2) {
-                Text(title)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(topPrimaryColor)
-                    .shadow(color: topShadowColor, radius: 1.5, x: 0, y: 1)
-                Text(subtitle)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(topSecondaryColor)
-                    .shadow(color: topShadowColor.opacity(0.8), radius: 1, x: 0, y: 1)
+            Button {
+                Haptics.light()
+                isShowingDetail = true
+            } label: {
+                VStack(spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(topPrimaryColor)
+                        .shadow(color: topShadowColor, radius: 1.5, x: 0, y: 1)
+                    Text(subtitle)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(topSecondaryColor)
+                        .shadow(color: topShadowColor.opacity(0.8), radius: 1, x: 0, y: 1)
+                }
+                .lineLimit(1)
+                .padding(.horizontal, 22)
+                .frame(minWidth: 156, minHeight: 42)
+                .contentShape(Capsule())
+                .chatTopLiquidGlass(cornerRadius: 21, tone: topChromeTone)
             }
-            .lineLimit(1)
-            .padding(.horizontal, 22)
-            .frame(minWidth: 156, minHeight: 42)
-            .chatTopLiquidGlass(cornerRadius: 21, tone: topChromeTone)
+            .buttonStyle(PressableStyle())
+            .contextMenu {
+                Button {
+                    isShowingDetail = true
+                } label: {
+                    Label("聊天设置", systemImage: "slider.horizontal.3")
+                }
+            }
+            .accessibilityLabel("打开聊天设置")
 
             Spacer(minLength: 0)
 

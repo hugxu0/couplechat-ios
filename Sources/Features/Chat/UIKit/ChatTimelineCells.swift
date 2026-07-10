@@ -117,6 +117,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     private let statusLabel = UILabel()
     private let retryButton = UIButton(type: .system)
     private let highlightView = UIView()
+    private let interactionFeather = CAGradientLayer()
 
     private var representedImageURL: URL?
     private var representedVoiceURL: URL?
@@ -138,6 +139,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         bubbleView.layer.cornerCurve = .continuous
         bubbleView.clipsToBounds = true
         bubbleView.layer.shadowOpacity = 0
+        interactionFeather.startPoint = CGPoint(x: 0, y: 0)
+        interactionFeather.endPoint = CGPoint(x: 1, y: 1)
         contentView.addSubview(avatarView)
         contentView.addSubview(highlightView)
         contentView.addSubview(bubbleView)
@@ -268,14 +271,35 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         let incomingTextColor = usesDarkIncomingBubble ? UIColor.white : UIColor.label.resolvedColor(with: traitCollection)
         let incomingSecondaryColor = usesDarkIncomingBubble ? UIColor.white.withAlphaComponent(0.72) : UIColor.secondaryLabel.resolvedColor(with: traitCollection)
         let isInteraction = message.interactionPayload != nil
+        let interactionColor: UIColor = {
+            guard let kind = message.interactionPayload?.kind else { return .systemPink }
+            switch kind {
+            case .miss, .flower: return UIColor(red: 0.94, green: 0.34, blue: 0.55, alpha: 1)
+            case .pat: return UIColor(red: 0.95, green: 0.58, blue: 0.24, alpha: 1)
+            case .poop: return UIColor(red: 0.68, green: 0.45, blue: 0.29, alpha: 1)
+            case .note: return UIColor(red: 0.46, green: 0.45, blue: 0.88, alpha: 1)
+            }
+        }()
         bubbleView.backgroundColor = mediaOnly ? .clear : (isInteraction
-            ? (mine ? accentColor.withAlphaComponent(0.90) : UIColor.systemPink.withAlphaComponent(0.13))
+            ? (usesDarkIncomingBubble ? UIColor.black.withAlphaComponent(0.58) : UIColor.systemBackground.withAlphaComponent(0.72))
             : (mine ? accentColor : incomingBubbleColor))
         bubbleView.layer.borderWidth = isInteraction ? 1 : 0
         bubbleView.layer.borderColor = isInteraction
-            ? (mine ? UIColor.white.withAlphaComponent(0.32) : UIColor.systemPink.withAlphaComponent(0.24)).cgColor
+            ? interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.48 : 0.28).cgColor
             : UIColor.clear.cgColor
-        bodyLabel.textColor = mine ? .white : incomingTextColor
+        bodyLabel.textColor = isInteraction
+            ? (usesDarkIncomingBubble ? .white : interactionColor.withAlphaComponent(0.92))
+            : (mine ? .white : incomingTextColor)
+        interactionFeather.removeFromSuperlayer()
+        if isInteraction {
+            interactionFeather.colors = [
+                interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.32 : 0.22).cgColor,
+                interactionColor.withAlphaComponent(0.08).cgColor,
+                UIColor.clear.cgColor
+            ]
+            interactionFeather.locations = [0, 0.56, 1]
+            bubbleView.layer.insertSublayer(interactionFeather, at: 0)
+        }
         replyMarker.backgroundColor = mine ? UIColor.white.withAlphaComponent(0.9) : accentColor
         replyLabel.textColor = mine ? UIColor.white.withAlphaComponent(0.86) : incomingSecondaryColor
 
@@ -344,6 +368,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         }
 
         bubbleView.layer.cornerRadius = cornerRadius(for: message)
+        interactionFeather.frame = bubbleView.bounds
+        interactionFeather.cornerRadius = bubbleView.layer.cornerRadius
         highlightView.frame = bubbleView.frame.insetBy(dx: -5, dy: -5)
         highlightView.layer.cornerRadius = bubbleView.layer.cornerRadius + 5
         layoutBubbleContent(message)
@@ -360,7 +386,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
 
         if let interaction = message.interactionPayload {
             bodyLabel.text = interactionCardText(interaction)
-            bodyLabel.font = .systemFont(ofSize: 15, weight: .bold)
+            bodyLabel.font = .systemFont(ofSize: 13.5, weight: .bold)
             bodyLabel.numberOfLines = 2
             bodyLabel.textAlignment = .center
             bubbleView.addSubview(bodyLabel)

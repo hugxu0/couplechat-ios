@@ -3,7 +3,6 @@ import AVKit
 import AVFoundation
 import UIKit
 import Photos
-import PhotosUI
 
 /// 沉浸式媒体浏览：不显示页码或工具栏，操作只在手势和长按菜单中出现。
 struct MediaPagerView: View {
@@ -154,9 +153,7 @@ struct MediaPagerView: View {
         saving = true
         Task {
             let success: Bool
-            if item.isLivePhoto, let motion = item.pairedVideoMediaURL {
-                success = await MediaSaver.saveLivePhoto(photo: url, motion: motion)
-            } else if item.isVideo {
+            if item.isVideo {
                 success = await MediaSaver.saveVideo(from: url)
             } else {
                 success = await MediaSaver.saveImage(from: url)
@@ -197,13 +194,7 @@ private struct MediaPage: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                if item.isLivePhoto,
-                   let photo = item.mediaURL,
-                   let motion = item.pairedVideoMediaURL,
-                   shouldLoadMedia {
-                    RemoteLivePhotoView(photoURL: photo, motionURL: motion)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                } else if item.isVideo, let url = item.mediaURL, shouldLoadMedia {
+                if item.isVideo, let url = item.mediaURL, shouldLoadMedia {
                     VideoPlayer(player: AVPlayer(url: url))
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 } else if let url = item.mediaURL, shouldLoadMedia {
@@ -214,15 +205,6 @@ private struct MediaPage: View {
                     failedView
                 }
 
-                if item.isLivePhoto {
-                    Image(uiImage: PHLivePhotoView.livePhotoBadgeImage(options: .overContent))
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 38, height: 22)
-                        .padding(.leading, 12)
-                        .padding(.top, geometry.safeAreaInsets.top + 10)
-                        .accessibilityHidden(true)
-                }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .contentShape(Rectangle())
@@ -293,127 +275,7 @@ private struct ZoomableRemoteImage: View {
     }
 }
 
-private struct RemoteLivePhotoView: UIViewRepresentable {
-    let photoURL: URL
-    let motionURL: URL
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIView(context: Context) -> PHLivePhotoView {
-        let view = PHLivePhotoView()
-        view.contentMode = .scaleAspectFit
-        view.clipsToBounds = true
-        let press = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePress(_:)))
-        view.addGestureRecognizer(press)
-        context.coordinator.liveView = view
-        context.coordinator.load(photoURL: photoURL, motionURL: motionURL)
-        return view
-    }
-
-    func updateUIView(_ uiView: PHLivePhotoView, context: Context) {
-        context.coordinator.liveView = uiView
-        context.coordinator.load(photoURL: photoURL, motionURL: motionURL)
-    }
-
-    final class Coordinator: NSObject {
-        weak var liveView: PHLivePhotoView?
-        private var signature = ""
-        private var requestID: PHLivePhotoRequestID = PHLivePhotoRequestIDInvalid
-        private var localFiles: [URL] = []
-
-        deinit {
-            if requestID != PHLivePhotoRequestIDInvalid { PHLivePhoto.cancelRequest(withRequestID: requestID) }
-            localFiles.forEach { try? FileManager.default.removeItem(at: $0) }
-        }
-
-        func load(photoURL: URL, motionURL: URL) {
-            let nextSignature = photoURL.absoluteString + "|" + motionURL.absoluteString
-            guard signature != nextSignature else { return }
-            signature = nextSignature
-            Task { [weak self] in
-                guard let self else { return }
-                do {
-                    async let photo = Self.download(photoURL, extension: photoURL.pathExtension.isEmpty ? "jpg" : photoURL.pathExtension)
-                    async let motion = Self.download(motionURL, extension: motionURL.pathExtension.isEmpty ? "mov" : motionURL.pathExtension)
-                    let files = try await (photo, motion)
-                    await MainActor.run {
-                        self.localFiles.forEach { try? FileManager.default.removeItem(at: $0) }
-                        self.localFiles = [files.0, files.1]
-                        self.requestID = PHLivePhoto.request(
-                            withResourceFileURLs: self.localFiles,
-                            placeholderImage: nil,
-                            targetSize: .zero,
-                            contentMode: .aspectFit
-                        ) { [weak self] livePhoto, info in
-                            guard let self,
-                                  (info[PHLivePhotoInfoIsDegradedKey] as? Bool) != true,
-                                  livePhoto != nil else { return }
-                            DispatchQueue.main.async {
-                                self.liveView?.livePhoto = livePhoto
-                                self.liveView?.startPlayback(with: .hint)
-                            }
-                        }
-                    }
-                } catch {
-                    await MainActor.run { self.signature = "" }
-                }
-            }
-        }
-
-        @objc func handlePress(_ gesture: UILongPressGestureRecognizer) {
-            switch gesture.state {
-            case .began:
-                liveView?.startPlayback(with: .full)
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            case .ended, .cancelled, .failed:
-                liveView?.stopPlayback()
-            default:
-                break
-            }
-        }
-
-        private static func download(_ url: URL, extension ext: String) async throws -> URL {
-            let (source, _) = try await URLSession.shared.download(from: url)
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
-            try FileManager.default.moveItem(at: source, to: destination)
-            return destination
-        }
-    }
-}
-
 enum MediaSaver {
-    static func saveLivePhoto(photo: URL, motion: URL) async -> Bool {
-        do {
-            async let photoFile = downloadedFile(from: photo, extension: "jpg")
-            async let motionFile = downloadedFile(from: motion, extension: "mov")
-            let files = try await (photoFile, motionFile)
-            defer {
-                try? FileManager.default.removeItem(at: files.0)
-                try? FileManager.default.removeItem(at: files.1)
-            }
-            return await withCheckedContinuation { continuation in
-                PHPhotoLibrary.shared().performChanges {
-                    let request = PHAssetCreationRequest.forAsset()
-                    request.addResource(with: .photo, fileURL: files.0, options: nil)
-                    request.addResource(with: .pairedVideo, fileURL: files.1, options: nil)
-                } completionHandler: { success, _ in
-                    continuation.resume(returning: success)
-                }
-            }
-        } catch {
-            return false
-        }
-    }
-
-    private static func downloadedFile(from url: URL, extension ext: String) async throws -> URL {
-        let (source, _) = try await URLSession.shared.download(from: url)
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
-        try FileManager.default.moveItem(at: source, to: destination)
-        return destination
-    }
-
     static func saveImage(from url: URL) async -> Bool {
         do {
             let (data, _) = try await URLSession.shared.data(from: url)

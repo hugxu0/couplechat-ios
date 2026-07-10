@@ -26,7 +26,8 @@ final class ChatStickerPanelView: UIView {
     }
 
     private let store: StickerStore
-    private let accentColor: UIColor
+    private var accentColor: UIColor
+    private var usesLightContent = false
     private let collectionView: UICollectionView
     private let backgroundGlass = ChatGlassView(style: .systemThinMaterial, cornerRadius: 30)
     private let tabGlass = ChatGlassView(style: .systemThinMaterial, cornerRadius: 20)
@@ -56,6 +57,24 @@ final class ChatStickerPanelView: UIView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func applyTheme(accentColor: UIColor, usesLightContent: Bool) {
+        self.accentColor = accentColor
+        self.usesLightContent = usesLightContent
+        backgroundGlass.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18, borderAlpha: usesLightContent ? 0.14 : 0.20)
+        tabGlass.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.12 : 0.16, borderAlpha: usesLightContent ? 0.13 : 0.18)
+        collectionView.indicatorStyle = usesLightContent ? .white : .black
+        reloadTabs()
+        reloadItems()
+    }
+
+    private var secondaryColor: UIColor {
+        usesLightContent ? UIColor.white.withAlphaComponent(0.72) : UIColor.black.withAlphaComponent(0.58)
+    }
+
+    private var neutralFill: UIColor {
+        usesLightContent ? UIColor.white.withAlphaComponent(0.09) : UIColor.black.withAlphaComponent(0.06)
     }
 
     private func build() {
@@ -144,8 +163,8 @@ final class ChatStickerPanelView: UIView {
 
         let manage = UIButton(type: .system)
         manage.setImage(UIImage(systemName: "gearshape"), for: .normal)
-        manage.tintColor = .secondaryLabel
-        manage.backgroundColor = UIColor.white.withAlphaComponent(0.07)
+        manage.tintColor = secondaryColor
+        manage.backgroundColor = neutralFill
         manage.layer.cornerCurve = .continuous
         manage.layer.cornerRadius = 15
         manage.widthAnchor.constraint(equalToConstant: 32).isActive = true
@@ -162,8 +181,8 @@ final class ChatStickerPanelView: UIView {
         config.cornerStyle = .capsule
         config.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 9, bottom: 5, trailing: 9)
         config.imagePadding = 4
-        config.baseBackgroundColor = tab == selectedTab ? accentColor.withAlphaComponent(0.92) : UIColor.white.withAlphaComponent(0.06)
-        config.baseForegroundColor = tab == selectedTab ? .white : .secondaryLabel
+        config.baseBackgroundColor = tab == selectedTab ? accentColor.withAlphaComponent(0.92) : neutralFill
+        config.baseForegroundColor = tab == selectedTab ? .white : secondaryColor
         config.title = title(for: tab)
         config.image = UIImage(systemName: icon(for: tab))
 
@@ -228,9 +247,12 @@ extension ChatStickerPanelView: UICollectionViewDataSource, UICollectionViewDele
         case .sticker(let sticker):
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: StickerCell.reuseId, for: indexPath) as! StickerCell
             cell.configure(sticker)
+            cell.applyAppearance(fill: neutralFill)
             return cell
         case .addSticker:
-            return collectionView.dequeueReusableCell(withReuseIdentifier: AddStickerCell.reuseId, for: indexPath)
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: AddStickerCell.reuseId, for: indexPath) as! AddStickerCell
+            cell.applyAppearance(fill: neutralFill, foreground: secondaryColor)
+            return cell
         }
     }
 
@@ -363,6 +385,10 @@ private final class StickerCell: UICollectionViewCell {
             }
         }
     }
+
+    func applyAppearance(fill: UIColor) {
+        contentView.backgroundColor = fill
+    }
 }
 
 private final class AddStickerCell: UICollectionViewCell {
@@ -386,5 +412,10 @@ private final class AddStickerCell: UICollectionViewCell {
     override func layoutSubviews() {
         super.layoutSubviews()
         imageView.frame = contentView.bounds
+    }
+
+    func applyAppearance(fill: UIColor, foreground: UIColor) {
+        contentView.backgroundColor = fill
+        imageView.tintColor = foreground
     }
 }

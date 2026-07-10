@@ -462,52 +462,6 @@ final class MessageStore: ObservableObject {
         flushOutbox(session: session)
     }
 
-    func sendAlbum(resources: [OutboundMediaResource], displayText: String?, channel: ChatChannel = .couple,
-                   session: Session) {
-        let assetCount = Set(resources.map(\.assetId)).count
-        guard !resources.isEmpty, (1...9).contains(assetCount) else { return }
-        let clientId = "tmp-" + UUID().uuidString
-        let createdAt = Date().timeIntervalSince1970 * 1000
-        var pendingAttachments: [PendingOutboundAttachment] = []
-        var optimisticAttachments: [ChatAttachment] = []
-        for resource in resources {
-            let fileId = "\(clientId)-\(resource.assetId)-\(resource.role)"
-            guard let url = persistOutboundMedia(
-                data: resource.data, mimeType: resource.mimeType, clientId: fileId, username: session.username)
-            else {
-                pendingAttachments.forEach { try? FileManager.default.removeItem(atPath: $0.localFilePath) }
-                return
-            }
-            pendingAttachments.append(PendingOutboundAttachment(
-                assetId: resource.assetId, role: resource.role, order: resource.order,
-                localFilePath: url.path, mimeType: resource.mimeType, uploadId: nil, uploadURL: nil))
-            optimisticAttachments.append(ChatAttachment(
-                id: "pending-\(resource.assetId)-\(resource.role)", assetId: resource.assetId,
-                role: resource.role, order: resource.order, url: url.absoluteString, mimeType: resource.mimeType))
-        }
-        let text = displayText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? displayText!
-            : (assetCount > 1 ? "[\(assetCount)张图片]" : "[图片]")
-        var optimistic = ChatMessage(
-            optimisticMedia: "image", text: text,
-            localURL: optimisticAttachments.first(where: { $0.role == "photo" })?.url,
-            me: session, clientId: clientId, channel: channel.rawValue,
-            attachments: optimisticAttachments)
-        optimistic.ts = createdAt
-        updateMessages(channel) { $0.append(optimistic) }
-        let item = PendingOutboundMessage(
-            clientId: clientId, channel: channel.rawValue, type: "image", text: text,
-            replyTo: nil, replyPreview: nil, localFilePath: nil, mimeType: nil,
-            uploadId: nil, uploadURL: nil, createdAt: createdAt, attempts: 0, lastError: nil,
-            attachments: pendingAttachments)
-        guard ChatLocalDatabase.shared.upsertPendingOutbound(item) else {
-            pendingAttachments.forEach { try? FileManager.default.removeItem(atPath: $0.localFilePath) }
-            markPendingFailed(clientId: clientId, channel: channel, error: "本地保存失败")
-            return
-        }
-        flushOutbox(session: session)
-    }
-
     func sendSticker(url: String, channel: ChatChannel = .couple, session: Session) {
         let clientId = "tmp-" + UUID().uuidString
         let optimistic = ChatMessage(

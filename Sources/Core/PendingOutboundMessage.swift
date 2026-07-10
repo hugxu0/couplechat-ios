@@ -82,11 +82,3 @@ struct PendingOutboundAttachment: Codable, Equatable {
     var uploadId: String?
     var uploadURL: String?
 }
-
-struct OutboundMediaResource {
-    let assetId: String
-    let role: String
-    let order: Int
-    let data: Data
-    let mimeType: String
-}

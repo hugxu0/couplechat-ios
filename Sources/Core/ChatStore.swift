@@ -590,12 +590,6 @@ final class ChatStore: ObservableObject {
             duration: kind == .note ? 2.1 : 1.15)
     }
 
-    func sendAlbum(resources: [OutboundMediaResource], displayText: String?, channel: ChatChannel = .couple) {
-        guard let session = auth.session else { return }
-        if channel == .ai { messageStore.aiReplying = true }
-        messageStore.sendAlbum(resources: resources, displayText: displayText, channel: channel, session: session)
-    }
-
     func aiActivity(for channel: ChatChannel) -> AIActivity? {
         aiActivityByChannel[channel.rawValue]
     }

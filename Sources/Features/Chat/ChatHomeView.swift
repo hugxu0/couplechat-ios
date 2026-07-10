@@ -87,7 +87,7 @@ struct ChatHomeView: View {
                         .padding(.vertical, 9)
                         .background(
                             Capsule(style: .continuous)
-                                .fill((refreshMessage == "已更新" ? DS.Palette.green : Color.red).opacity(0.92))
+                                .fill((refreshMessage == "刷新成功" ? DS.Palette.green : Color.red).opacity(0.92))
                                 .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
                         )
                         .padding(.top, 8)
@@ -598,13 +598,7 @@ struct ChatHomeView: View {
     /// 刷新结束后弹一条结果提示，1.8s 后自动消失（独立于下拉手势的生命周期）
     private func flashRefreshResult(_ result: HomeRefreshResult) {
         withAnimation(DS.Anim.ease) {
-            if result.dataUpdated && result.realtimeConnected {
-                refreshMessage = "已更新并连接"
-            } else if result.dataUpdated {
-                refreshMessage = "内容已更新，实时连接恢复中"
-            } else {
-                refreshMessage = "刷新失败，稍后再试"
-            }
+            refreshMessage = (result.dataUpdated || result.realtimeConnected) ? "刷新成功" : "刷新失败"
         }
         Task {
             try? await Task.sleep(nanoseconds: 1_800_000_000)
@@ -802,6 +796,7 @@ private struct CoupleAvatarColumn: View {
     let editable: Bool
     let statusOptions: [ChatHomeView.StatusOption]
     let onStatusPick: (ChatHomeView.StatusOption) -> Void
+    @State private var showStatusPicker = false
 
     var body: some View {
         VStack(spacing: 9) {
@@ -838,12 +833,9 @@ private struct CoupleAvatarColumn: View {
     @ViewBuilder
     private var statusCapsule: some View {
         if editable {
-            Menu {
-                ForEach(statusOptions) { option in
-                    Button(option.title) {
-                        onStatusPick(option)
-                    }
-                }
+            Button {
+                Haptics.light()
+                showStatusPicker = true
             } label: {
                 Text(status ?? "加状态")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -854,6 +846,17 @@ private struct CoupleAvatarColumn: View {
             }
             .frame(minWidth: 76, minHeight: 34)
             .contentShape(Capsule())
+            .buttonStyle(PressableStyle())
+            .confirmationDialog("选择状态", isPresented: $showStatusPicker, titleVisibility: .visible) {
+                ForEach(statusOptions) { option in
+                    Button(option.title) { onStatusPick(option) }
+                }
+            }
+            .contextMenu {
+                ForEach(statusOptions) { option in
+                    Button(option.title) { onStatusPick(option) }
+                }
+            }
         } else {
             Text(status ?? "想贴贴")
                 .font(.system(size: 14, weight: .bold, design: .rounded))

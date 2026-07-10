@@ -139,6 +139,7 @@ final class ChatViewController: UIViewController {
         self.onMediaTap = onMediaTap
         if themeChanged || composerToneChanged || dynamicComposerToneChanged || appliedAccent != theme.accent {
             composer.applyTheme(theme, usesLightContent: self.composerUsesLightContent)
+            stickerPanel?.applyTheme(accentColor: theme.accent.uiColor, usesLightContent: self.composerUsesLightContent)
             applyAccentColor()
         }
         if dynamicallySamplesComposerTone, isViewLoaded {
@@ -204,6 +205,7 @@ final class ChatViewController: UIViewController {
         // 消息气泡使用已解析的静态前景/背景色；系统外观改变时必须重新配置单元，
         // 避免保留浅色背景却让动态 .label 变成白字。
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
+        stickerPanel?.applyTheme(accentColor: theme.accent.uiColor, usesLightContent: composerUsesLightContent)
         layoutHeightCache.removeAll()
         collectionView.collectionViewLayout.invalidateLayout()
         UIView.performWithoutAnimation {
@@ -237,6 +239,7 @@ final class ChatViewController: UIViewController {
         guard composerUsesLightContent != usesLightContent else { return }
         composerUsesLightContent = usesLightContent
         composer.applyTheme(theme, usesLightContent: usesLightContent)
+        stickerPanel?.applyTheme(accentColor: theme.accent.uiColor, usesLightContent: usesLightContent)
     }
 
     func performJump(_ command: ChatV2JumpCommand) {
@@ -379,6 +382,7 @@ final class ChatViewController: UIViewController {
 
     private func installStickerPanel() {
         let panel = ChatStickerPanelView(store: StickerStore.shared, accentColor: theme.accent.uiColor)
+        panel.applyTheme(accentColor: theme.accent.uiColor, usesLightContent: composerUsesLightContent)
         panel.delegate = self
         panel.translatesAutoresizingMaskIntoConstraints = false
         panelContainer.addSubview(panel)
@@ -930,58 +934,15 @@ final class ChatViewController: UIViewController {
         let items = pendingMedia
         guard !items.isEmpty else { return }
         let caption = composer.textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sendMode = composer.mediaSendMode
         pendingMedia = []
         composer.setMediaPreviews([])
         composer.clearText()
         stickToLatestAfterNextReload = true
-        let images = items.filter { $0.messageType == "image" }
         var captionConsumed = false
-
-        if sendMode == .merged, images.count > 1 {
-            var resources: [OutboundMediaResource] = []
-            for (index, item) in images.enumerated() {
-                resources.append(OutboundMediaResource(
-                    assetId: item.id, role: "photo", order: index,
-                    data: item.data, mimeType: item.mimeType))
-                if let motion = item.pairedVideoData {
-                    resources.append(OutboundMediaResource(
-                        assetId: item.id, role: "pairedVideo", order: index,
-                        data: motion, mimeType: item.pairedVideoMimeType ?? "video/quicktime"))
-                }
-            }
-            store.sendAlbum(
-                resources: resources,
-                displayText: caption.isEmpty ? nil : caption,
-                channel: channel)
-            captionConsumed = !caption.isEmpty
-            // 合并只针对图片；视频仍按选择顺序逐条发送。
-            for item in items where item.messageType == "video" {
-                sendSingleMedia(item, caption: captionConsumed ? nil : caption)
-                captionConsumed = captionConsumed || !caption.isEmpty
-            }
-        } else {
-            // 默认保持选择顺序逐条入发送队列。Live Photo 仍是“一条消息”，只是这条
-            // 消息内部原子携带静态图与 paired video 两个资源。
-            for item in items {
-                if item.isLivePhoto {
-                    var resources = [OutboundMediaResource(
-                        assetId: item.id, role: "photo", order: 0,
-                        data: item.data, mimeType: item.mimeType)]
-                    if let motion = item.pairedVideoData {
-                        resources.append(OutboundMediaResource(
-                            assetId: item.id, role: "pairedVideo", order: 0,
-                            data: motion, mimeType: item.pairedVideoMimeType ?? "video/quicktime"))
-                    }
-                    store.sendAlbum(
-                        resources: resources,
-                        displayText: captionConsumed || caption.isEmpty ? nil : caption,
-                        channel: channel)
-                } else {
-                    sendSingleMedia(item, caption: captionConsumed ? nil : caption)
-                }
-                captionConsumed = captionConsumed || !caption.isEmpty
-            }
+        // 多选媒体始终按用户选择顺序逐条发送，说明文字只附在第一条上。
+        for item in items {
+            sendSingleMedia(item, caption: captionConsumed ? nil : caption)
+            captionConsumed = captionConsumed || !caption.isEmpty
         }
         reloadTimeline(animated: false)
     }

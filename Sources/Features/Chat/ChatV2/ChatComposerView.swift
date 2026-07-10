@@ -1,10 +1,4 @@
-import PhotosUI
 import UIKit
-
-enum ChatMediaSendMode: Int {
-    case separate
-    case merged
-}
 
 struct ChatPendingMedia: Identifiable {
     let id: String
@@ -13,10 +7,6 @@ struct ChatPendingMedia: Identifiable {
     let mimeType: String
     let messageType: String
     let localPreviewURL: URL?
-    var pairedVideoData: Data? = nil
-    var pairedVideoMimeType: String? = nil
-
-    var isLivePhoto: Bool { pairedVideoData != nil }
 }
 
 protocol ChatComposerViewDelegate: AnyObject {
@@ -61,7 +51,6 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private let replyTitleLabel = UILabel()
     private let replyBodyLabel = UILabel()
     private let mediaPreviewContainer = UIStackView()
-    private let mediaModeControl = UISegmentedControl(items: ["逐张发送", "合并"])
     private let mediaScrollView = UIScrollView()
     private let mediaStack = UIStackView()
     private let inputRow = UIStackView()
@@ -94,7 +83,6 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private var mediaVisible = false
     private var waveBars: [UIView] = []
 
-    private(set) var mediaSendMode: ChatMediaSendMode = .separate
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -119,9 +107,6 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         replyTitleLabel.textColor = secondary
         replyBodyLabel.textColor = primary
         replyCloseButton.tintColor = secondary
-        mediaModeControl.selectedSegmentTintColor = accentColor
-        mediaModeControl.setTitleTextAttributes([.foregroundColor: primary], for: .normal)
-        mediaModeControl.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
         recordingLabel.textColor = recordingCancelled ? .systemRed : secondary
         recordingHintLabel.textColor = recordingCancelled ? .systemRed : secondary
         textView.textColor = primary
@@ -162,13 +147,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         previewItems = items
         mediaVisible = !items.isEmpty
         mediaPreviewContainer.isHidden = items.isEmpty
-        let shouldShowMode = items.filter { $0.messageType == "image" }.count > 1
-        if !shouldShowMode {
-            mediaSendMode = .separate
-            mediaModeControl.selectedSegmentIndex = ChatMediaSendMode.separate.rawValue
-        }
-        mediaModeControl.isHidden = !shouldShowMode
-        mediaPreviewHeightConstraint?.constant = shouldShowMode ? 117 : 84
+        mediaPreviewHeightConstraint?.constant = 84
         mediaStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for item in items {
             mediaStack.addArrangedSubview(previewTile(for: item))
@@ -342,15 +321,6 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         mediaPreviewContainer.spacing = 5
         mediaPreviewContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        mediaModeControl.selectedSegmentIndex = ChatMediaSendMode.separate.rawValue
-        mediaModeControl.accessibilityLabel = "多图发送方式"
-        mediaModeControl.addTarget(self, action: #selector(mediaModeChanged), for: .valueChanged)
-        mediaModeControl.translatesAutoresizingMaskIntoConstraints = false
-        let modeHeight = mediaModeControl.heightAnchor.constraint(equalToConstant: 28)
-        modeHeight.priority = .defaultHigh
-        modeHeight.isActive = true
-        mediaPreviewContainer.addArrangedSubview(mediaModeControl)
-
         mediaScrollView.showsHorizontalScrollIndicator = false
         mediaScrollView.translatesAutoresizingMaskIntoConstraints = false
         mediaStack.axis = .horizontal
@@ -368,11 +338,6 @@ final class ChatComposerView: UIView, UITextViewDelegate {
             mediaStack.bottomAnchor.constraint(equalTo: mediaScrollView.contentLayoutGuide.bottomAnchor),
             mediaStack.heightAnchor.constraint(equalTo: mediaScrollView.frameLayoutGuide.heightAnchor)
         ])
-    }
-
-    @objc private func mediaModeChanged() {
-        mediaSendMode = ChatMediaSendMode(rawValue: mediaModeControl.selectedSegmentIndex) ?? .separate
-        UISelectionFeedbackGenerator().selectionChanged()
     }
 
     private func buildInputRow() {
@@ -641,19 +606,6 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         close.addAction(UIAction { [weak self] _ in self?.delegate?.composerDidRemoveMedia(id: item.id) }, for: .touchUpInside)
 
         container.addSubview(imageView)
-        if item.isLivePhoto {
-            let badge = UIImageView(image: PHLivePhotoView.livePhotoBadgeImage(options: .overContent))
-            badge.contentMode = .scaleAspectFit
-            badge.isAccessibilityElement = false
-            badge.translatesAutoresizingMaskIntoConstraints = false
-            imageView.addSubview(badge)
-            NSLayoutConstraint.activate([
-                badge.leadingAnchor.constraint(equalTo: imageView.leadingAnchor, constant: 6),
-                badge.bottomAnchor.constraint(equalTo: imageView.bottomAnchor, constant: -6),
-                badge.widthAnchor.constraint(equalToConstant: 30),
-                badge.heightAnchor.constraint(equalToConstant: 18)
-            ])
-        }
         container.addSubview(close)
 
         NSLayoutConstraint.activate([
