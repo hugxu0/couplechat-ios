@@ -9,6 +9,10 @@ function parse(value: string): unknown {
   }
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 export async function getSharedState() {
   const rows = await all<SharedItemRow>("SELECT * FROM shared_items ORDER BY key ASC");
   const state = Object.fromEntries(
@@ -76,6 +80,16 @@ export async function getSharedState() {
         },
       };
     }
+  }
+
+  // 历史网页端允许写入顶层字符串、数组或 null；原生客户端共享状态只接受对象。
+  // 可识别的 loveDate 升级到 dates，其余异常键不下发，以免单条旧记录阻断登录。
+  const loveDate = typeof state.loveDate?.value === "string" ? state.loveDate.value : undefined;
+  if (!isJsonObject(state.dates?.value) && loveDate) {
+    state.dates = { ...state.loveDate, value: { together: loveDate } };
+  }
+  for (const [key, entry] of Object.entries(state)) {
+    if (!isJsonObject(entry.value)) delete state[key];
   }
 
   return state;

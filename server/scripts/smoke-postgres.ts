@@ -294,8 +294,15 @@ async function main() {
     const { setSharedItem, getSharedState } = await import("../src/shared/sharedService");
     await setSharedItem(user, "smoke", { hello: "pg" });
     await setSharedItem(user, "smoke", { hello: "pg2" });
+    await setSharedItem(user, "legacy-scalar", "old web value");
+    await setSharedItem(user, "loveDate", "2024-01-01");
     const shared = await getSharedState();
-    assertOk("shared_items upsert", (shared.smoke?.value as { hello?: string })?.hello === "pg2");
+    assertOk(
+      "shared_items upsert 与旧标量隔离",
+      (shared.smoke?.value as { hello?: string })?.hello === "pg2" &&
+        !shared["legacy-scalar"] &&
+        (shared.dates?.value as { together?: string })?.together === "2024-01-01",
+    );
 
     // personal items CRUD
     const items = await import("../src/personalItems/itemService");

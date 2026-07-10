@@ -19,8 +19,7 @@ final class SharedStore: ObservableObject {
 
     func setShared(_ key: String, value: [String: Any], session: Session?) {
         sharedState[key] = ["key": key, "value": value]
-        if let valueData = try? JSONSerialization.data(withJSONObject: value),
-           let valueJson = String(data: valueData, encoding: .utf8) {
+        if let valueJson = jsonObjectString(value) {
             ChatLocalDatabase.shared.saveSharedState(
                 key: key, valueJson: valueJson,
                 updatedBy: session?.username ?? "",
@@ -94,18 +93,23 @@ final class SharedStore: ObservableObject {
     // MARK: - 从 Socket 事件更新
 
     func applySharedInit(_ state: [String: Any]) {
-        sharedState = state
+        var sanitizedState: [String: Any] = [:]
         var persisted: [(String, String, String, Double)] = []
         for (key, val) in state {
             if let dict = val as? [String: Any],
                let value = dict["value"],
-               let valueData = try? JSONSerialization.data(withJSONObject: value),
-               let valueJson = String(data: valueData, encoding: .utf8) {
+               let valueJson = jsonObjectString(value) {
+                sanitizedState[key] = dict
                 let updatedBy = dict["updatedBy"] as? String ?? ""
                 let updatedAt = (dict["updatedAt"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
                 persisted.append((key, valueJson, updatedBy, updatedAt))
+            } else {
+                // 旧数据可能含有顶层字符串、数组或 null。共享状态契约只接受对象；
+                // 非法值可能使 NSJSONSerialization 抛出 Objective-C 异常，不能影响登录。
+                print("[SharedStore] 忽略格式不合法的共享状态: \(key)")
             }
         }
+        sharedState = sanitizedState
         Task.detached(priority: .utility) {
             for row in persisted {
                 ChatLocalDatabase.shared.saveSharedState(
@@ -116,13 +120,14 @@ final class SharedStore: ObservableObject {
 
     func applySharedUpdate(_ update: [String: Any]) {
         guard let key = update["key"] as? String else { return }
-        sharedState[key] = update
         if let value = update["value"],
-           let valueData = try? JSONSerialization.data(withJSONObject: value),
-           let valueJson = String(data: valueData, encoding: .utf8) {
+           let valueJson = jsonObjectString(value) {
+            sharedState[key] = update
             let updatedBy = update["updatedBy"] as? String ?? ""
             let updatedAt = (update["updatedAt"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
             ChatLocalDatabase.shared.saveSharedState(key: key, valueJson: valueJson, updatedBy: updatedBy, updatedAt: updatedAt)
+        } else {
+            print("[SharedStore] 忽略格式不合法的共享状态更新: \(key)")
         }
     }
 
@@ -239,6 +244,17 @@ final class SharedStore: ObservableObject {
     }
 
     // MARK: - 私有辅助
+
+    /// `try?` 不能捕获 Foundation 的 Objective-C NSException。先验证顶层 JSON
+    /// 对象，确保历史异常值不会在登录阶段造成 abort。
+    private func jsonObjectString(_ value: Any) -> String? {
+        guard value is [String: Any],
+              JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
 
     private struct PersonalItemsResponse: Decodable {
         let items: [PersonalItem]
