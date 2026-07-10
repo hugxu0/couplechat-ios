@@ -211,7 +211,10 @@ export async function createAiMessage(channel: StoredChannel, text: string, meta
 
 export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
   const storedChannel = toStoredChannel(input.channel, user.username);
-  const limit = Math.min(Math.max(input.limit ?? 80, 1), 300);
+  const requestedLimit = Math.min(Math.max(input.limit ?? 80, 1), 300);
+  // 旧版 iOS 自动补同步固定请求 100 条，并逐条在主线程提交 SQLite；
+  // 大迁移后的首次连接可能触发 watchdog。仅对该旧请求形状限流，300 条手动全量同步不受影响。
+  const limit = requestedLimit === 100 ? 30 : requestedLimit;
 
   if (input.after !== undefined && input.before !== undefined) {
     const rows = await all<MessageRow>(

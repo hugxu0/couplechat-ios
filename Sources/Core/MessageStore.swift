@@ -273,7 +273,7 @@ final class MessageStore: ObservableObject {
         guard socketProvider?.socket != nil, roundsLeft > 0 else { return }
         let local = messages(for: channel)
         let lastTs = local.last(where: { !$0.pending && !$0.failed })?.ts ?? 0
-        let limit = 100
+        let limit = 50
         let request = MessageFetchRequest(channel: channel, since: lastTs > 0 ? lastTs : nil, limit: limit)
         let incoming = await fetchRemoteMessages(request, context: "syncHistory:\(channel.rawValue)")
         await upsertBatch(incoming, in: channel)
