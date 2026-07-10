@@ -17,7 +17,11 @@ struct CoupleDates: Equatable {
         f.dateFormat = "yyyy-MM-dd"
         f.timeZone = TimeZone(identifier: "Asia/Shanghai")
         guard let date = f.date(from: dateString) else { return nil }
-        let days = shanghaiCalendar.dateComponents([.day], from: date, to: Date()).day ?? 0
+        let days = shanghaiCalendar.dateComponents(
+            [.day],
+            from: shanghaiCalendar.startOfDay(for: date),
+            to: shanghaiCalendar.startOfDay(for: Date())
+        ).day ?? 0
         return max(0, days)
     }
 
@@ -27,7 +31,11 @@ struct CoupleDates: Equatable {
         f.dateFormat = "yyyy-MM-dd"
         f.timeZone = TimeZone(identifier: "Asia/Shanghai")
         guard let date = f.date(from: dateString) else { return nil }
-        let days = shanghaiCalendar.dateComponents([.day], from: Date(), to: date).day ?? 0
+        let days = shanghaiCalendar.dateComponents(
+            [.day],
+            from: shanghaiCalendar.startOfDay(for: Date()),
+            to: shanghaiCalendar.startOfDay(for: date)
+        ).day ?? 0
         return max(0, days)
     }
 }
