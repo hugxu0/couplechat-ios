@@ -242,8 +242,9 @@ final class ChatStore: ObservableObject {
                 self.connectionState = .connected
                 self.lastConnectionError = nil
                 self.reportAway(false)
-                self.messageStore.syncHistory(.couple)
-                self.messageStore.syncHistory(.ai)
+                await self.messageStore.syncHistory(.couple)
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                await self.messageStore.syncHistory(.ai)
                 if let session = self.auth.session {
                     self.messageStore.flushOutbox(session: session)
                 }
@@ -523,8 +524,8 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if data.first is [String: Any] {
-                    self.messageStore.syncHistory(.couple)
-                    self.messageStore.syncHistory(.ai)
+                    await self.messageStore.syncHistory(.couple)
+                    await self.messageStore.syncHistory(.ai)
                     if let session = self.auth.session {
                         self.messageStore.flushOutbox(session: session)
                     }
@@ -552,8 +553,8 @@ final class ChatStore: ObservableObject {
                     }
                     let ok = data.first is [String: Any]
                     if ok {
-                        self.messageStore.syncHistory(.couple)
-                        self.messageStore.syncHistory(.ai)
+                        await self.messageStore.syncHistory(.couple)
+                        await self.messageStore.syncHistory(.ai)
                         if let session = self.auth.session {
                             self.messageStore.flushOutbox(session: session)
                         }
@@ -641,8 +642,10 @@ final class ChatStore: ObservableObject {
     func clearLocalHistory() {
         messageStore.clearLocalHistory()
         if connected {
-            messageStore.syncHistory(.couple, roundsLeft: 1)
-            messageStore.syncHistory(.ai, roundsLeft: 1)
+            Task {
+                await messageStore.syncHistory(.couple, roundsLeft: 1)
+                await messageStore.syncHistory(.ai, roundsLeft: 1)
+            }
         }
     }
 }

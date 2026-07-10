@@ -32,6 +32,7 @@ final class MessageStore: ObservableObject {
     @Published var aiReplying = false
     @Published private var loadingOlderChannels = Set<String>()
     @Published private var loadingNewerChannels = Set<String>()
+    private var syncingHistoryChannels = Set<String>()
 
     /// 消息解析计数：帮助追踪静默丢弃的消息
     private static var parseFailureCount: Int = 0
@@ -117,10 +118,17 @@ final class MessageStore: ObservableObject {
         }
     }
 
-    func upsertBatch(_ msgs: [ChatMessage], in channel: ChatChannel) {
+    func upsertBatch(_ msgs: [ChatMessage], in channel: ChatChannel) async {
         guard !msgs.isEmpty else { return }
+        // SQLite 批量事务放到 utility executor，避免连接后补历史时阻塞主线程触发 watchdog。
+        let persisted = await Task.detached(priority: .utility) {
+            ChatLocalDatabase.shared.insertMessages(msgs)
+        }.value
+        guard persisted == msgs.count else {
+            print("[MessageStore] ⚠️ 批量消息写入失败 channel=\(channel.rawValue)")
+            return
+        }
         for msg in msgs {
-            ChatLocalDatabase.shared.insertMessage(msg)
             if !msg.pending, !msg.failed, let clientId = msg.clientId {
                 completePendingOutbound(clientId: clientId)
             }
@@ -210,7 +218,7 @@ final class MessageStore: ObservableObject {
                 MessageFetchRequest(channel: channel, after: range.start, before: range.end, limit: 80),
                 context: "ensureDate:\(channel.rawValue)")
             guard !incoming.isEmpty else { return nil }
-            upsertBatch(incoming, in: channel)
+            await upsertBatch(incoming, in: channel)
             dayMessages = incoming
         }
         guard let target = dayMessages.first else { return nil }
@@ -254,24 +262,24 @@ final class MessageStore: ObservableObject {
 
     // MARK: - 历史同步
 
-    func syncHistory(_ channel: ChatChannel, roundsLeft: Int = 5) {
-        guard let s = socketProvider?.socket, roundsLeft > 0 else { return }
+    func syncHistory(_ channel: ChatChannel, roundsLeft: Int = 5) async {
+        guard !syncingHistoryChannels.contains(channel.rawValue) else { return }
+        syncingHistoryChannels.insert(channel.rawValue)
+        defer { syncingHistoryChannels.remove(channel.rawValue) }
+        await syncHistoryPages(channel, roundsLeft: roundsLeft)
+    }
+
+    private func syncHistoryPages(_ channel: ChatChannel, roundsLeft: Int) async {
+        guard socketProvider?.socket != nil, roundsLeft > 0 else { return }
         let local = messages(for: channel)
         let lastTs = local.last(where: { !$0.pending && !$0.failed })?.ts ?? 0
         let limit = 100
         let request = MessageFetchRequest(channel: channel, since: lastTs > 0 ? lastTs : nil, limit: limit)
-        s.emitWithAck(SocketEvent.messagesFetch.rawValue, SocketPayloadEncoder.encode(request)).timingOut(after: 9) { [weak self] data in
-            guard let dict = data.first as? [String: Any],
-                  let list = dict["list"] as? [[String: Any]] else { return }
-            let incoming = Self.parseMessages(list, context: "syncHistory:\(channel.rawValue)")
-            Task { @MainActor in
-                guard let self else { return }
-                self.upsertBatch(incoming, in: channel)
-                if channel == .couple { self.markRead(.couple) }
-                if lastTs > 0, incoming.count >= limit {
-                    self.syncHistory(channel, roundsLeft: roundsLeft - 1)
-                }
-            }
+        let incoming = await fetchRemoteMessages(request, context: "syncHistory:\(channel.rawValue)")
+        await upsertBatch(incoming, in: channel)
+        if channel == .couple { markRead(.couple) }
+        if lastTs > 0, incoming.count >= limit {
+            await syncHistoryPages(channel, roundsLeft: roundsLeft - 1)
         }
     }
 
