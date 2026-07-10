@@ -1,6 +1,7 @@
 import XCTest
 @testable import CoupleChat
 
+@MainActor
 final class MessageStoreParseTests: XCTestCase {
 
     // MARK: - parseMessage
@@ -71,6 +72,7 @@ final class MessageStoreParseTests: XCTestCase {
     }
 }
 
+@MainActor
 final class MessageStoreSearchMergeTests: XCTestCase {
 
     func testMergeSearchDeduplicatesById() {
@@ -113,6 +115,7 @@ final class MessageStoreSearchMergeTests: XCTestCase {
     }
 }
 
+@MainActor
 final class MessageStoreMergedWindowTests: XCTestCase {
 
     func testMergedWindowEmptyWindowReturnsCurrent() {
@@ -155,10 +158,11 @@ final class MessageStoreMergedWindowTests: XCTestCase {
     }
 }
 
+@MainActor
 final class MessageStoreDayRangeTests: XCTestCase {
 
     func testDayRangeSpansFullDay() {
-        let cal = Calendar(identifier: .gregorian)
+        var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
         let date = cal.date(from: DateComponents(year: 2026, month: 7, day: 10))!
 
@@ -169,7 +173,7 @@ final class MessageStoreDayRangeTests: XCTestCase {
     }
 
     func testDayRangeStartIsMidnight() {
-        let cal = Calendar(identifier: .gregorian)
+        var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
         let date = cal.date(from: DateComponents(year: 2026, month: 1, day: 15, hour: 14, minute: 30))!
 
@@ -181,6 +185,7 @@ final class MessageStoreDayRangeTests: XCTestCase {
     }
 }
 
+@MainActor
 final class MessageStoreMediaPlaceholderTests: XCTestCase {
 
     func testPlaceholderText() {
