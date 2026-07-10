@@ -399,6 +399,11 @@ final class MessageStore: ObservableObject {
             do {
                 let uploaded = try await uploadMedia(data: data, mimeType: mimeType, session: session)
                 let type = preferredType == "file" ? "file" : (uploaded.type.isEmpty ? preferredType : uploaded.type)
+                // 这是自己刚上传的原始数据；服务器 URL 一确定就写进同一张图片缓存，
+                // 因此从气泡打开预览不需要再等一次网络下载。
+                if type == "image", let remoteURL = ServerConfig.resolveMediaURL(uploaded.url) {
+                    ImageCache.shared.store(data: data, for: remoteURL)
+                }
                 updateMessages(channel) { list in
                     guard let i = list.firstIndex(where: { $0.id == clientId }) else { return }
                     list[i].type = type

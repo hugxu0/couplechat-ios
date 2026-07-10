@@ -12,6 +12,7 @@ struct MediaPagerView: View {
     @GestureState private var dismissTranslation: CGSize = .zero
     @State private var saving = false
     @State private var toast: String?
+    @State private var closingProgress: CGFloat = 0
 
     init(messages: [ChatMessage], selectedId: Binding<String?>) {
         self.items = messages.compactMap(MediaBrowserItem.init(message:))
@@ -23,15 +24,33 @@ struct MediaPagerView: View {
         _selectedId = selectedId
     }
 
-    private var selection: Binding<String> {
+    private var dismissProgress: CGFloat {
+        max(closingProgress, min(1, max(0, dismissTranslation.height / 260)))
+    }
+
+    private var selectedIndex: Int {
+        guard let selectedId,
+              let index = items.firstIndex(where: { $0.id == selectedId }) else { return 0 }
+        return index
+    }
+
+    private var indexSelection: Binding<Int> {
         Binding(
-            get: { selectedId ?? items.first?.id ?? "" },
-            set: { selectedId = $0 }
+            get: { selectedIndex },
+            set: { index in
+                guard items.indices.contains(index) else { return }
+                selectedId = items[index].id
+            }
         )
     }
 
-    private var dismissProgress: CGFloat {
-        min(1, max(0, dismissTranslation.height / 260))
+    /// TabView 不再一次创建数百张图片页，只保留当前和相邻页。
+    /// 既减少首次打开的网络/解码负担，也让横向分页保持轻量。
+    private var pageIndices: [Int] {
+        guard !items.isEmpty else { return [] }
+        let lower = max(items.startIndex, selectedIndex - 1)
+        let upper = min(items.index(before: items.endIndex), selectedIndex + 1)
+        return Array(lower...upper)
     }
 
     var body: some View {
@@ -45,21 +64,26 @@ struct MediaPagerView: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.white.opacity(0.72))
             } else {
-                TabView(selection: selection) {
-                    ForEach(items) { item in
+                TabView(selection: indexSelection) {
+                    ForEach(pageIndices, id: \.self) { index in
+                        let item = items[index]
                         MediaPage(
                             item: item,
                             isFavorite: favorites.contains(item),
                             onSave: { save(item) },
                             onToggleFavorite: { toggleFavorite(item) }
                         )
-                        .tag(item.id)
+                        .tag(index)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .offset(y: max(0, dismissTranslation.height))
                 .scaleEffect(CGFloat(1) - dismissProgress * 0.08)
                 .simultaneousGesture(dismissGesture)
+                .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.88), value: dismissTranslation)
+                .task(id: selectedId) {
+                    prefetchAroundSelection()
+                }
             }
 
             if let toast {
@@ -89,8 +113,30 @@ struct MediaPagerView: View {
             .onEnded { value in
                 guard value.translation.height > 110,
                       abs(value.translation.height) > abs(value.translation.width) else { return }
-                selectedId = nil
+                dismiss()
             }
+    }
+
+    private func dismiss() {
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.88)) {
+            closingProgress = 1
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            selectedId = nil
+            closingProgress = 0
+        }
+    }
+
+    private func prefetchAroundSelection() {
+        guard !items.isEmpty else { return }
+        let lower = max(items.startIndex, selectedIndex - 2)
+        let upper = min(items.index(before: items.endIndex), selectedIndex + 2)
+        for index in lower...upper {
+            guard !items[index].isVideo, let url = items[index].mediaURL else { continue }
+            Task.detached(priority: .userInitiated) {
+                _ = await ImageCache.shared.image(for: url)
+            }
+        }
     }
 
     private func save(_ item: MediaBrowserItem) {
@@ -146,7 +192,8 @@ private struct MediaPage: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .contentShape(Rectangle())
-            .contextMenu {
+            // 不提供原图片的上下文预览，避免系统先把大图抬起并遮住菜单。
+            .contextMenu(menuItems: {
                 Button {
                     onSave()
                 } label: {
@@ -157,7 +204,9 @@ private struct MediaPage: View {
                 } label: {
                     Label(isFavorite ? "取消收藏" : "收藏", systemImage: isFavorite ? "heart.slash" : "heart")
                 }
-            }
+            }, preview: {
+                Color.clear.frame(width: 1, height: 1)
+            })
         }
         .ignoresSafeArea()
     }
@@ -185,29 +234,16 @@ private struct ZoomableRemoteImage: View {
     }
 
     var body: some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .empty:
-                ProgressView().tint(.white)
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: size.width, maxHeight: size.height)
-                    .scaleEffect(scale)
-                    .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.86), value: scale)
-                    .gesture(magnifyGesture)
-                    .onTapGesture(count: 2) {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                            settledScale = settledScale > 1 ? 1 : 2
-                        }
-                    }
-            case .failure:
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.white.opacity(0.72))
-            @unknown default:
-                EmptyView()
+        CachedImage(url: url, contentMode: .fit) {
+            ProgressView().tint(.white)
+        }
+        .frame(maxWidth: size.width, maxHeight: size.height)
+        .scaleEffect(scale)
+        .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.86), value: scale)
+        .gesture(magnifyGesture)
+        .onTapGesture(count: 2) {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                settledScale = settledScale > 1 ? 1 : 2
             }
         }
     }

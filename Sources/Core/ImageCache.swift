@@ -46,6 +46,19 @@ final class ImageCache {
     func image(for url: URL) async -> UIImage? {
         if let hit = memoryImage(for: url) { return hit }
 
+        // 自己刚选中的照片在消息确认前使用 file:// 临时地址。它不能交给 URLSession，
+        // 直接后台解码才能让点开本人刚发的图立即看到原图。
+        if url.isFileURL {
+            let decoded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+                guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return nil }
+                return image.preparingForDisplay() ?? image
+            }.value
+            if let decoded {
+                memory.setObject(decoded, forKey: url.absoluteString as NSString)
+            }
+            return decoded
+        }
+
         let file = fileURL(for: url)
         // 磁盘命中：后台读 + 解码
         if let decoded = await Task.detached(priority: .utility) { () -> UIImage? in
