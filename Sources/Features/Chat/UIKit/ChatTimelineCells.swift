@@ -108,6 +108,10 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     private let replyMarker = UIView()
     private let replyLabel = UILabel()
     private let bodyLabel = UILabel()
+    private let interactionIconBackground = UIView()
+    private let interactionEmojiLabel = UILabel()
+    private let interactionTitleLabel = UILabel()
+    private let interactionSubtitleLabel = UILabel()
     private let mediaImageView = UIImageView()
     private let mediaIconView = UIImageView()
     private let albumScrollView = UIScrollView()
@@ -160,6 +164,17 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         bodyLabel.font = .systemFont(ofSize: 17)
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byWordWrapping
+
+        interactionIconBackground.layer.cornerCurve = .continuous
+        interactionIconBackground.layer.cornerRadius = 17
+        interactionEmojiLabel.font = .systemFont(ofSize: 19)
+        interactionEmojiLabel.textAlignment = .center
+        interactionTitleLabel.font = .systemFont(ofSize: 15, weight: .bold)
+        interactionTitleLabel.numberOfLines = 1
+        interactionSubtitleLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        interactionSubtitleLabel.numberOfLines = 1
+        interactionSubtitleLabel.adjustsFontSizeToFitWidth = true
+        interactionSubtitleLabel.minimumScaleFactor = 0.78
 
         mediaImageView.contentMode = .scaleAspectFit
         mediaImageView.clipsToBounds = true
@@ -244,6 +259,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         myAvatar: String,
         peerAvatarURL: URL?,
         myAvatarURL: URL?,
+        counterpartName: String,
         accentColor: UIColor,
         usesDarkIncomingBubble: Bool = false,
         voicePlaying: Bool = false,
@@ -290,6 +306,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         bodyLabel.textColor = isInteraction
             ? (usesDarkIncomingBubble ? .white : interactionColor.withAlphaComponent(0.92))
             : (mine ? .white : incomingTextColor)
+        interactionTitleLabel.textColor = usesDarkIncomingBubble ? .white : UIColor.label.resolvedColor(with: traitCollection)
+        interactionSubtitleLabel.textColor = usesDarkIncomingBubble
+            ? UIColor.white.withAlphaComponent(0.68)
+            : UIColor.secondaryLabel.resolvedColor(with: traitCollection)
+        interactionIconBackground.backgroundColor = interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.24 : 0.12)
         interactionFeather.removeFromSuperlayer()
         if isInteraction {
             interactionFeather.colors = [
@@ -314,7 +335,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         highlightView.layer.borderColor = accentColor.withAlphaComponent(0.85).cgColor
         highlightView.backgroundColor = highlighted ? accentColor.withAlphaComponent(0.12) : .clear
 
-        installContent(for: message)
+        installContent(for: message, counterpartName: counterpartName)
         if message.id.hasPrefix("__ai_activity__") {
             let animation = CABasicAnimation(keyPath: "opacity")
             animation.fromValue = 0.52
@@ -375,7 +396,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         layoutBubbleContent(message)
     }
 
-    private func installContent(for message: ChatMessage) {
+    private func installContent(for message: ChatMessage, counterpartName: String) {
         bodyLabel.font = .systemFont(ofSize: 17)
         bodyLabel.numberOfLines = 0
         bodyLabel.textAlignment = .natural
@@ -385,11 +406,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         }
 
         if let interaction = message.interactionPayload {
-            bodyLabel.text = interactionCardText(interaction)
-            bodyLabel.font = .systemFont(ofSize: 13.5, weight: .bold)
-            bodyLabel.numberOfLines = 2
-            bodyLabel.textAlignment = .center
-            bubbleView.addSubview(bodyLabel)
+            configureInteraction(interaction, counterpartName: counterpartName)
+            bubbleView.addSubview(interactionIconBackground)
+            bubbleView.addSubview(interactionEmojiLabel)
+            bubbleView.addSubview(interactionTitleLabel)
+            bubbleView.addSubview(interactionSubtitleLabel)
             return
         }
 
@@ -446,19 +467,41 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         }
     }
 
-    private func interactionCardText(_ payload: InteractionPayload) -> String {
+    private func configureInteraction(_ payload: InteractionPayload, counterpartName: String) {
         let title: String
+        let incomingDetail: String
+        let outgoingDetail: String
         switch payload.kind {
-        case .miss: title = "💗  想你了"
-        case .pat: title = "🖐️  拍一拍"
-        case .flower: title = "🌸  送你一朵花"
-        case .poop: title = "💩  调皮一下"
+        case .miss:
+            interactionEmojiLabel.text = "💗"
+            title = "想你了"
+            incomingDetail = "\(counterpartName)给你送来一次想念"
+            outgoingDetail = "送给\(counterpartName)一次想念"
+        case .pat:
+            interactionEmojiLabel.text = "🖐️"
+            title = "拍一拍"
+            incomingDetail = "\(counterpartName)轻轻拍了拍你"
+            outgoingDetail = "轻轻拍了拍\(counterpartName)"
+        case .flower:
+            interactionEmojiLabel.text = "🌸"
+            title = "送花花"
+            incomingDetail = "\(counterpartName)送给你一朵花"
+            outgoingDetail = "送给\(counterpartName)一朵花"
+        case .poop:
+            interactionEmojiLabel.text = "💩"
+            title = "扔粑粑"
+            incomingDetail = "\(counterpartName)朝你扔了个粑粑"
+            outgoingDetail = "朝\(counterpartName)扔了个粑粑"
         case .note:
             let note = payload.text.replacingOccurrences(of: "🪧", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            title = "🪧  \(note)"
+            interactionEmojiLabel.text = "🪧"
+            title = "贴条"
+            incomingDetail = note.isEmpty ? "\(counterpartName)给你贴了一张小纸条" : note
+            outgoingDetail = note.isEmpty ? "给\(counterpartName)贴了一张小纸条" : note
         }
-        return "互动消息\n\(title)"
+        interactionTitleLabel.text = title
+        interactionSubtitleLabel.text = mine ? outgoingDetail : incomingDetail
     }
 
     private func configureMedia(_ message: ChatMessage) {
@@ -550,6 +593,19 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             replyMarker.frame = CGRect(x: 8, y: 8, width: 3, height: 20)
             replyLabel.frame = CGRect(x: 18, y: 0, width: replyView.bounds.width - 26, height: 36)
             y += 43
+        }
+
+        if message.interactionPayload != nil {
+            let iconSize: CGFloat = 34
+            let iconX: CGFloat = 12
+            let iconY = (bubbleView.bounds.height - iconSize) / 2
+            interactionIconBackground.frame = CGRect(x: iconX, y: iconY, width: iconSize, height: iconSize)
+            interactionEmojiLabel.frame = interactionIconBackground.frame
+            let textX = interactionIconBackground.frame.maxX + 10
+            let textWidth = max(0, bubbleView.bounds.width - textX - 12)
+            interactionTitleLabel.frame = CGRect(x: textX, y: iconY - 1, width: textWidth, height: 19)
+            interactionSubtitleLabel.frame = CGRect(x: textX, y: iconY + 18, width: textWidth, height: 16)
+            return
         }
 
         switch message.type {

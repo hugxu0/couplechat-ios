@@ -9,9 +9,9 @@ struct ChatHomeView: View {
     @State private var sentAction: String?
     @State private var showCustomStatusPrompt = false
     @State private var customStatusText = ""
+    @State private var editingStatusID: String?
     @State private var showNotePrompt = false
     @State private var noteText = ""
-    @State private var statusEditMode = false
     @State private var refreshMessage: String?
     @State private var refreshingHome = false
     @State private var pullRefreshArmed = true
@@ -64,12 +64,15 @@ struct ChatHomeView: View {
             .overlay(alignment: .top) { pullRefreshIndicator }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
-            .alert("自定义状态", isPresented: $showCustomStatusPrompt) {
+            .alert(editingStatusID == nil ? "添加状态" : "编辑状态", isPresented: $showCustomStatusPrompt) {
                 TextField("比如：想被抱抱", text: $customStatusText)
-                Button("保存") { setCustomStatus() }
+                Button(editingStatusID == nil ? "添加并使用" : "保存") { saveStatusEditor() }
+                if let editingStatusID {
+                    Button("删除状态", role: .destructive) { deleteStatus(id: editingStatusID) }
+                }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("会显示在你的头像上方，尽量短一点。")
+                Text(editingStatusID == nil ? "点按状态即可切换，长按已有状态可以编辑。" : "修改后会同步更新当前正在使用的状态。")
             }
             .alert("贴一张小纸条", isPresented: $showNotePrompt) {
                 TextField("写一句想贴给 TA 的话", text: $noteText)
@@ -156,44 +159,16 @@ struct ChatHomeView: View {
     }
 
     private var homeCardBackground: some View {
-        ZStack {
-            DS.Palette.cardSurface
-            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            theme.accent.color.opacity(0.12),
-                            Color.clear
-                        ],
-                        center: .topTrailing,
-                        startRadius: 20,
-                        endRadius: 260
-                    )
-                )
-            VStack {
-                HStack {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(theme.accent.color.opacity(0.10))
-                    Spacer()
-                    Image(systemName: "heart.fill")
-                        .font(.system(size: 56))
-                        .foregroundStyle(DS.Palette.pink.opacity(0.08))
-                        .rotationEffect(.degrees(-10))
-                }
-                Spacer()
-                HStack {
-                    Circle()
-                        .stroke(theme.accent.color.opacity(0.08), lineWidth: 2)
-                        .frame(width: 82, height: 82)
-                    Spacer()
-                    Image(systemName: "quote.opening")
-                        .font(.system(size: 32, weight: .semibold))
-                        .foregroundStyle(DS.Palette.textSecondary.opacity(0.06))
-                }
-            }
-            .padding(22)
-        }
+        LinearGradient(
+            colors: [
+                DS.Palette.cardSurface,
+                theme.accent.color.opacity(0.09),
+                DS.Palette.pink.opacity(0.055),
+                DS.Palette.cardSurface.opacity(0.96),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     private var shortPullRefreshProbe: some View {
@@ -312,106 +287,54 @@ struct ChatHomeView: View {
                 }
 
                 Button {
+                    editingStatusID = nil
                     customStatusText = ""
                     showCustomStatusPrompt = true
                 } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 15, weight: .bold))
+                    Label("添加", systemImage: "plus")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Palette.textSecondary)
-                        .frame(width: 38, height: 34)
-                        .background(DS.Palette.innerSurface, in: Capsule())
+                        .padding(.horizontal, 13)
+                        .frame(height: 36)
+                        .background(.white.opacity(0.52), in: Capsule())
+                        .overlay(Capsule().stroke(.white.opacity(0.72), lineWidth: 1))
                 }
                 .buttonStyle(PressableStyle())
-
-                if !statusEditMode {
-                    Button {
-                        Haptics.medium()
-                        withAnimation(DS.Anim.springFast) { statusEditMode = true }
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(DS.Palette.textSecondary)
-                            .frame(width: 34, height: 34)
-                            .background(DS.Palette.innerSurface, in: Capsule())
-                    }
-                    .buttonStyle(PressableStyle())
-                    .accessibilityLabel("管理状态")
-                }
-
-                if statusEditMode {
-                    Button {
-                        withAnimation(DS.Anim.springFast) { statusEditMode = false }
-                    } label: {
-                        Text("完成")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundStyle(DS.Palette.accent)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 8)
-                            .background(DS.Palette.innerSurface, in: Capsule())
-                    }
-                    .buttonStyle(PressableStyle())
-                } else if statusMap[myUsername] != nil {
-                    Button {
-                        clearStatus()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(DS.Palette.textSecondary)
-                            .frame(width: 34, height: 34)
-                            .background(DS.Palette.innerSurface, in: Capsule())
-                    }
-                    .buttonStyle(PressableStyle())
-                }
             }
-            .padding(.top, statusEditMode ? 8 : 0)
-            .padding(.horizontal, statusEditMode ? 8 : 1)
+            .padding(.horizontal, 1)
         }
     }
 
     private func statusChip(_ status: StatusOption) -> some View {
         let selected = statusMap[myUsername] == status.title
-        return ZStack(alignment: .topTrailing) {
-            Button {
-                guard !statusEditMode else { return }
-                setStatus(status)
-            } label: {
-                Text(status.title)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(status.color)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule()
-                            .fill(
-                                selected && !statusEditMode
-                                    ? AnyShapeStyle(status.color.opacity(0.18))
-                                    : AnyShapeStyle(DS.Palette.innerSurface)
-                            )
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(selected && !statusEditMode ? status.color.opacity(0.28) : Color.clear, lineWidth: 1)
-                    )
-                    .contentShape(Capsule())
+        return HStack(spacing: 6) {
+            if selected {
+                Circle()
+                    .fill(status.color)
+                    .frame(width: 6, height: 6)
             }
-            .buttonStyle(PressableStyle())
-            .disabled(statusEditMode)
-
-            if statusEditMode {
-                Button {
-                    deleteStatus(id: status.id)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8.5, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .frame(width: 17, height: 17)
-                        .background(Color.red, in: Circle())
-                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.4))
-                }
-                .buttonStyle(.plain)
-                .offset(x: 6, y: -7)
-            }
+            Text(status.title)
+                .lineLimit(1)
         }
+        .font(.system(size: 13, weight: .bold, design: .rounded))
+        .foregroundStyle(selected ? status.color : DS.Palette.textPrimary.opacity(0.72))
+        .padding(.horizontal, 14)
+        .frame(height: 36)
+        .background(
+            Capsule().fill(
+                selected
+                    ? AnyShapeStyle(status.color.opacity(0.14))
+                    : AnyShapeStyle(.white.opacity(0.52))
+            )
+        )
+        .overlay(Capsule().stroke(selected ? status.color.opacity(0.22) : .white.opacity(0.72), lineWidth: 1))
+        .shadow(color: selected ? status.color.opacity(0.12) : .clear, radius: 7, y: 3)
+        .contentShape(Capsule())
+        .onTapGesture { toggleStatus(status) }
+        .onLongPressGesture(minimumDuration: 0.42) { beginEditingStatus(status) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("点按切换状态，长按编辑")
     }
 
     private var actionStrip: some View {
@@ -662,6 +585,21 @@ struct ChatHomeView: View {
         store.setShared("chat_statuses", value: next)
     }
 
+    private func toggleStatus(_ status: StatusOption) {
+        if statusMap[myUsername] == status.title {
+            clearStatus()
+        } else {
+            setStatus(status)
+        }
+    }
+
+    private func beginEditingStatus(_ status: StatusOption) {
+        Haptics.medium()
+        editingStatusID = status.id
+        customStatusText = status.title
+        showCustomStatusPrompt = true
+    }
+
     private func clearStatus() {
         Haptics.selection()
         var next = statusMap
@@ -669,18 +607,32 @@ struct ChatHomeView: View {
         store.setShared("chat_statuses", value: next)
     }
 
-    private func setCustomStatus() {
+    private func saveStatusEditor() {
         let raw = customStatusText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
         let title = String(raw.prefix(8))
         var list = storedStatuses
-        if !list.contains(where: { $0.title == title }) {
+        if let editingStatusID,
+           let index = list.firstIndex(where: { $0.id == editingStatusID }) {
+            let oldTitle = list[index].title
+            list[index].title = title
+            saveStatuses(list)
+            if statusMap[myUsername] == oldTitle {
+                var next = statusMap
+                next[myUsername] = title
+                store.setShared("chat_statuses", value: next)
+            }
+        } else if !list.contains(where: { $0.title == title }) {
             list.append(StoredStatus(id: UUID().uuidString, title: title))
             saveStatuses(list)
+            var next = statusMap
+            next[myUsername] = title
+            store.setShared("chat_statuses", value: next)
+        } else if let existing = statusOptions.first(where: { $0.title == title }) {
+            setStatus(existing)
         }
-        var next = statusMap
-        next[myUsername] = title
-        store.setShared("chat_statuses", value: next)
+        editingStatusID = nil
+        customStatusText = ""
     }
 
     private func deleteStatus(id: String) {
@@ -719,7 +671,7 @@ struct ChatHomeView: View {
 
     private func paletteOption(stored: StoredStatus, index: Int) -> StatusOption {
         let palette = Self.statusPalettes[index % Self.statusPalettes.count]
-        return StatusOption(id: stored.id, title: stored.title, color: palette.color, gradient: palette.gradient)
+        return StatusOption(id: stored.id, title: stored.title, color: palette.color)
     }
 
     private struct StoredStatus: Codable, Identifiable, Equatable {
@@ -729,7 +681,6 @@ struct ChatHomeView: View {
 
     private struct StatusPalette {
         let color: Color
-        let gradient: LinearGradient
     }
 
     private static let defaultStatuses: [StoredStatus] = [
@@ -740,14 +691,10 @@ struct ChatHomeView: View {
     ]
 
     private static let statusPalettes: [StatusPalette] = [
-        .init(color: Color(red: 0.78, green: 0.28, blue: 0.46),
-              gradient: LinearGradient(colors: [Color(red: 1.00, green: 0.55, blue: 0.68), Color(red: 1.00, green: 0.74, blue: 0.82)], startPoint: .leading, endPoint: .trailing)),
-        .init(color: Color(red: 0.72, green: 0.30, blue: 0.48),
-              gradient: LinearGradient(colors: [Color(red: 0.96, green: 0.56, blue: 0.78), Color(red: 1.00, green: 0.80, blue: 0.90)], startPoint: .leading, endPoint: .trailing)),
-        .init(color: Color(red: 0.38, green: 0.56, blue: 0.82),
-              gradient: LinearGradient(colors: [Color(red: 0.52, green: 0.68, blue: 0.95), Color(red: 0.72, green: 0.84, blue: 1.00)], startPoint: .leading, endPoint: .trailing)),
-        .init(color: Color(red: 0.82, green: 0.54, blue: 0.26),
-              gradient: LinearGradient(colors: [Color(red: 0.98, green: 0.72, blue: 0.42), Color(red: 1.00, green: 0.84, blue: 0.60)], startPoint: .leading, endPoint: .trailing)),
+        .init(color: Color(red: 0.78, green: 0.28, blue: 0.46)),
+        .init(color: Color(red: 0.72, green: 0.30, blue: 0.48)),
+        .init(color: Color(red: 0.38, green: 0.56, blue: 0.82)),
+        .init(color: Color(red: 0.82, green: 0.54, blue: 0.26)),
     ]
 
     private static func randomNoteText() -> String {
@@ -764,7 +711,6 @@ struct ChatHomeView: View {
         let id: String
         let title: String
         let color: Color
-        let gradient: LinearGradient
     }
 
     fileprivate struct QuickAction: Identifiable {

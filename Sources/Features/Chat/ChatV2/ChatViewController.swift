@@ -1089,6 +1089,7 @@ extension ChatViewController: UICollectionViewDataSource {
                     myAvatar: myAvatar,
                     peerAvatarURL: store.avatarURL(for: message.sender),
                     myAvatarURL: myAvatarURL,
+                    counterpartName: channel == .ai ? "大橘" : store.partnerDisplayName(fallback: "TA"),
                     accentColor: theme.accent.uiColor,
                     usesDarkIncomingBubble: usesDarkChatSurface,
                     voicePlaying: playingVoiceMessageID == message.id,
