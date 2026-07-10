@@ -103,6 +103,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     weak var delegate: ChatTimelineCellDelegate?
 
     private let avatarView = ChatAvatarView()
+    private let aiActivityIconView = UIImageView(
+        image: UIImage(systemName: "cat") ?? UIImage(systemName: AccountPresentation.dajuIconName))
     private let bubbleView = UIView()
     private let replyView = UIView()
     private let replyMarker = UIView()
@@ -112,6 +114,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     private let interactionEmojiLabel = UILabel()
     private let interactionTitleLabel = UILabel()
     private let interactionSubtitleLabel = UILabel()
+    private let aiActivityStack = UIStackView()
+    private var aiActivityDots: [UIView] = []
     private let mediaImageView = UIImageView()
     private let mediaIconView = UIImageView()
     private let albumScrollView = UIScrollView()
@@ -146,6 +150,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         interactionFeather.startPoint = CGPoint(x: 0, y: 0)
         interactionFeather.endPoint = CGPoint(x: 1, y: 1)
         contentView.addSubview(avatarView)
+        aiActivityIconView.contentMode = .scaleAspectFit
+        aiActivityIconView.isHidden = true
+        contentView.addSubview(aiActivityIconView)
         contentView.addSubview(highlightView)
         contentView.addSubview(bubbleView)
         contentView.addSubview(statusLabel)
@@ -175,6 +182,21 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         interactionSubtitleLabel.numberOfLines = 1
         interactionSubtitleLabel.adjustsFontSizeToFitWidth = true
         interactionSubtitleLabel.minimumScaleFactor = 0.78
+
+        aiActivityStack.axis = .horizontal
+        aiActivityStack.alignment = .center
+        aiActivityStack.distribution = .equalSpacing
+        aiActivityStack.spacing = 5
+        for _ in 0..<3 {
+            let dot = UIView()
+            dot.layer.cornerCurve = .continuous
+            dot.layer.cornerRadius = 3
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+            aiActivityStack.addArrangedSubview(dot)
+            aiActivityDots.append(dot)
+        }
 
         mediaImageView.contentMode = .scaleAspectFit
         mediaImageView.clipsToBounds = true
@@ -247,6 +269,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         albumScrollView.subviews.forEach { $0.removeFromSuperview() }
         albumPhotos = []
         albumPairedIDs = []
+        aiActivityDots.forEach { $0.layer.removeAllAnimations() }
     }
 
     func configure(
@@ -273,10 +296,13 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         self.voicePlaying = voicePlaying
         self.voiceProgress = voiceProgress
 
+        let isAIActivity = message.id.hasPrefix("__ai_activity__")
         let avatarText = mine ? myAvatar : peerAvatar
         let avatarURL = mine ? myAvatarURL : peerAvatarURL
         avatarView.configure(text: avatarText, url: avatarURL)
-        avatarView.isHidden = false
+        avatarView.isHidden = isAIActivity
+        aiActivityIconView.isHidden = !isAIActivity
+        aiActivityIconView.tintColor = accentColor
 
         let mediaOnly = Self.isStandaloneMedia(message)
         // Context-menu 预览可能在不同 trait 环境中重绘动态系统色，造成气泡翻色。
@@ -296,9 +322,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             case .note: return UIColor(red: 0.46, green: 0.45, blue: 0.88, alpha: 1)
             }
         }()
-        bubbleView.backgroundColor = mediaOnly ? .clear : (isInteraction
+        bubbleView.backgroundColor = mediaOnly ? .clear : (isAIActivity
+            ? accentColor.withAlphaComponent(usesDarkIncomingBubble ? 0.24 : 0.11)
+            : (isInteraction
             ? (usesDarkIncomingBubble ? UIColor.black.withAlphaComponent(0.58) : UIColor.systemBackground.withAlphaComponent(0.72))
-            : (mine ? accentColor : incomingBubbleColor))
+            : (mine ? accentColor : incomingBubbleColor)))
         bubbleView.layer.borderWidth = isInteraction ? 1 : 0
         bubbleView.layer.borderColor = isInteraction
             ? interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.48 : 0.28).cgColor
@@ -311,6 +339,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             ? UIColor.white.withAlphaComponent(0.68)
             : UIColor.secondaryLabel.resolvedColor(with: traitCollection)
         interactionIconBackground.backgroundColor = interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.24 : 0.12)
+        aiActivityDots.forEach {
+            $0.backgroundColor = accentColor.withAlphaComponent(usesDarkIncomingBubble ? 0.92 : 0.68)
+        }
         interactionFeather.removeFromSuperlayer()
         if isInteraction {
             interactionFeather.colors = [
@@ -336,17 +367,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         highlightView.backgroundColor = highlighted ? accentColor.withAlphaComponent(0.12) : .clear
 
         installContent(for: message, counterpartName: counterpartName)
-        if message.id.hasPrefix("__ai_activity__") {
-            let animation = CABasicAnimation(keyPath: "opacity")
-            animation.fromValue = 0.52
-            animation.toValue = 1.0
-            animation.duration = 0.72
-            animation.autoreverses = true
-            animation.repeatCount = .infinity
-            bodyLabel.layer.add(animation, forKey: "ai-breathing")
-        } else {
-            bodyLabel.layer.removeAnimation(forKey: "ai-breathing")
-        }
+        setAIActivityAnimating(isAIActivity)
         setNeedsLayout()
     }
 
@@ -356,7 +377,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
 
         let bounds = contentView.bounds
         let topGap = grouped ? ChatTimelineMetrics.sameSenderTopGap : ChatTimelineMetrics.otherSenderTopGap
-        let avatarSize = ChatTimelineMetrics.avatarSize
+        let isAIActivity = message.id.hasPrefix("__ai_activity__")
+        let avatarSize = isAIActivity ? CGFloat(24) : ChatTimelineMetrics.avatarSize
         let maxBubbleWidth = bounds.width * ChatTimelineMetrics.bubbleMaxWidthRatio
         let bubbleWidth = bubbleWidth(for: message, maxWidth: maxBubbleWidth)
         let bubbleHeight = bounds.height - topGap - 2
@@ -382,6 +404,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             retryButton.frame = CGRect(x: bubbleView.frame.minX - 34, y: bubbleView.frame.midY - 15, width: 30, height: 30)
         } else {
             avatarView.frame = CGRect(x: ChatTimelineMetrics.horizontalInset, y: avatarY, width: avatarSize, height: avatarSize)
+            aiActivityIconView.frame = isAIActivity ? avatarView.frame.insetBy(dx: 2, dy: 2) : .zero
             let leading = ChatTimelineMetrics.horizontalInset + avatarSize + ChatTimelineMetrics.avatarGap
             bubbleView.frame = CGRect(x: leading, y: topGap, width: bubbleWidth, height: bubbleHeight)
             statusLabel.frame = .zero
@@ -403,6 +426,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         if let reply = message.replyPreview, !reply.isEmpty {
             replyLabel.text = reply
             bubbleView.addSubview(replyView)
+        }
+
+        if message.id.hasPrefix("__ai_activity__") {
+            bubbleView.addSubview(aiActivityStack)
+            return
         }
 
         if let interaction = message.interactionPayload {
@@ -595,6 +623,15 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             y += 43
         }
 
+        if message.id.hasPrefix("__ai_activity__") {
+            aiActivityStack.frame = CGRect(
+                x: 13,
+                y: (bubbleView.bounds.height - 12) / 2,
+                width: max(0, bubbleView.bounds.width - 26),
+                height: 12)
+            return
+        }
+
         if message.interactionPayload != nil {
             let iconSize: CGFloat = 34
             let iconX: CGFloat = 12
@@ -663,6 +700,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     }
 
     private func bubbleWidth(for message: ChatMessage, maxWidth: CGFloat) -> CGFloat {
+        if message.id.hasPrefix("__ai_activity__") { return 58 }
         switch message.type {
         case "image", "video", "sticker", "voice", "file":
             return ChatTimelineMetrics.mediaBubbleWidth(for: message.type, containerWidth: contentView.bounds.width)
@@ -672,6 +710,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     }
 
     private func cornerRadius(for message: ChatMessage) -> CGFloat {
+        if message.id.hasPrefix("__ai_activity__") { return 18 }
         switch message.type {
         case "image", "video", "sticker": return 16
         default: return 18
@@ -684,6 +723,26 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             return message.replyPreview?.isEmpty != false
         default:
             return false
+        }
+    }
+
+    private func setAIActivityAnimating(_ active: Bool) {
+        for (index, dot) in aiActivityDots.enumerated() {
+            dot.layer.removeAllAnimations()
+            guard active else { continue }
+            let bounce = CAKeyframeAnimation(keyPath: "transform.translation.y")
+            bounce.values = [0, -3, 0]
+            bounce.keyTimes = [0, 0.45, 1]
+            let fade = CAKeyframeAnimation(keyPath: "opacity")
+            fade.values = [0.38, 1, 0.38]
+            fade.keyTimes = bounce.keyTimes
+            let group = CAAnimationGroup()
+            group.animations = [bounce, fade]
+            group.duration = 0.92
+            group.beginTime = CACurrentMediaTime() + Double(index) * 0.14
+            group.repeatCount = .infinity
+            group.isRemovedOnCompletion = false
+            dot.layer.add(group, forKey: "daju-typing-dot")
         }
     }
 

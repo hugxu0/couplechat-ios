@@ -30,18 +30,18 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     func setCatThinking(_ thinking: Bool) {
         if thinking {
             guard catButton.layer.animation(forKey: "cat-thinking") == nil else { return }
-            let pulse = CABasicAnimation(keyPath: "transform.scale")
-            pulse.fromValue = 0.92
-            pulse.toValue = 1.12
-            pulse.duration = 0.62
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 0.58
+            pulse.toValue = 1.0
+            pulse.duration = 0.72
             pulse.autoreverses = true
             pulse.repeatCount = .infinity
             catButton.layer.add(pulse, forKey: "cat-thinking")
-            catButton.tintColor = .systemPink
         } else {
             catButton.layer.removeAnimation(forKey: "cat-thinking")
-            catButton.tintColor = usesLightContent ? .white : .secondaryLabel
         }
+        // 大橘是一个主题动作，不随壁纸明暗退化成系统灰。
+        catButton.tintColor = accentColor
     }
     private(set) var preferredHeight: CGFloat = 58
 

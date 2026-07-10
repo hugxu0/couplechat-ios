@@ -82,6 +82,7 @@ final class ChatStore: ObservableObject {
     /// 因而必须在 disconnect 回调中明确重新握手。
     private let httpClient: any HTTPClient
     private var childStateCancellables = Set<AnyCancellable>()
+    private var localAIActivityTokens: [String: UUID] = [:]
     var isConnected: Bool { connected }
     var sessionUsername: String? { auth.session?.username }
     var currentSession: Session? { auth.session }
@@ -200,6 +201,13 @@ final class ChatStore: ObservableObject {
         // objectWillChange 传给父对象。只转发 AI 状态，避免 SwiftUI 顶栏/大橘入口永远
         // 看见旧值，同时不让普通消息更新产生重复的整页刷新。
         Publishers.CombineLatest(messageStore.$aiTyping, messageStore.$aiReplying)
+            .dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &childStateCancellables)
+
+        // 首页读取的是 ChatStore 暴露的 sharedValue；SharedStore 是独立的
+        // ObservableObject，必须显式转发，否则状态已写入但首页不会立即重绘。
+        shared.$sharedState
             .dropFirst()
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &childStateCancellables)
@@ -556,8 +564,29 @@ final class ChatStore: ObservableObject {
 
     func sendText(_ text: String, channel: ChatChannel = .couple, replyTo: String? = nil, replyPreview: String? = nil) {
         guard let session = auth.session else { return }
+        if channel == .ai || text.contains("@大橘") {
+            beginLocalAIActivity(channel: channel, requesterUsername: session.username)
+        }
         if channel == .ai { messageStore.aiReplying = true }
         messageStore.sendText(text, channel: channel, replyTo: replyTo, replyPreview: replyPreview, session: session)
+    }
+
+    private func beginLocalAIActivity(channel: ChatChannel, requesterUsername: String) {
+        let token = UUID()
+        localAIActivityTokens[channel.rawValue] = token
+        aiActivityByChannel[channel.rawValue] = AIActivity(
+            channel: channel,
+            requestMessageId: nil,
+            requesterUsername: requesterUsername,
+            phase: "accepted")
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard let self, self.localAIActivityTokens[channel.rawValue] == token else { return }
+            self.localAIActivityTokens.removeValue(forKey: channel.rawValue)
+            if self.aiActivityByChannel[channel.rawValue]?.requestMessageId == nil {
+                self.aiActivityByChannel.removeValue(forKey: channel.rawValue)
+            }
+        }
     }
 
     func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?, channel: ChatChannel = .couple, displayText: String? = nil) {

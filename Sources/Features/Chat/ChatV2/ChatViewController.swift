@@ -439,7 +439,7 @@ final class ChatViewController: UIViewController {
                 guard let self else { return }
                 DispatchQueue.main.async {
                     let visible = self.store.isAIComposing(in: self.channel)
-                    self.composer.setTypingVisible(visible)
+                    self.composer.setTypingVisible(false)
                     self.composer.setCatThinking(visible)
                     self.reloadTimeline(animated: true)
                 }
@@ -449,7 +449,7 @@ final class ChatViewController: UIViewController {
 
     private func handleStoreChange() {
         let visible = store.isAIComposing(in: channel)
-        composer.setTypingVisible(visible)
+        composer.setTypingVisible(false)
         composer.setCatThinking(visible)
         reloadTimeline(animated: true)
         store.markRead(channel)

@@ -10,11 +10,8 @@ struct MediaPagerView: View {
     @Binding var selectedId: String?
 
     @EnvironmentObject private var favorites: MediaFavoriteStore
-    @GestureState private var dismissTranslation: CGSize = .zero
     @State private var saving = false
     @State private var toast: String?
-    @State private var appeared = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(messages: [ChatMessage], selectedId: Binding<String?>) {
         self.items = messages.flatMap(MediaBrowserItem.items(for:))
@@ -24,14 +21,6 @@ struct MediaPagerView: View {
     init(items: [MediaBrowserItem], selectedId: Binding<String?>) {
         self.items = items
         _selectedId = selectedId
-    }
-
-    private var dismissProgress: CGFloat {
-        min(1, max(0, dismissTranslation.height / 260))
-    }
-
-    private var dismissOffset: CGFloat {
-        max(0, dismissTranslation.height)
     }
 
     private var selectedIndex: Int {
@@ -50,7 +39,6 @@ struct MediaPagerView: View {
     var body: some View {
         ZStack {
             Color.black
-                .opacity(appeared ? Double(CGFloat(1) - dismissProgress) : 0)
                 .ignoresSafeArea()
 
             if items.isEmpty {
@@ -74,8 +62,6 @@ struct MediaPagerView: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
-                .offset(y: dismissOffset)
-                .opacity(appeared ? Double(CGFloat(1) - dismissProgress * 0.76) : 0)
                 .simultaneousGesture(dismissGesture)
                 .task(id: selectedId) {
                     prefetchAroundSelection()
@@ -95,37 +81,37 @@ struct MediaPagerView: View {
                 }
                 .transition(.opacity)
             }
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        selectedId = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("关闭预览")
+                }
+                Spacer()
+            }
+            .padding(.top, 10)
+            .padding(.trailing, 14)
         }
         .preferredColorScheme(.dark)
-        .onAppear {
-            withAnimation(.easeOut(duration: reduceMotion ? 0.10 : 0.16)) {
-                appeared = true
-            }
-        }
     }
 
     private var dismissGesture: some Gesture {
         DragGesture(minimumDistance: 10)
-            .updating($dismissTranslation) { value, state, transaction in
-                guard value.translation.height > 0,
-                      abs(value.translation.height) > abs(value.translation.width) else { return }
-                transaction.animation = .interactiveSpring(response: 0.22, dampingFraction: 0.88)
-                state = value.translation
-            }
             .onEnded { value in
                 guard (value.translation.height > 90 || value.predictedEndTranslation.height > 190),
                       abs(value.translation.height) > abs(value.translation.width) else { return }
-                dismissPreview()
+                // 只修改 fullScreenCover 的绑定，让系统负责完整的退出转场。
+                selectedId = nil
             }
-    }
-
-    private func dismissPreview() {
-        withAnimation(.easeOut(duration: 0.14)) {
-            appeared = false
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-            selectedId = nil
-        }
     }
 
     private func prefetchAroundSelection() {
@@ -201,7 +187,7 @@ private struct MediaPage: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .contentShape(Rectangle())
-            // 不提供原图片的上下文预览，避免系统先把大图抬起并遮住菜单。
+            // 使用真实媒体作为系统上下文预览；UIKit 负责长按时的缩放和菜单转场。
             .contextMenu(menuItems: {
                 Button {
                     onSave()
@@ -213,11 +199,30 @@ private struct MediaPage: View {
                 } label: {
                     Label(isFavorite ? "取消收藏" : "收藏", systemImage: isFavorite ? "heart.slash" : "heart")
                 }
-            }, preview: {
-                Color.clear.frame(width: 1, height: 1)
-            })
+            }, preview: { mediaContextPreview(in: geometry.size) })
         }
         .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private func mediaContextPreview(in size: CGSize) -> some View {
+        let previewWidth = min(size.width * 0.82, 340)
+        let previewHeight = min(size.height * 0.62, 460)
+        if item.isVideo, let url = item.mediaURL {
+            VideoPlayer(player: AVPlayer(url: url))
+                .frame(width: previewWidth, height: previewHeight)
+                .background(.black)
+        } else if let url = item.mediaURL {
+            CachedImage(url: url, contentMode: .fit) {
+                ProgressView().tint(.white)
+            }
+            .frame(width: previewWidth, height: previewHeight)
+            .background(.black)
+        } else {
+            failedView
+                .frame(width: previewWidth, height: previewHeight)
+                .background(.black)
+        }
     }
 
     private var failedView: some View {

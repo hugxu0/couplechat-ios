@@ -83,7 +83,9 @@ enum ChatTimelineMetrics {
         let contentWidth = maxBubbleWidth - bubbleHorizontalPadding * 2
         var contentHeight: CGFloat
 
-        if message.interactionPayload != nil {
+        if message.id.hasPrefix("__ai_activity__") {
+            contentHeight = 20
+        } else if message.interactionPayload != nil {
             contentHeight = 42
         } else { switch message.type {
         case "image", "video":
@@ -126,6 +128,9 @@ enum ChatTimelineMetrics {
         let minBubbleWidth: CGFloat = 58
         let available = maxBubbleWidth - bubbleHorizontalPadding * 2
         let text = message.displayText.isEmpty ? " " : message.displayText
+        if message.id.hasPrefix("__ai_activity__") {
+            return 58
+        }
         if message.interactionPayload != nil {
             return ceil(min(maxBubbleWidth, 222))
         }
