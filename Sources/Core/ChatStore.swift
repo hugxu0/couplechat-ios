@@ -408,7 +408,15 @@ final class ChatStore: ObservableObject {
     var anniversaries: [AnniversaryEntry] { shared.anniversaries }
     func saveAnniversaries(_ items: [AnniversaryEntry]) { shared.saveAnniversaries(items, session: auth.session) }
 
-    func avatarURL(for username: String?) -> URL? { shared.avatarURL(for: username) }
+    func avatarURL(for username: String?) -> URL? {
+        if let sharedURL = shared.avatarURL(for: username) { return sharedURL }
+        return AccountPresentation.mediaURL(auth.account(for: username)?.avatar)
+    }
+
+    func avatarText(for username: String?) -> String {
+        let fallbackUsername = username ?? ""
+        return AccountPresentation.avatarText(auth.account(for: username)?.avatar, for: fallbackUsername)
+    }
 
     func partnerAlias(for username: String?) -> String? { auth.partnerAlias(for: username) }
     func setPartnerAlias(_ alias: String?, for username: String?) { auth.setPartnerAlias(alias, for: username) }

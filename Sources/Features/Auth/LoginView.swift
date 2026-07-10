@@ -34,10 +34,10 @@ struct LoginView: View {
                         pwFocused = true
                     } label: {
                         VStack(spacing: 6) {
-                            Text(acc.avatar ?? AccountPresentation.avatar(for: acc.username))
-                                .font(.system(size: 36))
-                                .frame(width: 72, height: 72)
-                                .background(DS.Palette.bubbleOther)
+                            AvatarBadge(
+                                url: AccountPresentation.mediaURL(acc.avatar),
+                                fallbackEmoji: AccountPresentation.avatarText(acc.avatar, for: acc.username),
+                                size: 72)
                                 .clipShape(Circle())
                                 .overlay {
                                     Circle().strokeBorder(

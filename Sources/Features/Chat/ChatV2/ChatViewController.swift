@@ -961,7 +961,7 @@ final class ChatViewController: UIViewController {
 
     private var peerAvatar: String {
         if channel == .ai { return "🐱" }
-        return store.partner?.avatar ?? AccountPresentation.avatar(for: store.partner?.username ?? "si")
+        return store.avatarText(for: store.partner?.username ?? "si")
     }
 
     private var peerAvatarURL: URL? {
@@ -969,7 +969,7 @@ final class ChatViewController: UIViewController {
     }
 
     private var myAvatar: String {
-        AccountPresentation.avatar(for: store.session?.username ?? "xu")
+        store.avatarText(for: store.session?.username ?? "xu")
     }
 
     private var myAvatarURL: URL? {

@@ -5,6 +5,7 @@ import Foundation
 final class AuthStore: ObservableObject {
     @Published var session: Session?
     @Published private(set) var recoveredLocalCache = false
+    @Published private(set) var accounts: [Account] = []
     @Published var partner: Account? {
         didSet {
             if let partner, let data = try? JSONEncoder().encode(partner) {
@@ -57,6 +58,7 @@ final class AuthStore: ObservableObject {
         Keychain.clearSession()
         session = nil
         partner = nil
+        accounts = []
         recoveredLocalCache = false
         ChatLocalDatabase.shared.close()
     }
@@ -73,6 +75,7 @@ final class AuthStore: ObservableObject {
             print("[AuthStore] ⚠️ fetchAccounts 解码失败")
             return []
         }
+        self.accounts = accounts
         return accounts
     }
 
@@ -125,6 +128,12 @@ final class AuthStore: ObservableObject {
     func partnerDisplayName(fallback: String = "对方") -> String {
         if let alias = partnerAlias(for: partner?.username) { return alias }
         return partner?.name ?? fallback
+    }
+
+    func account(for username: String?) -> Account? {
+        guard let username else { return nil }
+        if partner?.username == username { return partner }
+        return accounts.first { $0.username == username }
     }
 
     // MARK: - 恢复本地缓存

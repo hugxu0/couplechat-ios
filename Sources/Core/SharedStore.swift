@@ -75,10 +75,16 @@ final class SharedStore: ObservableObject {
     // MARK: - 头像
 
     func avatarURL(for username: String?) -> URL? {
-        guard let username, !username.isEmpty,
-              let value = sharedValue("avatar_\(username)"),
-              let raw = value["url"] as? String else { return nil }
-        return ServerConfig.resolveMediaURL(raw)
+        guard let username, !username.isEmpty else { return nil }
+        if let value = sharedValue("avatar_\(username)"),
+           let raw = value["url"] as? String {
+            return ServerConfig.resolveMediaURL(raw)
+        }
+        // 旧网页后端把两人的头像合并在 avatars 对象中。
+        if let raw = sharedValue("avatars")?[username] as? String {
+            return ServerConfig.resolveMediaURL(raw)
+        }
+        return nil
     }
 
     func setAvatar(_ url: String, for username: String, session: Session?) {

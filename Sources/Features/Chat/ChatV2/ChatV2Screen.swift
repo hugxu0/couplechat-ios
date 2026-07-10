@@ -45,7 +45,7 @@ struct ChatV2Screen: View {
 
     private var peerAvatar: String {
         if channel == .ai { return "🐱" }
-        return store.partner?.avatar ?? AccountPresentation.avatar(for: store.partner?.username ?? "si")
+        return store.avatarText(for: store.partner?.username ?? "si")
     }
 
     private var peerAvatarURL: URL? {

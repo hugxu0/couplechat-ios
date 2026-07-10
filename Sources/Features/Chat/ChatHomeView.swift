@@ -21,11 +21,11 @@ struct ChatHomeView: View {
 
     private var myName: String { store.session?.name ?? "小旭" }
     private var myUsername: String { store.session?.username ?? "xu" }
-    private var myAvatar: String { AccountPresentation.avatar(for: myUsername) }
+    private var myAvatar: String { store.avatarText(for: myUsername) }
     private var partnerName: String { store.partnerDisplayName(fallback: "小偲") }
     private var partnerUsername: String { store.partner?.username ?? (myUsername == "xu" ? "si" : "xu") }
     private var partnerAvatar: String {
-        store.partner?.avatar ?? AccountPresentation.avatar(for: partnerUsername)
+        store.avatarText(for: partnerUsername)
     }
 
     private var statusMap: [String: String] {
@@ -542,10 +542,12 @@ struct ChatHomeView: View {
     }
 
     private func latestAvatar(for message: ChatMessage) -> some View {
-        Text(message.sender == store.session?.username ? myAvatar : partnerAvatar)
-            .font(.system(size: 21))
-            .frame(width: 31, height: 31)
-            .background(.white.opacity(0.7), in: Circle())
+        let mine = message.sender == store.session?.username
+        return AvatarBadge(
+            url: store.avatarURL(for: mine ? myUsername : partnerUsername),
+            fallbackEmoji: mine ? myAvatar : partnerAvatar,
+            size: 31,
+            background: .white.opacity(0.7))
     }
 
     private var enterChatButton: some View {
