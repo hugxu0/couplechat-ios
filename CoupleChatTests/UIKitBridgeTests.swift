@@ -42,7 +42,9 @@ final class CoupleDatesTests: XCTestCase {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: Date())!
         let dateString = formatter.string(from: tomorrow)
 
         let days = CoupleDates.daysUntil(dateString)
