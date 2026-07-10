@@ -58,7 +58,7 @@ extension ChatMessage {
            let kind = InteractionEffectKind(rawValue: interaction.kind) {
             return InteractionPayload(id: interaction.id, kind: kind, text: interaction.text)
         }
-        InteractionPayload.parse(id: id, text: text)
+        return InteractionPayload.parse(id: id, text: text)
     }
 }
 
