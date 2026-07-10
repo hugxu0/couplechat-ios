@@ -25,8 +25,17 @@ struct ChatV2Screen: View {
     }
 
     private var subtitle: String {
-        if !store.connected {
-            return store.lastConnectionError ?? "未连接"
+        switch store.connectionState {
+        case .connecting:
+            return "连接中"
+        case .reconnecting:
+            return "正在重连"
+        case .failed:
+            return store.lastConnectionError ?? "连接失败"
+        case .disconnected:
+            return "未连接"
+        case .connected:
+            break
         }
         switch channel {
         case .couple: return store.partnerOnline ? "在线" : "离线"
@@ -92,7 +101,8 @@ struct ChatV2Screen: View {
     }
 
     private var topSecondaryColor: Color {
-        if !store.connected { return .red }
+        if store.connectionState.isUnavailable { return .red }
+        if store.connectionState.isTransient { return .orange }
         return topChromeTone.secondaryTextColor
     }
 
@@ -173,6 +183,7 @@ struct ChatV2Screen: View {
                     .foregroundStyle(topPrimaryColor)
                     .shadow(color: topShadowColor, radius: 1.5, x: 0, y: 1)
                     .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(PressableStyle())
 
@@ -231,6 +242,8 @@ struct ChatV2Screen: View {
         .padding(.horizontal, 18)
         .padding(.top, 0)
         .padding(.bottom, 7)
+        .contentShape(Rectangle())
+        .zIndex(10)
     }
 
     @ViewBuilder
