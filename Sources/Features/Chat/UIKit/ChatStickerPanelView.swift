@@ -14,12 +14,14 @@ final class ChatStickerPanelView: UIView {
     private enum Tab: Hashable {
         case emoji
         case favorites
+        case all
         case group(String)
 
         var id: String {
             switch self {
             case .emoji: return "emoji"
             case .favorites: return "favorites"
+            case .all: return "all"
             case .group(let id): return id
             }
         }
@@ -62,8 +64,11 @@ final class ChatStickerPanelView: UIView {
     func applyTheme(accentColor: UIColor, usesLightContent: Bool) {
         self.accentColor = accentColor
         self.usesLightContent = usesLightContent
-        backgroundGlass.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18, borderAlpha: usesLightContent ? 0.14 : 0.20)
-        tabGlass.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.12 : 0.16, borderAlpha: usesLightContent ? 0.13 : 0.18)
+        // 与键盘一致使用确定的局部 appearance；不能让系统浅色模式把深色壁纸上的
+        // systemMaterial 又解析成白色。
+        overrideUserInterfaceStyle = usesLightContent ? .dark : .light
+        backgroundGlass.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.30 : 0.18, borderAlpha: usesLightContent ? 0.18 : 0.20)
+        tabGlass.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.24 : 0.16, borderAlpha: usesLightContent ? 0.16 : 0.18)
         collectionView.indicatorStyle = usesLightContent ? .white : .black
         reloadTabs()
         reloadItems()
@@ -122,8 +127,8 @@ final class ChatStickerPanelView: UIView {
 
             tabGlass.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             tabGlass.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            tabGlass.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            tabGlass.heightAnchor.constraint(equalToConstant: 40),
+            tabGlass.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
+            tabGlass.heightAnchor.constraint(equalToConstant: 34),
 
             tabScrollView.leadingAnchor.constraint(equalTo: tabGlass.leadingAnchor),
             tabScrollView.trailingAnchor.constraint(equalTo: tabGlass.trailingAnchor),
@@ -132,9 +137,9 @@ final class ChatStickerPanelView: UIView {
 
             tabStack.leadingAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.leadingAnchor, constant: 8),
             tabStack.trailingAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.trailingAnchor, constant: -8),
-            tabStack.topAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.topAnchor, constant: 5),
-            tabStack.bottomAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
-            tabStack.heightAnchor.constraint(equalTo: tabScrollView.frameLayoutGuide.heightAnchor, constant: -10)
+            tabStack.topAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.topAnchor, constant: 4),
+            tabStack.bottomAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.bottomAnchor, constant: -4),
+            tabStack.heightAnchor.constraint(equalTo: tabScrollView.frameLayoutGuide.heightAnchor, constant: -8)
         ])
     }
 
@@ -151,7 +156,10 @@ final class ChatStickerPanelView: UIView {
     }
 
     private func reloadTabs() {
-        tabs = [.emoji, .favorites] + store.sortedGroups.map { .group($0.id) }
+        let customGroups = store.sortedGroups
+            .filter { $0.id != StickerStore.defaultGroupId }
+            .map { Tab.group($0.id) }
+        tabs = [.emoji, .favorites, .all] + customGroups
         if !tabs.contains(selectedTab) {
             selectedTab = .emoji
         }
@@ -166,9 +174,9 @@ final class ChatStickerPanelView: UIView {
         manage.tintColor = secondaryColor
         manage.backgroundColor = neutralFill
         manage.layer.cornerCurve = .continuous
-        manage.layer.cornerRadius = 15
-        manage.widthAnchor.constraint(equalToConstant: 32).isActive = true
-        manage.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        manage.layer.cornerRadius = 13
+        manage.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        manage.heightAnchor.constraint(equalToConstant: 26).isActive = true
         manage.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.delegate?.stickerPanelDidRequestManage(self)
@@ -179,16 +187,16 @@ final class ChatStickerPanelView: UIView {
     private func makeTabButton(for tab: Tab) -> UIButton {
         var config = UIButton.Configuration.filled()
         config.cornerStyle = .capsule
-        config.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 9, bottom: 5, trailing: 9)
-        config.imagePadding = 4
+        config.contentInsets = NSDirectionalEdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8)
+        config.imagePadding = 3
         config.baseBackgroundColor = tab == selectedTab ? accentColor.withAlphaComponent(0.92) : neutralFill
         config.baseForegroundColor = tab == selectedTab ? .white : secondaryColor
         config.title = title(for: tab)
         config.image = UIImage(systemName: icon(for: tab))
 
         let button = UIButton(configuration: config)
-        button.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
-        button.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        button.titleLabel?.font = .systemFont(ofSize: 11, weight: .semibold)
+        button.heightAnchor.constraint(equalToConstant: 26).isActive = true
         button.setContentCompressionResistancePriority(.required, for: .horizontal)
         button.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -208,6 +216,11 @@ final class ChatStickerPanelView: UIView {
             }
         case .favorites:
             items = store.favorites.map { .sticker($0) }
+        case .all:
+            items = store.stickers
+                .sorted { $0.addedAt > $1.addedAt }
+                .map { .sticker($0) }
+            items.append(.addSticker(groupId: StickerStore.defaultGroupId))
         case .group(let id):
             items = store.stickers(in: id).map { .sticker($0) }
             items.append(.addSticker(groupId: id))
@@ -219,6 +232,7 @@ final class ChatStickerPanelView: UIView {
         switch tab {
         case .emoji: return "表情"
         case .favorites: return "收藏"
+        case .all: return "所有表情"
         case .group(let id):
             return store.sortedGroups.first(where: { $0.id == id })?.name ?? "我的表情"
         }
@@ -228,6 +242,7 @@ final class ChatStickerPanelView: UIView {
         switch tab {
         case .emoji: return "face.smiling"
         case .favorites: return "star.fill"
+        case .all: return "square.grid.2x2"
         case .group: return "square.grid.2x2"
         }
     }

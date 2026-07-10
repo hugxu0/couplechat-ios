@@ -52,6 +52,11 @@ struct ProfileView: View {
                     .ignoresSafeArea()
             }
             .confirmationDialog("更换头像", isPresented: $showAvatarActionSheet, titleVisibility: .visible) {
+                if avatarTarget == .daju {
+                    Button("使用默认大橘头像") {
+                        useDefaultDajuAvatar()
+                    }
+                }
                 Button("从手机相册选择") {
                     showPhotoPicker = true
                 }
@@ -114,6 +119,29 @@ struct ProfileView: View {
         avatarTarget = target
         customAvatar = nil
         showAvatarActionSheet = true
+    }
+
+    private func useDefaultDajuAvatar() {
+        avatarUploading = true
+        let image = Self.defaultDajuAvatarImage(accent: theme.accent.uiColor)
+        Task {
+            _ = await store.uploadDajuAvatar(image)
+            await MainActor.run { avatarUploading = false }
+        }
+    }
+
+    private static func defaultDajuAvatarImage(accent: UIColor) -> UIImage {
+        let size = CGSize(width: 512, height: 512)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            let bounds = CGRect(origin: .zero, size: size)
+            context.cgContext.setFillColor(accent.withAlphaComponent(0.13).cgColor)
+            context.cgContext.fillEllipse(in: bounds)
+
+            let configuration = UIImage.SymbolConfiguration(pointSize: 238, weight: .medium)
+            let symbol = UIImage(systemName: AccountPresentation.dajuIconName, withConfiguration: configuration)?
+                .withTintColor(accent, renderingMode: .alwaysOriginal)
+            symbol?.draw(in: CGRect(x: 137, y: 137, width: 238, height: 238))
+        }
     }
 
     // MARK: - 身份横栏

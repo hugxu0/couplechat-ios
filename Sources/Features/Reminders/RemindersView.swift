@@ -113,10 +113,9 @@ struct RemindersView: View {
     private func scopeButton(_ value: String, icon: String, title: String) -> some View {
         Button {
             if scope == value { return }
-            withAnimation(DS.Anim.spring) { scope = value }
+            scope = value
             Haptics.selection()
-            loading = false
-            Task { await reload() }
+            Task { await reload(scope: value) }
         } label: {
             Label(title, systemImage: icon)
                 .font(.system(size: 14, weight: .semibold))
@@ -137,7 +136,7 @@ struct RemindersView: View {
     private func switchButton(_ kind: PersonalItemKind, icon: String, title: String) -> some View {
         Button {
             if tab == kind { return }
-            withAnimation(DS.Anim.spring) { tab = kind }
+            tab = kind
             Haptics.selection()
         } label: {
             Label(title, systemImage: icon)
@@ -182,7 +181,7 @@ struct RemindersView: View {
 
     @ViewBuilder
     private var itemList: some View {
-        if loading && items.isEmpty {
+        if loading && visibleItems.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity)
                 .padding(.top, 80)
@@ -198,10 +197,8 @@ struct RemindersView: View {
                     } onDelete: {
                         Task { await delete(item) }
                     }
-                    .transition(.scale(scale: 0.96).combined(with: .opacity))
                 }
             }
-            .animation(DS.Anim.spring, value: visibleItems)
         }
 
         if let errorMessage {
@@ -242,13 +239,15 @@ struct RemindersView: View {
         .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
     }
 
-    private func reload() async {
-        guard !loading else { return }
-        loading = true
+    private func reload(scope requestedScope: String? = nil) async {
+        let targetScope = requestedScope ?? scope
+        if scope == targetScope && !items.contains(where: { $0.scope == targetScope }) {
+            loading = true
+        }
         errorMessage = nil
-        let fetched = await store.fetchPersonalItems(scope: scope)
+        let fetched = await store.fetchPersonalItems(scope: targetScope)
         await MainActor.run {
-            if scope == "personal" {
+            if targetScope == "personal" {
                 // 合并：保留已有 shared items，替换 personal items
                 let shared = items.filter { $0.scope == "shared" }
                 items = fetched + shared
@@ -257,7 +256,7 @@ struct RemindersView: View {
                 let personal = items.filter { $0.scope == "personal" }
                 items = personal + fetched
             }
-            loading = false
+            if scope == targetScope { loading = false }
         }
         if let account = store.session?.username {
             await ReminderNotificationScheduler.rescheduleAll(items, account: account)

@@ -137,9 +137,17 @@ struct ChatHomeView: View {
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                .stroke(DS.Palette.accent.opacity(0.14), lineWidth: 1)
+                .stroke(
+                    LinearGradient(
+                        colors: [.white.opacity(0.62), theme.accent.color.opacity(0.16)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
         )
-        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+        .shadow(color: theme.accent.color.opacity(0.055), radius: 5, y: -1)
+        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius + 3, y: DS.Surface.shadowY + 2)
     }
 
     private var sectionDivider: some View {
@@ -159,16 +167,34 @@ struct ChatHomeView: View {
     }
 
     private var homeCardBackground: some View {
-        LinearGradient(
-            colors: [
-                DS.Palette.cardSurface,
-                theme.accent.color.opacity(0.09),
-                DS.Palette.pink.opacity(0.055),
-                DS.Palette.cardSurface.opacity(0.96),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        ZStack(alignment: .top) {
+            LinearGradient(
+                colors: [
+                    DS.Palette.cardSurface,
+                    theme.accent.color.opacity(0.13),
+                    DS.Palette.pink.opacity(0.075),
+                    DS.Palette.cardSurface.opacity(0.96),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            RadialGradient(
+                colors: [.white.opacity(0.58), theme.accent.color.opacity(0.07), .clear],
+                center: .top,
+                startRadius: 4,
+                endRadius: 185
+            )
+            HStack {
+                Image(systemName: "sparkles")
+                Spacer()
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 11))
+            }
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(theme.accent.color.opacity(0.11))
+            .padding(.horizontal, 22)
+            .padding(.top, 13)
+        }
     }
 
     private var shortPullRefreshProbe: some View {

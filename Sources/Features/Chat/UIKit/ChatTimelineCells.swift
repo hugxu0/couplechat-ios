@@ -103,8 +103,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     weak var delegate: ChatTimelineCellDelegate?
 
     private let avatarView = ChatAvatarView()
-    private let aiActivityIconView = UIImageView(
-        image: UIImage(systemName: "cat") ?? UIImage(systemName: AccountPresentation.dajuIconName))
     private let bubbleView = UIView()
     private let replyView = UIView()
     private let replyMarker = UIView()
@@ -150,9 +148,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         interactionFeather.startPoint = CGPoint(x: 0, y: 0)
         interactionFeather.endPoint = CGPoint(x: 1, y: 1)
         contentView.addSubview(avatarView)
-        aiActivityIconView.contentMode = .scaleAspectFit
-        aiActivityIconView.isHidden = true
-        contentView.addSubview(aiActivityIconView)
         contentView.addSubview(highlightView)
         contentView.addSubview(bubbleView)
         contentView.addSubview(statusLabel)
@@ -300,9 +295,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         let avatarText = mine ? myAvatar : peerAvatar
         let avatarURL = mine ? myAvatarURL : peerAvatarURL
         avatarView.configure(text: avatarText, url: avatarURL)
-        avatarView.isHidden = isAIActivity
-        aiActivityIconView.isHidden = !isAIActivity
-        aiActivityIconView.tintColor = accentColor
+        avatarView.isHidden = false
 
         let mediaOnly = Self.isStandaloneMedia(message)
         // Context-menu 预览可能在不同 trait 环境中重绘动态系统色，造成气泡翻色。
@@ -377,8 +370,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
 
         let bounds = contentView.bounds
         let topGap = grouped ? ChatTimelineMetrics.sameSenderTopGap : ChatTimelineMetrics.otherSenderTopGap
-        let isAIActivity = message.id.hasPrefix("__ai_activity__")
-        let avatarSize = isAIActivity ? CGFloat(24) : ChatTimelineMetrics.avatarSize
+        let avatarSize = ChatTimelineMetrics.avatarSize
         let maxBubbleWidth = bounds.width * ChatTimelineMetrics.bubbleMaxWidthRatio
         let bubbleWidth = bubbleWidth(for: message, maxWidth: maxBubbleWidth)
         let bubbleHeight = bounds.height - topGap - 2
@@ -404,7 +396,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             retryButton.frame = CGRect(x: bubbleView.frame.minX - 34, y: bubbleView.frame.midY - 15, width: 30, height: 30)
         } else {
             avatarView.frame = CGRect(x: ChatTimelineMetrics.horizontalInset, y: avatarY, width: avatarSize, height: avatarSize)
-            aiActivityIconView.frame = isAIActivity ? avatarView.frame.insetBy(dx: 2, dy: 2) : .zero
             let leading = ChatTimelineMetrics.horizontalInset + avatarSize + ChatTimelineMetrics.avatarGap
             bubbleView.frame = CGRect(x: leading, y: topGap, width: bubbleWidth, height: bubbleHeight)
             statusLabel.frame = .zero
