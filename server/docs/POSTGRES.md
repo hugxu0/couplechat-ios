@@ -34,6 +34,20 @@ DATABASE_URL='postgres://couplechat:密码@localhost:5432/couplechat' \
 - 可用 `SQLITE_PATH=/path/to/xx.sqlite` 指定其他源库。
 - 迁移完成后建议把 `.data/couplechat.sqlite` 备份后移走。
 
+### 旧网页生产库（legacy chat.db）
+
+旧网页后端使用 `messages/shared/read_state/memory_facts/knowledge_cards/daily_cache` schema，不能直接使用上面的同构迁移脚本。停写并完成 `pg_dump` 后运行：
+
+```bash
+IMPORT_LEGACY_REPLACE=YES \
+LEGACY_SQLITE_PATH=/root/import-couplechat/legacy-import.sqlite \
+LEGACY_AI_DOCS_PATH=/root/import-couplechat/source-ai-docs \
+LEGACY_UPLOADS_PATH=/opt/couplechat-ios/server/uploads \
+npx tsx scripts/import-legacy-production.ts
+```
+
+该脚本保留 `accounts`（密码、Bark、登录配置），事务式替换其余业务表，完成 `alice/bob → xu/si`、提醒备忘、媒体索引和 AI 文档转换。运行前必须先执行 `npm run smoke:legacy-import`。
+
 ## 四、配置服务
 
 在服务的环境（`.env` 或 systemd unit）里加：

@@ -7,6 +7,7 @@ import { registerRealtime } from "./socket/realtime";
 import { setSocketIO } from "./personalItems/routes";
 import { initAi } from "./ai/aiService";
 import { startReminderScheduler } from "./ai/reminderScheduler";
+import { startUploadCleanup } from "./upload/cleanup";
 
 async function main() {
   await initDatabase();
@@ -24,8 +25,10 @@ async function main() {
   startReminderScheduler(io);
 
   await app.listen({ host: config.host, port: config.port });
+  const stopUploadCleanup = startUploadCleanup();
 
   const shutdown = () => {
+    stopUploadCleanup();
     void closeDatabase().finally(() => process.exit(0));
   };
   process.on("SIGINT", shutdown);

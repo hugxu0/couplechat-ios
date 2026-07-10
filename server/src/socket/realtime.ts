@@ -12,6 +12,7 @@ import {
   socketEvents,
 } from "../contracts/realtime";
 import {
+  countMessages,
   createMessage,
   fetchMessages,
   getReadReceipts,
@@ -51,7 +52,9 @@ async function safeAck(fn: () => Promise<unknown>, ack?: Ack) {
 
 export function registerRealtime(io: Server) {
   io.use((socket, next) => {
-    const token = socket.handshake.auth?.token ?? socket.handshake.query?.token;
+    // Token 必须走 Socket.IO auth payload，不能落进握手 URL 的 query string，
+    // 否则默认的反向代理访问日志可能记录完整 token。
+    const token = socket.handshake.auth?.token;
     const user = typeof token === "string" ? verifyToken(token) : null;
     if (!user) return next(new Error("unauthorized"));
     socket.data.user = user;
@@ -89,8 +92,11 @@ export function registerRealtime(io: Server) {
     socket.on(socketEvents.messagesFetch, (payload: unknown, ack?: Ack) =>
       safeAck(async () => {
         const input = fetchMessagesSchema.parse(payload ?? {});
-        const list = await fetchMessages(user, input);
-        return { ok: true, list, replace: !input.since && !input.after && !input.before };
+        const [list, total] = await Promise.all([
+          fetchMessages(user, input),
+          countMessages(user, input.channel),
+        ]);
+        return { ok: true, list, total, replace: !input.since && !input.after && !input.before };
       }, ack),
     );
 
@@ -114,7 +120,7 @@ export function registerRealtime(io: Server) {
         // AI 流水线（couple 召唤应答 / ai 私聊应答 / 记忆提取 / 滚动摘要）
         handleUserMessage(io, user, message);
 
-        return { ok: true, id: message.id };
+        return { ok: true, id: message.id, message };
       }, ack),
     );
 

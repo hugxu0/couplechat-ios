@@ -36,6 +36,7 @@ final class AppState: ObservableObject {
 
 struct RootTabView: View {
     @State private var tab: MainTab = .chat
+    @State private var visitedTabs: Set<MainTab> = [.chat]
     @StateObject private var app = AppState()
     @EnvironmentObject private var store: ChatStore
     // 订阅主题变化：主题色一改，标签栏和全部子页立即重绘
@@ -54,25 +55,31 @@ struct RootTabView: View {
             Color(.systemGroupedBackground).ignoresSafeArea()
 
             ZStack {
-                ChatHomeView()
-                    .opacity(tab == .chat ? 1.0 : 0.0)
-                    .disabled(tab != .chat)
-                
-                RecordsView()
-                    .opacity(tab == .records ? 1.0 : 0.0)
-                    .disabled(tab != .records)
-                
-                PetView()
-                    .opacity(tab == .pet ? 1.0 : 0.0)
-                    .disabled(tab != .pet)
-                
-                RemindersView()
-                    .opacity(tab == .reminders ? 1.0 : 0.0)
-                    .disabled(tab != .reminders)
-                
-                ProfileView()
-                    .opacity(tab == .profile ? 1.0 : 0.0)
-                    .disabled(tab != .profile)
+                if visitedTabs.contains(.chat) {
+                    ChatHomeView()
+                        .opacity(tab == .chat ? 1.0 : 0.0)
+                        .disabled(tab != .chat)
+                }
+                if visitedTabs.contains(.records) {
+                    RecordsView()
+                        .opacity(tab == .records ? 1.0 : 0.0)
+                        .disabled(tab != .records)
+                }
+                if visitedTabs.contains(.pet) {
+                    PetView()
+                        .opacity(tab == .pet ? 1.0 : 0.0)
+                        .disabled(tab != .pet)
+                }
+                if visitedTabs.contains(.reminders) {
+                    RemindersView()
+                        .opacity(tab == .reminders ? 1.0 : 0.0)
+                        .disabled(tab != .reminders)
+                }
+                if visitedTabs.contains(.profile) {
+                    ProfileView()
+                        .opacity(tab == .profile ? 1.0 : 0.0)
+                        .disabled(tab != .profile)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -145,6 +152,7 @@ struct RootTabView: View {
                 Button {
                     // 状态切换必须即时生效，不包进动画事务——
                     // 否则快速连点时切换会被动画排队拖住、感觉「点了没反应」。
+                    visitedTabs.insert(t)
                     tab = t
                     Haptics.selection()
                 } label: {

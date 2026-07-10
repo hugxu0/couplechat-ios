@@ -1,14 +1,14 @@
 import fs from "node:fs";
-import path from "node:path";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { config } from "./config";
 import { registerAuthRoutes } from "./auth/routes";
 import { registerUploadRoutes } from "./upload/routes";
 import { registerStatsRoutes } from "./stats/routes";
 import { registerPersonalItemRoutes } from "./personalItems/routes";
+import { registerMediaAccessRoutes } from "./upload/mediaAccess";
+import { pingDatabase } from "./db";
 
 export async function buildApp() {
   fs.mkdirSync(config.uploadDir, { recursive: true });
@@ -26,14 +26,17 @@ export async function buildApp() {
       files: 1,
     },
   });
-  await app.register(fastifyStatic, {
-    root: path.resolve(config.uploadDir),
-    prefix: "/uploads/",
+  app.get("/health", async (_request, reply) => {
+    try {
+      await pingDatabase();
+      return { ok: true, database: "ok", ts: Date.now() };
+    } catch {
+      return reply.code(503).send({ ok: false, database: "unavailable", ts: Date.now() });
+    }
   });
 
-  app.get("/health", async () => ({ ok: true, ts: Date.now() }));
-
   await registerAuthRoutes(app);
+  await registerMediaAccessRoutes(app);
   await registerUploadRoutes(app);
   await registerStatsRoutes(app);
   await registerPersonalItemRoutes(app);

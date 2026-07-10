@@ -146,4 +146,4 @@ tar -czf /opt/backups/couplechat/uploads-$(date +%F-%H%M).tar.gz uploads .data/a
 
 **部署前一定先备份**。`TOKEN_SECRET` 不能换，一换所有已登录 token 失效，用户回登录页。
 
-从旧 SQLite 迁移到 PostgreSQL 的一次性脚本见 `docs/POSTGRES.md` 第三节。
+同构 SQLite 迁移见 `docs/POSTGRES.md` 第三节；旧网页生产 `chat.db` 必须使用 `scripts/import-legacy-production.ts`，不能混用。

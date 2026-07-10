@@ -9,13 +9,21 @@ struct StorageView: View {
     @EnvironmentObject private var app: AppState
 
     @State private var breakdown: ChatStore.StorageBreakdown?
-    @State private var syncing = false
-    @State private var syncCount = 0
-    @State private var caching = false
-    @State private var cacheDone = 0
-    @State private var cacheTotal = 0
+    @State private var operation: SyncOperation = .idle
+    @State private var operationTask: Task<Void, Never>?
+    @State private var remoteCounts: [String: Int] = [:]
     @State private var statusText: String?
+    @State private var statusIsError = false
     @State private var showClearConfirm = false
+    @State private var showClearMessagesConfirm = false
+
+    private enum SyncOperation: Equatable {
+        case idle
+        case history(name: String, current: Int, total: Int?)
+        case images(done: Int, total: Int, failed: Int)
+
+        var isRunning: Bool { self != .idle }
+    }
 
     private static let byteFormatter: ByteCountFormatter = {
         let f = ByteCountFormatter()
@@ -31,8 +39,8 @@ struct StorageView: View {
     var body: some View {
         List {
             summarySection
-            breakdownSection
             syncSection
+            breakdownSection
             fileSection
             cleanupSection
         }
@@ -47,23 +55,56 @@ struct StorageView: View {
         } message: {
             Text("只清理已下载的图片，聊天记录不受影响。需要时会重新下载。")
         }
+        .confirmationDialog("清除本地聊天记录？", isPresented: $showClearMessagesConfirm, titleVisibility: .visible) {
+            Button("清除本地记录", role: .destructive) { clearLocalMessages() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("只删除这台设备上的消息数据库，服务器上的聊天记录和上传文件不会删除；之后可以重新同步。")
+        }
+        .onDisappear { operationTask?.cancel() }
     }
 
     // MARK: - 总览
 
     private var summarySection: some View {
         Section {
-            VStack(spacing: 6) {
-                Text(sizeString(breakdown?.totalBytes ?? 0))
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-                    .foregroundStyle(DS.Palette.textPrimary)
-                Text("本地已用空间")
-                    .font(.system(size: 13))
-                    .foregroundStyle(DS.Palette.textSecondary)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(sizeString(breakdown?.totalBytes ?? 0))
+                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                            .foregroundStyle(DS.Palette.textPrimary)
+                        Text("当前设备上的聊天数据")
+                            .font(.system(size: 13))
+                            .foregroundStyle(DS.Palette.textSecondary)
+                    }
+                    Spacer()
+                    connectionBadge
+                }
+
+                if store.auth.recoveredLocalCache {
+                    Label("检测到旧缓存异常，已安全隔离并新建本地数据库。云端记录可重新同步。", systemImage: "wrench.and.screwdriver.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.orange)
+                }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
         }
+    }
+
+    private var connectionBadge: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(store.connected ? DS.Palette.green : Color.orange)
+                .frame(width: 7, height: 7)
+            Text(store.connected ? "云端已连接" : "等待连接")
+                .font(.system(size: 12, weight: .semibold))
+        }
+        .foregroundStyle(store.connected ? DS.Palette.green : Color.orange)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background((store.connected ? DS.Palette.green : Color.orange).opacity(0.10), in: Capsule())
     }
 
     // MARK: - 明细
@@ -72,7 +113,7 @@ struct StorageView: View {
         Section("占用明细") {
             breakdownRow(icon: "photo.stack", tint: DS.Palette.pink,
                          title: "聊天图片缓存",
-                         detail: sizeString(breakdown?.imageCacheBytes ?? 0))
+                         detail: "\(breakdown?.cachedImageFiles ?? 0) 项 · \(sizeString(breakdown?.imageCacheBytes ?? 0))")
             breakdownRow(icon: "externaldrive", tint: DS.Palette.blue,
                          title: "消息数据库",
                          detail: sizeString(breakdown?.databaseBytes ?? 0))
@@ -104,58 +145,85 @@ struct StorageView: View {
 
     private var syncSection: some View {
         Section {
-            // 全量同步聊天记录
-            Button {
-                runFullSync()
-            } label: {
-                HStack {
-                    Label("同步全部聊天记录", systemImage: "arrow.triangle.2.circlepath")
-                        .foregroundStyle(store.connected ? DS.Palette.textPrimary : DS.Palette.textSecondary)
-                    Spacer()
-                    if syncing {
-                        HStack(spacing: 6) {
-                            ProgressView()
-                            Text("\(syncCount)").font(.system(size: 13, design: .rounded).monospacedDigit())
-                                .foregroundStyle(DS.Palette.textSecondary)
-                        }
-                    }
-                }
-            }
-            .disabled(syncing || caching || !store.connected)
+            syncProgressCard
 
-            // 缓存全部图片
-            Button {
-                runCacheImages()
-            } label: {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label("缓存全部图片到本地", systemImage: "square.and.arrow.down.on.square")
-                            .foregroundStyle(caching ? DS.Palette.textSecondary : DS.Palette.textPrimary)
-                        Spacer()
-                        if caching {
-                            Text("\(cacheDone)/\(cacheTotal)")
-                                .font(.system(size: 13, design: .rounded).monospacedDigit())
-                                .foregroundStyle(DS.Palette.textSecondary)
-                        }
-                    }
-                    if caching && cacheTotal > 0 {
-                        ProgressView(value: Double(cacheDone), total: Double(cacheTotal))
-                            .tint(DS.Palette.accent)
-                    }
+            if operation.isRunning {
+                Button(role: .cancel) { pauseOperation() } label: {
+                    Label("暂停当前任务", systemImage: "pause.circle")
                 }
+            } else {
+                Button { runFullSync() } label: {
+                    Label("同步全部聊天记录", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(!store.connected)
+
+                Button { runCacheImages() } label: {
+                    Label("下载全部聊天图片", systemImage: "icloud.and.arrow.down")
+                }
+                .disabled(!store.connected)
             }
-            .disabled(syncing || caching)
         } header: {
-            Text("同步与缓存")
+            Text("本地同步")
         } footer: {
             if let statusText {
-                Text(statusText).foregroundStyle(DS.Palette.green)
+                Text(statusText).foregroundStyle(statusIsError ? Color.orange : DS.Palette.green)
             } else if !store.connected {
                 Text("需要先连接服务器才能同步聊天记录。")
             } else {
-                Text("同步会把云端全部聊天记录拉到本地，缓存图片后离线也能看。数据较多时可能需要一点时间。")
+                Text("聊天记录支持断点续传；退出后再次同步会从上次位置继续。图片单独下载，失败项会显示数量。")
             }
         }
+    }
+
+    @ViewBuilder
+    private var syncProgressCard: some View {
+        switch operation {
+        case .idle:
+            VStack(alignment: .leading, spacing: 9) {
+                channelProgressRow("两人聊天", local: breakdown?.coupleMessages ?? 0, remote: remoteCounts[ChatChannel.couple.rawValue])
+                channelProgressRow("大橘聊天", local: breakdown?.aiMessages ?? 0, remote: remoteCounts[ChatChannel.ai.rawValue])
+            }
+            .padding(.vertical, 3)
+        case let .history(name, current, total):
+            progressBlock(
+                title: "正在同步\(name)",
+                detail: total.map { "本地 \(current) / 云端 \($0) 条" } ?? "已保存 \(current) 条，正在读取云端总数",
+                value: total.map { Double(min(current, $0)) }, total: total.map(Double.init))
+        case let .images(done, total, failed):
+            progressBlock(
+                title: "正在下载聊天图片",
+                detail: "已处理 \(done) / \(total) 项" + (failed > 0 ? " · \(failed) 项失败" : ""),
+                value: Double(done), total: Double(max(total, 1)))
+        }
+    }
+
+    private func channelProgressRow(_ title: String, local: Int, remote: Int?) -> some View {
+        HStack {
+            Text(title).font(.system(size: 14, weight: .medium))
+            Spacer()
+            Text(remote.map { "\(local) / \($0) 条" } ?? "本地 \(local) 条")
+                .font(.system(size: 13, design: .rounded).monospacedDigit())
+                .foregroundStyle(DS.Palette.textSecondary)
+        }
+    }
+
+    private func progressBlock(title: String, detail: String, value: Double?, total: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                ProgressView().controlSize(.small)
+                Text(title).font(.system(size: 15, weight: .semibold))
+                Spacer()
+            }
+            if let value, let total {
+                ProgressView(value: value, total: total).tint(DS.Palette.accent)
+            } else {
+                ProgressView().tint(DS.Palette.accent)
+            }
+            Text(detail)
+                .font(.system(size: 12, design: .rounded).monospacedDigit())
+                .foregroundStyle(DS.Palette.textSecondary)
+        }
+        .padding(.vertical, 3)
     }
 
     // MARK: - 清理
@@ -184,7 +252,14 @@ struct StorageView: View {
             } label: {
                 Label("清理图片缓存", systemImage: "trash")
             }
-            .disabled(syncing || caching)
+            .disabled(operation.isRunning)
+
+            Button(role: .destructive) {
+                showClearMessagesConfirm = true
+            } label: {
+                Label("清除本地聊天记录", systemImage: "externaldrive.badge.minus")
+            }
+            .disabled(operation.isRunning)
         }
     }
 
@@ -195,52 +270,78 @@ struct StorageView: View {
     }
 
     private func runFullSync() {
-        guard !syncing else { return }
-        syncing = true
-        syncCount = 0
+        guard !operation.isRunning, store.connected else { return }
         statusText = nil
-        Task {
-            let coupleTotal = await store.syncAllHistory(.couple) { count in
-                Task { @MainActor in syncCount = count }
+        statusIsError = false
+        operationTask = Task {
+            var downloaded = 0
+            var errors: [String] = []
+            for (channel, name) in [(ChatChannel.couple, "两人聊天"), (.ai, "大橘聊天")] {
+                if Task.isCancelled { break }
+                let result = await store.syncAllHistory(channel) { current, total in
+                    operation = .history(name: name, current: current, total: total)
+                    if let total { remoteCounts[channel.rawValue] = total }
+                    refresh()
+                }
+                downloaded += result.downloaded
+                if let total = result.remoteTotal { remoteCounts[channel.rawValue] = total }
+                if let error = result.error, error != "同步已暂停" { errors.append("\(name)：\(error)") }
             }
-            let aiTotal = await store.syncAllHistory(.ai) { count in
-                Task { @MainActor in syncCount = coupleTotal + count }
-            }
-            await MainActor.run {
-                syncing = false
-                refresh()
-                statusText = "已同步 \(coupleTotal + aiTotal) 条消息"
+            operation = .idle
+            refresh()
+            if Task.isCancelled {
+                statusText = "同步已暂停，下次会从当前位置继续"
+            } else if errors.isEmpty {
+                statusText = downloaded > 0 ? "同步完成，本次新增 \(downloaded) 条消息" : "本地聊天记录已是最新"
                 Haptics.medium()
+            } else {
+                statusIsError = true
+                statusText = errors.joined(separator: "；")
             }
         }
     }
 
     private func runCacheImages() {
-        guard !caching else { return }
-        caching = true
-        cacheDone = 0
-        cacheTotal = 0
+        guard !operation.isRunning, store.connected else { return }
         statusText = nil
-        Task {
-            await store.cacheAllImages(.couple) { done, total in
-                Task { @MainActor in cacheDone = done; cacheTotal = total }
+        statusIsError = false
+        operationTask = Task {
+            let result = await store.cacheAllImages { done, total, failed in
+                operation = .images(done: done, total: total, failed: failed)
             }
-            await store.cacheAllImages(.ai) { done, total in
-                Task { @MainActor in cacheDone = done; cacheTotal = total }
-            }
-            await MainActor.run {
-                caching = false
-                refresh()
-                statusText = "图片已全部缓存到本地"
+            operation = .idle
+            refresh()
+            if Task.isCancelled {
+                statusText = "图片下载已暂停"
+            } else if result.failed == 0 {
+                statusText = result.total == 0 ? "当前没有需要下载的聊天图片" : "\(result.succeeded) 张图片已保存在本地"
                 Haptics.medium()
+            } else {
+                statusIsError = true
+                statusText = "已保存 \(result.succeeded) 张，\(result.failed) 张下载失败，可稍后重试"
             }
         }
+    }
+
+    private func pauseOperation() {
+        operationTask?.cancel()
+        operationTask = nil
     }
 
     private func clearCache() {
         store.clearImageCache()
         refresh()
         statusText = "图片缓存已清理"
+        statusIsError = false
+        Haptics.light()
+    }
+
+    private func clearLocalMessages() {
+        store.clearLocalHistory()
+        remoteCounts = [:]
+        refresh()
+        statusText = "本地聊天记录已清除，云端数据未受影响"
+        statusIsError = false
         Haptics.light()
     }
 }

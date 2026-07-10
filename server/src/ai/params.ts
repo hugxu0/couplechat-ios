@@ -66,7 +66,7 @@ export const CONTEXT = {
   // 应答时带多少条最近聊天；最后 immediateCount 条标为「紧邻上文」重点看。
   recentCount: 30,
   immediateCount: 8,
-  // 检索查询词：当前问题 + 最近几条用户消息拼接（不再用 LLM 单独生成检索词）。
+  // 独立检索词模型失败时的本地兜底：当前问题 + 最近几条用户消息拼接。
   retrievalRecentUserLines: 3,
   // 会话滚动摘要。
   sessionSummaryUpdateEvery: 14,
@@ -84,9 +84,9 @@ export const PACE = {
   // 多条回复之间的拟人停顿（毫秒）。
   replyGapMinMs: 900,
   replyGapJitterMs: 700,
-  // 每个频道的应答队列：积压超过此数直接丢弃新触发（多半是连环催）。
+  // 每个频道的应答队列：积压超过此数时合并为最新触发，当前队列排空后继续回答。
   queuePendingMax: 3,
-  // 单轮应答兜底超时：超时释放队列，避免后续消息全部堵住。
+  // 单轮应答兜底超时：发出可见反馈并释放队列，避免后续消息全部堵住。
   respondTimeoutMs: 120_000,
   // 每积累多少条 couple 用户消息触发一次事实提取。
   factScanEveryMessages: 8,

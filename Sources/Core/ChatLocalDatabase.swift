@@ -3,17 +3,19 @@ import SQLite3
 
 final class ChatLocalDatabase {
     static let shared = ChatLocalDatabase()
-    private static let schemaVersion: Int32 = 1
+    private static let schemaVersion: Int32 = 2
     private var db: OpaquePointer?
     private(set) var currentDatabaseURL: URL?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private let databaseLock = NSRecursiveLock()
+    private(set) var lastOpenRecoveredCache = false
 
     private init() {}
 
     func open(username: String) -> Bool {
         databaseLock.lock()
         defer { databaseLock.unlock() }
+        lastOpenRecoveredCache = false
         if db != nil { close() }
         let fileManager = FileManager.default
         let appSupportDirs = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -120,8 +122,6 @@ final class ChatLocalDatabase {
             print("[ChatLocalDatabase] ⚠️ 本地数据库版本 \(currentVersion) 高于客户端支持的 \(Self.schemaVersion)")
             return false
         }
-        guard currentVersion < Self.schemaVersion else { return true }
-
         guard execute(sql: "BEGIN IMMEDIATE TRANSACTION;") else { return false }
         var committed = false
         defer {
@@ -144,8 +144,6 @@ final class ChatLocalDatabase {
             clientId TEXT,
             metaJson TEXT
         );
-        CREATE INDEX IF NOT EXISTS idx_messages_channel_ts ON messages(channel, ts);
-        CREATE INDEX IF NOT EXISTS idx_messages_channel_type_ts ON messages(channel, type, ts);
         """
         
         let readReceiptsSQL = """
@@ -166,13 +164,109 @@ final class ChatLocalDatabase {
             updatedAt REAL NOT NULL
         );
         """
+
+        let outboxSQL = """
+        CREATE TABLE IF NOT EXISTS pending_outbound_messages (
+            clientId TEXT PRIMARY KEY,
+            channel TEXT NOT NULL,
+            type TEXT NOT NULL,
+            text TEXT NOT NULL,
+            replyTo TEXT,
+            replyPreview TEXT,
+            localFilePath TEXT,
+            mimeType TEXT,
+            uploadId TEXT,
+            uploadURL TEXT,
+            createdAt REAL NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            lastError TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_outbound_created
+            ON pending_outbound_messages(createdAt);
+        """
         
         guard execute(sql: messagesSQL),
+              ensureMessageColumns(),
+              execute(sql: "CREATE INDEX IF NOT EXISTS idx_messages_channel_ts ON messages(channel, ts);"),
+              execute(sql: "CREATE INDEX IF NOT EXISTS idx_messages_channel_type_ts ON messages(channel, type, ts);"),
               execute(sql: readReceiptsSQL),
               execute(sql: sharedStateSQL),
+              execute(sql: outboxSQL),
               execute(sql: "PRAGMA user_version = \(Self.schemaVersion);"),
               execute(sql: "COMMIT;") else { return false }
         committed = true
+        return true
+    }
+
+    /// CREATE TABLE IF NOT EXISTS 不会给旧表补列。逐列检查使跨多个历史版本升级也安全。
+    private func ensureMessageColumns() -> Bool {
+        let definitions: [(String, String)] = [
+            ("channel", "TEXT NOT NULL DEFAULT 'couple'"),
+            ("sender", "TEXT NOT NULL DEFAULT ''"),
+            ("senderName", "TEXT NOT NULL DEFAULT ''"),
+            ("kind", "TEXT NOT NULL DEFAULT 'user'"),
+            ("type", "TEXT NOT NULL DEFAULT 'text'"),
+            ("text", "TEXT NOT NULL DEFAULT ''"),
+            ("url", "TEXT"),
+            ("replyTo", "TEXT"),
+            ("replyPreview", "TEXT"),
+            ("ts", "REAL NOT NULL DEFAULT 0"),
+            ("clientId", "TEXT"),
+            ("metaJson", "TEXT"),
+        ]
+        let existing = tableColumns("messages")
+        for (name, definition) in definitions where !existing.contains(name) {
+            guard execute(sql: "ALTER TABLE messages ADD COLUMN \(name) \(definition);") else { return false }
+        }
+        return true
+    }
+
+    private func tableColumns(_ table: String) -> Set<String> {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table));", -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        var columns = Set<String>()
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let name = readText(stmt, index: 1) { columns.insert(name) }
+        }
+        return columns
+    }
+
+    /// 打开失败时保留原数据库副本并创建干净缓存。聊天真源在服务器，
+    /// 因此损坏的本地缓存不应该阻止 App 启动；副本仍留在磁盘便于诊断/恢复。
+    func openRecoveringIfNeeded(username: String) -> Bool {
+        if open(username: username) { return true }
+
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        let fileManager = FileManager.default
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let directory = appSupport.appendingPathComponent("ChatCache", isDirectory: true)
+        let safeUsername = username
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        let databaseURL = directory.appendingPathComponent("\(safeUsername).sqlite")
+        let stamp = Int(Date().timeIntervalSince1970)
+
+        var movedAnyFile = false
+        for suffix in ["", "-wal", "-shm"] {
+            let source = URL(fileURLWithPath: databaseURL.path + suffix)
+            guard fileManager.fileExists(atPath: source.path) else { continue }
+            let destination = URL(fileURLWithPath: databaseURL.path + ".recovered-\(stamp)" + suffix)
+            do {
+                try fileManager.moveItem(at: source, to: destination)
+                movedAnyFile = true
+            } catch {
+                print("[ChatLocalDatabase] ⚠️ 无法隔离异常缓存: \(error.localizedDescription)")
+                return false
+            }
+        }
+
+        guard open(username: username) else { return false }
+        lastOpenRecoveredCache = movedAnyFile
+        if movedAnyFile {
+            print("[ChatLocalDatabase] 已隔离异常缓存并创建新数据库")
+        }
         return true
     }
     
@@ -239,6 +333,48 @@ final class ChatLocalDatabase {
         
         sqlite3_step(stmt)
         sqlite3_finalize(stmt)
+    }
+
+    /// 全量同步按页事务写入，避免每条消息单独提交 WAL。
+    @discardableResult
+    func insertMessages(_ messages: [ChatMessage]) -> Int {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        guard !messages.isEmpty, execute(sql: "BEGIN IMMEDIATE TRANSACTION;") else { return 0 }
+        for message in messages { insertMessage(message) }
+        guard execute(sql: "COMMIT;") else {
+            _ = execute(sql: "ROLLBACK;")
+            return 0
+        }
+        return messages.count
+    }
+
+    func oldestMessageTimestamp(channel: String) -> Double? {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT MIN(ts) FROM messages WHERE channel = ?;", -1, &stmt, nil) == SQLITE_OK else {
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW, sqlite3_column_type(stmt, 0) != SQLITE_NULL else { return nil }
+        return sqlite3_column_double(stmt, 0)
+    }
+
+    func deleteMessages(channel: String? = nil) {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        if let channel {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "DELETE FROM messages WHERE channel = ?;", -1, &stmt, nil) == SQLITE_OK else { return }
+            sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+            _ = sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        } else {
+            _ = execute(sql: "DELETE FROM messages;")
+        }
+        _ = execute(sql: "PRAGMA wal_checkpoint(PASSIVE);")
     }
     
     func deleteMessage(id: String) {
@@ -428,6 +564,102 @@ final class ChatLocalDatabase {
         databaseLock.lock()
         defer { databaseLock.unlock() }
         return groupedCounts(channel: channel, format: "%Y-%m-%d")
+    }
+
+    // MARK: - Durable Outbox
+
+    @discardableResult
+    func upsertPendingOutbound(_ item: PendingOutboundMessage) -> Bool {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        let sql = """
+        INSERT OR REPLACE INTO pending_outbound_messages
+        (clientId, channel, type, text, replyTo, replyPreview, localFilePath, mimeType,
+         uploadId, uploadURL, createdAt, attempts, lastError)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, item.clientId, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, item.channel, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, item.type, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 4, item.text, -1, SQLITE_TRANSIENT)
+        bindText(stmt, index: 5, value: item.replyTo)
+        bindText(stmt, index: 6, value: item.replyPreview)
+        bindText(stmt, index: 7, value: item.localFilePath)
+        bindText(stmt, index: 8, value: item.mimeType)
+        bindText(stmt, index: 9, value: item.uploadId)
+        bindText(stmt, index: 10, value: item.uploadURL)
+        sqlite3_bind_double(stmt, 11, item.createdAt)
+        sqlite3_bind_int(stmt, 12, Int32(item.attempts))
+        bindText(stmt, index: 13, value: item.lastError)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    func pendingOutbound(clientId: String) -> PendingOutboundMessage? {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        let sql = """
+        SELECT clientId, channel, type, text, replyTo, replyPreview, localFilePath, mimeType,
+               uploadId, uploadURL, createdAt, attempts, lastError
+        FROM pending_outbound_messages WHERE clientId = ? LIMIT 1;
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, clientId, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return parsePendingOutboundRow(stmt)
+    }
+
+    func loadPendingOutbounds() -> [PendingOutboundMessage] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        let sql = """
+        SELECT clientId, channel, type, text, replyTo, replyPreview, localFilePath, mimeType,
+               uploadId, uploadURL, createdAt, attempts, lastError
+        FROM pending_outbound_messages ORDER BY createdAt ASC;
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        var items: [PendingOutboundMessage] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let item = parsePendingOutboundRow(stmt) { items.append(item) }
+        }
+        return items
+    }
+
+    func deletePendingOutbound(clientId: String) {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "DELETE FROM pending_outbound_messages WHERE clientId = ?;", -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, clientId, -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
+    }
+
+    private func parsePendingOutboundRow(_ stmt: OpaquePointer?) -> PendingOutboundMessage? {
+        guard let clientId = readText(stmt, index: 0),
+              let channel = readText(stmt, index: 1),
+              let type = readText(stmt, index: 2),
+              let text = readText(stmt, index: 3) else { return nil }
+        return PendingOutboundMessage(
+            clientId: clientId,
+            channel: channel,
+            type: type,
+            text: text,
+            replyTo: readText(stmt, index: 4),
+            replyPreview: readText(stmt, index: 5),
+            localFilePath: readText(stmt, index: 6),
+            mimeType: readText(stmt, index: 7),
+            uploadId: readText(stmt, index: 8),
+            uploadURL: readText(stmt, index: 9),
+            createdAt: sqlite3_column_double(stmt, 10),
+            attempts: Int(sqlite3_column_int(stmt, 11)),
+            lastError: readText(stmt, index: 12))
     }
 
     func monthCounts(channel: String) -> [(date: String, sender: String, count: Int)] {

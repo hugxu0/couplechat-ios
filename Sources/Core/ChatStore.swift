@@ -2,6 +2,23 @@ import Foundation
 import SocketIO
 import SwiftUI
 
+/// 实时连接的显示状态。`connecting` / `reconnecting` 是正常过渡，不能被当作断联错误展示。
+enum RealtimeConnectionState: Equatable {
+    case disconnected
+    case connecting
+    case connected
+    case reconnecting
+    case failed
+
+    var isTransient: Bool {
+        self == .connecting || self == .reconnecting
+    }
+
+    var isUnavailable: Bool {
+        self == .disconnected || self == .failed
+    }
+}
+
 /// 协调层：持有 socket，分发事件给子 store，对外暴露统一接口。
 /// 子 store：AuthStore（登录）、MessageStore（消息）、SharedStore（共享状态）。
 @MainActor
@@ -16,7 +33,8 @@ final class ChatStore: ObservableObject {
 
     // MARK: - 对外聚合状态
 
-    @Published var connected = false
+    @Published private(set) var connected = false
+    @Published private(set) var connectionState: RealtimeConnectionState = .disconnected
     @Published var partnerOnline = false
     @Published var lastConnectionError: String?
 
@@ -37,6 +55,11 @@ final class ChatStore: ObservableObject {
 
     private var manager: SocketManager?
     private(set) var socket: SocketIOClient?
+    /// Socket.IO 自己会在意外断开后重连；这个标志只负责避免前台恢复等调用重复发起握手。
+    private var connectionAttemptInFlight = false
+    /// 健康检查失败时的受控重连。手动 disconnect 不会触发 Socket.IO 自动重连，
+    /// 因而必须在 disconnect 回调中明确重新握手。
+    private var reconnectAfterDisconnect = false
     var isConnected: Bool { connected }
     var sessionUsername: String? { auth.session?.username }
 
@@ -50,9 +73,17 @@ final class ChatStore: ObservableObject {
     struct StorageBreakdown {
         var imageCacheBytes: Int64
         var databaseBytes: Int64
+        var cachedImageFiles: Int
         var coupleMessages: Int
         var aiMessages: Int
         var totalBytes: Int64 { imageCacheBytes + databaseBytes }
+    }
+
+    struct MediaCacheResult: Equatable {
+        let total: Int
+        let completed: Int
+        let failed: Int
+        var succeeded: Int { completed - failed }
     }
 
     private static let statsDayFormatter: DateFormatter = {
@@ -169,6 +200,9 @@ final class ChatStore: ObservableObject {
         manager = nil
         socket = nil
         connected = false
+        connectionAttemptInFlight = false
+        reconnectAfterDisconnect = false
+        connectionState = .disconnected
         partnerOnline = false
         lastConnectionError = nil
         auth.logout()
@@ -178,17 +212,24 @@ final class ChatStore: ObservableObject {
 
     private func connect() {
         guard let session = auth.session else { return }
-        auth.resolvePartner()
-        let m = SocketManager(socketURL: Self.baseURL, config: [
-            .compress,
-            .reconnects(true),
-            .reconnectWaitMax(5),
-            .connectParams(["token": session.token]),
-        ])
-        manager = m
-        let s = m.defaultSocket
-        socket = s
-        bindEvents(s)
+        let createdSocket = socket == nil
+        if createdSocket {
+            auth.resolvePartner()
+            let m = SocketManager(socketURL: Self.baseURL, config: [
+                .compress,
+                .reconnects(true),
+                .reconnectWaitMax(5),
+            ])
+            manager = m
+            let s = m.defaultSocket
+            socket = s
+            bindEvents(s)
+        }
+
+        guard !connected, !connectionAttemptInFlight, let s = socket else { return }
+        connectionAttemptInFlight = true
+        connectionState = createdSocket ? .connecting : .reconnecting
+        // 认证只随 Socket.IO auth payload 发送，不放入 URL 查询参数，避免 token 落入代理访问日志。
         s.connect(withPayload: ["token": session.token])
     }
 
@@ -197,14 +238,37 @@ final class ChatStore: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.connected = true
+                self.connectionAttemptInFlight = false
+                self.connectionState = .connected
                 self.lastConnectionError = nil
                 self.reportAway(false)
                 self.messageStore.syncHistory(.couple)
                 self.messageStore.syncHistory(.ai)
+                if let session = self.auth.session {
+                    self.messageStore.flushOutbox(session: session)
+                }
             }
         }
         s.on(clientEvent: .disconnect) { [weak self] _, _ in
-            Task { @MainActor in self?.connected = false }
+            Task { @MainActor in
+                guard let self else { return }
+                self.connected = false
+                if self.reconnectAfterDisconnect {
+                    self.reconnectAfterDisconnect = false
+                    self.connectionAttemptInFlight = false
+                    self.connectionState = .reconnecting
+                    self.connect()
+                    return
+                }
+                guard self.auth.loggedIn else {
+                    self.connectionAttemptInFlight = false
+                    self.connectionState = .disconnected
+                    return
+                }
+                // 意外断开交由 Socket.IO 的重连策略处理；不在这里再手动 connect。
+                self.connectionAttemptInFlight = true
+                self.connectionState = .reconnecting
+            }
         }
         s.on(clientEvent: .error) { [weak self] data, _ in
             Task { @MainActor in self?.handleSocketError(data) }
@@ -306,10 +370,17 @@ final class ChatStore: ObservableObject {
             if let dict = item as? [String: Any] { return dict.values.map { "\($0)" }.joined(separator: " ") }
             return "\(item)"
         }.joined(separator: " ")
-        lastConnectionError = message.isEmpty ? "连接失败" : message
         connected = false
         if message.lowercased().contains("unauthorized") {
+            connectionAttemptInFlight = false
+            connectionState = .failed
+            lastConnectionError = "登录已过期，请重新登录"
             auth.verifySessionOrLogout()
+        } else {
+            // 网络瞬断期间保持“重连中”，不要把正常恢复过程渲染为红色断联。
+            connectionAttemptInFlight = true
+            connectionState = .reconnecting
+            lastConnectionError = nil
         }
     }
 
@@ -366,7 +437,8 @@ final class ChatStore: ObservableObject {
     func uploadAvatar(_ image: UIImage) async -> Bool {
         guard let session = auth.session,
               let data = image.jpegData(compressionQuality: 0.85) else { return false }
-        guard let uploaded = try? await messageStore.uploadMedia(data: data, mimeType: "image/jpeg", session: session) else { return false }
+        guard let uploaded = try? await messageStore.uploadMedia(
+            data: data, mimeType: "image/jpeg", purpose: .avatar, session: session) else { return false }
         if let url = ServerConfig.resolveMediaURL(uploaded.url) {
             ImageCache.shared.store(data: data, image: image, for: url)
         }
@@ -418,22 +490,38 @@ final class ChatStore: ObservableObject {
 
     func reportAway(_ away: Bool) { socket?.emit(SocketEvent.away.rawValue, away) }
 
-    func recoverOnForeground() {
-        guard let s = socket else { return }
-        reportAway(false)
-        guard connected else {
-            s.connect(withPayload: ["token": auth.session?.token ?? ""])
+    private func reconnectAfterFailedHealthCheck() {
+        guard socket != nil else {
+            connectionAttemptInFlight = false
+            connect()
             return
         }
+        connected = false
+        connectionState = .reconnecting
+        reconnectAfterDisconnect = true
+        connectionAttemptInFlight = true
+        socket?.disconnect()
+    }
+
+    func recoverOnForeground() {
+        guard auth.session != nil else { return }
+        reportAway(false)
+        guard connected else {
+            connect()
+            return
+        }
+        guard let s = socket else { return }
         s.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 2.5) { [weak self] data in
             Task { @MainActor in
                 guard let self else { return }
                 if data.first is [String: Any] {
                     self.messageStore.syncHistory(.couple)
                     self.messageStore.syncHistory(.ai)
+                    if let session = self.auth.session {
+                        self.messageStore.flushOutbox(session: session)
+                    }
                 } else {
-                    self.socket?.disconnect()
-                    self.socket?.connect(withPayload: ["token": self.auth.session?.token ?? ""])
+                    self.reconnectAfterFailedHealthCheck()
                 }
             }
         }
@@ -441,12 +529,12 @@ final class ChatStore: ObservableObject {
 
     func refreshHomeData() async -> Bool {
         reportAway(false)
-        guard let s = socket else { return false }
         if !connected {
-            s.connect(withPayload: ["token": auth.session?.token ?? ""])
+            connect()
             try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
         guard connected else { return false }
+        guard let s = socket else { return false }
         return await withCheckedContinuation { continuation in
             s.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 2.5) { [weak self] data in
                 Task { @MainActor in
@@ -458,9 +546,11 @@ final class ChatStore: ObservableObject {
                     if ok {
                         self.messageStore.syncHistory(.couple)
                         self.messageStore.syncHistory(.ai)
+                        if let session = self.auth.session {
+                            self.messageStore.flushOutbox(session: session)
+                        }
                     } else {
-                        self.socket?.disconnect()
-                        self.socket?.connect(withPayload: ["token": self.auth.session?.token ?? ""])
+                        self.reconnectAfterFailedHealthCheck()
                     }
                     continuation.resume(returning: ok)
                 }
@@ -510,21 +600,41 @@ final class ChatStore: ObservableObject {
     func clearImageCache() { ImageCache.shared.clearAll() }
 
     @discardableResult
-    func syncAllHistory(_ channel: ChatChannel, onProgress: @escaping (Int) -> Void) async -> Int {
+    func syncAllHistory(
+        _ channel: ChatChannel,
+        onProgress: @escaping (_ localCount: Int, _ remoteTotal: Int?) -> Void
+    ) async -> MessageStore.HistorySyncResult {
         await messageStore.syncAllHistory(channel, onProgress: onProgress)
     }
 
-    func cacheAllImages(_ channel: ChatChannel, onProgress: @escaping (Int, Int) -> Void) async {
-        let raws = ChatLocalDatabase.shared.mediaURLs(channel: channel.rawValue, types: ["image", "sticker"])
-        let urls = raws.compactMap { ServerConfig.resolveMediaURL($0) }
+    func cacheAllImages(
+        _ channels: [ChatChannel] = ChatChannel.allCases,
+        onProgress: @escaping (_ completed: Int, _ total: Int, _ failed: Int) -> Void
+    ) async -> MediaCacheResult {
+        let raws = channels.flatMap {
+            ChatLocalDatabase.shared.mediaURLs(channel: $0.rawValue, types: ["image", "sticker"])
+        }
+        let urls = Array(Set(raws.compactMap { ServerConfig.resolveMediaURL($0) }))
         let total = urls.count
-        onProgress(0, total)
+        onProgress(0, total, 0)
         var done = 0
+        var failed = 0
         for url in urls {
             if Task.isCancelled { break }
-            if !ImageCache.shared.isCached(url) { _ = await ImageCache.shared.image(for: url) }
+            if !ImageCache.shared.isCached(url), await ImageCache.shared.image(for: url) == nil {
+                failed += 1
+            }
             done += 1
-            onProgress(done, total)
+            onProgress(done, total, failed)
+        }
+        return MediaCacheResult(total: total, completed: done, failed: failed)
+    }
+
+    func clearLocalHistory() {
+        messageStore.clearLocalHistory()
+        if connected {
+            messageStore.syncHistory(.couple, roundsLeft: 1)
+            messageStore.syncHistory(.ai, roundsLeft: 1)
         }
     }
 }

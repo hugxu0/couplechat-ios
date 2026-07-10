@@ -23,6 +23,16 @@ export interface PlanContext {
   resolvedQuestion: string;
 }
 
+// 提醒/备忘属于可执行能力，不能完全依赖一次 LLM 意图分类。
+// 上游偶发超时或返回坏 JSON 时，显式任务请求仍应拿到 actions 规则和任务上下文。
+export function hasTaskIntentHint(question: string): boolean {
+  const text = String(question || "").trim();
+  if (!text) return false;
+  if (/(提醒|备忘录?|待办|闹钟|别忘|到点|帮我记|记下来|记一笔)/u.test(text)) return true;
+  if (/(?:完成|做完|删(?:掉|除)?|取消|修改|编辑|改一下).{0,16}(?:提醒|备忘录?|待办)/u.test(text)) return true;
+  return /(?:\d+\s*(?:分钟|小时|天)后|待会儿|等下|过会儿|今晚|明早|明天|后天).{0,12}(?:叫|喊|通知|催)我/u.test(text);
+}
+
 function fallbackPlan(question: string): PlanContext {
   return {
     intent: "chat",
@@ -31,7 +41,7 @@ function fallbackPlan(question: string): PlanContext {
     needMemory: true,
     needShortMemory: true,
     needRetrieval: false,
-    needTasks: false,
+    needTasks: hasTaskIntentHint(question),
     needPetStatus: false,
     needImages: false,
     needClarification: false,
@@ -79,6 +89,7 @@ function toBool(v: unknown, fallback: boolean): boolean {
 
 export async function classifyIntent(question: string, recent: LogMessage[]): Promise<PlanContext> {
   const fallback = fallbackPlan(question);
+  const taskHint = hasTaskIntentHint(question);
   const out = await chat({
     profile: "task",
     system: buildSystem(),
@@ -94,7 +105,7 @@ export async function classifyIntent(question: string, recent: LogMessage[]): Pr
     needMemory: toBool(parsed.needMemory, fallback.needMemory),
     needShortMemory: toBool(parsed.needShortMemory, fallback.needShortMemory),
     needRetrieval: toBool(parsed.needRetrieval, fallback.needRetrieval),
-    needTasks: toBool(parsed.needTasks, fallback.needTasks),
+    needTasks: toBool(parsed.needTasks, fallback.needTasks) || taskHint,
     needPetStatus: toBool(parsed.needPetStatus, fallback.needPetStatus),
     needImages: toBool(parsed.needImages, fallback.needImages),
     needClarification: toBool(parsed.needClarification, fallback.needClarification),

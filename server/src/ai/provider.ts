@@ -29,6 +29,21 @@ interface ChatArgs {
   gen: GenProfile;
 }
 
+async function logHttpFailure(scope: string, res: Response): Promise<void> {
+  let detail = "";
+  try {
+    detail = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 400);
+  } catch {
+    // 读取错误响应失败时，状态码本身仍足够用于定位。
+  }
+  const retryAfter = res.headers.get("retry-after");
+  console.warn(
+    `[ai] ${scope} HTTP ${res.status}` +
+      (retryAfter ? ` retry-after=${retryAfter}` : "") +
+      (detail ? ` body=${detail}` : ""),
+  );
+}
+
 // Anthropic 原生 Messages API。system 标 cache_control:ephemeral：
 // 人设+格式说明每次调用都不变，连续对话能吃到提示词缓存（约 1/10 计费）。
 async function chatAnthropic(p: AiProvider, args: ChatArgs, signal: AbortSignal): Promise<string | null> {
@@ -49,15 +64,20 @@ async function chatAnthropic(p: AiProvider, args: ChatArgs, signal: AbortSignal)
     signal,
   });
   if (!res.ok) {
-    console.warn(`[ai] ${args.profile} anthropic HTTP ${res.status}`);
+    await logHttpFailure(`${args.profile} anthropic`, res);
     return null;
   }
-  const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
+  const data = (await res.json()) as {
+    content?: Array<{ type: string; text?: string }>;
+    stop_reason?: string;
+  };
   const text = (data.content ?? [])
     .filter((b) => b.type === "text" && b.text)
     .map((b) => b.text)
     .join("");
-  return text.trim() || null;
+  const content = text.trim() || null;
+  if (!content) console.warn(`[ai] ${args.profile} anthropic 空响应 stop_reason=${data.stop_reason ?? "unknown"}`);
+  return content;
 }
 
 async function chatOpenAi(p: AiProvider, args: ChatArgs, signal: AbortSignal): Promise<string | null> {
@@ -76,12 +96,16 @@ async function chatOpenAi(p: AiProvider, args: ChatArgs, signal: AbortSignal): P
     signal,
   });
   if (!res.ok) {
-    console.warn(`[ai] ${args.profile} HTTP ${res.status}`);
+    await logHttpFailure(args.profile, res);
     return null;
   }
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+  };
   const content = data.choices?.[0]?.message?.content;
-  return content ? String(content).trim() : null;
+  const text = content ? String(content).trim() || null : null;
+  if (!text) console.warn(`[ai] ${args.profile} 空响应 finish_reason=${data.choices?.[0]?.finish_reason ?? "unknown"}`);
+  return text;
 }
 
 export async function chat(args: ChatArgs): Promise<string | null> {
@@ -130,7 +154,7 @@ export async function describeImage(imageUrl: string, gen: GenProfile, prompt = 
       signal: controller.signal,
     });
     if (!res.ok) {
-      console.warn(`[ai] vision HTTP ${res.status}`);
+      await logHttpFailure("vision", res);
       return null;
     }
     const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
@@ -182,7 +206,7 @@ export async function webSearch(query: string, gen: GenProfile): Promise<SearchR
       signal: controller.signal,
     });
     if (!res.ok) {
-      console.warn(`[ai] search HTTP ${res.status}`);
+      await logHttpFailure("search", res);
       return null;
     }
     const data = (await res.json()) as {

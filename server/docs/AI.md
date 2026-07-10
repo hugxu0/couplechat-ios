@@ -31,7 +31,7 @@
               ▼                                                         ▼
    ┌────────────────────────────────────────┐              ┌──────────────────────────┐
    │  replyEngine.queueRespond(trigger,sink)│              │ 各自独立 LLM 调用         │
-   │  （每频道串行队列，积压 >3 丢弃）        │              │ 命中则主动 emit 一条消息  │
+   │  （每频道串行，过载合并为最新请求）      │              │ 命中则主动 emit 一条消息  │
    └────────────────┬───────────────────────┘              └──────────────────────────┘
                     ▼
    ┌─────────────────────────────────────────────────────────────────────┐
@@ -202,12 +202,13 @@ const query =
 `queueRespond(trigger, sink)` 按频道串行排队：
 
 ```
-queues: Map<storedChannel, { chain: Promise, pending: number }>
+queues: Map<storedChannel, { chain: Promise, pending: number, deferred: QueueItem | null }>
 ```
 
 - 连环 `@大橘` 时不并发（防上游限流），逐条回答
-- 积压 ≥ `PACE.queuePendingMax`（默认 3）直接丢弃新触发
-- 每轮有 `PACE.respondTimeoutMs`（默认 120s）兜底超时，避免堵死队列
+- 积压 ≥ `PACE.queuePendingMax`（默认 3）时合并为最新请求；现有队列排空后仍会回答，不再静默丢弃
+- 每轮有 `PACE.respondTimeoutMs`（默认 120s）兜底超时：发出可见反馈、释放队列，并禁止旧任务稍后乱序写回
+- `respond()` 内部异常、模型连续空响应、AI 配置临时缺失也都有用户可见的本地兜底
 
 ### 4.2 respond() 完整流程
 
@@ -215,7 +216,7 @@ queues: Map<storedChannel, { chain: Promise, pending: number }>
 respond(trigger, sink):
   1. sink.typing(true)
   2. traceBegin()
-  3. recent = recentMessages(channel, 30)
+  3. recent = recentMessages(channel, 30)，按 messageId 排除当前消息，避免提示词重复
   4. [plan, retrievalPlan] = Promise.all([
        classifyIntent(question, recent),
        generateRetrievalQuery(question, recent).catch(() => null),
@@ -225,10 +226,10 @@ respond(trigger, sink):
   7. [recalled, mood, imageContext, searchResult] = Promise.all([
        (needMemory || needRetrieval) ? recallSafe(query, channel) : NO_RECALL,
        ensureDailyMood().catch(""),
-       describeLatestImageIfNeeded(plan, recent),
+       describeLatestImageIfNeeded(plan, recent, trigger),
        needSearch ? webSearch(query, GEN.search) : null,
      ])
-  8. tasksText = needTasks ? tasksTextRich() : ""
+  8. tasksText = needTasks ? tasksTextRich().catch("") : ""
   9. out = chat({ profile:"chat", system: buildSystem(...), user: buildUser(...), gen: GEN.reply })
   10. replies = normalizeReplies(out)
       → 空则原样重试一次
@@ -252,18 +253,15 @@ respond(trigger, sink):
 ```
 personaCore(names)                       ← 人设（身份+性格+记忆姿态+语气）
 频道区分（私聊 vs 共享）
-【人物卡】profileCardsText()              ← profile:<username> + relationship
+【人物卡】profileCardsText()              ← needMemory 时才带，避免普通闲聊被画像淹没
 【短期记忆】getDoc("short-term")          ← needShortMemory 时才带
 【今日心情】mood
 【澄清提示】                               ← needClarification 时加一句
 【记忆怎么用】                             ← 自然带出、不念档案、不加戏
 【不确定就澄清】                           ← 指代不明先反问
-【像人发微信一样说话】                     ← 1~3 条，第一条短反应
-【可用 actions】                           ← 5 种 action 列表
-【判断用哪个 action】                      ← 提醒 vs 备忘 vs 修改
-【add_reminder 时间换算】                  ← 相对→绝对 "YYYY-MM-DD HH:mm"
-【add_memo Markdown 规则】
-【actions 不会立刻生效】                   ← 确认卡机制，replies 用征询口吻
+【上下文证据优先级】                       ← 当前请求优先，人物卡不当心理诊断
+【像人发微信一样说话】                     ← 1~3 条，第一条必须有实际信息
+【任务 actions 规则】                      ← 仅 needTasks=true 时注入，含时间换算与确认卡机制
 【输出格式】                               ← JSON {replies, actions}
 ```
 
@@ -710,6 +708,8 @@ interface TraceEntry {
 所有调用失败/未配置一律返回 `null`，调用方自行兜底——用户永远不该看到堆栈。
 
 `chat()` 有 `AbortController` 超时控制。
+
+HTTP 失败会记录状态码、`Retry-After` 和最多 400 字的上游错误正文；成功但内容为空时记录 `finish_reason` / `stop_reason`，便于区分限流、截断和模型空响应。日志不记录请求 Authorization 头。
 
 ### 14.4 JSON 提取
 

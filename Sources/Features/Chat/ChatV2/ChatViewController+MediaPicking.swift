@@ -53,13 +53,15 @@ extension ChatViewController: PHPickerViewControllerDelegate {
             if let data = await provider.loadData(typeIdentifier: identifier),
                let image = UIImage(data: data) {
                 let mime = UTType(identifier)?.preferredMIMEType ?? "image/jpeg"
-                let normalized = normalizedImageData(data, image: image, mimeType: mime)
-                let previewURL = writeTemporaryPreview(data: normalized, preferredExtension: mime == "image/png" ? "png" : "jpg")
+                let normalized = normalizedImagePayload(data, image: image, mimeType: mime)
+                let previewURL = writeTemporaryPreview(
+                    data: normalized.data,
+                    preferredExtension: normalized.mimeType == "image/png" ? "png" : "jpg")
                 return ChatPendingMedia(
                     id: UUID().uuidString,
                     image: image,
-                    data: normalized,
-                    mimeType: mime,
+                    data: normalized.data,
+                    mimeType: normalized.mimeType,
                     messageType: "image",
                     localPreviewURL: previewURL)
             }
@@ -75,11 +77,18 @@ extension ChatViewController: PHPickerViewControllerDelegate {
         return ChatPendingMedia(id: UUID().uuidString, image: thumb, data: data, mimeType: mime, messageType: "video", localPreviewURL: url)
     }
 
-    private func normalizedImageData(_ data: Data, image: UIImage, mimeType: String) -> Data {
+    private func normalizedImagePayload(
+        _ data: Data,
+        image: UIImage,
+        mimeType: String
+    ) -> (data: Data, mimeType: String) {
         if mimeType == "image/jpeg" || mimeType == "image/png" || mimeType == "image/gif" || mimeType == "image/webp" {
-            return data
+            return (data, mimeType)
         }
-        return image.jpegData(compressionQuality: 0.86) ?? data
+        if let jpeg = image.jpegData(compressionQuality: 0.86) {
+            return (jpeg, "image/jpeg")
+        }
+        return (data, mimeType)
     }
 
     private func videoThumbnail(url: URL) async -> UIImage? {

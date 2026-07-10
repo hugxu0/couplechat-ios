@@ -63,16 +63,18 @@ struct MessageSendRequest: Encodable {
     let type: String
     let text: String
     let url: String?
+    let uploadId: String?
     let replyTo: String?
     let replyPreview: String?
     let clientId: String
 
-    init(channel: ChatChannel, type: String, text: String, url: String? = nil,
+    init(channel: ChatChannel, type: String, text: String, url: String? = nil, uploadId: String? = nil,
          replyTo: String? = nil, replyPreview: String? = nil, clientId: String) {
         self.channel = channel.rawValue
         self.type = type
         self.text = text
         self.url = url
+        self.uploadId = uploadId
         self.replyTo = replyTo
         self.replyPreview = replyPreview
         self.clientId = clientId

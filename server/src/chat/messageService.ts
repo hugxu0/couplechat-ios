@@ -1,5 +1,6 @@
+import fs from "node:fs/promises";
 import { nanoid } from "nanoid";
-import { all, get, run, type MessageRow, type ReadReceiptRow } from "../db";
+import { all, get, run, transaction, type MessageRow, type ReadReceiptRow, type UploadRow } from "../db";
 import type { FetchMessagesPayload, SendMessagePayload } from "../contracts/realtime";
 import type { AuthUser, ClientChannel, ClientMessage, MessageKind, MessageType, StoredChannel } from "../types";
 import { toClientChannel, toStoredChannel } from "../types";
@@ -52,52 +53,83 @@ function normalizedReply(input: SendMessageInput): unknown {
 }
 
 export async function createMessage(user: AuthUser, input: SendMessageInput): Promise<ClientMessage> {
-  const storedChannel = toStoredChannel(input.channel, user.username);
-  const ts = Date.now();
+  return transaction(async (db) => {
+    const storedChannel = toStoredChannel(input.channel, user.username);
+    const ts = Date.now();
 
-  if (input.clientId) {
-    const existing = await get<MessageRow>("SELECT * FROM messages WHERE sender = ? AND client_id = ?", [
-      user.username,
-      input.clientId,
-    ]);
-    if (existing) return mapMessage(existing, input.channel);
-  }
+    // clientId 是客户端离线队列的幂等键：重试必须返回原消息，不能重复写入。
+    if (input.clientId) {
+      const existing = await db.get<MessageRow>("SELECT * FROM messages WHERE sender = ? AND client_id = ?", [
+        user.username,
+        input.clientId,
+      ]);
+      if (existing) return mapMessage(existing, input.channel);
+    }
 
-  const row: MessageRow = {
-    id: `msg_${nanoid(16)}`,
-    channel: storedChannel,
-    sender: user.username,
-    sender_name: user.name,
-    kind: "user",
-    type: input.type,
-    text: input.text ?? "",
-    url: input.url ?? null,
-    reply_json: safeJson(normalizedReply(input)),
-    meta_json: safeJson(input.meta),
-    ts,
-    client_id: input.clientId ?? null,
-  };
+    const requiresUpload = ["image", "video", "voice", "file"].includes(input.type);
+    let attachmentURL: string | null = input.url ?? null;
+    let upload: UploadRow | undefined;
+    if (requiresUpload) {
+      upload = input.uploadId
+        ? await db.get<UploadRow>(
+          "SELECT * FROM uploads WHERE id = ? AND owner = ? FOR UPDATE",
+          [input.uploadId, user.username],
+        )
+        // 兼容尚未升级的 iOS：它没有 uploadId，但也只能使用自己上传过的 URL。
+        : await db.get<UploadRow>(
+          "SELECT * FROM uploads WHERE owner = ? AND url = ? FOR UPDATE",
+          [user.username, input.url],
+        );
+      if (!upload) throw new Error("upload_not_found");
+      if (upload.message_id) throw new Error("upload_already_attached");
+      if (input.url && input.url !== upload.url) throw new Error("upload_url_mismatch");
+      attachmentURL = upload.url;
+    }
 
-  await run(
-    `INSERT INTO messages
-      (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, ts, client_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      row.id,
-      row.channel,
-      row.sender,
-      row.sender_name,
-      row.kind,
-      row.type,
-      row.text,
-      row.url,
-      row.reply_json,
-      row.meta_json,
-      row.ts,
-      row.client_id,
-    ],
-  );
-  return mapMessage(row, input.channel);
+    const row: MessageRow = {
+      id: `msg_${nanoid(16)}`,
+      channel: storedChannel,
+      sender: user.username,
+      sender_name: user.name,
+      kind: "user",
+      type: input.type,
+      text: input.text ?? "",
+      url: attachmentURL,
+      reply_json: safeJson(normalizedReply(input)),
+      meta_json: safeJson(input.meta),
+      ts,
+      client_id: input.clientId ?? null,
+    };
+
+    await db.run(
+      `INSERT INTO messages
+        (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, ts, client_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.channel,
+        row.sender,
+        row.sender_name,
+        row.kind,
+        row.type,
+        row.text,
+        row.url,
+        row.reply_json,
+        row.meta_json,
+        row.ts,
+        row.client_id,
+      ],
+    );
+
+    if (upload) {
+      const bound = await db.run(
+        "UPDATE uploads SET message_id = ?, purpose = 'message' WHERE id = ? AND owner = ? AND message_id IS NULL",
+        [row.id, upload.id, user.username],
+      );
+      if (bound !== 1) throw new Error("upload_already_attached");
+    }
+    return mapMessage(row, input.channel);
+  });
 }
 
 export async function createSystemMessage(channel: StoredChannel, text: string): Promise<ClientMessage> {
@@ -233,6 +265,15 @@ export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
   return rows.reverse().map((row) => mapMessage(row, input.channel));
 }
 
+export async function countMessages(user: AuthUser, channel: ClientChannel) {
+  const storedChannel = toStoredChannel(channel, user.username);
+  const row = await get<{ count: number | string }>(
+    "SELECT COUNT(*) AS count FROM messages WHERE channel = ?",
+    [storedChannel],
+  );
+  return Number(row?.count ?? 0);
+}
+
 export async function searchMessages(user: AuthUser, channel: ClientChannel, query: string, limit = 50) {
   const storedChannel = toStoredChannel(channel, user.username);
   const rows = await all<MessageRow>(
@@ -243,23 +284,44 @@ export async function searchMessages(user: AuthUser, channel: ClientChannel, que
 }
 
 export async function recallMessage(user: AuthUser, id: string) {
-  const existing = await get<MessageRow>("SELECT * FROM messages WHERE id = ? AND sender = ?", [id, user.username]);
-  if (!existing) return null;
+  const result = await transaction(async (db) => {
+    const existing = await db.get<MessageRow>(
+      "SELECT * FROM messages WHERE id = ? AND sender = ? FOR UPDATE",
+      [id, user.username],
+    );
+    if (!existing) return null;
 
-  const text = "你撤回了一条消息";
-  await run(
-    `UPDATE messages
-     SET kind = 'system', type = 'text', text = ?, url = NULL, reply_json = NULL, meta_json = NULL
-     WHERE id = ?`,
-    [text, id],
-  );
+    const upload = existing.url
+      ? await db.get<UploadRow>(
+        "SELECT * FROM uploads WHERE message_id = ? OR (url = ? AND purpose = 'message') LIMIT 1 FOR UPDATE",
+        [id, existing.url],
+      )
+      : undefined;
+    await db.run(
+      `UPDATE messages
+       SET kind = 'system', type = 'text', text = ?, url = NULL, reply_json = NULL, meta_json = NULL
+       WHERE id = ?`,
+      ["你撤回了一条消息", id],
+    );
+    if (upload) await db.run("DELETE FROM uploads WHERE id = ?", [upload.id]);
 
-  return {
-    id,
-    channel: toClientChannel(existing.channel as StoredChannel),
-    by: user.username,
-    byName: user.name,
-  };
+    return {
+      recalled: {
+        id,
+        channel: toClientChannel(existing.channel as StoredChannel),
+        by: user.username,
+        byName: user.name,
+      },
+      uploadPath: upload?.path,
+    };
+  });
+  if (!result) return null;
+  if (result.uploadPath) {
+    await fs.rm(result.uploadPath, { force: true }).catch((error) => {
+      console.warn(`[upload] 撤回消息后删除文件失败 id=${id}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  return result.recalled;
 }
 
 export async function upsertReadReceipt(user: AuthUser, channel: ClientChannel, ts: number) {

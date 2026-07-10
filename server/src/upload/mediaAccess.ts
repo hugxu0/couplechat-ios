@@ -1,0 +1,67 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import type { FastifyInstance, FastifyReply } from "fastify";
+import { z } from "zod";
+import { config } from "../config";
+import { get, type UploadRow } from "../db";
+
+const mediaParamsSchema = z.object({ id: z.string().regex(/^up_[A-Za-z0-9_-]{8,}$/) });
+// 新后端使用 up_<id>，旧网页后端使用 <13位毫秒时间戳>-<12位hex>。
+// 两种都必须先命中 uploads 表，绝不把任意磁盘文件暴露成静态目录。
+const legacyParamsSchema = z.object({
+  filename: z.string().regex(/^(?:up_[A-Za-z0-9_-]{8,}|[0-9]{13}-[a-f0-9]{12})\.[a-z0-9]{1,8}$/i),
+});
+const signatureQuerySchema = z.object({ sig: z.string().min(32).max(128) });
+
+export function signMediaId(id: string): string {
+  return crypto.createHmac("sha256", config.tokenSecret).update(`media:${id}`).digest("base64url");
+}
+
+export function verifyMediaSignature(id: string, signature: string): boolean {
+  const expected = Buffer.from(signMediaId(id));
+  const actual = Buffer.from(signature);
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+export function signedMediaURL(id: string): string {
+  return `${config.publicBaseURL}/media/${id}?sig=${signMediaId(id)}`;
+}
+
+function sendUpload(reply: FastifyReply, upload: UploadRow) {
+  const filename = path.basename(upload.path).replace(/["\r\n]/g, "_");
+  reply
+    .type(upload.mime_type)
+    .header("Content-Length", String(upload.size))
+    .header("Content-Disposition", `inline; filename="${filename}"`)
+    .header("X-Content-Type-Options", "nosniff")
+    .header("Cache-Control", "private, max-age=86400");
+  return reply.send(fs.createReadStream(upload.path));
+}
+
+export async function registerMediaAccessRoutes(app: FastifyInstance) {
+  app.get("/media/:id", async (request, reply) => {
+    const params = mediaParamsSchema.safeParse(request.params);
+    const query = signatureQuerySchema.safeParse(request.query);
+    if (!params.success || !query.success || !verifyMediaSignature(params.data.id, query.data.sig)) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    const upload = await get<UploadRow>("SELECT * FROM uploads WHERE id = ?", [params.data.id]);
+    if (!upload || !fs.existsSync(upload.path)) return reply.code(404).send({ error: "not_found" });
+    return sendUpload(reply, upload);
+  });
+
+  // 历史消息继续使用旧 URL；只允许数据库中确实以 /uploads/ 保存的旧记录，
+  // 新签名媒体即使文件名被看到也不能从该路径绕过签名。
+  app.get("/uploads/:filename", async (request, reply) => {
+    const params = legacyParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ error: "not_found" });
+    const upload = await get<UploadRow>("SELECT * FROM uploads WHERE url LIKE ? LIMIT 1", [
+      `%/uploads/${params.data.filename}`,
+    ]);
+    if (!upload || path.basename(upload.path) !== params.data.filename || !fs.existsSync(upload.path)) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    return sendUpload(reply, upload);
+  });
+}

@@ -96,14 +96,29 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
 
   if (storedChannel === "couple") {
     if (!isText) return; // couple 频道暂不处理图片，只认文字召唤
-    if (!aiEnabled()) return; // couple 频道未配置模型时不插话
+    const triggered = isTriggered(message.text);
+    if (!aiEnabled()) {
+      // 配置缺失或部署切换期间，明确召唤也必须有反馈，不能静默。
+      if (triggered) {
+        void sink.emit(storedChannel, fallbackReply(stripTrigger(message.text)), true).catch((error) => {
+          console.warn("[ai] couple 本地兜底发送失败:", error instanceof Error ? error.message : error);
+        });
+      }
+      return;
+    }
     onCoupleUserMessage(); // 攒够 N 条触发一次事实提取
     // 后台管道：冲突检测 + 主动插话（fire-and-forget，绝不阻塞 @召唤应答）
     void maybeCheckConflict(io, storedChannel).catch(() => {});
     void maybeInterject(io, storedChannel).catch(() => {});
-    if (isTriggered(message.text)) {
+    if (triggered) {
       queueRespond(
-        { storedChannel, question: stripTrigger(message.text), requesterName: user.name, requesterUsername: user.username },
+        {
+          storedChannel,
+          question: stripTrigger(message.text),
+          requesterName: user.name,
+          requesterUsername: user.username,
+          messageId: message.id,
+        },
         sink,
       );
     }
@@ -124,7 +139,15 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
   // 文本 / 图片统一走一条流水线：图片消息此时已经落库，回复引擎里的意图判断
   // 会自己决定要不要识图（needImages 命中才去看最近这张图，不强求）。
   queueRespond(
-    { storedChannel, question: message.text.trim(), requesterName: user.name, requesterUsername: user.username },
+    {
+      storedChannel,
+      question: message.text.trim(),
+      requesterName: user.name,
+      requesterUsername: user.username,
+      messageId: message.id,
+      currentImageUrl: isImage ? message.url : undefined,
+      currentImageSenderName: isImage ? message.senderName : undefined,
+    },
     sink,
   );
 }

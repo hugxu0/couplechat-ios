@@ -220,6 +220,7 @@ final class SharedStore: ObservableObject {
         ChatStore.StorageBreakdown(
             imageCacheBytes: ImageCache.shared.diskUsageBytes(),
             databaseBytes: ChatLocalDatabase.shared.databaseSizeBytes(),
+            cachedImageFiles: ImageCache.shared.cachedFileCount(),
             coupleMessages: ChatLocalDatabase.shared.messageCount(channel: ChatChannel.couple.rawValue),
             aiMessages: ChatLocalDatabase.shared.messageCount(channel: ChatChannel.ai.rawValue))
     }

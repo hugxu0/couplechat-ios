@@ -129,11 +129,13 @@ Base URL 示例：`https://hoo66.top`
 { "ok": true }
 ```
 
-### `POST /api/upload`
+### `POST /api/upload?purpose=message|avatar|sticker`
 
 鉴权：`Authorization: Bearer <token>`
 
 `multipart/form-data`，字段名不限，单文件，最大 50MB。
+
+新版客户端必须标明 `purpose`。未传时按 `legacy` 兼容；只有 `purpose=message` 且超过 24 小时仍未绑定消息的文件会被定时清理，头像、贴纸和旧客户端上传不会误删。
 
 支持 MIME：
 
@@ -149,14 +151,14 @@ Base URL 示例：`https://hoo66.top`
 ```json
 {
   "id": "up_xxx",
-  "url": "https://example.com/uploads/up_xxx.jpg",
+  "url": "https://example.com/media/up_xxx?sig=<hmac>",
   "mimeType": "image/jpeg",
   "size": 12345,
   "type": "image"
 }
 ```
 
-静态访问：`GET /uploads/<filename>`
+新上传通过 HMAC 签名地址访问：`GET /media/<uploadId>?sig=<hmac>`。`/uploads/<filename>` 仅为数据库中已有的历史 URL 保留，且文件名只接受新后端 `up_<id>.<ext>` 或旧网页后端 `<13位毫秒时间戳>-<12位hex>.<ext>`；路由还必须命中 `uploads` 表，不能绕过新媒体的签名校验或访问任意磁盘路径。
 
 ### `GET /api/stats`
 
@@ -368,8 +370,10 @@ AI 私聊频道输入中指示（仅 `ai:<username>` room，payload 为 `boolean
 Ack：
 
 ```json
-{ "ok": true, "id": "msg_xxx" }
+{ "ok": true, "id": "msg_xxx", "message": { "id": "msg_xxx", "clientId": "tmp-xxx", "ts": 1710000000000, "...": "完整消息" } }
 ```
+
+新版客户端直接使用 ACK 中的完整 `message` 替换乐观气泡；旧客户端可继续只读取 `id`。
 
 媒体消息先走 `/api/upload`，再发送：
 
@@ -377,10 +381,13 @@ Ack：
 {
   "channel": "couple",
   "type": "image",
-  "url": "https://example.com/uploads/up_xxx.jpg",
+  "url": "https://example.com/media/up_xxx?sig=<hmac>",
+  "uploadId": "up_xxx",
   "clientId": "tmp-xxx"
 }
 ```
+
+新版 `image` / `video` / `voice` / `file` 必须携带 `uploadId`。服务端会校验该上传记录归当前用户所有、尚未绑定到其他消息，并以记录中的 URL 为准；为了滚动升级，旧版仅传 URL 时也只会匹配当前用户自己的上传记录。`clientId` 可安全地用于重试。
 
 #### `messages:fetch`
 

@@ -1,7 +1,7 @@
 // PostgreSQL 数据层：pg 连接池 + SQLite 风格 `?` 占位符自动转 `$n`，
 // 服务层的 SQL 基本原样保留。时间戳统一毫秒 BIGINT（int8 已配置解析为 number）。
 
-import { Pool, types } from "pg";
+import { Pool, type PoolClient, types } from "pg";
 import { config } from "../config";
 
 // int8（BIGINT / COUNT()）默认返回字符串——这里全是毫秒时间戳和小计数，
@@ -103,6 +103,8 @@ export interface UploadRow {
   mime_type: string;
   size: number;
   created_at: number;
+  message_id: string | null;
+  purpose: string;
 }
 
 function conn(): Pool {
@@ -142,13 +144,28 @@ export async function closeDatabase() {
   pool = null;
 }
 
-export async function run(sql: string, params: any[] = []): Promise<void> {
-  await conn().query(toPg(sql), normalizeParams(params));
+type Queryable = Pick<Pool | PoolClient, "query">;
+
+async function runOn(queryable: Queryable, sql: string, params: any[] = []): Promise<number> {
+  const result = await queryable.query(toPg(sql), normalizeParams(params));
+  return result.rowCount ?? 0;
+}
+
+export async function pingDatabase(): Promise<void> {
+  await conn().query("SELECT 1");
+}
+
+async function allOn<T extends object>(queryable: Queryable, sql: string, params: any[] = []): Promise<T[]> {
+  const result = await queryable.query(toPg(sql), normalizeParams(params));
+  return result.rows as T[];
+}
+
+export async function run(sql: string, params: any[] = []): Promise<number> {
+  return runOn(conn(), sql, params);
 }
 
 export async function all<T extends object>(sql: string, params: any[] = []): Promise<T[]> {
-  const result = await conn().query(toPg(sql), normalizeParams(params));
-  return result.rows as T[];
+  return allOn<T>(conn(), sql, params);
 }
 
 export async function get<T extends object>(sql: string, params: any[] = []): Promise<T | undefined> {
@@ -160,6 +177,36 @@ interface SchemaMigration {
   version: number;
   name: string;
   sql: string;
+}
+
+export interface DatabaseTransaction {
+  run(sql: string, params?: any[]): Promise<number>;
+  all<T extends object>(sql: string, params?: any[]): Promise<T[]>;
+  get<T extends object>(sql: string, params?: any[]): Promise<T | undefined>;
+}
+
+/// 需要同时修改多张表时使用同一连接和事务，避免上传记录、消息记录出现半完成状态。
+export async function transaction<T>(work: (db: DatabaseTransaction) => Promise<T>): Promise<T> {
+  const client = await conn().connect();
+  const db: DatabaseTransaction = {
+    run: (sql, params = []) => runOn(client, sql, params),
+    all: <R extends object>(sql: string, params: any[] = []) => allOn<R>(client, sql, params),
+    async get<R extends object>(sql: string, params: any[] = []): Promise<R | undefined> {
+      const rows = await allOn<R>(client, sql, params);
+      return rows[0];
+    },
+  };
+  try {
+    await client.query("BEGIN");
+    const value = await work(db);
+    await client.query("COMMIT");
+    return value;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // 迁移必须只追加，已发布的版本号与 SQL 不再修改。
@@ -284,6 +331,34 @@ const schemaMigrations: SchemaMigration[] = [
     );
 
     ALTER TABLE personal_items ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'personal';
+    `,
+  },
+  {
+    version: 2,
+    name: "bind_uploads_to_messages",
+    sql: `
+    ALTER TABLE uploads ADD COLUMN IF NOT EXISTS message_id TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS uploads_message_id_idx
+      ON uploads(message_id)
+      WHERE message_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS uploads_owner_created_at_idx
+      ON uploads(owner, created_at);
+    `,
+  },
+  {
+    version: 3,
+    name: "classify_upload_purpose",
+    sql: `
+    ALTER TABLE uploads ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'legacy';
+    UPDATE uploads u
+       SET message_id = (
+         SELECT m.id FROM messages m WHERE m.url = u.url ORDER BY m.ts ASC LIMIT 1
+       ), purpose = 'message'
+     WHERE u.message_id IS NULL
+       AND EXISTS (SELECT 1 FROM messages m WHERE m.url = u.url);
+    CREATE INDEX IF NOT EXISTS uploads_cleanup_idx
+      ON uploads(purpose, created_at)
+      WHERE message_id IS NULL;
     `,
   },
 ];

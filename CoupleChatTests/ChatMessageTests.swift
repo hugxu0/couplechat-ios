@@ -62,6 +62,53 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertTrue(msg.pending)
     }
 
+    func testPendingOutboundRestoresSameClientIdAndFailureState() {
+        let session = Session(token: "tok", username: "xu", name: "小旭")
+        let pending = PendingOutboundMessage(
+            clientId: "tmp-durable-001",
+            channel: "couple",
+            type: "text",
+            text: "断网消息",
+            replyTo: nil,
+            replyPreview: nil,
+            localFilePath: nil,
+            mimeType: nil,
+            uploadId: nil,
+            uploadURL: nil,
+            createdAt: 1_710_000_000_000,
+            attempts: 1,
+            lastError: "timeout")
+
+        let restored = pending.optimisticMessage(session: session)
+        XCTAssertEqual(restored.id, "tmp-durable-001")
+        XCTAssertEqual(restored.ts, 1_710_000_000_000)
+        XCTAssertFalse(restored.pending)
+        XCTAssertTrue(restored.failed)
+    }
+
+    func testPendingStickerRestoresStickerBubble() {
+        let session = Session(token: "tok", username: "xu", name: "小旭")
+        let pending = PendingOutboundMessage(
+            clientId: "tmp-sticker-001",
+            channel: "couple",
+            type: "sticker",
+            text: "[表情]",
+            replyTo: nil,
+            replyPreview: nil,
+            localFilePath: nil,
+            mimeType: nil,
+            uploadId: nil,
+            uploadURL: "https://example.com/sticker.jpg",
+            createdAt: 1_710_000_000_000,
+            attempts: 0,
+            lastError: nil)
+
+        let restored = pending.optimisticMessage(session: session)
+        XCTAssertEqual(restored.type, "sticker")
+        XCTAssertEqual(restored.url, "https://example.com/sticker.jpg")
+        XCTAssertTrue(restored.pending)
+    }
+
     func testTimeFormatting() {
         let dict: [String: Any] = [
             "id": "msg_time",

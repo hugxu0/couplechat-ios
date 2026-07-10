@@ -54,14 +54,16 @@ recording(cancelled: Bool)
 ```text
 send action
 -> optimistic message
+-> durable outbox persist (same clientId for every retry)
 -> upload media if needed
 -> message:send
 -> ack / message:new replace
 -> local database persist
+-> outbox row and local media cleanup
 -> read receipt update
 ```
 
-失败只影响对应消息的本地状态。文本失败允许原消息重发；媒体失败后续应补独立 pending queue，不把原始 payload 塞进渲染 cell。
+失败只影响对应消息的本地状态。文本和媒体都保存在独立 outbox 表；断网、重启或 ACK 丢失后继续使用原 `clientId` 重放，原始 payload 不进入渲染 cell。
 
 ## 验收清单
 

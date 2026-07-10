@@ -37,6 +37,8 @@ si = 小偲
 - **协议契约**：Socket 事件名与入站 payload 集中在 `server/src/contracts/realtime.ts`；iOS 请求体和事件名集中在 `Sources/Core/SocketContract.swift`。
 - **持久化地基**：PostgreSQL 使用 `schema_migrations` 版本台账；iOS SQLite 使用 WAL、FULLMUTEX、递归锁和 `PRAGMA user_version`。
 - **网络可测试**：`AuthStore`、`MessageStore`、`SharedStore` 通过可注入的 `HTTPClient` 请求网络。
+- **AI 不静默**：模型空响应会重试；异常、120 秒总超时和显式召唤时的配置缺失都会发可见兜底。频道过载合并为最新请求，不再直接丢弃。
+- **AI 上下文收敛**：当前消息不重复注入；人物卡只在需要长期记忆时加载；提醒/备忘规则只在任务意图时加载，并有本地任务意图兜底。
 - **异步边界**：日期历史跳转会等待远端数据加载完成后再刷新页面。
 - **SwiftLint CI**：`build-ios.yml` 在 Archive 前跑 SwiftLint 检查。
 - **ServerConfig 可配置**：`baseURL` 从 Info.plist 读取（`SERVER_BASE_URL`），换环境不改代码。
@@ -269,11 +271,13 @@ AI 环境变量详见 `server/docs/AI.md` 与 `.env.production.example`（`AI_*`
 ## 六、ChatStore 可靠性要点
 
 1. **多频道**：`messagesByChannel["couple"]` / `["ai"]`
-2. **乐观发送**：`clientId` 去重，ack 或 `message:new` 替换 pending
-3. **重连补漏**：按最后一条非 pending/failed 的 `ts` 做 `since` 增量
-4. **假连接**：回前台 `health`，2.5s 超时 disconnect + reconnect
-5. **unauthorized**：先 `GET /api/me` 核实，确认无效才 logout
-6. **shared 变更**：写入 SQLite + 广播；纪念日走 `dates` / `anniversaries` key
+2. **可靠发送**：乐观气泡先写 `pending_outbound_messages`；文本和媒体重启后继续用原 `clientId` 串行重放，ack 或 `message:new` 清理 outbox
+3. **媒体续传**：原文件持久化到 `ChatOutboxMedia`，上传成功后保存 `uploadId`，消息 ACK 丢失时不会重复上传
+   新上传使用 HMAC 签名 `/media/<id>?sig=...`；媒体消息撤回会删除对应服务端文件，历史 `/uploads` URL 保持兼容
+4. **重连补漏**：按最后一条非 pending/failed 的 `ts` 做 `since` 增量，并在连接成功后 flush outbox
+5. **假连接**：回前台 `health`，2.5s 超时后走受控重连；UI 区分连接中/重连中/失败
+6. **unauthorized**：先 `GET /api/me` 核实，确认无效才 logout
+7. **shared 变更**：写入 SQLite + 广播；纪念日走 `dates` / `anniversaries` key
 
 ---
 
@@ -363,16 +367,18 @@ npm run healthcheck -- https://hoo66.top
 
 ---
 
-## 十一、旧后端历史数据迁移（2026-07-07）
+## 十一、旧后端历史数据迁移（2026-07-10 已完成生产切换）
 
-根目录 `data/` 含旧后端（`alice/bob`）导出：`chat.db`（387842 条消息）、AI 记忆、uploads。
+美国旧后端在 `2026-07-10 09:56:05 CST` 停写并制作一致性快照，已全量替换日本生产库中的测试数据：
 
-**已做（仅本地开发库）**：
-- `messages` / `ai_facts` / `ai_episodes` / `uploads` 已导入本地 PostgreSQL（经 SQLite 中转脚本）
-- 用户名映射：`alice→xu`，`bob→si`
+- 389,461 条消息，时间范围 `1733059587000...1783647407026`
+- 347 个上传文件/索引，共 190,652,967 字节，实际文件缺失为 0
+- 109 条长期事实、4,374 张事件卡，全部保留 embedding
+- 11 项共享状态、12 条提醒/备忘、2 条已读回执
+- 1,270 份 AI 运行/归档文档（人物卡、关系卡、短期记忆、日记、推荐、会话摘要和旧 cache）
+- 用户名/私聊频道映射：`alice→xu`、`bob→si`、`ai:alice→ai:xu`、`ai:bob→ai:si`
+- 旧 `chunk_embeddings` 明确废弃，不进入新运行库；完整旧 SQLite 仍在美国备份中
 
-**未做**：
-- `chunk_embeddings`、`shared` 表（纪念日/提醒旧数据）、`daily_cache` 未迁移
-- **生产库完全没动**，仍从 `xu/si` 干净起步
+迁移脚本：`server/scripts/import-legacy-production.ts`；全量演练：`npm run smoke:legacy-import`。详细记录见 `server/docs/PRODUCTION_MIGRATION_2026-07-10.md`。
 
-若要导入生产：先在服务器 `pg_dump` 备份，再跑 `scripts/migrate-sqlite-to-postgres.ts`（或等价 SQL），详见 `docs/POSTGRES.md`。
+美国旧站已经恢复运行，但快照时间之后两套后端会各自写入；日常使用应以日本新后端 `hoo66.top` 为准。

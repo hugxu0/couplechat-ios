@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 final class AuthStore: ObservableObject {
     @Published var session: Session?
+    @Published private(set) var recoveredLocalCache = false
     @Published var partner: Account? {
         didSet {
             if let partner, let data = try? JSONEncoder().encode(partner) {
@@ -27,7 +28,8 @@ final class AuthStore: ObservableObject {
     func bootstrap() {
         guard session == nil, let saved = Keychain.loadSession() else { return }
         session = saved
-        _ = ChatLocalDatabase.shared.open(username: saved.username)
+        _ = ChatLocalDatabase.shared.openRecoveringIfNeeded(username: saved.username)
+        recoveredLocalCache = ChatLocalDatabase.shared.lastOpenRecoveredCache
     }
 
     // MARK: - 登录
@@ -45,7 +47,8 @@ final class AuthStore: ObservableObject {
         let s = try JSONDecoder().decode(Session.self, from: data)
         Keychain.saveSession(s)
         session = s
-        _ = ChatLocalDatabase.shared.open(username: s.username)
+        _ = ChatLocalDatabase.shared.openRecoveringIfNeeded(username: s.username)
+        recoveredLocalCache = ChatLocalDatabase.shared.lastOpenRecoveredCache
     }
 
     // MARK: - 登出
@@ -54,6 +57,7 @@ final class AuthStore: ObservableObject {
         Keychain.clearSession()
         session = nil
         partner = nil
+        recoveredLocalCache = false
         ChatLocalDatabase.shared.close()
     }
 

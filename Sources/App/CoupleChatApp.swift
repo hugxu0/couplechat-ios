@@ -45,7 +45,10 @@ struct CoupleChatApp: App {
             .onChange(of: scenePhase) {
                 switch scenePhase {
                 case .active: store.recoverOnForeground()
-                case .background, .inactive: store.reportAway(true)
+                // inactive 会在来电、系统弹窗、图片选择器等短暂打断时出现；
+                // 此时把用户标为离开会造成对方在线状态和推送策略抖动。
+                case .background: store.reportAway(true)
+                case .inactive: break
                 @unknown default: break
                 }
             }

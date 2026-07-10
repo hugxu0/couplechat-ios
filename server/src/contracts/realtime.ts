@@ -34,13 +34,24 @@ export const clientChannelSchema = z.enum(["couple", "ai"]);
 export const sendMessageSchema = z.object({
   channel: clientChannelSchema.default("couple"),
   type: z.enum(["text", "image", "video", "sticker", "voice", "file"]).default("text"),
-  text: z.string().default(""),
-  url: z.string().url().optional(),
-  replyTo: z.string().min(1).optional(),
-  replyPreview: z.string().optional(),
+  text: z.string().max(8_000).default(""),
+  // url 由服务端按 uploadId 回填，客户端传它只用于兼容旧版本及交叉校验。
+  url: z.string().url().max(2_000).optional(),
+  uploadId: z.string().regex(/^up_[A-Za-z0-9_-]{8,}$/).optional(),
+  replyTo: z.string().min(1).max(128).optional(),
+  replyPreview: z.string().max(500).optional(),
   reply: z.unknown().optional(),
   meta: z.unknown().optional(),
-  clientId: z.string().min(1).optional(),
+  clientId: z.string().min(1).max(128).optional(),
+}).superRefine((value, ctx) => {
+  const requiresUpload = ["image", "video", "voice", "file"].includes(value.type);
+  // 新客户端必须发 uploadId；保留 url 是为了让旧版客户端可按“当前用户拥有的上传记录”安全回填。
+  if (requiresUpload && !value.uploadId && !value.url) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uploadId"], message: "upload_reference_required" });
+  }
+  if (!requiresUpload && value.uploadId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uploadId"], message: "upload_reference_not_allowed" });
+  }
 });
 
 export const fetchMessagesSchema = z.object({
@@ -54,7 +65,9 @@ export const fetchMessagesSchema = z.object({
 
 export const readReceiptSchema = z.object({
   channel: clientChannelSchema.default("couple"),
-  ts: z.number().positive(),
+  // Swift 的 Date.timeIntervalSince1970 * 1000 可能带小数；PostgreSQL BIGINT
+  // 只能存整数毫秒。入口统一四舍五入，兼容已发布客户端并保持协议稳定。
+  ts: z.number().finite().positive().transform((value) => Math.round(value)),
 });
 
 export const searchMessagesSchema = z.object({

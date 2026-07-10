@@ -71,15 +71,85 @@ async function main() {
       "SELECT version, name FROM schema_migrations ORDER BY version ASC",
     );
     assertOk(
-      "schema_migrations 记录基线迁移",
-      migrations.length === 1 && migrations[0].version === 1 && migrations[0].name === "initial_schema",
+      "schema_migrations 记录全部迁移",
+      migrations.length === 3 &&
+        migrations[0].version === 1 && migrations[0].name === "initial_schema" &&
+        migrations[1].version === 2 && migrations[1].name === "bind_uploads_to_messages" &&
+        migrations[2].version === 3 && migrations[2].name === "classify_upload_purpose",
     );
 
-    const { fetchMessagesSchema } = await import("../src/contracts/realtime");
+    const { fetchMessagesSchema, readReceiptSchema } = await import("../src/contracts/realtime");
     const rangeContract = fetchMessagesSchema.safeParse({
       channel: "couple", after: 1, before: 2, limit: 80,
     });
     assertOk("Socket fetch 契约接受 after+before 范围", rangeContract.success);
+    const fractionalRead = readReceiptSchema.safeParse({ channel: "couple", ts: 1783653931714.444 });
+    assertOk(
+      "iOS 小数毫秒已读回执会归一化为 BIGINT",
+      fractionalRead.success && fractionalRead.data.ts === 1783653931714,
+    );
+    const { sendMessageSchema } = await import("../src/contracts/realtime");
+    assertOk(
+      "媒体消息要求 uploadId",
+      !sendMessageSchema.safeParse({ channel: "couple", type: "image", text: "[图片]" }).success,
+    );
+    assertOk(
+      "旧版媒体 URL 在滚动升级期间兼容",
+      sendMessageSchema.safeParse({
+        channel: "couple", type: "image", text: "[图片]", url: "https://example.com/uploads/up_legacy.jpg",
+      }).success,
+    );
+
+    // AI 可靠性：超时必须发兜底；队列过载必须保留最新请求而不是静默丢弃。
+    const { ReplyQueue, runReplyTaskWithTimeout } = await import("../src/ai/replyEngine");
+    const aiTrigger = {
+      storedChannel: "ai:smoke",
+      question: "测试",
+      requesterName: "测试用户",
+      requesterUsername: "smoke",
+    };
+    const timeoutReplies: string[] = [];
+    const timeoutSink = {
+      emit: async (_channel: string, text: string) => { timeoutReplies.push(text); },
+      typing: () => undefined,
+      replying: () => undefined,
+    };
+    await runReplyTaskWithTimeout(
+      aiTrigger,
+      timeoutSink,
+      async () => new Promise<void>(() => undefined),
+      5,
+    );
+    assertOk("AI 超时会发送兜底回复", timeoutReplies.length === 1);
+
+    const { hasTaskIntentHint } = await import("../src/ai/intent");
+    assertOk(
+      "AI 任务意图在分类模型失败时仍可确定",
+      hasTaskIntentHint("十分钟后提醒我吃药")
+        && hasTaskIntentHint("把购物清单记到备忘录")
+        && hasTaskIntentHint("明早喊我起床")
+        && !hasTaskIntentHint("今晚吃什么好"),
+    );
+
+    const startedQuestions: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const queue = new ReplyQueue(async (trigger) => {
+      startedQuestions.push(trigger.question);
+      if (trigger.question === "q1") await firstGate;
+    }, 2);
+    const queueSink = { emit: async () => undefined, typing: () => undefined };
+    queue.enqueue({ ...aiTrigger, question: "q1" }, queueSink);
+    queue.enqueue({ ...aiTrigger, question: "q2" }, queueSink);
+    const overload1 = queue.enqueue({ ...aiTrigger, question: "q3" }, queueSink);
+    const overload2 = queue.enqueue({ ...aiTrigger, question: "q4" }, queueSink);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    releaseFirst?.();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assertOk(
+      "AI 队列过载合并并最终回答最新请求",
+      overload1 === "coalesced" && overload2 === "coalesced" && startedQuestions.join(",") === "q1,q2,q4",
+    );
 
     // 账号
     const { listPublicAccounts, authenticate } = await import("../src/auth/accounts");
@@ -87,7 +157,7 @@ async function main() {
     assertOk(`listPublicAccounts → ${accounts.length} 个账号`, accounts.length === 2);
 
     // 消息：分页 / since / after+before / around / 搜索 / LIKE
-    const { fetchMessages, searchMessages, createMessage, upsertReadReceipt, getReadReceipts } = await import("../src/chat/messageService");
+    const { fetchMessages, searchMessages, createMessage, recallMessage, upsertReadReceipt, getReadReceipts } = await import("../src/chat/messageService");
     const user = { username: accounts[0].username, name: accounts[0].name };
     const latest = await fetchMessages(user, { channel: "couple", limit: 50 });
     assertOk(`fetchMessages latest → ${latest.length} 条`, latest.length === 50);
@@ -112,6 +182,112 @@ async function main() {
     const created = await createMessage(user, { channel: "couple", type: "text", text: "PG 冒烟测试", clientId: "smoke-1" });
     const dup = await createMessage(user, { channel: "couple", type: "text", text: "PG 冒烟测试重复", clientId: "smoke-1" });
     assertOk("clientId 幂等（重发返回同一条）", created.id === dup.id);
+
+    // 媒体附件：消息只能绑定当前用户未使用过的 uploadId，绑定和消息写入必须一起提交。
+    const uploadId = "up_smoke_media_123";
+    const uploadURL = "https://example.com/uploads/up_smoke_media_123.jpg";
+    const mediaPath = path.join(dataDir, "up_smoke_media_123.jpg");
+    fs.writeFileSync(mediaPath, "media");
+    await db.run(
+      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [uploadId, user.username, mediaPath, uploadURL, "image/jpeg", 5, Date.now()],
+    );
+    const media = await createMessage(user, {
+      channel: "couple", type: "image", text: "[图片]", url: uploadURL, uploadId, clientId: "smoke-media-1",
+    });
+    const boundUpload = await db.get<{ message_id: string | null }>("SELECT message_id FROM uploads WHERE id = ?", [uploadId]);
+    assertOk("媒体消息原子绑定 upload", media.url === uploadURL && boundUpload?.message_id === media.id);
+    let duplicateAttachmentRejected = false;
+    try {
+      await createMessage(user, {
+        channel: "couple", type: "image", text: "[图片]", url: uploadURL, uploadId, clientId: "smoke-media-2",
+      });
+    } catch {
+      duplicateAttachmentRejected = true;
+    }
+    assertOk("同一 upload 不能绑定两条消息", duplicateAttachmentRejected);
+    const recalledMedia = await recallMessage(user, media.id);
+    const recalledUpload = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", [uploadId]);
+    assertOk(
+      "撤回媒体消息同时删除附件",
+      recalledMedia?.id === media.id && !recalledUpload && !fs.existsSync(mediaPath),
+    );
+    const legacyUploadId = "up_smoke_legacy_123";
+    const legacyUploadURL = "https://example.com/uploads/up_smoke_legacy_123.jpg";
+    await db.run(
+      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [legacyUploadId, user.username, "/tmp/up_smoke_legacy_123.jpg", legacyUploadURL, "image/jpeg", 123, Date.now()],
+    );
+    const legacyMedia = await createMessage(user, {
+      channel: "couple", type: "image", text: "[图片]", url: legacyUploadURL, clientId: "smoke-legacy-media-1",
+    });
+    assertOk("旧版媒体按 owner + url 安全绑定", legacyMedia.url === legacyUploadURL);
+
+    // 只清理明确用于消息且超过 24h 仍未绑定的文件；头像/贴纸/旧客户端上传不误删。
+    const abandonedPath = path.join(dataDir, "abandoned-message.jpg");
+    const avatarPath = path.join(dataDir, "keep-avatar.jpg");
+    fs.writeFileSync(abandonedPath, "abandoned");
+    fs.writeFileSync(avatarPath, "avatar");
+    const oldCreatedAt = Date.now() - 2 * 24 * 60 * 60 * 1000;
+    await db.run(
+      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ["up_abandoned_123", user.username, abandonedPath, "https://example.com/abandoned.jpg", "image/jpeg", 9, oldCreatedAt, "message"],
+    );
+    await db.run(
+      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ["up_avatar_keep_123", user.username, avatarPath, "https://example.com/avatar.jpg", "image/jpeg", 6, oldCreatedAt, "avatar"],
+    );
+    const { cleanupAbandonedMessageUploads } = await import("../src/upload/cleanup");
+    const cleaned = await cleanupAbandonedMessageUploads();
+    const keptAvatar = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", ["up_avatar_keep_123"]);
+    assertOk(
+      "过期消息附件清理且不误删头像",
+      cleaned === 1 && !fs.existsSync(abandonedPath) && fs.existsSync(avatarPath) && keptAvatar?.id === "up_avatar_keep_123",
+    );
+
+    const { signedMediaURL, signMediaId, verifyMediaSignature } = await import("../src/upload/mediaAccess");
+    const signedURL = new URL(signedMediaURL("up_signature_123"));
+    const signature = signedURL.searchParams.get("sig") ?? "";
+    assertOk(
+      "新媒体 URL 使用 HMAC 签名",
+      signedURL.pathname === "/media/up_signature_123" &&
+        signature === signMediaId("up_signature_123") &&
+        verifyMediaSignature("up_signature_123", signature) &&
+        !verifyMediaSignature("up_signature_456", signature),
+    );
+    const routeMediaId = "up_signed_route_123";
+    const routeMediaPath = path.join(dataDir, `${routeMediaId}.txt`);
+    fs.writeFileSync(routeMediaPath, "signed-media");
+    const routeMediaURL = signedMediaURL(routeMediaId);
+    await db.run(
+      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [routeMediaId, user.username, routeMediaPath, routeMediaURL, "text/plain", 12, Date.now(), "avatar"],
+    );
+    const legacyRouteFilename = "1783639852451-95c29e3767ff.jpg";
+    const legacyRoutePath = path.join(dataDir, legacyRouteFilename);
+    fs.writeFileSync(legacyRoutePath, "legacy-media");
+    await db.run(
+      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        "legacy_route_timestamp_hash", user.username, legacyRoutePath,
+        `https://example.com/uploads/${legacyRouteFilename}`, "image/jpeg", 12, Date.now(), "legacy",
+      ],
+    );
+    const { buildApp } = await import("../src/app");
+    const app = await buildApp();
+    const healthResponse = await app.inject({ method: "GET", url: "/health" });
+    const signedResponse = await app.inject({ method: "GET", url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search });
+    const legacyRouteResponse = await app.inject({ method: "GET", url: `/uploads/${legacyRouteFilename}` });
+    const invalidSignatureResponse = await app.inject({ method: "GET", url: `/media/${routeMediaId}?sig=invalid-signature-value-000000000000` });
+    const bypassResponse = await app.inject({ method: "GET", url: `/uploads/${path.basename(routeMediaPath)}` });
+    await app.close();
+    assertOk(
+      "签名媒体路由拒绝伪造签名和裸路径旁路",
+      healthResponse.statusCode === 200 && healthResponse.json().database === "ok" &&
+        signedResponse.statusCode === 200 && signedResponse.body === "signed-media" &&
+        legacyRouteResponse.statusCode === 200 && legacyRouteResponse.body === "legacy-media" &&
+        invalidSignatureResponse.statusCode === 404 && bypassResponse.statusCode === 404,
+    );
 
     // 已读回执 upsert
     await upsertReadReceipt(user, "couple", created.ts);
