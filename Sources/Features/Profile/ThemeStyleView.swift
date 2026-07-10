@@ -44,14 +44,13 @@ struct ThemeStyleView: View {
                 .foregroundStyle(DS.Palette.textSecondary)
 
             ZStack {
-                RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
-                    .fill(previewWallpaper.previewGradient)
-                if let image = theme.customWallpaperImage(for: wallpaperChannel) {
+                if theme.hasCustomWallpaper(for: wallpaperChannel),
+                   let image = theme.customWallpaperImage(for: wallpaperChannel) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
                 } else {
-                    previewWallpaper.patternOverlay
+                    WallpaperPreviewSurface(choice: previewWallpaper, height: 110)
                 }
 
                 VStack(spacing: 8) {
@@ -211,13 +210,7 @@ struct ThemeStyleView: View {
             }
         } label: {
             VStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(choice.previewGradient)
-                    choice.patternOverlay
-                }
-                .frame(height: 110)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                WallpaperPreviewSurface(choice: choice)
                 .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .stroke(selected ? DS.Palette.accent : .clear, lineWidth: 3)

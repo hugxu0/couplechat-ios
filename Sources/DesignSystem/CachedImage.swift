@@ -46,10 +46,18 @@ struct AvatarBadge: View {
 
     var body: some View {
         CachedImage(url: url) {
-            Text(fallbackEmoji)
-                .font(.system(size: size * 0.55))
-                .frame(width: size, height: size)
-                .background(background)
+            Group {
+                if fallbackEmoji == AccountPresentation.dajuDefaultEmoji {
+                    Image(systemName: AccountPresentation.dajuIconName)
+                        .font(.system(size: size * 0.47, weight: .medium))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(fallbackEmoji)
+                        .font(.system(size: size * 0.55))
+                }
+            }
+            .frame(width: size, height: size)
+            .background(background)
         }
         .frame(width: size, height: size)
         .clipShape(Circle())

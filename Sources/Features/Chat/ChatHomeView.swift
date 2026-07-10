@@ -390,14 +390,19 @@ struct ChatHomeView: View {
             }
         }
         .contentShape(Capsule())
-        .onTapGesture {
-            guard !statusEditMode else { return }
-            setStatus(status)
-        }
-        .onLongPressGesture(minimumDuration: 0.45) {
-            Haptics.medium()
-            withAnimation(DS.Anim.springFast) { statusEditMode = true }
-        }
+        // 显式并行处理点击与长按，避免长按手势吞掉原有状态胶囊的点击。
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                guard !statusEditMode else { return }
+                setStatus(status)
+            }
+        )
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                Haptics.medium()
+                withAnimation(DS.Anim.springFast) { statusEditMode = true }
+            }
+        )
     }
 
     private var actionStrip: some View {
@@ -831,6 +836,8 @@ private struct CoupleAvatarColumn: View {
                     .padding(.vertical, 6)
                     .background(.white.opacity(0.64), in: Capsule())
             }
+            .frame(minWidth: 76, minHeight: 34)
+            .contentShape(Capsule())
         } else {
             Text(status ?? "想贴贴")
                 .font(.system(size: 14, weight: .bold, design: .rounded))

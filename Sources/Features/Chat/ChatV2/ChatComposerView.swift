@@ -443,7 +443,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         catBackgroundView.update(cornerRadius: 22, tintAlpha: 0.20, borderAlpha: 0.22)
         catBackgroundView.translatesAutoresizingMaskIntoConstraints = false
 
-        catButton.setImage(UIImage(systemName: "pawprint"), for: .normal)
+        catButton.setImage(UIImage(systemName: AccountPresentation.dajuIconName), for: .normal)
         catButton.backgroundColor = .clear
         catButton.translatesAutoresizingMaskIntoConstraints = false
         catBackgroundView.addSubview(catButton)

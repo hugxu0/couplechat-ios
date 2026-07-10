@@ -351,8 +351,9 @@ final class ChatStore: ObservableObject {
             guard let dict = data.first as? [String: Any],
                   let id = dict["id"] as? String else { return }
             let byName = dict["byName"] as? String
+            let recalledText = dict["recalledText"] as? String
             let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "")
-            Task { @MainActor in self?.messageStore.applyRecall(id: id, byName: byName, channel: channel, myUsername: self?.auth.session?.username) }
+            Task { @MainActor in self?.messageStore.applyRecall(id: id, byName: byName, channel: channel, myUsername: self?.auth.session?.username, recalledText: recalledText) }
         }
         s.on(SocketEvent.messageUpdate.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
@@ -474,14 +475,23 @@ final class ChatStore: ObservableObject {
     }
 
     func uploadAvatar(_ image: UIImage) async -> Bool {
+        await uploadAvatar(image, for: auth.session?.username)
+    }
+
+    func uploadDajuAvatar(_ image: UIImage) async -> Bool {
+        await uploadAvatar(image, for: "ai")
+    }
+
+    private func uploadAvatar(_ image: UIImage, for target: String?) async -> Bool {
         guard let session = auth.session,
+              let target,
               let data = image.jpegData(compressionQuality: 0.85) else { return false }
         guard let uploaded = try? await messageStore.uploadMedia(
             data: data, mimeType: "image/jpeg", purpose: .avatar, session: session) else { return false }
         if let url = ServerConfig.resolveMediaURL(uploaded.url) {
             ImageCache.shared.store(data: data, image: image, for: url)
         }
-        shared.setAvatar(uploaded.url, for: session.username, session: session)
+        shared.setAvatar(uploaded.url, for: target, session: session)
         return true
     }
 

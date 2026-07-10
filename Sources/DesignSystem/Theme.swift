@@ -10,7 +10,7 @@ import UIKit
 // MARK: - 主题色
 
 enum AccentChoice: String, CaseIterable, Identifiable {
-    case tangerine  // 蜜橘（默认）
+    case tangerine  // 蜜橘
     case sakura     // 樱粉
     case ocean      // 雾蓝
     case mint       // 薄荷
@@ -267,6 +267,23 @@ enum WallpaperChoice: String, CaseIterable, Identifiable {
     }
 }
 
+/// 壁纸选择器统一使用的预览表面，保证渐变、星点和裁剪尺寸与选择卡片一致。
+struct WallpaperPreviewSurface: View {
+    let choice: WallpaperChoice
+    var height: CGFloat = 110
+
+    var body: some View {
+        ZStack {
+            choice.previewGradient
+            choice.patternOverlay
+                .allowsHitTesting(false)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
 // MARK: - ThemeManager
 
 /// 聊天界面需要分别判断顶栏与输入栏下方的壁纸明暗。
@@ -322,7 +339,7 @@ final class ThemeManager: ObservableObject {
     private var customWallpaperLuminanceCache: [String: [WallpaperSurfaceRegion: CGFloat]] = [:]
 
     private init() {
-        accent = AccentChoice(rawValue: UserDefaults.standard.string(forKey: "theme.accent") ?? "") ?? .tangerine
+        accent = AccentChoice(rawValue: UserDefaults.standard.string(forKey: "theme.accent") ?? "") ?? .sakura
         appearance = AppearanceChoice(rawValue: UserDefaults.standard.string(forKey: "theme.appearance") ?? "") ?? .system
         wallpapers = UserDefaults.standard.dictionary(forKey: "theme.wallpapers") as? [String: String] ?? [:]
         customWallpaperKeys = Set(UserDefaults.standard.stringArray(forKey: "theme.customWallpapers") ?? [])

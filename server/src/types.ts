@@ -23,6 +23,7 @@ export interface ClientMessage {
   replyPreview?: string;
   reply?: unknown;
   meta?: unknown;
+  recalledText?: string;
   channel: ClientChannel;
   ts: number;
   clientId?: string;

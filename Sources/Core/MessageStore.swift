@@ -564,14 +564,14 @@ final class MessageStore: ObservableObject {
             SocketPayloadEncoder.encode(MessageRecallRequest(id: message.id))).timingOut(after: 9) { _ in }
     }
 
-    func applyRecall(id: String, byName: String?, channel: ChatChannel?, myUsername: String?) {
+    func applyRecall(id: String, byName: String?, channel: ChatChannel?, myUsername: String?, recalledText: String? = nil) {
         let channels = channel.map { [$0] } ?? ChatChannel.allCases
         for c in channels {
             updateMessages(c) { list in
                 guard let i = list.firstIndex(where: { $0.id == id }) else { return }
                 var m = list[i]
                 let mine = m.sender == myUsername
-                if m.recalledText == nil { m.recalledText = m.text }
+                if m.recalledText == nil { m.recalledText = recalledText ?? m.text }
                 m.kind = "system"
                 m.type = "text"
                 m.url = nil

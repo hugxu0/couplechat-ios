@@ -47,9 +47,7 @@ struct WallpaperPickerSheet: View {
         } label: {
             VStack(spacing: 8) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(choice.previewGradient)
-                    choice.patternOverlay
+                    WallpaperPreviewSurface(choice: choice, height: 120)
                     VStack(alignment: .leading, spacing: 4) {
                         Capsule().fill(.white.opacity(0.85)).frame(width: 42, height: 12)
                         Capsule().fill(DS.Palette.accent.opacity(0.9)).frame(width: 34, height: 12)
@@ -57,7 +55,6 @@ struct WallpaperPickerSheet: View {
                     }
                     .padding(10)
                 }
-                .frame(height: 120)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)

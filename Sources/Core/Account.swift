@@ -27,10 +27,14 @@ enum ChatChannel: String, CaseIterable, Identifiable {
 }
 
 enum AccountPresentation {
+    static let dajuDefaultEmoji = "🐱"
+    static let dajuIconName = "pawprint"
+
     static func avatar(for username: String) -> String {
         switch username {
         case "xu": return "🐶"
         case "si": return "🐰"
+        case "ai": return dajuDefaultEmoji
         default: return "💗"
         }
     }

@@ -31,6 +31,7 @@ export interface MessageRow {
   url: string | null;
   reply_json: string | null;
   meta_json: string | null;
+  recalled_text: string | null;
   ts: number;
   client_id: string | null;
 }
@@ -359,6 +360,13 @@ const schemaMigrations: SchemaMigration[] = [
     CREATE INDEX IF NOT EXISTS uploads_cleanup_idx
       ON uploads(purpose, created_at)
       WHERE message_id IS NULL;
+    `,
+  },
+  {
+    version: 4,
+    name: "preserve_recalled_text",
+    sql: `
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS recalled_text TEXT;
     `,
   },
 ];

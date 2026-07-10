@@ -3,7 +3,7 @@ import SQLite3
 
 final class ChatLocalDatabase {
     static let shared = ChatLocalDatabase()
-    private static let schemaVersion: Int32 = 2
+    private static let schemaVersion: Int32 = 3
     private var db: OpaquePointer?
     private(set) var currentDatabaseURL: URL?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -140,7 +140,8 @@ final class ChatLocalDatabase {
             replyPreview TEXT,
             ts REAL NOT NULL,
             clientId TEXT,
-            metaJson TEXT
+            metaJson TEXT,
+            recalledText TEXT
         );
         """
         
@@ -211,6 +212,7 @@ final class ChatLocalDatabase {
             ("ts", "REAL NOT NULL DEFAULT 0"),
             ("clientId", "TEXT"),
             ("metaJson", "TEXT"),
+            ("recalledText", "TEXT"),
         ]
         let existing = tableColumns("messages")
         for (name, definition) in definitions where !existing.contains(name) {
@@ -261,8 +263,8 @@ final class ChatLocalDatabase {
         guard !msg.pending, !msg.failed, !msg.id.hasPrefix("tmp-") else { return }
         let sql = """
         INSERT OR REPLACE INTO messages 
-        (id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        (id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         
         var stmt: OpaquePointer?
@@ -290,6 +292,7 @@ final class ChatLocalDatabase {
             }
         }
         sqlite3_bind_text(stmt, 13, metaStr, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 14, msg.recalledText, -1, SQLITE_TRANSIENT)
         
         sqlite3_step(stmt)
         sqlite3_finalize(stmt)
@@ -353,7 +356,7 @@ final class ChatLocalDatabase {
         defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
         let sql = """
-        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson 
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText
         FROM messages 
         WHERE channel = ? AND ts < ? 
         ORDER BY ts DESC 
@@ -386,7 +389,7 @@ final class ChatLocalDatabase {
         defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
         let sql = """
-        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText
         FROM messages
         WHERE channel = ? AND ts >= ? AND ts <= ?
         ORDER BY ts ASC;
@@ -433,7 +436,7 @@ final class ChatLocalDatabase {
         var messages: [ChatMessage] = []
         let limitClause = limit == nil ? "" : "LIMIT ?"
         let sql = """
-        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText
         FROM messages
         WHERE channel = ? AND ts >= ? AND ts < ?
         ORDER BY ts ASC
@@ -470,7 +473,7 @@ final class ChatLocalDatabase {
         let placeholders = types.map { _ in "?" }.joined(separator: ",")
         let limitClause = limit == nil ? "" : "LIMIT ?"
         let sql = """
-        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText
         FROM messages
         WHERE channel = ? AND type IN (\(placeholders)) AND kind = 'user'
         ORDER BY ts DESC
@@ -633,7 +636,7 @@ final class ChatLocalDatabase {
         defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
         let sql = """
-        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson 
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText
         FROM messages 
         WHERE channel = ? 
         ORDER BY ts DESC 
@@ -661,7 +664,7 @@ final class ChatLocalDatabase {
     private func fetchMessagesBeforeOrAt(channel: String, timestamp: Double, limit: Int) -> [ChatMessage] {
         var messages: [ChatMessage] = []
         let sql = """
-        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText
         FROM messages
         WHERE channel = ? AND ts <= ?
         ORDER BY ts DESC
@@ -687,7 +690,7 @@ final class ChatLocalDatabase {
     private func fetchMessagesAfter(channel: String, timestamp: Double, limit: Int) -> [ChatMessage] {
         var messages: [ChatMessage] = []
         let sql = """
-        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText
         FROM messages
         WHERE channel = ? AND ts > ?
         ORDER BY ts ASC
@@ -739,7 +742,7 @@ final class ChatLocalDatabase {
         defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
         let sql = """
-        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson 
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText
         FROM messages 
         WHERE channel = ? AND (text LIKE ? OR replyPreview LIKE ?)
         ORDER BY ts DESC 
@@ -891,6 +894,7 @@ final class ChatLocalDatabase {
         let ts = sqlite3_column_double(stmt, 10)
         let clientId = readText(stmt, index: 11)
         let metaJson = readText(stmt, index: 12)
+        let recalledText = readText(stmt, index: 13)
         
         var dict: [String: Any] = [
             "id": id,
@@ -906,6 +910,7 @@ final class ChatLocalDatabase {
         if let replyTo = replyTo { dict["replyTo"] = replyTo }
         if let replyPreview = replyPreview { dict["replyPreview"] = replyPreview }
         if let clientId = clientId { dict["clientId"] = clientId }
+        if let recalledText = recalledText { dict["recalledText"] = recalledText }
         
         if let metaJson = metaJson,
            let data = metaJson.data(using: .utf8),

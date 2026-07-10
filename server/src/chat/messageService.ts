@@ -44,6 +44,7 @@ function mapMessage(row: MessageRow, clientChannel?: ClientChannel): ClientMessa
     replyPreview: typeof replyObject?.preview === "string" ? replyObject.preview : undefined,
     reply,
     meta: readJson(row.meta_json),
+    recalledText: row.recalled_text ?? undefined,
     channel: clientChannel ?? toClientChannel(row.channel as StoredChannel),
     ts: row.ts,
     clientId: row.client_id ?? undefined,
@@ -98,6 +99,7 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
       url: attachmentURL,
       reply_json: safeJson(normalizedReply(input)),
       meta_json: safeJson(input.meta),
+      recalled_text: null,
       ts,
       client_id: input.clientId ?? null,
     };
@@ -145,6 +147,7 @@ export async function createSystemMessage(channel: StoredChannel, text: string):
     url: null,
     reply_json: null,
     meta_json: null,
+    recalled_text: null,
     ts: Date.now(),
     client_id: null,
   };
@@ -183,6 +186,7 @@ export async function createAiMessage(channel: StoredChannel, text: string, meta
     url: null,
     reply_json: null,
     meta_json: metaJson,
+    recalled_text: null,
     ts: Date.now(),
     client_id: null,
   };
@@ -300,9 +304,9 @@ export async function recallMessage(user: AuthUser, id: string) {
       : undefined;
     await db.run(
       `UPDATE messages
-       SET kind = 'system', type = 'text', text = ?, url = NULL, reply_json = NULL, meta_json = NULL
+       SET kind = 'system', type = 'text', text = ?, recalled_text = ?, url = NULL, reply_json = NULL, meta_json = NULL
        WHERE id = ?`,
-      ["你撤回了一条消息", id],
+      ["你撤回了一条消息", existing.type === "text" ? existing.text : null, id],
     );
     if (upload) await db.run("DELETE FROM uploads WHERE id = ?", [upload.id]);
 
@@ -312,6 +316,7 @@ export async function recallMessage(user: AuthUser, id: string) {
         channel: toClientChannel(existing.channel as StoredChannel),
         by: user.username,
         byName: user.name,
+        recalledText: existing.type === "text" ? existing.text : undefined,
       },
       uploadPath: upload?.path,
     };

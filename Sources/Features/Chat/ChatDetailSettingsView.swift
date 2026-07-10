@@ -30,6 +30,10 @@ struct ChatDetailSettingsView: View {
         store.partner?.username ?? (store.session?.username == "xu" ? "si" : "xu")
     }
 
+    private var avatarUsername: String? {
+        channel == .ai ? "ai" : partnerUsername
+    }
+
     @AppStorage("chat_muted") private var chatMuted: Bool = false
 
     private var mediaItemCount: Int {
@@ -103,18 +107,12 @@ struct ChatDetailSettingsView: View {
     @ViewBuilder
     private func avatar(size: CGFloat, emojiSize: CGFloat) -> some View {
         Group {
-            if channel == .couple, let url = store.avatarURL(for: store.partner?.username) {
+            if let url = store.avatarURL(for: avatarUsername) {
                 CachedImage(url: url) {
-                    Text(partnerAvatar)
-                        .font(.system(size: emojiSize))
-                        .frame(width: size, height: size)
-                        .background(theme.accent.color.opacity(0.10))
+                    avatarPlaceholder(size: size, emojiSize: emojiSize)
                 }
             } else {
-                Text(partnerAvatar)
-                    .font(.system(size: emojiSize))
-                    .frame(width: size, height: size)
-                    .background(theme.accent.color.opacity(0.10))
+                avatarPlaceholder(size: size, emojiSize: emojiSize)
             }
         }
         .frame(width: size, height: size)
@@ -125,6 +123,22 @@ struct ChatDetailSettingsView: View {
                 .fill(partnerOnline ? DS.Palette.green : DS.Palette.textSecondary.opacity(0.55))
                 .frame(width: 10, height: 10)
                 .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+        }
+    }
+
+    @ViewBuilder
+    private func avatarPlaceholder(size: CGFloat, emojiSize: CGFloat) -> some View {
+        if partnerAvatar == AccountPresentation.dajuDefaultEmoji {
+            Image(systemName: AccountPresentation.dajuIconName)
+                .font(.system(size: emojiSize * 0.82, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: size, height: size)
+                .background(theme.accent.color.opacity(0.10))
+        } else {
+            Text(partnerAvatar)
+                .font(.system(size: emojiSize))
+                .frame(width: size, height: size)
+                .background(theme.accent.color.opacity(0.10))
         }
     }
 

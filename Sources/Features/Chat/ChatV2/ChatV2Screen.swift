@@ -44,12 +44,12 @@ struct ChatV2Screen: View {
     }
 
     private var peerAvatar: String {
-        if channel == .ai { return "🐱" }
+        if channel == .ai { return store.avatarText(for: "ai") }
         return store.avatarText(for: store.partner?.username ?? "si")
     }
 
     private var peerAvatarURL: URL? {
-        channel == .ai ? nil : store.avatarURL(for: store.partner?.username)
+        channel == .ai ? store.avatarURL(for: "ai") : store.avatarURL(for: store.partner?.username)
     }
 
     private var mediaMessages: [ChatMessage] {

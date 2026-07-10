@@ -560,12 +560,16 @@ private final class ChatAvatarView: UIView {
     }
 
     func configure(text: String, url: URL?) {
-        label.text = text
-        imageView.image = nil
+        let isDajuDefault = text == AccountPresentation.dajuDefaultEmoji
+        label.text = isDajuDefault ? nil : text
+        imageView.image = isDajuDefault ? UIImage(systemName: AccountPresentation.dajuIconName) : nil
+        imageView.contentMode = isDajuDefault ? .center : .scaleAspectFill
+        imageView.tintColor = .secondaryLabel
         representedURL = url
         guard let url else { return }
         if let cached = ImageCache.shared.memoryImage(for: url) {
             imageView.image = cached
+            imageView.contentMode = .scaleAspectFill
             label.text = nil
             return
         }
@@ -574,6 +578,7 @@ private final class ChatAvatarView: UIView {
             await MainActor.run {
                 guard let self, self.representedURL == url else { return }
                 self.imageView.image = image
+                self.imageView.contentMode = .scaleAspectFill
                 if image != nil { self.label.text = nil }
             }
         }

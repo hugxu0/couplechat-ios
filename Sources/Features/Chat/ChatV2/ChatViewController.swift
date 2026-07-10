@@ -654,6 +654,20 @@ final class ChatViewController: UIViewController {
         composer.setReplyPreview(nil)
     }
 
+    private func beginEditingRecalledMessage(_ message: ChatMessage) {
+        guard message.sender == store.session?.username,
+              let recalledText = message.recalledText,
+              !recalledText.isEmpty else { return }
+        clearReplyTarget()
+        pendingMedia.removeAll()
+        composer.setMediaPreviews([])
+        composer.textView.text = recalledText
+        composer.textViewDidChange(composer.textView)
+        inputState = .editing
+        hidePanel(animated: true)
+        composer.focusTextInput()
+    }
+
     private func replyPreview(for message: ChatMessage) -> String {
         let body: String
         switch message.type {
@@ -960,12 +974,12 @@ final class ChatViewController: UIViewController {
     }
 
     private var peerAvatar: String {
-        if channel == .ai { return "🐱" }
+        if channel == .ai { return store.avatarText(for: "ai") }
         return store.avatarText(for: store.partner?.username ?? "si")
     }
 
     private var peerAvatarURL: URL? {
-        channel == .ai ? nil : store.avatarURL(for: store.partner?.username)
+        channel == .ai ? store.avatarURL(for: "ai") : store.avatarURL(for: store.partner?.username)
     }
 
     private var myAvatar: String {
@@ -1095,31 +1109,48 @@ extension ChatViewController: UICollectionViewDelegateFlowLayout {
     }
 
     func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
-        guard indexPath.item < timelineItems.count,
-              case .message(let id) = timelineItems[indexPath.item],
-              let message = messagesById[id],
-              let cell = collectionView.cellForItem(at: indexPath) as? ChatNativeMessageCell else { return nil }
+        guard indexPath.item < timelineItems.count else { return nil }
+        let message: ChatMessage
+        switch timelineItems[indexPath.item] {
+        case .message(let id):
+            guard let value = messagesById[id],
+                  let cell = collectionView.cellForItem(at: indexPath) as? ChatNativeMessageCell else { return nil }
+            let convertedPoint = collectionView.convert(point, to: cell)
+            guard cell.containsBubble(point: point) || cell.containsBubble(point: convertedPoint) else { return nil }
+            message = value
+        case .system(let systemID, _):
+            guard let id = systemID.hasPrefix("system-") ? String(systemID.dropFirst("system-".count)) : nil,
+                  let value = messagesById[id],
+                  value.recalledText != nil,
+                  value.sender == store.session?.username else { return nil }
+            message = value
+        default:
+            return nil
+        }
 
-        let convertedPoint = collectionView.convert(point, to: cell)
-        guard cell.containsBubble(point: point) || cell.containsBubble(point: convertedPoint) else { return nil }
-
-        return UIContextMenuConfiguration(identifier: id as NSString, previewProvider: nil) { [weak self] _ in
+        return UIContextMenuConfiguration(identifier: message.id as NSString, previewProvider: nil) { [weak self] _ in
             guard let self else { return nil }
             var actions: [UIAction] = []
-            if message.type == "text" {
-                actions.append(UIAction(title: "复制", image: UIImage(systemName: "doc.on.doc")) { _ in
-                    UIPasteboard.general.string = message.displayText
+            if message.kind == "system", message.recalledText != nil {
+                actions.append(UIAction(title: "重新编辑", image: UIImage(systemName: "pencil")) { _ in
+                    self.beginEditingRecalledMessage(message)
                 })
-            }
-            actions.append(UIAction(title: "引用", image: UIImage(systemName: "arrowshape.turn.up.left")) { _ in
-                self.setReplyTarget(message)
-            })
-            let withinTwoMin = message.sender == self.store.session?.username &&
-                (Date().timeIntervalSince1970 * 1000 - message.ts) < 120_000
-            if withinTwoMin && !message.pending && !message.failed {
-                actions.append(UIAction(title: "撤回", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
-                    self.store.recallMessage(message, channel: self.channel)
+            } else if message.kind != "system" {
+                if message.type == "text" {
+                    actions.append(UIAction(title: "复制", image: UIImage(systemName: "doc.on.doc")) { _ in
+                        UIPasteboard.general.string = message.displayText
+                    })
+                }
+                actions.append(UIAction(title: "引用", image: UIImage(systemName: "arrowshape.turn.up.left")) { _ in
+                    self.setReplyTarget(message)
                 })
+                let withinTwoMin = message.sender == self.store.session?.username &&
+                    (Date().timeIntervalSince1970 * 1000 - message.ts) < 120_000
+                if withinTwoMin && !message.pending && !message.failed {
+                    actions.append(UIAction(title: "撤回", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
+                        self.store.recallMessage(message, channel: self.channel)
+                    })
+                }
             }
             return UIMenu(children: actions)
         }
