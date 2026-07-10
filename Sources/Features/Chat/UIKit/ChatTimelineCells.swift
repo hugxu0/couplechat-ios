@@ -28,8 +28,17 @@ final class ChatTimeCell: UICollectionViewCell {
         label.frame = contentView.bounds.insetBy(dx: 12, dy: 0)
     }
 
-    func configure(text: String) {
+    func configure(text: String, usesLightContent: Bool) {
         label.text = text
+        // 时间分隔符直接跟随壁纸表面状态，不使用动态系统色，
+        // 这样深色自定义壁纸不会留下看不清的深灰字。
+        label.textColor = usesLightContent
+            ? UIColor.white.withAlphaComponent(0.72)
+            : UIColor.black.withAlphaComponent(0.46)
+        label.shadowColor = usesLightContent
+            ? UIColor.black.withAlphaComponent(0.34)
+            : UIColor.white.withAlphaComponent(0.40)
+        label.shadowOffset = CGSize(width: 0, height: 1)
     }
 }
 

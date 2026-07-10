@@ -42,6 +42,7 @@ final class ChatViewController: UIViewController {
     private var dynamicallySamplesComposerTone = false
     private var lastComposerSampleFrame: CGRect = .null
     private var usesDarkChatSurface = false
+    private var timelineUsesLightContent = false
     private var appliedAccent: AccentChoice?
 
     private var cancellables: Set<AnyCancellable> = []
@@ -81,6 +82,7 @@ final class ChatViewController: UIViewController {
         composerUsesLightContent: Bool,
         dynamicallySamplesComposerTone: Bool,
         usesDarkChatSurface: Bool,
+        timelineUsesLightContent: Bool,
         onMediaTap: @escaping (String) -> Void
     ) {
         self.channel = channel
@@ -89,6 +91,7 @@ final class ChatViewController: UIViewController {
         self.composerUsesLightContent = composerUsesLightContent
         self.dynamicallySamplesComposerTone = dynamicallySamplesComposerTone
         self.usesDarkChatSurface = usesDarkChatSurface
+        self.timelineUsesLightContent = timelineUsesLightContent
         self.onMediaTap = onMediaTap
         super.init(nibName: nil, bundle: nil)
     }
@@ -115,6 +118,7 @@ final class ChatViewController: UIViewController {
         composerUsesLightContent: Bool,
         dynamicallySamplesComposerTone: Bool,
         usesDarkChatSurface: Bool,
+        timelineUsesLightContent: Bool,
         onMediaTap: @escaping (String) -> Void
     ) {
         let storeChanged = self.store !== store
@@ -122,6 +126,7 @@ final class ChatViewController: UIViewController {
         let composerToneChanged = self.composerUsesLightContent != composerUsesLightContent
         let dynamicComposerToneChanged = self.dynamicallySamplesComposerTone != dynamicallySamplesComposerTone
         let chatSurfaceToneChanged = self.usesDarkChatSurface != usesDarkChatSurface
+        let timelineToneChanged = self.timelineUsesLightContent != timelineUsesLightContent
         self.store = store
         self.theme = theme
         self.dynamicallySamplesComposerTone = dynamicallySamplesComposerTone
@@ -130,6 +135,7 @@ final class ChatViewController: UIViewController {
             self.composerUsesLightContent = composerUsesLightContent
         }
         self.usesDarkChatSurface = usesDarkChatSurface
+        self.timelineUsesLightContent = timelineUsesLightContent
         self.onMediaTap = onMediaTap
         if themeChanged || composerToneChanged || dynamicComposerToneChanged || appliedAccent != theme.accent {
             composer.applyTheme(theme, usesLightContent: self.composerUsesLightContent)
@@ -138,7 +144,7 @@ final class ChatViewController: UIViewController {
         if dynamicallySamplesComposerTone, isViewLoaded {
             refreshComposerSurfaceTone(force: true)
         }
-        if chatSurfaceToneChanged, collectionView != nil {
+        if (chatSurfaceToneChanged || timelineToneChanged), collectionView != nil {
             UIView.performWithoutAnimation {
                 collectionView.reloadData()
             }
@@ -996,7 +1002,7 @@ extension ChatViewController: UICollectionViewDataSource {
         switch item {
         case .time(_, let text):
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ChatTimeCell.reuseId, for: indexPath) as! ChatTimeCell
-            cell.configure(text: text)
+            cell.configure(text: text, usesLightContent: timelineUsesLightContent)
             return cell
         case .system(_, let text):
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ChatSystemCell.reuseId, for: indexPath) as! ChatSystemCell

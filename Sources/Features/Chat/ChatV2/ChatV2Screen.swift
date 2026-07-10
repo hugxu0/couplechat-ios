@@ -71,6 +71,13 @@ struct ChatV2Screen: View {
         ChatSurfaceTone(luminance: composerSurfaceLuminance)
     }
 
+    private var timelineUsesLightContent: Bool {
+        if let luminance = theme.customWallpaperLuminance(for: channel, region: .timelineCenter) {
+            return ChatSurfaceTone(luminance: luminance).usesLightContent
+        }
+        return displayedWallpaper == .night
+    }
+
     private var usesDarkChatSurface: Bool {
         if theme.hasCustomWallpaper(for: channel) {
             let top = theme.customWallpaperLuminance(for: channel, region: .topCenter) ?? 0.5
@@ -115,6 +122,7 @@ struct ChatV2Screen: View {
                     composerUsesLightContent: composerChromeTone.usesLightContent,
                     dynamicallySamplesComposerTone: theme.hasCustomWallpaper(for: channel),
                     usesDarkChatSurface: usesDarkChatSurface,
+                    timelineUsesLightContent: timelineUsesLightContent,
                     jumpCommand: $jumpCommand,
                     onMediaTap: { mediaViewerMessageId = $0 }
                 )
@@ -165,7 +173,6 @@ struct ChatV2Screen: View {
                     .foregroundStyle(topPrimaryColor)
                     .shadow(color: topShadowColor, radius: 1.5, x: 0, y: 1)
                     .frame(width: 44, height: 44)
-                    .chatTopLiquidGlass(cornerRadius: 22, tone: topChromeTone)
             }
             .buttonStyle(PressableStyle())
 
@@ -214,11 +221,10 @@ struct ChatV2Screen: View {
                     url: peerAvatarURL,
                     fallbackEmoji: peerAvatar,
                     size: 35,
-                    background: .white.opacity(0.10)
+                    background: .clear
                 )
                 .padding(4.5)
                     .frame(width: 44, height: 44)
-                    .chatTopLiquidGlass(cornerRadius: 22, tone: topChromeTone)
             }
             .buttonStyle(PressableStyle())
         }
@@ -368,6 +374,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
     let composerUsesLightContent: Bool
     let dynamicallySamplesComposerTone: Bool
     let usesDarkChatSurface: Bool
+    let timelineUsesLightContent: Bool
     @Binding var jumpCommand: ChatV2JumpCommand?
     let onMediaTap: (String) -> Void
 
@@ -382,6 +389,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             composerUsesLightContent: composerUsesLightContent,
             dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
+            timelineUsesLightContent: timelineUsesLightContent,
             onMediaTap: onMediaTap
         )
         controller.setTopOverlayInset(topOverlayInset)
@@ -396,6 +404,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             composerUsesLightContent: composerUsesLightContent,
             dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
+            timelineUsesLightContent: timelineUsesLightContent,
             onMediaTap: onMediaTap
         )
         if let command = jumpCommand {

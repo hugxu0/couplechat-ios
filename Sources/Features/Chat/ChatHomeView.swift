@@ -54,7 +54,9 @@ struct ChatHomeView: View {
                 shortPullRefreshProbe
                 mainPanel
                     .padding(.horizontal, DS.Spacing.page)
-                    .padding(.bottom, 100)
+                // 卡片外保留一小段真实的滚动缓冲，供下拉刷新和底部标签栏呼吸，
+                // 不再把这块空间塞进「最新消息」里造成一片空白。
+                Color.clear.frame(height: 58)
             }
             .coordinateSpace(name: "chatHomeScroll")
             .scrollIndicators(.hidden)
@@ -100,7 +102,7 @@ struct ChatHomeView: View {
         VStack(spacing: 0) {
             coupleHeader
                 .padding(.top, 14)
-                .padding(.bottom, 24)
+                .padding(.bottom, 18)
 
             sectionDivider
 
@@ -117,8 +119,8 @@ struct ChatHomeView: View {
             sectionDivider
 
             latestMessages
-                .padding(.top, 24)
-                .padding(.bottom, 12)
+                .padding(.top, 16)
+                .padding(.bottom, 14)
 
             enterChatButton
                 .padding(.bottom, 16)
@@ -127,7 +129,7 @@ struct ChatHomeView: View {
         .padding(.top, 4)
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity)
-        .frame(minHeight: 690)
+        .frame(minHeight: 0, alignment: .top)
         .background(homeCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
         .overlay(
@@ -446,14 +448,17 @@ struct ChatHomeView: View {
     private var latestMessages: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack {
-                Text("最新消息")
+                Label("最新消息", systemImage: "bubble.left.and.bubble.right.fill")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(DS.Palette.textSecondary)
+                    .foregroundStyle(DS.Palette.textPrimary)
                 Spacer()
                 if let last = store.messages.last {
                     Text(last.timeString)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Palette.textSecondary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(.white.opacity(0.48), in: Capsule())
                 }
             }
 
@@ -471,6 +476,37 @@ struct ChatHomeView: View {
                 }
             }
         }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 148, alignment: .top)
+        .background(conversationWindowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(theme.accent.color.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private var conversationWindowBackground: some View {
+        ZStack(alignment: .bottomTrailing) {
+            LinearGradient(
+                colors: [
+                    theme.accent.color.opacity(0.12),
+                    DS.Palette.innerSurface.opacity(0.92),
+                    DS.Palette.pink.opacity(0.06)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: "sparkles")
+                .font(.system(size: 56, weight: .thin))
+                .foregroundStyle(theme.accent.color.opacity(0.09))
+                .rotationEffect(.degrees(-14))
+                .offset(x: 13, y: 15)
+            Image(systemName: "heart.fill")
+                .font(.system(size: 17))
+                .foregroundStyle(DS.Palette.pink.opacity(0.14))
+                .offset(x: -40, y: -16)
+        }
     }
 
     private func latestRow(_ message: ChatMessage) -> some View {
@@ -487,8 +523,15 @@ struct ChatHomeView: View {
                 .foregroundStyle(mine ? DS.Palette.textPrimary : DS.Palette.textPrimary)
                 .lineLimit(2)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(mine ? DS.Palette.pink.opacity(0.14) : DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+                .padding(.vertical, 10)
+                .background(
+                    mine ? theme.accent.color.opacity(0.16) : Color.white.opacity(0.62),
+                    in: RoundedRectangle(cornerRadius: 17, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        .stroke(mine ? theme.accent.color.opacity(0.12) : .white.opacity(0.56), lineWidth: 1)
+                )
 
             if mine {
                 latestAvatar(for: message)

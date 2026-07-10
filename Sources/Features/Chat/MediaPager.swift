@@ -13,6 +13,7 @@ struct MediaPagerView: View {
     @State private var saving = false
     @State private var toast: String?
     @State private var closingProgress: CGFloat = 0
+    @State private var closingOffset: CGFloat = 0
 
     init(messages: [ChatMessage], selectedId: Binding<String?>) {
         self.items = messages.compactMap(MediaBrowserItem.init(message:))
@@ -28,35 +29,27 @@ struct MediaPagerView: View {
         max(closingProgress, min(1, max(0, dismissTranslation.height / 260)))
     }
 
+    private var dismissOffset: CGFloat {
+        closingProgress > 0 ? closingOffset : max(0, dismissTranslation.height)
+    }
+
     private var selectedIndex: Int {
         guard let selectedId,
               let index = items.firstIndex(where: { $0.id == selectedId }) else { return 0 }
         return index
     }
 
-    private var indexSelection: Binding<Int> {
+    private var selection: Binding<String> {
         Binding(
-            get: { selectedIndex },
-            set: { index in
-                guard items.indices.contains(index) else { return }
-                selectedId = items[index].id
-            }
+            get: { selectedId ?? items.first?.id ?? "" },
+            set: { selectedId = $0 }
         )
-    }
-
-    /// TabView 不再一次创建数百张图片页，只保留当前和相邻页。
-    /// 既减少首次打开的网络/解码负担，也让横向分页保持轻量。
-    private var pageIndices: [Int] {
-        guard !items.isEmpty else { return [] }
-        let lower = max(items.startIndex, selectedIndex - 1)
-        let upper = min(items.index(before: items.endIndex), selectedIndex + 1)
-        return Array(lower...upper)
     }
 
     var body: some View {
         ZStack {
             Color.black
-                .opacity(Double(CGFloat(1) - dismissProgress * 0.72))
+                .opacity(Double(CGFloat(1) - dismissProgress))
                 .ignoresSafeArea()
 
             if items.isEmpty {
@@ -64,23 +57,26 @@ struct MediaPagerView: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.white.opacity(0.72))
             } else {
-                TabView(selection: indexSelection) {
-                    ForEach(pageIndices, id: \.self) { index in
+                // 保持稳定的完整页序列；之前在手势中动态增删相邻页，会让 PageViewController
+                // 丢失当前索引，从而卡在两张图之间。图片加载由缓存和预取负责。
+                TabView(selection: selection) {
+                    ForEach(items.indices, id: \.self) { index in
                         let item = items[index]
                         MediaPage(
                             item: item,
+                            shouldLoadMedia: abs(index - selectedIndex) <= 1,
                             isFavorite: favorites.contains(item),
                             onSave: { save(item) },
                             onToggleFavorite: { toggleFavorite(item) }
                         )
-                        .tag(index)
+                        .tag(item.id)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
-                .offset(y: max(0, dismissTranslation.height))
-                .scaleEffect(CGFloat(1) - dismissProgress * 0.08)
+                .offset(y: dismissOffset)
+                .scaleEffect(CGFloat(1) - dismissProgress * 0.12)
+                .opacity(Double(CGFloat(1) - dismissProgress * 0.76))
                 .simultaneousGesture(dismissGesture)
-                .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.88), value: dismissTranslation)
                 .task(id: selectedId) {
                     prefetchAroundSelection()
                 }
@@ -101,36 +97,42 @@ struct MediaPagerView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onAppear {
+            closingProgress = 0
+            closingOffset = 0
+        }
     }
 
     private var dismissGesture: some Gesture {
         DragGesture(minimumDistance: 10)
-            .updating($dismissTranslation) { value, state, _ in
+            .updating($dismissTranslation) { value, state, transaction in
                 guard value.translation.height > 0,
                       abs(value.translation.height) > abs(value.translation.width) else { return }
+                transaction.animation = .interactiveSpring(response: 0.22, dampingFraction: 0.88)
                 state = value.translation
             }
             .onEnded { value in
                 guard value.translation.height > 110,
                       abs(value.translation.height) > abs(value.translation.width) else { return }
-                dismiss()
+                dismiss(with: value.translation.height)
             }
     }
 
-    private func dismiss() {
+    private func dismiss(with translation: CGFloat) {
+        closingOffset = max(translation, 150)
         withAnimation(.spring(response: 0.26, dampingFraction: 0.88)) {
             closingProgress = 1
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
             selectedId = nil
-            closingProgress = 0
         }
     }
 
     private func prefetchAroundSelection() {
         guard !items.isEmpty else { return }
-        let lower = max(items.startIndex, selectedIndex - 2)
-        let upper = min(items.index(before: items.endIndex), selectedIndex + 2)
+        guard let currentIndex = items.firstIndex(where: { $0.id == selectedId }) else { return }
+        let lower = max(items.startIndex, currentIndex - 2)
+        let upper = min(items.index(before: items.endIndex), currentIndex + 2)
         for index in lower...upper {
             guard !items[index].isVideo, let url = items[index].mediaURL else { continue }
             Task.detached(priority: .userInitiated) {
@@ -174,6 +176,7 @@ struct MediaPagerView: View {
 
 private struct MediaPage: View {
     let item: MediaBrowserItem
+    let shouldLoadMedia: Bool
     let isFavorite: Bool
     let onSave: () -> Void
     let onToggleFavorite: () -> Void
@@ -181,11 +184,13 @@ private struct MediaPage: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                if item.isVideo, let url = item.mediaURL {
+                if item.isVideo, let url = item.mediaURL, shouldLoadMedia {
                     VideoPlayer(player: AVPlayer(url: url))
                         .frame(width: geometry.size.width, height: geometry.size.height)
-                } else if let url = item.mediaURL {
+                } else if let url = item.mediaURL, shouldLoadMedia {
                     ZoomableRemoteImage(url: url, size: geometry.size)
+                } else if item.mediaURL != nil {
+                    ProgressView().tint(.white.opacity(0.7))
                 } else {
                     failedView
                 }

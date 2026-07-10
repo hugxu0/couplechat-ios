@@ -273,6 +273,7 @@ enum WallpaperChoice: String, CaseIterable, Identifiable {
 /// 不使用系统的深浅模式作为前景色依据，避免自定义壁纸和系统模式相互打架。
 enum WallpaperSurfaceRegion: Hashable {
     case topCenter
+    case timelineCenter
     case composerCenter
 }
 
@@ -395,6 +396,8 @@ final class ThemeManager: ObservableObject {
         switch region {
         case .topCenter:
             sampleRect = CGRect(x: 14.0 / 48.0, y: 7.0 / 104.0, width: 20.0 / 48.0, height: 12.0 / 104.0)
+        case .timelineCenter:
+            sampleRect = CGRect(x: 7.0 / 48.0, y: 30.0 / 104.0, width: 34.0 / 48.0, height: 42.0 / 104.0)
         case .composerCenter:
             sampleRect = CGRect(x: 7.0 / 48.0, y: 84.0 / 104.0, width: 34.0 / 48.0, height: 12.0 / 104.0)
         }
