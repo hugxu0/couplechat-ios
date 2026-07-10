@@ -37,7 +37,7 @@ struct MediaPagerView: View {
     var body: some View {
         ZStack {
             Color.black
-                .opacity(1 - dismissProgress * 0.72)
+                .opacity(Double(CGFloat(1) - dismissProgress * 0.72))
                 .ignoresSafeArea()
 
             if items.isEmpty {
@@ -58,7 +58,7 @@ struct MediaPagerView: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .offset(y: max(0, dismissTranslation.height))
-                .scaleEffect(1 - dismissProgress * 0.08)
+                .scaleEffect(CGFloat(1) - dismissProgress * 0.08)
                 .simultaneousGesture(dismissGesture)
             }
 
