@@ -212,7 +212,7 @@ extension ChatViewController {
         keyboardOverlap = 0
         updateBottomDockAnchor(usesScreenBottom: true)
         panelContainer.isHidden = false
-        panelHeightConstraint.constant = max(300, height)
+        panelHeightConstraint.constant = max(300, height) + view.safeAreaInsets.bottom + 8
         applyInputLayout(duration: 0.24, curve: .curveEaseOut, forceBottom: true)
     }
 

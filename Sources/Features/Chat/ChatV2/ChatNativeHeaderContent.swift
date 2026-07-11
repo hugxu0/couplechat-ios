@@ -24,23 +24,19 @@ struct ChatNativeHeaderTitle: View {
     }
 }
 
-struct ChatNativeHeaderAvatar: View {
-    let model: ChatHeaderModel
-    let avatarURL: URL?
-
+struct ChatNativeHeaderMenu: View {
     var body: some View {
-        AvatarBadge(
-            url: avatarURL,
-            fallbackEmoji: model.avatar,
-            size: 34,
-            background: .clear)
+        Image(systemName: "ellipsis")
+            .font(.system(size: 18, weight: .bold))
+            .foregroundStyle(.primary)
+            .frame(width: 44, height: 44)
+            .dsGlassInteractive(in: Circle())
             .accessibilityLabel("打开聊天设置")
     }
 }
 
 struct ChatNativeHeaderModifier<Destination: View>: ViewModifier {
     let model: ChatHeaderModel
-    let avatarURL: URL?
     @Binding var isShowingDetails: Bool
     let onOpenDetails: () -> Void
     let destination: () -> Destination
@@ -62,9 +58,7 @@ struct ChatNativeHeaderModifier<Destination: View>: ViewModifier {
                     NavigationLink(isActive: $isShowingDetails) {
                         destination()
                     } label: {
-                        ChatNativeHeaderAvatar(model: model, avatarURL: avatarURL)
-                            .padding(4)
-                            .dsGlassInteractive(in: Circle())
+                        ChatNativeHeaderMenu()
                     }
                     .buttonStyle(.plain)
                 }
@@ -84,7 +78,6 @@ extension View {
     ) -> some View {
         modifier(ChatNativeHeaderModifier(
             model: model,
-            avatarURL: avatarURL,
             isShowingDetails: isShowingDetails,
             onOpenDetails: onOpenDetails,
             destination: destination))
