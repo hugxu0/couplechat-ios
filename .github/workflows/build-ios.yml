@@ -2,9 +2,12 @@ name: iOS 日常验证与构建
 
 on:
   workflow_dispatch:
+    inputs:
+      full_validation:
+        description: 运行完整测试、截图和 iPad 构建
+        type: boolean
+        default: false
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
 
 concurrency:
@@ -13,6 +16,7 @@ concurrency:
 
 jobs:
   verify-server:
+    if: github.event_name != 'workflow_dispatch' || inputs.full_validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -54,9 +58,15 @@ jobs:
           xcode-version: "26.3"
 
       - name: Install tools
-        run: brew install swiftlint xcodegen
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.full_validation }}" != "true" ]]; then
+            brew install xcodegen
+          else
+            brew install swiftlint xcodegen
+          fi
 
       - name: Record build environment
+        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         run: |
           mkdir -p build-artifacts
           {
@@ -78,9 +88,11 @@ jobs:
         run: xcodegen generate
 
       - name: SwiftLint
+        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         run: swiftlint lint --reporter github-actions-logging
 
       - name: Guard structure of new Swift files
+        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
@@ -100,6 +112,7 @@ jobs:
           done < build-artifacts/new-swift-files.txt
 
       - name: Unit tests
+        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         run: |
           set -o pipefail
           DEVICE_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPhone 17")
@@ -112,6 +125,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       - name: Chat header visual fixtures
+        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         run: |
           set -o pipefail
           DEVICE_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPhone 17")
@@ -128,6 +142,7 @@ jobs:
             --output-path build-artifacts/chat-header-screenshots
 
       - name: Build for iPad simulator
+        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         run: |
           IPAD_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPad")
           xcodebuild build \

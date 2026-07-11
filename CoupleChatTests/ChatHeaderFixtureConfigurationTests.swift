@@ -29,22 +29,5 @@ final class ChatHeaderFixtureConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration?.appearance, .light)
         XCTAssertEqual(configuration?.connection, .online)
     }
-
-    func testNativeSpikeRequiresItsOwnFlagAndReusesFixtureArguments() {
-        XCTAssertNil(ChatNativeHeaderSpikeConfiguration.fromProcessArguments([
-            "--chat-header-fixture",
-        ]))
-
-        let configuration = ChatNativeHeaderSpikeConfiguration.fromProcessArguments([
-            "--chat-header-native-spike",
-            "--fixture-wallpaper", "dark",
-            "--fixture-appearance", "dark",
-            "--fixture-status", "connecting",
-        ])
-
-        XCTAssertEqual(configuration?.fixture.appearance, .dark)
-        XCTAssertEqual(configuration?.fixture.connection, .connecting)
-        XCTAssertEqual(configuration?.fixture.wallpaper, .dark)
-    }
 }
 #endif

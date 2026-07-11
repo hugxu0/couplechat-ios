@@ -13,9 +13,6 @@ struct ChatV2Screen: View {
     @State private var mediaViewerMessageId: String?
     @State private var jumpCommand: ChatV2JumpCommand?
     @State private var isShowingDetail = false
-    // UIVisualEffectView 在导航转场的第一帧会先呈现默认材质。先保持透明，
-    // 再无动画地启用已确定色调的羽化层，避免一进聊天页闪一帧白雾。
-    @State private var hasResolvedTopBackdrop = false
 
     private var title: String {
         switch channel {
@@ -61,22 +58,11 @@ struct ChatV2Screen: View {
 
     /// 顶栏和输入栏是两块独立的“表面”：它们应该由实际壁纸采样决定，
     /// 而不是受系统深浅模式或同一段渐变的偶然观感影响。
-    private var topSurfaceLuminance: CGFloat {
-        if let luminance = theme.customWallpaperLuminance(for: channel, region: .topCenter) {
-            return luminance
-        }
-        return displayedWallpaper == .night ? 0.18 : 0.82
-    }
-
     private var composerSurfaceLuminance: CGFloat {
         if let luminance = theme.customWallpaperLuminance(for: channel, region: .composerCenter) {
             return luminance
         }
         return displayedWallpaper == .night ? 0.18 : 0.82
-    }
-
-    private var topChromeTone: ChatSurfaceTone {
-        ChatSurfaceTone(luminance: topSurfaceLuminance)
     }
 
     private var composerChromeTone: ChatSurfaceTone {
@@ -121,7 +107,7 @@ struct ChatV2Screen: View {
     var body: some View {
         GeometryReader { proxy in
             let safeTop = proxy.safeAreaInsets.top
-            let topOverlayInset = safeTop + 58
+            let topOverlayInset = safeTop + 44
             let screenSize = UIScreen.main.bounds.size
             let stableWidth = max(proxy.size.width, screenSize.width)
             let stableHeight = max(proxy.size.height, screenSize.height)
@@ -148,32 +134,21 @@ struct ChatV2Screen: View {
                 .position(x: stableWidth / 2, y: stableHeight / 2)
                 .ignoresSafeArea(.all)
 
-                ChatHeaderBackdrop(
-                    height: safeTop + 72,
-                    tone: topChromeTone,
-                    isResolved: hasResolvedTopBackdrop)
-                    .frame(width: proxy.size.width, height: safeTop + 72)
-                    .ignoresSafeArea(edges: .top)
-
-                ChatHeaderChrome(
-                    model: headerModel,
-                    avatarURL: peerAvatarURL,
-                    tone: topChromeTone,
-                    isShowingDetails: $isShowingDetail,
-                    onBack: { dismiss() },
-                    onOpenDetails: {
-                        Haptics.light()
-                        isShowingDetail = true
-                    },
-                    destination: { chatDetailSettings })
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .ignoresSafeArea(.keyboard, edges: .bottom)
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .background(chatBackground.ignoresSafeArea())
-        .toolbar(.hidden, for: .navigationBar)
-        .navigationBarBackButtonHidden(true)
+        .chatNativeHeader(
+            model: headerModel,
+            avatarURL: peerAvatarURL,
+            isShowingDetails: $isShowingDetail,
+            onOpenDetails: {
+                Haptics.light()
+                isShowingDetail = true
+            },
+            destination: { chatDetailSettings })
         .fullScreenCover(isPresented: Binding(
             get: { mediaViewerMessageId != nil },
             set: { if !$0 { mediaViewerMessageId = nil } }
@@ -183,12 +158,6 @@ struct ChatV2Screen: View {
         }
         .onAppear {
             app.pushSubpage()
-            // 此时壁纸采样已同步完成；不要给首帧叠加默认浅色材质。
-            var transaction = Transaction()
-            transaction.animation = nil
-            withTransaction(transaction) {
-                hasResolvedTopBackdrop = true
-            }
         }
         .onDisappear { app.popSubpage() }
         .background(SwipeBackEnabler())
@@ -234,55 +203,6 @@ struct ChatV2Screen: View {
         return theme.wallpaper(for: channel)
     }
 
-}
-
-extension ChatSurfaceTone {
-    /// 以胶囊正后方的中位亮度为准。阈值只在一个地方定义，
-    /// 使面板的黑/白材质与所有内部文字永远相反，不会各自漂移。
-    var primaryTextColor: Color { usesLightContent ? .white : Color.black.opacity(0.86) }
-    var secondaryTextColor: Color { usesLightContent ? Color.white.opacity(0.82) : Color.black.opacity(0.54) }
-    var panelTintColor: UIColor { usesLightContent ? .black : .white }
-    var panelTintAlpha: CGFloat { usesLightContent ? 0.16 : 0.18 }
-    var panelBorderAlpha: CGFloat { usesLightContent ? 0.14 : 0.20 }
-    var panelGradientAlpha: CGFloat { usesLightContent ? 0.14 : 0.24 }
-}
-
-extension View {
-    func chatTopLiquidGlass(cornerRadius: CGFloat, tone: ChatSurfaceTone) -> some View {
-        self
-            .background {
-                LiquidGlassBackground(
-                    cornerRadius: cornerRadius,
-                    tintColor: tone.panelTintColor,
-                    tintAlpha: tone.panelTintAlpha,
-                    borderAlpha: tone.panelBorderAlpha,
-                    gradientAlpha: tone.panelGradientAlpha
-                )
-            }
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-    }
-}
-
-private struct LiquidGlassBackground: UIViewRepresentable {
-    let cornerRadius: CGFloat
-    var tintColor: UIColor = .white
-    var tintAlpha: CGFloat = 0.18
-    var borderAlpha: CGFloat = 0.22
-    var gradientAlpha: CGFloat = 1
-
-    func makeUIView(context: Context) -> ChatGlassView {
-        let view = ChatGlassView(style: .systemUltraThinMaterial, cornerRadius: cornerRadius)
-        view.update(cornerRadius: cornerRadius, tintAlpha: tintAlpha, borderAlpha: borderAlpha)
-        view.setTintColor(tintColor, alpha: tintAlpha)
-        view.setGradientAlpha(gradientAlpha)
-        return view
-    }
-
-    func updateUIView(_ view: ChatGlassView, context: Context) {
-        view.update(cornerRadius: cornerRadius, tintAlpha: tintAlpha, borderAlpha: borderAlpha)
-        view.setTintColor(tintColor, alpha: tintAlpha)
-        view.setGradientAlpha(gradientAlpha)
-    }
 }
 
 private struct SwipeBackEnabler: UIViewControllerRepresentable {

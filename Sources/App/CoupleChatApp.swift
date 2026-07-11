@@ -6,7 +6,6 @@ import UserNotifications
 struct CoupleChatApp: App {
 #if DEBUG
     private let headerFixture = ChatHeaderVisualFixtureConfiguration.fromProcessArguments()
-    private let nativeHeaderSpike = ChatNativeHeaderSpikeConfiguration.fromProcessArguments()
 #endif
     @StateObject private var store = ChatStore()
     @StateObject private var theme = ThemeManager.shared
@@ -21,9 +20,7 @@ struct CoupleChatApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if let nativeHeaderSpike {
-                ChatNativeHeaderSpikeScreen(configuration: nativeHeaderSpike)
-            } else if let headerFixture {
+            if let headerFixture {
                 ChatHeaderVisualFixtureScreen(configuration: headerFixture)
             } else {
                 appContent

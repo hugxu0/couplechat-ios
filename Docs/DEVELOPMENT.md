@@ -76,7 +76,10 @@ xcodebuild test -project CoupleChat.xcodeproj -scheme CoupleChat \
   -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
 
-GitHub Actions 的 `iOS 日常验证与构建` 会在 push/PR 到 `main` 或手动触发时并行验证服务端与客户端。客户端固定使用 Xcode 26.3，执行 SwiftLint、新 Swift 文件结构护栏、iPhone 单元测试、iPad Simulator 构建和 unsigned Archive，并上传未签名 IPA、构建环境报告与 `.xcresult` 诊断包。
+GitHub Actions 的 `iOS 日常验证与构建` 会在 push 到 `main` 或手动触发时并行验证服务端与客户端。客户端固定使用 Xcode 26.3，执行 SwiftLint、新 Swift 文件结构护栏、iPhone 单元测试、iPad Simulator 构建和 unsigned Archive，并上传未签名 IPA、构建环境报告与 `.xcresult` 诊断包。
+
+手动触发 `iOS 日常验证与构建` 默认只生成工程、Archive 和上传 IPA，不运行测试、截图或 iPad 构建。
+需要完整阶段验证时勾选 `full_validation`；push 到 `main` 始终执行完整验证。
 
 生成的 `.xcodeproj`、`build/` 和 `build-artifacts/` 不提交。
 

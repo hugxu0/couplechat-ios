@@ -1,5 +1,6 @@
 #if DEBUG
 import SwiftUI
+import UIKit
 
 struct ChatHeaderVisualFixtureConfiguration: Equatable {
     enum Wallpaper: String { case bright, dark, custom }
@@ -27,6 +28,7 @@ struct ChatHeaderVisualFixtureConfiguration: Equatable {
 struct ChatHeaderVisualFixtureScreen: View {
     let configuration: ChatHeaderVisualFixtureConfiguration
     @State private var isShowingDetails = false
+    @State private var path = ["chat"]
 
     private var model: ChatHeaderModel {
         switch configuration.connection {
@@ -50,28 +52,26 @@ struct ChatHeaderVisualFixtureScreen: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .top) {
-                fixtureWallpaper.ignoresSafeArea()
-                fixtureConversation
-                ChatHeaderBackdrop(
-                    height: proxy.safeAreaInsets.top + 72,
-                    tone: headerTone,
-                    isResolved: true)
-                    .ignoresSafeArea(edges: .top)
-                ChatHeaderChrome(
-                    model: model,
-                    avatarURL: nil,
-                    tone: headerTone,
-                    isShowingDetails: $isShowingDetails,
-                    onBack: {},
-                    onOpenDetails: {},
-                    destination: { EmptyView() })
-            }
+        NavigationStack(path: $path) {
+            Color.clear
+                .navigationDestination(for: String.self) { _ in fixtureContent }
         }
         .preferredColorScheme(configuration.appearance == .dark ? .dark : .light)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat-header-visual-fixture")
+    }
+
+    private var fixtureContent: some View {
+        ZStack {
+            fixtureWallpaper.ignoresSafeArea()
+            fixtureConversation
+        }
+        .chatNativeHeader(
+            model: model,
+            avatarURL: nil,
+            isShowingDetails: $isShowingDetails,
+            onOpenDetails: {},
+            destination: { EmptyView() })
     }
 
     private var fixtureConversation: some View {
@@ -112,26 +112,24 @@ struct ChatHeaderVisualFixtureScreen: View {
                 WallpaperChoice.night.patternOverlay
             }
         case .custom:
-            Image("LaunchSplash")
+            Image(uiImage: Self.customWallpaper)
                 .resizable()
                 .scaledToFill()
-                .overlay(alignment: .top) {
-                    HStack(spacing: 0) {
-                        Color.black.opacity(0.86)
-                        Color.white.opacity(0.82)
-                    }
-                    .frame(height: 180)
-                }
         }
     }
 
-    private var headerTone: ChatSurfaceTone {
-        switch configuration.wallpaper {
-        case .bright: return ChatSurfaceTone(luminance: 0.82)
-        case .dark: return ChatSurfaceTone(luminance: 0.18)
-        case .custom:
-            return ChatSurfaceTone(luminance: configuration.appearance == .dark ? 0.18 : 0.82)
+    private static let customWallpaper: UIImage = {
+        let size = CGSize(width: 430, height: 932)
+        return UIGraphicsImageRenderer(size: size).image { renderer in
+            let context = renderer.cgContext
+            context.setFillColor(UIColor(white: 0.05, alpha: 1).cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: size.width * 0.52, height: size.height))
+            context.setFillColor(UIColor(white: 0.98, alpha: 1).cgColor)
+            context.fill(CGRect(x: size.width * 0.52, y: 0, width: size.width * 0.48, height: size.height))
+            context.setFillColor(UIColor.systemPink.withAlphaComponent(0.72).cgColor)
+            context.fill(CGRect(x: 0, y: size.height * 0.42, width: size.width, height: 54))
         }
-    }
+    }()
+
 }
 #endif
