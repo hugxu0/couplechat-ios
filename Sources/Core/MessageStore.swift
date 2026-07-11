@@ -418,7 +418,7 @@ final class MessageStore: ObservableObject {
             markPendingFailed(clientId: clientId, channel: channel, error: "本地保存失败")
             return
         }
-        flushOutbox(session: session)
+        schedulePendingOutbound(item, channel: channel, session: session)
     }
 
     func sendInteraction(id: String, kind: InteractionEffectKind, text: String, channel: ChatChannel = .couple, session: Session) {
@@ -465,7 +465,7 @@ final class MessageStore: ObservableObject {
             markPendingFailed(clientId: clientId, channel: channel, error: "本地保存失败")
             return
         }
-        flushOutbox(session: session)
+        schedulePendingOutbound(item, channel: channel, session: session)
     }
 
     func sendSticker(url: String, channel: ChatChannel = .couple, session: Session) {
@@ -492,7 +492,7 @@ final class MessageStore: ObservableObject {
             markPendingFailed(clientId: clientId, channel: channel, error: "本地保存失败")
             return
         }
-        flushOutbox(session: session)
+        schedulePendingOutbound(item, channel: channel, session: session)
     }
 
     func uploadSticker(_ image: UIImage, session: Session) async -> String? {
@@ -523,8 +523,7 @@ final class MessageStore: ObservableObject {
         pending.attempts = 0
         guard ChatLocalDatabase.shared.upsertPendingOutbound(pending) else { return .notFound }
         let channel = ChatChannel(rawValue: pending.channel) ?? .couple
-        markPendingSending(clientId: clientId, channel: channel)
-        flushOutbox(session: session)
+        schedulePendingOutbound(pending, channel: channel, session: session)
         return .started
     }
 
@@ -796,6 +795,19 @@ final class MessageStore: ObservableObject {
     }
 
     // MARK: - 私有辅助
+
+    private func schedulePendingOutbound(
+        _ item: PendingOutboundMessage,
+        channel: ChatChannel,
+        session: Session
+    ) {
+        guard socketProvider?.isConnected == true, socketProvider?.socket != nil else {
+            recordPendingFailure(item, channel: channel, message: "当前离线")
+            return
+        }
+        markPendingSending(clientId: item.clientId, channel: channel)
+        flushOutbox(session: session)
+    }
 
     /// 连接建立后按创建时间串行重放。服务端以 clientId 幂等，ACK 丢失也不会生成重复消息。
     func flushOutbox(session: Session) {

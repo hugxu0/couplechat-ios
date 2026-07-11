@@ -784,12 +784,17 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             delegate?.chatCellDidTapRetry(self)
             return
         }
+        guard Self.canOpenMediaPreview(message) else { return }
         switch message.type {
         case "image", "video", "file", "voice":
             delegate?.chatCellDidTapMedia(self)
         default:
             break
         }
+    }
+
+    static func canOpenMediaPreview(_ message: ChatMessage) -> Bool {
+        !message.pending && !message.failed
     }
 
     var selectedMediaIdentifier: String? {

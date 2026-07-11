@@ -1,5 +1,13 @@
+import SocketIO
 import XCTest
 @testable import CoupleChat
+
+private final class DisconnectedSocketProvider: SocketProvider {
+    var socket: SocketIOClient? { nil }
+    var isConnected: Bool { false }
+    var sessionUsername: String? { "xu" }
+    var currentSession: Session? { Session(token: "token", username: "xu", name: "小旭") }
+}
 
 @MainActor
 final class MessageStoreParseTests: XCTestCase {
@@ -230,6 +238,23 @@ final class MessageStoreFailedOutboxTests: XCTestCase {
         XCTAssertFalse(store.messages(for: .couple).contains { $0.clientId == item.clientId })
     }
 
+    func testOfflineSendImmediatelyBecomesFailed() {
+        let provider = DisconnectedSocketProvider()
+        let store = MessageStore()
+        store.socketProvider = provider
+
+        store.sendText(
+            "offline", session: Session(token: "token", username: "xu", name: "小旭"))
+
+        let message = store.messages(for: .couple).last
+        XCTAssertNotNil(message)
+        XCTAssertFalse(message?.pending == true)
+        XCTAssertTrue(message?.failed == true)
+        XCTAssertEqual(
+            message.flatMap { ChatLocalDatabase.shared.pendingOutbound(clientId: $0.clientId ?? $0.id)?.attempts },
+            1)
+    }
+
     func testDiscardFailedMediaClearsOutboxTimelineAndFile() async throws {
         let file = try makeTemporaryFile(extension: "jpg")
         let item = makeItem(clientId: "tmp-failed-image", type: "image", localFilePath: file.path)
@@ -335,5 +360,23 @@ final class MessageStoreFailedOutboxTests: XCTestCase {
         try Data("test".utf8).write(to: url)
         temporaryURLs.append(url)
         return url
+    }
+}
+
+@MainActor
+final class ChatTimelineMediaPreviewStateTests: XCTestCase {
+    func testPendingAndFailedMediaCannotOpenPager() {
+        let session = Session(token: "token", username: "xu", name: "小旭")
+        var message = ChatMessage(
+            optimisticMedia: "image", text: "[图片]", localURL: "file:///tmp/pending.jpg",
+            me: session, clientId: "tmp-preview", channel: "couple")
+        XCTAssertFalse(ChatNativeMessageCell.canOpenMediaPreview(message))
+
+        message.pending = false
+        message.failed = true
+        XCTAssertFalse(ChatNativeMessageCell.canOpenMediaPreview(message))
+
+        message.failed = false
+        XCTAssertTrue(ChatNativeMessageCell.canOpenMediaPreview(message))
     }
 }
