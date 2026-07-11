@@ -99,18 +99,23 @@ struct ChatV2Screen: View {
         return displayedWallpaper == .night
     }
 
-    private var topPrimaryColor: Color {
-        topChromeTone.primaryTextColor
-    }
-
-    private var topSecondaryColor: Color {
-        if store.connectionState.isUnavailable { return .red }
-        if store.connectionState.isTransient { return .orange }
-        return topChromeTone.secondaryTextColor
-    }
-
-    private var topShadowColor: Color {
-        topChromeTone.usesLightContent ? .black.opacity(0.42) : .white.opacity(0.34)
+    private var headerModel: ChatHeaderModel {
+        let connection: ChatHeaderModel.Connection
+        if store.isAIComposing(in: channel) {
+            connection = .aiComposing
+        } else if store.connectionState.isTransient {
+            connection = .connecting
+        } else if store.connectionState.isUnavailable {
+            connection = .failed
+        } else {
+            connection = .online
+        }
+        return ChatHeaderModel(
+            title: title,
+            subtitle: subtitle,
+            avatar: peerAvatar,
+            connection: connection,
+            isAIComposing: store.isAIComposing(in: channel))
     }
 
     var body: some View {
@@ -143,12 +148,24 @@ struct ChatV2Screen: View {
                 .position(x: stableWidth / 2, y: stableHeight / 2)
                 .ignoresSafeArea(.all)
 
-                topSafeGlass(height: safeTop + 72)
+                ChatHeaderBackdrop(
+                    height: safeTop + 72,
+                    tone: topChromeTone,
+                    isResolved: hasResolvedTopBackdrop)
                     .frame(width: proxy.size.width, height: safeTop + 72)
                     .ignoresSafeArea(edges: .top)
 
-                topBar
-                    .padding(.top, 0)
+                ChatHeaderChrome(
+                    model: headerModel,
+                    avatarURL: peerAvatarURL,
+                    tone: topChromeTone,
+                    isShowingDetails: $isShowingDetail,
+                    onBack: { dismiss() },
+                    onOpenDetails: {
+                        Haptics.light()
+                        isShowingDetail = true
+                    },
+                    destination: { chatDetailSettings })
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -177,114 +194,22 @@ struct ChatV2Screen: View {
         .background(SwipeBackEnabler())
     }
 
-    private var topBar: some View {
-        HStack(spacing: 12) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(topPrimaryColor)
-                    .shadow(color: topShadowColor, radius: 1.5, x: 0, y: 1)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PressableStyle())
-
-            Spacer(minLength: 0)
-
-            Button {
-                Haptics.light()
-                isShowingDetail = true
-            } label: {
-                VStack(spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(topPrimaryColor)
-                        .shadow(color: topShadowColor, radius: 1.5, x: 0, y: 1)
-                    Text(subtitle)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(topSecondaryColor)
-                        .shadow(color: topShadowColor.opacity(0.8), radius: 1, x: 0, y: 1)
-                }
-                .lineLimit(1)
-                .padding(.horizontal, 22)
-                .frame(minWidth: 156, minHeight: 42)
-                .contentShape(Capsule())
-                .chatTopLiquidGlass(cornerRadius: 21, tone: topChromeTone)
-            }
-            .buttonStyle(PressableStyle())
-            .contextMenu {
-                Button {
-                    isShowingDetail = true
-                } label: {
-                    Label("聊天设置", systemImage: "slider.horizontal.3")
-                }
-            }
-            .accessibilityLabel("打开聊天设置")
-
-            Spacer(minLength: 0)
-
-            NavigationLink(isActive: $isShowingDetail) {
-                ChatDetailSettingsView(
-                    channel: channel,
-                    partnerName: title,
-                    partnerAvatar: peerAvatar,
-                    partnerOnline: store.partnerOnline,
-                    onJumpToMessage: { message in
-                        isShowingDetail = false
-                        let command = ChatV2JumpCommand(action: .message(message))
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            jumpCommand = command
-                        }
-                    },
-                    onJumpToDate: { date in
-                        isShowingDetail = false
-                        let command = ChatV2JumpCommand(action: .date(date))
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            jumpCommand = command
-                        }
-                    }
-                )
-            } label: {
-                AvatarBadge(
-                    url: peerAvatarURL,
-                    fallbackEmoji: peerAvatar,
-                    size: 35,
-                    background: .clear
-                )
-                .padding(4.5)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(PressableStyle())
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 0)
-        .padding(.bottom, 7)
-        .contentShape(Rectangle())
-        .zIndex(10)
-    }
-
-    @ViewBuilder
-    private func topSafeGlass(height: CGFloat) -> some View {
-        // 暗壁纸不额外铺一层顶端材质，只有胶囊自己维持偏暗的 Liquid Glass；
-        // 亮壁纸才需要一层很短的白色羽化，以便黑字稳定可读。
-        if hasResolvedTopBackdrop && topChromeTone.usesDarkText {
-            TopBackdropBlur(style: .systemUltraThinMaterialLight)
-                .mask(
-                    LinearGradient(
-                        colors: [.white.opacity(0.64), .white.opacity(0.20), .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(height: height)
-                .allowsHitTesting(false)
-        } else {
-            Color.clear
-                .frame(height: height)
-                .allowsHitTesting(false)
-        }
+    private var chatDetailSettings: some View {
+        ChatDetailSettingsView(
+            channel: channel,
+            partnerName: title,
+            partnerAvatar: peerAvatar,
+            partnerOnline: store.partnerOnline,
+            onJumpToMessage: { message in
+                isShowingDetail = false
+                let command = ChatV2JumpCommand(action: .message(message))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { jumpCommand = command }
+            },
+            onJumpToDate: { date in
+                isShowingDetail = false
+                let command = ChatV2JumpCommand(action: .date(date))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { jumpCommand = command }
+            })
     }
 
     @ViewBuilder
@@ -311,7 +236,7 @@ struct ChatV2Screen: View {
 
 }
 
-private extension ChatSurfaceTone {
+extension ChatSurfaceTone {
     /// 以胶囊正后方的中位亮度为准。阈值只在一个地方定义，
     /// 使面板的黑/白材质与所有内部文字永远相反，不会各自漂移。
     var primaryTextColor: Color { usesLightContent ? .white : Color.black.opacity(0.86) }
@@ -322,7 +247,7 @@ private extension ChatSurfaceTone {
     var panelGradientAlpha: CGFloat { usesLightContent ? 0.14 : 0.24 }
 }
 
-private extension View {
+extension View {
     func chatTopLiquidGlass(cornerRadius: CGFloat, tone: ChatSurfaceTone) -> some View {
         self
             .background {
@@ -357,22 +282,6 @@ private struct LiquidGlassBackground: UIViewRepresentable {
         view.update(cornerRadius: cornerRadius, tintAlpha: tintAlpha, borderAlpha: borderAlpha)
         view.setTintColor(tintColor, alpha: tintAlpha)
         view.setGradientAlpha(gradientAlpha)
-    }
-}
-
-/// 仅用于顶端背景：UIBlurEffect 会采样其后的真实壁纸，
-/// 不带 Liquid Glass 的折射高光，因此不会把浅色场景洗成白雾。
-private struct TopBackdropBlur: UIViewRepresentable {
-    let style: UIBlurEffect.Style
-
-    func makeUIView(context: Context) -> UIVisualEffectView {
-        let view = UIVisualEffectView(effect: UIBlurEffect(style: style))
-        view.isUserInteractionEnabled = false
-        return view
-    }
-
-    func updateUIView(_ view: UIVisualEffectView, context: Context) {
-        view.effect = UIBlurEffect(style: style)
     }
 }
 

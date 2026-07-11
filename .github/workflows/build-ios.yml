@@ -106,9 +106,26 @@ jobs:
           xcodebuild test \
             -project CoupleChat.xcodeproj \
             -scheme CoupleChat \
+            -skip-testing:CoupleChatUITests \
             -destination "platform=iOS Simulator,id=$DEVICE_ID" \
             -resultBundlePath "$PWD/build-artifacts/CoupleChatTests.xcresult" \
             CODE_SIGNING_ALLOWED=NO
+
+      - name: Chat header visual fixtures
+        run: |
+          set -o pipefail
+          DEVICE_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPhone 17")
+          xcodebuild test \
+            -project CoupleChat.xcodeproj \
+            -scheme CoupleChat \
+            -only-testing:CoupleChatUITests/ChatHeaderVisualFixtureUITests \
+            -destination "platform=iOS Simulator,id=$DEVICE_ID" \
+            -resultBundlePath "$PWD/build-artifacts/ChatHeaderVisualFixtures.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+          mkdir -p build-artifacts/chat-header-screenshots
+          xcrun xcresulttool export attachments \
+            --path build-artifacts/ChatHeaderVisualFixtures.xcresult \
+            --output-path build-artifacts/chat-header-screenshots
 
       - name: Build for iPad simulator
         run: |
