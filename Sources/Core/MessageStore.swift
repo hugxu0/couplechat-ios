@@ -82,11 +82,11 @@ final class MessageStore: ObservableObject {
     init(
         httpClient: any HTTPClient = URLSessionHTTPClient(),
         persistence: any ChatPersistenceProtocol = ChatPersistence.shared,
-        timelineStore: ChatTimelineStore = ChatTimelineStore()
+        timelineStore: ChatTimelineStore? = nil
     ) {
         self.httpClient = httpClient
         self.persistence = persistence
-        self.timelineStore = timelineStore
+        self.timelineStore = timelineStore ?? ChatTimelineStore()
         mediaUploadService = MediaUploadService(httpClient: httpClient)
         outboxProcessor = OutboxProcessor(persistence: persistence)
     }
