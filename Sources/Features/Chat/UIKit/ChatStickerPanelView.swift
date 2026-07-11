@@ -192,6 +192,7 @@ final class ChatStickerPanelView: UIView {
         button.layer.cornerCurve = .continuous
         button.layer.cornerRadius = 17
         button.imageView?.contentMode = .scaleAspectFit
+        button.imageView?.clipsToBounds = true
         button.titleLabel?.font = .systemFont(ofSize: 20)
         button.tintColor = tab == selectedTab ? .white : secondaryColor
         button.accessibilityLabel = title(for: tab)
@@ -215,15 +216,32 @@ final class ChatStickerPanelView: UIView {
             return
         }
         guard let sticker = firstSticker(for: tab), let url = sticker.mediaURL else {
-            button.setImage(UIImage(systemName: icon(for: tab)), for: .normal)
+            button.setImage(systemTabIcon(for: tab), for: .normal)
             return
         }
         Task { [weak button] in
             let image = await ImageCache.shared.image(for: url)
             await MainActor.run {
-                button?.setImage(image ?? UIImage(systemName: self.icon(for: tab)), for: .normal)
+                button?.setImage(
+                    image.map(self.fittedTabIcon) ?? self.systemTabIcon(for: tab),
+                    for: .normal)
             }
         }
+    }
+
+    private func fittedTabIcon(_ image: UIImage) -> UIImage {
+        let canvas = CGSize(width: 24, height: 24)
+        let scale = min(canvas.width / max(1, image.size.width), canvas.height / max(1, image.size.height))
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let origin = CGPoint(x: (canvas.width - size.width) / 2, y: (canvas.height - size.height) / 2)
+        return UIGraphicsImageRenderer(size: canvas).image { _ in
+            image.draw(in: CGRect(origin: origin, size: size))
+        }.withRenderingMode(.alwaysOriginal)
+    }
+
+    private func systemTabIcon(for tab: Tab) -> UIImage? {
+        UIImage(systemName: icon(for: tab))?.applyingSymbolConfiguration(
+            UIImage.SymbolConfiguration(pointSize: 18, weight: .medium))
     }
 
     private func firstSticker(for tab: Tab) -> Sticker? {

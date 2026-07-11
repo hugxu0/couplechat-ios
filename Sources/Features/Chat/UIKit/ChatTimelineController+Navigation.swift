@@ -2,11 +2,15 @@ import UIKit
 
 extension ChatTimelineController {
     func captureBoundaryAnchor() {
-        pendingTopAnchor = visibleAnchor()
+        pendingTopAnchor = dragStartAnchor ?? visibleAnchor()
     }
 
     func captureVisibleAnchor() {
-        pendingTopAnchor = visibleAnchor()
+        pendingTopAnchor = dragStartAnchor ?? visibleAnchor()
+    }
+
+    func captureDragStartAnchor() {
+        dragStartAnchor = visibleAnchor()
     }
 
     func scrollToMessage(id: String, highlighted: Bool) {
@@ -25,11 +29,14 @@ extension ChatTimelineController {
     }
 
     func scrollToBottom(animated: Bool) {
-        guard let index = items.indices.last else { return }
-        collectionView.scrollToItem(
-            at: IndexPath(item: index, section: 0),
-            at: .bottom,
-            animated: animated)
+        guard !items.isEmpty else { return }
+        collectionView.layoutIfNeeded()
+        let minY = -collectionView.adjustedContentInset.top
+        let maxY = max(
+            minY,
+            collectionView.contentSize.height - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom)
+        collectionView.setContentOffset(CGPoint(x: 0, y: maxY), animated: animated)
     }
 
     func isNearBottom() -> Bool {

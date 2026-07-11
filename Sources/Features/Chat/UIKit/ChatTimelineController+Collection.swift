@@ -96,6 +96,7 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         completeFollowingLatest()
+        captureDragStartAnchor()
         delegate?.timelineDidBeginDragging()
     }
 
@@ -108,13 +109,8 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
             state: &scrollState,
             event: .userScrolled(isNearBottom: isNearBottom(), isAtLatestWindow: isNearLatestWindow()))
         delegate?.timelineDidScroll()
-        let pullDistance = -(scrollView.contentOffset.y + scrollView.contentInset.top)
         let bottomPull = scrollView.contentOffset.y + scrollView.bounds.height
             - scrollView.contentInset.bottom - scrollView.contentSize.height
-        if scrollView.isDragging, pullDistance > 42 {
-            refreshControl.beginRefreshing()
-            delegate?.timelineDidRequestOlder()
-        }
         if scrollView.isDragging, bottomPull > 48, !isNearLatestWindow() {
             delegate?.timelineDidRequestNewer()
         }

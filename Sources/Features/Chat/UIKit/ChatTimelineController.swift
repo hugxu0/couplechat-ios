@@ -38,9 +38,11 @@ final class ChatTimelineController: NSObject {
     var layoutHeightCache: [ChatMessageLayout: CGFloat] = [:]
     var highlightedMessageId: String?
     var pendingTopAnchor: (itemId: String, offset: CGFloat)?
+    var dragStartAnchor: (itemId: String, offset: CGFloat)?
     var stickToLatestAfterNextReload = false
     var scrollState = ChatScrollState()
     private var suppressesJumpToLatest = false
+    private var followLatestGeneration = 0
     var topInset: CGFloat = 96
     var bottomInset: CGFloat = 0
     private var lastMeasuredWidth: CGFloat = 0
@@ -173,6 +175,7 @@ final class ChatTimelineController: NSObject {
         case .restorePendingAnchor:
             if let anchor = pendingTopAnchor { restore(anchor) }
             pendingTopAnchor = nil
+            dragStartAnchor = nil
         case .restoreVisibleAnchor:
             if let oldAnchor { restore(oldAnchor) }
         case .followLatest:
@@ -238,16 +241,23 @@ final class ChatTimelineController: NSObject {
     }
 
     private func followLatest(animated: Bool) {
+        followLatestGeneration += 1
+        let generation = followLatestGeneration
         suppressesJumpToLatest = true
         scrollToBottom(animated: animated)
-        guard animated else {
-            suppressesJumpToLatest = false
-            return
+        guard !animated else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.followLatestGeneration == generation else { return }
+            self.collectionView.layoutIfNeeded()
+            self.scrollToBottom(animated: false)
+            self.suppressesJumpToLatest = false
+            self.delegate?.timelineDidScroll()
         }
     }
 
     func completeFollowingLatest() {
         guard suppressesJumpToLatest else { return }
+        followLatestGeneration += 1
         suppressesJumpToLatest = false
         delegate?.timelineDidScroll()
     }
