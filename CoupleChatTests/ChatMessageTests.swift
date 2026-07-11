@@ -82,6 +82,7 @@ final class ChatMessageTests: XCTestCase {
 
         let restored = pending.optimisticMessage(session: session)
         XCTAssertEqual(restored.id, "tmp-durable-001")
+        XCTAssertEqual(restored.clientId, "tmp-durable-001")
         XCTAssertEqual(restored.ts, 1_710_000_000_000)
         XCTAssertFalse(restored.pending)
         XCTAssertTrue(restored.failed)
@@ -108,6 +109,95 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertEqual(restored.type, "sticker")
         XCTAssertEqual(restored.url, "https://example.com/sticker.jpg")
         XCTAssertTrue(restored.pending)
+        XCTAssertFalse(restored.failed)
+        XCTAssertEqual(restored.id, restored.clientId)
+    }
+
+    func testPendingOutboundProjectsPendingStateWithoutChangingClientId() {
+        let session = Session(token: "tok", username: "si", name: "小偲")
+        let pending = PendingOutboundMessage(
+            clientId: "tmp-pending-text",
+            channel: "couple",
+            type: "text",
+            text: "等待发送",
+            replyTo: "msg-source",
+            replyPreview: "原消息",
+            localFilePath: nil,
+            mimeType: nil,
+            uploadId: nil,
+            uploadURL: nil,
+            createdAt: 1_710_000_000_001,
+            attempts: 0,
+            lastError: nil)
+
+        let restored = pending.optimisticMessage(session: session)
+        XCTAssertEqual(restored.id, pending.clientId)
+        XCTAssertEqual(restored.clientId, pending.clientId)
+        XCTAssertTrue(restored.pending)
+        XCTAssertFalse(restored.failed)
+        XCTAssertEqual(restored.replyTo, "msg-source")
+    }
+
+    func testFailedMediaOutboxProjectsFailedStateAndLocalPreview() {
+        let session = Session(token: "tok", username: "xu", name: "小旭")
+        let pending = PendingOutboundMessage(
+            clientId: "tmp-failed-image",
+            channel: "couple",
+            type: "image",
+            text: "[图片]",
+            replyTo: nil,
+            replyPreview: nil,
+            localFilePath: "/tmp/failed-image.jpg",
+            mimeType: "image/jpeg",
+            uploadId: nil,
+            uploadURL: nil,
+            createdAt: 1_710_000_000_002,
+            attempts: 2,
+            lastError: "offline")
+
+        let restored = pending.optimisticMessage(session: session)
+        XCTAssertEqual(restored.id, pending.clientId)
+        XCTAssertEqual(restored.clientId, pending.clientId)
+        XCTAssertEqual(restored.url, "file:///tmp/failed-image.jpg")
+        XCTAssertFalse(restored.pending)
+        XCTAssertTrue(restored.failed)
+    }
+
+    func testPendingAlbumKeepsClientIdAndAllAttachmentPreviews() {
+        let session = Session(token: "tok", username: "xu", name: "小旭")
+        let attachments = [
+            PendingOutboundAttachment(
+                assetId: "asset-live", role: "photo", order: 0,
+                localFilePath: "/tmp/live.jpg", mimeType: "image/jpeg",
+                uploadId: nil, uploadURL: nil),
+            PendingOutboundAttachment(
+                assetId: "asset-live", role: "pairedVideo", order: 0,
+                localFilePath: "/tmp/live.mov", mimeType: "video/quicktime",
+                uploadId: nil, uploadURL: nil),
+        ]
+        let pending = PendingOutboundMessage(
+            clientId: "tmp-live-photo",
+            channel: "couple",
+            type: "image",
+            text: "[实况照片]",
+            replyTo: nil,
+            replyPreview: nil,
+            localFilePath: nil,
+            mimeType: nil,
+            uploadId: nil,
+            uploadURL: nil,
+            createdAt: 1_710_000_000_003,
+            attempts: 0,
+            lastError: nil,
+            attachments: attachments)
+
+        let restored = pending.optimisticMessage(session: session)
+        XCTAssertEqual(restored.id, pending.clientId)
+        XCTAssertEqual(restored.clientId, pending.clientId)
+        XCTAssertEqual(restored.attachments?.count, 2)
+        XCTAssertEqual(restored.attachments?.map(\.role), ["photo", "pairedVideo"])
+        XCTAssertTrue(restored.pending)
+        XCTAssertFalse(restored.failed)
     }
 
     func testTimeFormatting() {

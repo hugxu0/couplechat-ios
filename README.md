@@ -18,6 +18,7 @@
 
 - [文档导航](Docs/README.md)：新开发者或 AI 的阅读起点
 - [项目现状](Docs/PROJECT_STATUS.md)：已实现功能、限制和待处理问题
+- [体验与架构优化计划](Docs/REFACTOR_PLAN.md)：本轮重构顺序、任务边界和逐项验收标准
 - [系统架构](Docs/ARCHITECTURE.md)：前后端模块、数据流和关键约束
 - [开发指南](Docs/DEVELOPMENT.md)：本地调试、构建和日常验证
 - [接口契约](Docs/API.md)：REST 与 Socket.IO 协议

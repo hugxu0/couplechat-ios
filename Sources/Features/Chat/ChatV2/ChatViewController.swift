@@ -480,20 +480,45 @@ final class ChatViewController: UIViewController {
             UIView.performWithoutAnimation(reload)
         }
 
-        if stickToLatestAfterNextReload {
+        let hasValidPendingAnchor = pendingTopAnchor.map {
+            indexPath(forItemId: $0.itemId) != nil
+        } ?? false
+        let hasValidVisibleAnchor = oldAnchor.map {
+            indexPath(forItemId: $0.itemId) != nil
+        } ?? false
+        let decision = ChatTimelineReloadDecision.decide(
+            stickToLatest: stickToLatestAfterNextReload,
+            hasPendingAnchor: pendingTopAnchor != nil,
+            hasValidPendingAnchor: hasValidPendingAnchor,
+            hasValidVisibleAnchor: hasValidVisibleAnchor,
+            wasNearLatestBottom: wasNearLatestBottom,
+            lastMessageChanged: oldLastMessageId != newLastMessageId,
+            messageCountIncreased: newMessageCount > oldMessageCount,
+            wasShowingAIActivity: wasShowingAIActivity
+        )
+
+        switch decision {
+        case .forceLatest:
             stickToLatestAfterNextReload = false
             browsingHistoricalWindow = false
             scrollToBottom(animated: animated)
             DispatchQueue.main.async { [weak self] in
                 self?.scrollToBottom(animated: false)
             }
-        } else if let anchor = pendingTopAnchor ?? (!wasNearLatestBottom ? oldAnchor : nil),
-           indexPath(forItemId: anchor.itemId) != nil {
-            restoreTimelineAnchor(anchor)
-            pendingTopAnchor = nil
-        } else if wasNearLatestBottom && oldLastMessageId != newLastMessageId &&
-                    (newMessageCount > oldMessageCount || wasShowingAIActivity) {
+        case .restorePendingAnchor:
+            if let anchor = pendingTopAnchor {
+                restoreTimelineAnchor(anchor)
+                pendingTopAnchor = nil
+            }
+        case .restoreVisibleAnchor:
+            if let anchor = oldAnchor {
+                restoreTimelineAnchor(anchor)
+                pendingTopAnchor = nil
+            }
+        case .followLatest:
             scrollToBottom(animated: animated)
+        case .preservePosition:
+            break
         }
         scheduleInitialTimelinePositioning()
         updateJumpToBottomVisibility(animated: animated)
