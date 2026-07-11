@@ -175,7 +175,7 @@ final class ChatViewController: UIViewController {
         if dynamicallySamplesComposerTone, isViewLoaded {
             refreshComposerSurfaceTone(force: true)
         }
-        if (surfaceChanged || timelineChanged), collectionView != nil {
+        if surfaceChanged || timelineChanged, collectionView != nil {
             timelineController.invalidateAppearance()
         }
         setTopOverlayInset(topOverlayInset)

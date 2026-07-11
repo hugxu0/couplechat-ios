@@ -39,7 +39,7 @@ final class ChatTimelineController: NSObject {
     var highlightedMessageId: String?
     var pendingTopAnchor: (itemId: String, offset: CGFloat)?
     var stickToLatestAfterNextReload = false
-    private(set) var scrollState = ChatScrollState()
+    var scrollState = ChatScrollState()
     private var initialPositioningScheduled = false
     var topInset: CGFloat = 96
     var bottomInset: CGFloat = 0
@@ -76,7 +76,11 @@ final class ChatTimelineController: NSObject {
             self.collectionView.reloadData()
             self.collectionView.layoutIfNeeded()
         }
-        animated ? reload() : UIView.performWithoutAnimation(reload)
+        if animated {
+            reload()
+        } else {
+            UIView.performWithoutAnimation(reload)
+        }
 
         let decision = ChatTimelineReloadDecision.decide(
             stickToLatest: stickToLatestAfterNextReload,

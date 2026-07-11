@@ -163,8 +163,12 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
             for: message,
             currentUsername: presentation.currentUsername).map { action in
             let attributes: UIMenuElement.Attributes = action == .recall || action == .discard ? .destructive : []
-            return UIAction(title: title(for: action), image: UIImage(systemName: icon(for: action)), attributes: attributes) {
-                [weak self] _ in self?.delegate?.timelineDidSelect(action, message: message)
+            return UIAction(
+                title: title(for: action),
+                image: UIImage(systemName: icon(for: action)),
+                attributes: attributes
+            ) { [weak self] _ in
+                self?.delegate?.timelineDidSelect(action, message: message)
             }
         }
     }

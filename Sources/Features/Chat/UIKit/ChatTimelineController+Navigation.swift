@@ -24,7 +24,7 @@ extension ChatTimelineController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
             guard let self, highlightedMessageId == id else { return }
             highlightedMessageId = nil
-            if let path = indexPath(forMessageId: id) {
+            if let path = self.indexPath(forMessageId: id) {
                 collectionView.reloadItems(at: [path])
             }
         }

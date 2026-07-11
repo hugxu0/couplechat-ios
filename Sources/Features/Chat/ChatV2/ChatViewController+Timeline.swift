@@ -15,9 +15,9 @@ extension ChatViewController {
             .sink { [weak self] _ in
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    composer.setTypingVisible(false)
-                    composer.setCatThinking(store.isAIComposing(in: channel))
-                    reloadTimeline(animated: true)
+                    self.composer.setTypingVisible(false)
+                    self.composer.setCatThinking(self.store.isAIComposing(in: self.channel))
+                    self.reloadTimeline(animated: true)
                 }
             }
             .store(in: &cancellables)
@@ -144,7 +144,7 @@ extension ChatViewController {
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
             guard let self else { return }
-            Task { await store.discardFailedMessage(message) }
+            Task { await self.store.discardFailedMessage(message) }
         })
         present(alert, animated: true)
     }
