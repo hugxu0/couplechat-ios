@@ -1,96 +1,72 @@
-# 悄悄话 · 原生 iOS 版（SwiftUI + UIKit）
+# 悄悄话
 
-双人私密聊天 App 的 iOS 原生客户端，对应网页版 [hugxu0/chat](https://github.com/hugxu0/chat)。  
-后端在本仓库 `server/`，部署于 `https://hoo66.top`；旧 PWA 仍保留在 `https://chat.huhuhu.top`，两者**不共用后端**。
+面向两位固定用户的原生 iOS 私密聊天应用。客户端使用 SwiftUI + UIKit，服务端使用 Fastify + Socket.IO + PostgreSQL，并集成“大橘”AI Agent。
 
-## 现状
+生产服务地址：`https://hoo66.top`
 
-已接入新后端，核心功能可用：
+## 当前能力
 
-- 登录（`xu` / `si`）、Socket.IO 实时聊天（couple + ai 频道）
-- 文字 / 图片 / 视频 / 语音 / 文件 / 贴纸消息，已读回执，撤回，引用回复
-- 本地 SQLite 缓存，离线可看历史；记录页统计从本地聚合；图片缓存可管理
-- 提醒 / 备忘 CRUD（个人 + 共享），本地通知
-- 大橘 AI（`@大橘` 召唤 + 私聊频道），确认卡、联网来源卡片
-- 主题色 / 深浅模式 / 聊天壁纸（预设 + 自定义照片）、头像上传
-- 互动特效（想你了 / 拍一拍 / 贴条等）
+- 双人登录、实时在线状态、已读、撤回、引用回复和消息搜索
+- 文字、图片、视频、语音、文件、贴纸和 Live Photo
+- 设备端 SQLite 缓存、离线历史、可靠发送队列和媒体缓存
+- 纪念日、提醒、备忘、聊天统计、主题和聊天壁纸
+- `couple` 公聊与个人 `ai` 私聊
+- 大橘 Agent、图片理解、联网查询、结构化 Memory 和确认卡
+- Docker Compose 生产部署，PostgreSQL 与媒体文件持久化
 
-**仍是占位**：大橘 tab 的宠物数值与 3D 模型。
+## 快速入口
 
-详细交接说明见 [`HANDOFF.md`](HANDOFF.md)。
-持续开发的协议、迁移与验证约定见 [`Docs/FOUNDATION.md`](Docs/FOUNDATION.md)。
+- [文档导航](Docs/README.md)：新开发者或 AI 的阅读起点
+- [项目现状](Docs/PROJECT_STATUS.md)：已实现功能、限制和待处理问题
+- [系统架构](Docs/ARCHITECTURE.md)：前后端模块、数据流和关键约束
+- [开发指南](Docs/DEVELOPMENT.md)：本地调试、构建和日常验证
+- [接口契约](Docs/API.md)：REST 与 Socket.IO 协议
+- [AI 系统](Docs/AI.md)：Agent、MCP、Memory 和调试方式
+- [生产部署](Docs/DEPLOYMENT.md)：RFCHost 的运行、更新和备份
 
-## 架构
+## 仓库结构
 
-```
+```text
+CoupleChatTests/       iOS 日常单元测试
+Docs/                  项目唯一文档目录
 Sources/
-├── App/                  入口、通知代理、自绘底部标签栏
-├── Core/
-│   ├── AuthStore.swift          登录/登出/session/partner
-│   ├── MessageStore.swift       消息 CRUD/发送/搜索/历史同步
-│   ├── SharedStore.swift        共享状态/纪念日/REST 调用
-│   ├── ChatStore.swift          协调层：socket、事件分发、便捷转发
-│   ├── SocketProvider.swift     协议：解耦子 store 对 socket 的依赖
-│   ├── ServerConfig.swift       服务端地址（支持 Info.plist 配置）
-│   ├── ChatLocalDatabase.swift  设备端 SQLite 缓存
-│   ├── SocketContract.swift     Socket 事件与请求体契约
-│   ├── HTTPClient.swift          可注入的 HTTP 网络边界
-│   ├── ChatMessage.swift        消息模型
-│   ├── Account.swift            账号模型
-│   ├── CoupleDates.swift        纪念日模型
-│   ├── DailyContent.swift       每日内容模型
-│   ├── PersonalItem.swift       提醒/备忘模型
-│   ├── Keychain.swift           会话持久化
-│   ├── ImageCache.swift         图片磁盘/内存缓存
-│   ├── StickerStore.swift       本机贴纸库
-│   └── ...
-├── DesignSystem/         DS.swift + Theme.swift（设计令牌与主题）
-└── Features/
-    ├── Auth/             登录
-    ├── Chat/             聊天首页 + ChatV2 会话页（UIKit 消息列表/输入栏 + SwiftUI 外壳）
-    ├── Records/          记录（纪念日、聊天统计、大橘日记）
-    ├── Pet/              大橘 tab（AI 私聊入口；宠物 UI 占位）
-    ├── Reminders/        提醒 / 备忘
-    └── Profile/          我的（连接状态、头像、外观、日期、Bark、存储空间）
-
-server/                   Node.js + Fastify + Socket.IO + PostgreSQL
+  App/                 App 入口、启动与主导航
+  Core/                状态、网络、Socket、本地数据库和模型
+  DesignSystem/        主题和通用视觉组件
+  Features/            登录、聊天、记录、提醒、宠物、个人中心
+server/
+  deploy/              当前生产 nginx 配置
+  scripts/             日常开发与健康检查脚本
+  src/                 服务端业务代码
+.github/workflows/     iOS 构建与测试
+project.yml            XcodeGen 工程定义
 ```
 
-持续开发时请先阅读 [`Docs/FOUNDATION.md`](Docs/FOUNDATION.md)，其中约定了 Socket 契约、异步加载、本地缓存迁移、服务端数据库迁移和验证门槛。
+## 常用命令
 
-**ChatStore 拆分**：原 1579 行的 God Object 已拆为 4 个职责单一的 store：
-- `AuthStore`（108 行）：登录/登出/session/partner
-- `MessageStore`（622 行）：消息 CRUD/发送/搜索/历史同步
-- `SharedStore`（195 行）：共享状态/纪念日/REST 调用
-- `ChatStore`（454 行）：协调层，持有 socket，分发事件，便捷转发
+Windows 本地后端调试使用 SSH 隧道连接生产数据库，安全开关会关闭定时任务、推送和上传写入：
 
-通过 `SocketProvider` 协议解耦子 store 对 socket 的依赖。所有 `@EnvironmentObject` 引用保持向后兼容。
-
-改全局风格（圆角、玻璃、动画）主要改 `Sources/DesignSystem/DS.swift`；主题色与壁纸改 `Theme.swift`。聊天会话页的重构说明见 `Docs/CHAT_V2_ARCHITECTURE.md`。
-
-## 构建
-
-开发机在 Windows，本地不编译 iOS。推到 `main` 或手动触发 GitHub Actions，产出未签名 ipa，用 iloader / SideStore 签名安装。工程由 XcodeGen 从 `project.yml` 生成，不入库。
-
-```bash
-gh workflow run "Build iOS IPA (unsigned)"
-```
-
-另有手动 workflow `Build IPA` 可在配置 Apple 签名 secret 后导出签名 IPA；未配置签名时只上传 `.app` artifact。
-
-## 后端本地启动
-
-```bash
+```powershell
 cd server
-cp .env.example .env
 npm install
-npm run dev
+npm run dev:cloud-db
 ```
 
-需要 PostgreSQL（默认 `postgres://couplechat:couplechat@localhost:5432/couplechat`）。详见 `server/README.md` 与 `server/docs/POSTGRES.md`。
+后端日常验证：
 
-## 后续计划
+```powershell
+cd server
+npm test
+npm run build
+npm run healthcheck -- https://hoo66.top
+```
 
-1. 大橘 tab 真实宠物状态（服务端 `shared` / 独立存储）+ SceneKit 3D 模型
-2. Bark 点击 deep link 打开指定页面
-3. 旧后端历史数据导入生产库（目前只在本地开发库）
+iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLint、单元测试和 Archive，具体见 [开发指南](Docs/DEVELOPMENT.md)。
+
+## 重要约束
+
+- `xu` 与 `si` 是固定账号标识，业务数据依赖它们，不要随意更名。
+- 生产数据库是唯一服务端数据源；本地调试会真实读写生产聊天与 AI Memory。
+- `.env`、`server/.data/`、`server/uploads/` 和任何数据库备份不得提交。
+- Socket 字段变化必须同时更新 `server/src/contracts/realtime.ts` 与 `Sources/Core/SocketContract.swift`。
+- 数据库结构只追加新的版本化变更，不修改已经执行过的版本。

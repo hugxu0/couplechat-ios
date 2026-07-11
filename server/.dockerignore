@@ -1,0 +1,7 @@
+.data
+uploads
+.env
+.env.*
+npm-debug.log*
+docs
+scripts

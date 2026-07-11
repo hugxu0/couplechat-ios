@@ -5,7 +5,7 @@ import Fastify from "fastify";
 import { config } from "./config";
 import { registerAuthRoutes } from "./auth/routes";
 import { registerUploadRoutes } from "./upload/routes";
-import { registerStatsRoutes } from "./stats/routes";
+import { registerDailyRoutes } from "./daily/routes";
 import { registerPersonalItemRoutes } from "./personalItems/routes";
 import { registerSyncRoutes } from "./sync/routes";
 import { registerMediaAccessRoutes } from "./upload/mediaAccess";
@@ -41,7 +41,7 @@ export async function buildApp() {
   await registerAuthRoutes(app);
   await registerMediaAccessRoutes(app);
   await registerUploadRoutes(app);
-  await registerStatsRoutes(app);
+  await registerDailyRoutes(app);
   await registerPersonalItemRoutes(app);
   await registerSyncRoutes(app);
   await registerAiMcpRoutes(app);

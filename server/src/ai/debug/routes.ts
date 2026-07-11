@@ -8,7 +8,7 @@ import type { Trigger } from "../agent/replyQueue";
 import { listPublicAccounts } from "../../auth/accounts";
 import { flushMemory } from "../memory/extractor";
 import { MEMORY_LAYERS, listMemoryForDebug, memoryStats, reconcileMemoryLifecycle, type MemoryLayer } from "../memory/store";
-import { all, run, transaction, type MessageRow } from "../../db";
+import { transaction, type MessageRow } from "../../db";
 
 function isLoopback(request: FastifyRequest): boolean {
   if (config.isProduction) return false;
@@ -107,60 +107,6 @@ export async function registerAiDebugRoutes(app: FastifyInstance) {
         limit: Number(request.query.limit) || 80,
       });
       return { ok: true, scopes, items };
-    },
-  );
-
-  app.get<{ Querystring: { status?: string; limit?: string } }>(
-    "/api/ai-debug/memory/import",
-    { preHandler: requireAuth },
-    async (request, reply) => {
-      if (!isLoopback(request)) return reply.code(404).send({ error: "not_found" });
-      if (!request.user) return reply.code(401).send({ error: "unauthorized" });
-      const status = String(request.query.status ?? "all");
-      const limit = Math.max(1, Math.min(100, Number(request.query.limit) || 40));
-      const runs = await all<Record<string, unknown>>(
-        "SELECT * FROM ai_memory_import_runs ORDER BY created_at DESC LIMIT 12",
-      );
-      const counts = await all<{ status: string; count: number }>(
-        "SELECT status, COUNT(*)::int AS count FROM ai_memory_import_candidates GROUP BY status ORDER BY status",
-      );
-      const params: Array<string | number> = [];
-      const where = status === "all" ? "" : "WHERE c.status = ?";
-      if (status !== "all") params.push(status);
-      params.push(limit);
-      const candidates = await all<Record<string, unknown>>(
-        `SELECT c.*,
-          COALESCE(json_agg(json_build_object(
-            'messageId', m.id, 'sender', m.sender, 'senderName', m.sender_name,
-            'text', LEFT(m.text, 500), 'ts', m.ts, 'role', e.evidence_role
-          ) ORDER BY m.ts) FILTER (WHERE m.id IS NOT NULL), '[]') AS evidence
-         FROM ai_memory_import_candidates c
-         LEFT JOIN ai_memory_import_evidence e ON e.candidate_id = c.id
-         LEFT JOIN messages m ON m.id = e.message_id
-         ${where}
-         GROUP BY c.id ORDER BY c.created_at DESC LIMIT ?`,
-        params,
-      );
-      return { ok: true, runs, counts: Object.fromEntries(counts.map((item) => [item.status, item.count])), candidates };
-    },
-  );
-
-  app.post<{ Params: { id: string }; Body: { decision?: "approve" | "reject" } }>(
-    "/api/ai-debug/memory/import/:id/decision",
-    { preHandler: requireAuth },
-    async (request, reply) => {
-      if (!isLoopback(request)) return reply.code(404).send({ error: "not_found" });
-      if (!request.user) return reply.code(401).send({ error: "unauthorized" });
-      const status = request.body?.decision === "approve" ? "approved"
-        : request.body?.decision === "reject" ? "rejected"
-          : null;
-      if (!status) return reply.code(400).send({ error: "invalid_decision" });
-      const changed = await run(
-        `UPDATE ai_memory_import_candidates SET status = ?, updated_at = ?
-         WHERE id = ? AND status IN ('needs_review','verified','approved')`,
-        [status, Date.now(), request.params.id],
-      );
-      return { ok: changed > 0, status };
     },
   );
 

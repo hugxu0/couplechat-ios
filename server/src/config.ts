@@ -14,6 +14,12 @@ function required(name: string): string {
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const tokenSecret = required("TOKEN_SECRET");
 
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  return !["0", "false", "no", "off"].includes(value.trim().toLowerCase());
+}
+
 if (nodeEnv === "production" && tokenSecret === "change-me-before-production") {
   throw new Error("TOKEN_SECRET must be changed in production");
 }
@@ -54,13 +60,6 @@ function embeddingPoolFromEnv(prefix: string): EmbeddingPool | undefined {
 // chat 用于用户回复，task 用于记忆提取和后台任务。
 const aiShared = providerFromEnv("AI");
 const aiTask = providerFromEnv("AI_TASK", aiShared);
-const migrationBase = aiTask ?? aiShared;
-const aiMigration = migrationBase ? {
-  baseUrl: process.env.AI_MIGRATION_BASE_URL ?? migrationBase.baseUrl,
-  apiKey: process.env.AI_MIGRATION_API_KEY ?? migrationBase.apiKey,
-  model: process.env.AI_MIGRATION_MODEL ?? "deepseek-v4-flash",
-} satisfies AiProvider : undefined;
-
 // 向量池：优先用新的多 key 池格式（EMBEDDING_<NAME>_PROVIDER/_BASE_URL/_API_KEYS）；
 // 没配的话退回旧的单 key 格式（EMBEDDING_BASE_URL/_API_KEY/_MODEL），保持兼容。
 const embeddingPools = [embeddingPoolFromEnv("VOYAGE"), embeddingPoolFromEnv("MONGODB")].filter(
@@ -80,14 +79,13 @@ export const config = {
   tokenSecret,
   accountsSeed: process.env.COUPLECHAT_ACCOUNTS ?? "",
   appDeepLinkScheme: process.env.APP_DEEP_LINK_SCHEME ?? "couplechat://",
-  dataDir: path.resolve(process.cwd(), ".data"),
-  uploadDir: path.resolve(process.cwd(), "uploads"),
+  dataDir: path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), ".data")),
+  uploadDir: path.resolve(process.env.UPLOAD_DIR ?? path.join(process.cwd(), "uploads")),
   // PostgreSQL 连接串（部署时用 DATABASE_URL 覆盖）
   databaseUrl: process.env.DATABASE_URL ?? "postgres://couplechat:couplechat@localhost:5432/couplechat",
   ai: {
     chat: providerFromEnv("AI_CHAT", aiShared),
     task: aiTask,
-    migration: aiMigration,
     // couple 频道召唤词；ai 私聊频道每条都答，不需要召唤。
     triggerAliases: (process.env.AI_TRIGGER_ALIASES ?? "@大橘")
       .split(/[,，;；]/)
@@ -100,4 +98,8 @@ export const config = {
   embeddingPools,
   embeddingModel: process.env.EMBEDDING_MODEL ?? fallbackEmbedding?.model ?? "voyage-4",
   embeddingDim: Number(process.env.EMBEDDING_DIM ?? 1024),
+  cloudDatabaseDebug: booleanEnv("CLOUD_DB_DEBUG", false),
+  scheduledJobsEnabled: booleanEnv("SCHEDULED_JOBS_ENABLED", true),
+  uploadsWritable: booleanEnv("UPLOADS_WRITABLE", true),
+  pushEnabled: booleanEnv("PUSH_ENABLED", true),
 };

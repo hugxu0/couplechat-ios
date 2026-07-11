@@ -37,9 +37,9 @@ export async function initAi(): Promise<void> {
     else pendingEngagement = signal;
   });
   await initializeMemory();
-  startMemoryMaintenance();
+  if (config.scheduledJobsEnabled) startMemoryMaintenance();
   if (aiEnabled()) {
-    startDailyScheduler();
+    if (config.scheduledJobsEnabled) startDailyScheduler();
     console.log("[ai] 大橘已就位（AI 模型已配置）");
     console.log(`[ai] Agent + MCP ${agentRuntimeEnabled() ? "已就绪" : "不可用，请检查模型兼容性"}`);
   } else {

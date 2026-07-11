@@ -5,18 +5,14 @@
   "description": "Sustainable backend for CoupleChat native clients.",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "dev:local-ai": "tsx watch scripts/local-ai-server.ts",
+    "dev:cloud-db": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-cloud-db.ps1",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke:postgres": "tsx scripts/smoke-postgres.ts",
-    "smoke:legacy-import": "tsx scripts/smoke-legacy-import.ts",
     "test": "npm run typecheck && npm run smoke:postgres",
-    "healthcheck": "node scripts/healthcheck.mjs",
-    "postgres:local": "tsx scripts/local-postgres.ts",
-    "memory:import": "tsx scripts/migrate-legacy-memory.ts"
+    "healthcheck": "node scripts/healthcheck.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.1",

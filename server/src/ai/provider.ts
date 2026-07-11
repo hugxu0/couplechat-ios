@@ -4,7 +4,7 @@
 import { config, type AiProvider } from "../config";
 import type { GenProfile } from "./settings";
 
-export type ChatProfile = "chat" | "task" | "migration";
+export type ChatProfile = "chat" | "task";
 
 export function aiEnabled(): boolean {
   return Boolean(config.ai.chat || config.ai.task);

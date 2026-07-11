@@ -94,6 +94,9 @@ export async function registerUploadRoutes(app: FastifyInstance) {
   fs.mkdirSync(config.uploadDir, { recursive: true });
 
   app.post("/api/upload", { preHandler: requireAuth }, async (request, reply) => {
+    if (!config.uploadsWritable) {
+      return reply.code(503).send({ error: "uploads_disabled_in_cloud_db_debug" });
+    }
     if (!request.user) return reply.code(401).send({ error: "unauthorized" });
     const query = uploadQuerySchema.safeParse(request.query ?? {});
     if (!query.success) return reply.code(400).send({ error: "invalid_upload_purpose" });

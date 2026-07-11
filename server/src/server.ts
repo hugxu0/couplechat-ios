@@ -23,10 +23,14 @@ async function main() {
   setAiSocketIO(io);
   setSocketIO(io);
   registerRealtime(io);
-  startReminderScheduler();
+  if (config.scheduledJobsEnabled) startReminderScheduler();
 
   await app.listen({ host: config.host, port: config.port });
-  const stopUploadCleanup = startUploadCleanup();
+  const stopUploadCleanup = config.scheduledJobsEnabled ? startUploadCleanup() : () => undefined;
+
+  if (config.cloudDatabaseDebug) {
+    console.log("[cloud-db-debug] 已连接云端数据库；定时任务、推送和上传写入按环境开关控制");
+  }
 
   const shutdown = () => {
     stopUploadCleanup();
