@@ -64,6 +64,10 @@ final class ChatTimelineController: NSObject {
     }
 
     func reload(messages: [ChatMessage], activity: ChatMessage?, animated: Bool) {
+        let oldFirstMessageID = items.compactMap { item -> String? in
+            if case .message(let id) = item { return id }
+            return nil
+        }.first
         let wasNearLatestBottom = isNearBottom() && isNearLatestWindow()
         let oldAnchor = visibleAnchor()
         let wasShowingActivity = items.contains { $0.id.hasPrefix("__ai_activity__") }
@@ -73,6 +77,21 @@ final class ChatTimelineController: NSObject {
         items = result.items
         messagesById = result.messagesById
         groupedMessageIds = result.groupedMessageIds
+
+        if pendingTopAnchor != nil,
+           let oldFirstMessageID,
+           let boundary = messages.firstIndex(where: { $0.id == oldFirstMessageID }),
+           boundary > messages.startIndex {
+            let newestLoadedMessage = messages[messages.index(before: boundary)]
+            pendingTopAnchor = (newestLoadedMessage.id, topInset + 8)
+        }
+
+        if refreshControl.isRefreshing, pendingTopAnchor != nil {
+            UIView.performWithoutAnimation {
+                refreshControl.endRefreshing()
+                collectionView.layoutIfNeeded()
+            }
+        }
 
         let reload = {
             self.collectionView.reloadData()

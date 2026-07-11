@@ -71,11 +71,14 @@ extension ChatViewController {
             return
         }
         isHistoryRefreshing = true
+        let previousCount = store.messages(for: channel).count
         timelineController.captureBoundaryAnchor()
         Task { [weak self] in
             guard let self else { return }
             await store.loadOlderAsync(channel)
-            timelineController.refreshControl.endRefreshing()
+            if store.messages(for: channel).count == previousCount {
+                timelineController.refreshControl.endRefreshing()
+            }
             isHistoryRefreshing = false
             updateJumpToBottomVisibility(animated: true)
         }

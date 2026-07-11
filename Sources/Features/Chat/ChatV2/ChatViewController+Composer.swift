@@ -98,7 +98,9 @@ extension ChatViewController {
         let anchor = wasNearBottom ? nil : timelineController.visibleAnchor()
         let panelHeight = panelContainer.isHidden ? 0 : panelHeightConstraint.constant
         let dockHeight = composerHeightConstraint.constant + panelHeight
-        let coveredBottom = max(keyboardOverlap, view.safeAreaInsets.bottom)
+        let coveredBottom = panelContainer.isHidden
+            ? max(keyboardOverlap, view.safeAreaInsets.bottom)
+            : 0
         let bottomInset = dockHeight + coveredBottom + 8
         let bottomInsetDelta = bottomInset - currentListBottomInset
         currentListBottomInset = bottomInset
@@ -208,6 +210,7 @@ extension ChatViewController {
         inputState = .emojiPanel
         composer.resignTextInput()
         keyboardOverlap = 0
+        updateBottomDockAnchor(usesScreenBottom: true)
         panelContainer.isHidden = false
         panelHeightConstraint.constant = max(300, height)
         applyInputLayout(duration: 0.24, curve: .curveEaseOut, forceBottom: true)
@@ -217,6 +220,7 @@ extension ChatViewController {
         guard panelHeightConstraint.constant > 0 else { return }
         panelHeightConstraint.constant = 0
         panelContainer.isHidden = true
+        updateBottomDockAnchor(usesScreenBottom: false)
         if case .emojiPanel = inputState { inputState = .idle }
         applyInputLayout(
             duration: animated ? 0.2 : 0,
@@ -228,6 +232,14 @@ extension ChatViewController {
         composer.resignTextInput()
         hidePanel(animated: animated)
         inputState = .idle
+    }
+
+    private func updateBottomDockAnchor(usesScreenBottom: Bool) {
+        bottomConstraint.isActive = false
+        bottomConstraint = usesScreenBottom
+            ? bottomStack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            : bottomStack.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8)
+        bottomConstraint.isActive = true
     }
 
     @objc func handleCollectionTap(_ gesture: UITapGestureRecognizer) {
