@@ -31,4 +31,33 @@ final class ChatHeaderVisualFixtureUITests: XCTestCase {
             app.terminate()
         }
     }
+
+    func testNativeHeaderSpikeMatrix() {
+        let fixtures = [
+            ("native-bright-light-online", "bright", "light", "online"),
+            ("native-dark-dark-online", "dark", "dark", "online"),
+            ("native-custom-light-connecting", "custom", "light", "connecting"),
+            ("native-custom-dark-failed", "custom", "dark", "failed"),
+            ("native-bright-light-ai-composing", "bright", "light", "aiComposing"),
+        ]
+
+        for fixture in fixtures {
+            let app = XCUIApplication()
+            app.launchArguments = [
+                "--chat-header-native-spike",
+                "--fixture-wallpaper", fixture.1,
+                "--fixture-appearance", fixture.2,
+                "--fixture-status", fixture.3,
+            ]
+            app.launch()
+            let fixtureRoot = app.descendants(matching: .any)["chat-native-header-spike"]
+            XCTAssertTrue(fixtureRoot.waitForExistence(timeout: 5))
+
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = fixture.0
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            app.terminate()
+        }
+    }
 }
