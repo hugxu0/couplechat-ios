@@ -196,7 +196,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         mediaImageView.contentMode = .scaleAspectFit
         mediaImageView.clipsToBounds = true
         mediaImageView.layer.cornerCurve = .continuous
-        mediaImageView.layer.cornerRadius = 16
+        mediaImageView.layer.cornerRadius = 8
 
         mediaIconView.contentMode = .scaleAspectFit
         mediaIconView.tintColor = .secondaryLabel
@@ -714,7 +714,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     private func cornerRadius(for message: ChatMessage) -> CGFloat {
         if message.id.hasPrefix("__ai_activity__") { return 18 }
         switch message.type {
-        case "image", "video", "sticker": return 16
+        case "image", "video": return 8
+        case "sticker": return 16
         default: return 18
         }
     }

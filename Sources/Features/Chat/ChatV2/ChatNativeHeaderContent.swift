@@ -24,17 +24,6 @@ struct ChatNativeHeaderTitle: View {
     }
 }
 
-struct ChatNativeHeaderMenu: View {
-    var body: some View {
-        Image(systemName: "ellipsis")
-            .font(.system(size: 18, weight: .bold))
-            .foregroundStyle(.primary)
-            .frame(width: 44, height: 44)
-            .dsGlassInteractive(in: Circle())
-            .accessibilityLabel("打开聊天设置")
-    }
-}
-
 struct ChatNativeHeaderModifier<Destination: View>: ViewModifier {
     let model: ChatHeaderModel
     @Binding var isShowingDetails: Bool
@@ -49,6 +38,7 @@ struct ChatNativeHeaderModifier<Destination: View>: ViewModifier {
                         ChatNativeHeaderTitle(model: model)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 5)
+                            .frame(minWidth: 120)
                             .dsGlassInteractive(in: Capsule())
                     }
                     .buttonStyle(.plain)
@@ -58,9 +48,9 @@ struct ChatNativeHeaderModifier<Destination: View>: ViewModifier {
                     NavigationLink(isActive: $isShowingDetails) {
                         destination()
                     } label: {
-                        ChatNativeHeaderMenu()
+                        Image(systemName: "ellipsis")
+                            .accessibilityLabel("打开聊天设置")
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .toolbarBackground(.automatic, for: .navigationBar)

@@ -105,7 +105,7 @@ enum ChatTimelineMetrics {
     static let otherSenderTopGap: CGFloat = 10
     static let statusOutsideWidth: CGFloat = 22
     static let statusOutsideGap: CGFloat = 2
-    static let mediaSize = CGSize(width: 230, height: 260)
+    static let mediaSize = CGSize(width: 200, height: 230)
     static let fileHeight: CGFloat = 58
     static let voiceHeight: CGFloat = 36
     static let stickerSize = CGSize(width: 132, height: 132)
