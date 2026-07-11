@@ -10,12 +10,9 @@ struct MediaGallerySheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedFile: ChatMessage?
     @State private var selectedMediaId: String?
+    @State private var mediaMessages: [ChatMessage] = []
 
     private let columns = [GridItem(.adaptive(minimum: 100), spacing: 2)]
-
-    private var mediaMessages: [ChatMessage] {
-        store.mediaMessages(for: channel, includeFiles: true)
-    }
 
     private var previewableMessages: [ChatMessage] {
         mediaMessages.filter { $0.type != "file" }
@@ -63,6 +60,9 @@ struct MediaGallerySheet: View {
         .background(MediaViewerPresenter(
             items: previewableMessages.flatMap(MediaBrowserItem.items(for:)),
             selectedId: $selectedMediaId))
+        .task {
+            mediaMessages = await store.mediaMessages(for: channel, includeFiles: true)
+        }
     }
 
     @ViewBuilder

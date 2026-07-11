@@ -47,10 +47,10 @@ struct RemindersView: View {
                     .padding(.bottom, 96)
             }
             .scrollIndicators(.hidden)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
             .task { await reload() }
-            .onReceive(NotificationCenter.default.publisher(for: ChatStore.personalItemChangedNotification)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: PersonalItemsRepository.changedNotification)) { _ in
                 Task { await reload() }
             }
             .sheet(item: $editorMode) { mode in
@@ -62,32 +62,24 @@ struct RemindersView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(tab == .reminder ? "提醒事项" : "备忘录")
-                    .font(.system(size: 30, weight: .bold))
-                    .foregroundStyle(DS.Palette.textPrimary)
-                Text(scope == "shared" ? "共享\(tab == .reminder ? "提醒" : "备忘录")" : (store.session?.name ?? "我的空间"))
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(DS.Palette.textSecondary)
-            }
-
-            Spacer()
-
+        RootPageHeader(
+            tab == .reminder ? "提醒事项" : "备忘录",
+            subtitle: scope == "shared"
+                ? "共享\(tab == .reminder ? "提醒" : "备忘录")"
+                : (store.auth.session?.name ?? "我的空间")
+        ) {
             Button {
                 Haptics.medium()
                 editorMode = .create(tab)
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 46, height: 46)
-                    .background(DS.Palette.accentGradient)
-                    .clipShape(Circle())
-                    .shadow(color: DS.Palette.accent.opacity(0.24), radius: 12, y: 6)
+                    .font(.system(size: 17, weight: .semibold))
             }
-            .buttonStyle(PressableStyle())
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("新增")
         }
+        .padding(.horizontal, -DS.Spacing.page)
     }
 
     private var tabSwitcher: some View {
@@ -97,7 +89,7 @@ struct RemindersView: View {
         }
         .padding(5)
         .background(DS.Palette.innerSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var scopePicker: some View {
@@ -146,8 +138,8 @@ struct RemindersView: View {
                 .padding(.vertical, 12)
                 .background {
                     if tab == kind {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(DS.Palette.accentGradient)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(DS.Palette.accent)
                     }
                 }
         }
@@ -174,9 +166,8 @@ struct RemindersView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(DS.Palette.cardSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: DS.Surface.shadow, radius: 10, y: 4)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     @ViewBuilder
@@ -202,41 +193,26 @@ struct RemindersView: View {
         }
 
         if let errorMessage {
-            Text(errorMessage)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(DS.Palette.pink)
-                .padding(.horizontal, 4)
+            StatusBanner(text: errorMessage, kind: .error)
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: tab == .reminder ? "bell.slash.fill" : "text.book.closed.fill")
-                .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(DS.Palette.accent)
-            Text(scope == "shared"
-                 ? (tab == .reminder ? "还没有共享提醒" : "还没有共享备忘录")
-                 : (tab == .reminder ? "还没有提醒" : "还没有备忘录"))
-                .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(DS.Palette.textPrimary)
+        VStack(spacing: 10) {
+            AppEmptyState(
+                scope == "shared"
+                    ? (tab == .reminder ? "还没有共享提醒" : "还没有共享备忘录")
+                    : (tab == .reminder ? "还没有提醒" : "还没有备忘录"),
+                systemImage: tab == .reminder ? "bell.slash" : "text.book.closed")
             Button {
                 editorMode = .create(tab)
             } label: {
                 Label(tab == .reminder ? "添加提醒" : "写备忘录", systemImage: "plus")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 11)
-                    .background(DS.Palette.accentGradient)
-                    .clipShape(Capsule())
             }
-            .buttonStyle(PressableStyle())
+            .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 46)
-        .background(DS.Palette.cardSurface)
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+        .padding(.vertical, 24)
     }
 
     private func reload(scope requestedScope: String? = nil) async {
@@ -245,7 +221,11 @@ struct RemindersView: View {
             loading = true
         }
         errorMessage = nil
-        let fetched = await store.fetchPersonalItems(scope: targetScope)
+        guard let token = store.auth.session?.token else {
+            loading = false
+            return
+        }
+        let fetched = await store.personalItems.fetch(scope: targetScope, token: token)
         await MainActor.run {
             if targetScope == "personal" {
                 // 合并：保留已有 shared items，替换 personal items
@@ -265,18 +245,22 @@ struct RemindersView: View {
 
     private func save(mode: EditorMode, title: String, markdown: String, dueAt: Int?) async {
         errorMessage = nil
+        guard let token = store.auth.session?.token else { return }
         let saved: PersonalItem?
         switch mode {
         case .create(let kind):
-            saved = await store.createPersonalItem(kind: kind, scope: scope, title: title, bodyMarkdown: markdown, dueAt: dueAt)
+            saved = await store.personalItems.create(
+                kind: kind, scope: scope, title: title,
+                bodyMarkdown: markdown, dueAt: dueAt, token: token)
         case .edit(let item):
-            saved = await store.updatePersonalItem(
+            saved = await store.personalItems.update(
                 item,
                 title: title,
                 bodyMarkdown: markdown,
                 dueAt: dueAt,
                 clearsDueAt: dueAt == nil && item.kind == .reminder,
-                isDone: item.isDone)
+                isDone: item.isDone,
+                token: token)
         }
 
         guard let saved else {
@@ -299,7 +283,9 @@ struct RemindersView: View {
     }
 
     private func toggleDone(_ item: PersonalItem) async {
-        guard let updated = await store.updatePersonalItem(item, isDone: !item.isDone) else { return }
+        guard let token = store.auth.session?.token,
+              let updated = await store.personalItems.update(
+                item, isDone: !item.isDone, token: token) else { return }
         await MainActor.run {
             if let index = items.firstIndex(where: { $0.id == updated.id }) {
                 items[index] = updated
@@ -311,7 +297,8 @@ struct RemindersView: View {
     }
 
     private func delete(_ item: PersonalItem) async {
-        guard await store.deletePersonalItem(item) else { return }
+        guard let token = store.auth.session?.token,
+              await store.personalItems.delete(item, token: token) else { return }
         await MainActor.run {
             withAnimation(DS.Anim.spring) {
                 items.removeAll { $0.id == item.id }

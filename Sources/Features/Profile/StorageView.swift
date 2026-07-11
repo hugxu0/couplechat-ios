@@ -9,7 +9,7 @@ struct StorageView: View {
     @EnvironmentObject private var historySync: HistorySyncCoordinator
     @EnvironmentObject private var app: AppState
 
-    @State private var breakdown: ChatStore.StorageBreakdown?
+    @State private var breakdown: AppStorageBreakdown?
     @State private var showClearConfirm = false
     @State private var showClearMessagesConfirm = false
 
@@ -76,9 +76,9 @@ struct StorageView: View {
                 }
 
                 if !store.localCacheAvailable {
-                    Label("本地缓存暂不可用，当前仍可使用云端聊天。", systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.orange)
+                    StatusBanner(
+                        text: "本地缓存暂不可用，当前仍可使用云端聊天。",
+                        kind: .warning)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -240,17 +240,16 @@ struct StorageView: View {
 
     private var cleanupSection: some View {
         Section {
-            Button(role: .destructive) {
+            DestructiveActionRow(title: "清理图片缓存", systemImage: "trash") {
                 showClearConfirm = true
-            } label: {
-                Label("清理图片缓存", systemImage: "trash")
             }
             .disabled(operation.isRunning)
 
-            Button(role: .destructive) {
+            DestructiveActionRow(
+                title: "清除本地聊天记录",
+                systemImage: "externaldrive.badge.minus"
+            ) {
                 showClearMessagesConfirm = true
-            } label: {
-                Label("清除本地聊天记录", systemImage: "externaldrive.badge.minus")
             }
             .disabled(operation.isRunning)
         }
@@ -259,7 +258,7 @@ struct StorageView: View {
     // MARK: - 动作
 
     private func refresh() {
-        breakdown = store.storageBreakdown()
+        Task { breakdown = await store.localData.storageBreakdown() }
     }
 
     private func runFullSync() {
@@ -275,18 +274,20 @@ struct StorageView: View {
     }
 
     private func clearCache() {
-        store.clearImageCache()
+        store.localData.clearImageCache()
         refresh()
         historySync.showNotice("图片缓存已清理")
         Haptics.light()
     }
 
     private func clearLocalMessages() {
-        store.clearLocalHistory()
-        historySync.resetHistoryCounts()
-        refresh()
-        historySync.showNotice("本地聊天记录已清除，云端数据未受影响")
-        Haptics.light()
+        Task {
+            await store.clearLocalHistory()
+            historySync.resetHistoryCounts()
+            refresh()
+            historySync.showNotice("本地聊天记录已清除，云端数据未受影响")
+            Haptics.light()
+        }
     }
 }
 
@@ -294,10 +295,7 @@ private struct AttachmentManagerView: View {
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var app: AppState
     @State private var channel: ChatChannel = .couple
-
-    private var items: [ChatMessage] {
-        store.mediaMessages(for: channel, includeFiles: true, limit: 300)
-    }
+    @State private var items: [ChatMessage] = []
 
     var body: some View {
         List {
@@ -309,7 +307,7 @@ private struct AttachmentManagerView: View {
             .listRowBackground(Color.clear)
 
             if items.isEmpty {
-                ContentUnavailableView("暂无媒体或文件", systemImage: "folder")
+                AppEmptyState("暂无媒体或文件", systemImage: "folder")
             } else {
                 Section("最近 \(items.count) 项") {
                     ForEach(items) { item in
@@ -349,6 +347,10 @@ private struct AttachmentManagerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { app.pushSubpage() }
         .onDisappear { app.popSubpage() }
+        .task(id: channel) {
+            items = await store.messageStore.mediaMessages(
+                for: channel, includeFiles: true, limit: 300)
+        }
     }
 
     private func icon(for type: String) -> String {

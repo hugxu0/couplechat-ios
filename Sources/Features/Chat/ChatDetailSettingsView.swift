@@ -20,6 +20,7 @@ struct ChatDetailSettingsView: View {
     @State private var showWallpaper = false
     @State private var showAliasPrompt = false
     @State private var aliasText = ""
+    @State private var mediaItemCount = 0
 
     /// 当前展示名：优先本地备注，其次账号昵称
     private var displayName: String {
@@ -35,10 +36,6 @@ struct ChatDetailSettingsView: View {
     }
 
     @AppStorage("chat_muted") private var chatMuted: Bool = false
-
-    private var mediaItemCount: Int {
-        store.mediaItemCount(for: channel, includeFiles: true)
-    }
 
     var body: some View {
         List {
@@ -73,6 +70,9 @@ struct ChatDetailSettingsView: View {
         // 子页保持底部标签栏隐藏
         .onAppear { app.pushSubpage() }
         .onDisappear { app.popSubpage() }
+        .task {
+            mediaItemCount = await store.mediaItemCount(for: channel, includeFiles: true)
+        }
     }
 
     private func saveAlias() {

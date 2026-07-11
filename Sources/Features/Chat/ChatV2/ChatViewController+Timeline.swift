@@ -5,7 +5,7 @@ import UIKit
 extension ChatViewController {
     func bindStore() {
         cancellables.removeAll()
-        messageStore.$messagesByChannel
+        messageStore.timelineStore.$messagesByChannel
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.handleStoreChange() }
             .store(in: &cancellables)
@@ -56,11 +56,7 @@ extension ChatViewController {
     }
 
     func isNearLatestWindow() -> Bool {
-        guard let currentLast = store.messages(for: channel).last else { return true }
-        let latest = ChatLocalDatabase.shared
-            .fetchLatestMessages(channel: channel.rawValue, limit: 1)
-            .last
-        return latest?.id == currentLast.id
+        store.isShowingLatestWindow(channel)
     }
 
     func handleHistoryRefresh() {
@@ -156,15 +152,18 @@ extension ChatViewController {
         } else if message.type == "file", let url = message.mediaURL {
             UIApplication.shared.open(url)
         } else {
-            let items = Array(store.mediaMessages(for: channel, includeFiles: false).reversed())
-                .flatMap(MediaBrowserItem.items(for:))
-            mediaViewerCoordinator.present(
-                from: self,
-                items: items,
-                selectedId: selectedId,
-                sourceProvider: { [weak self] identifier in
-                    self?.timelineController.sourceView(for: identifier)
-                })
+            Task { [weak self] in
+                guard let self else { return }
+                let messages = await store.mediaMessages(for: channel, includeFiles: false)
+                let items = Array(messages.reversed()).flatMap(MediaBrowserItem.items(for:))
+                mediaViewerCoordinator.present(
+                    from: self,
+                    items: items,
+                    selectedId: selectedId,
+                    sourceProvider: { [weak self] identifier in
+                        self?.timelineController.sourceView(for: identifier)
+                    })
+            }
         }
     }
 }

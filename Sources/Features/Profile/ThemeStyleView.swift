@@ -80,7 +80,7 @@ struct ThemeStyleView: View {
         }
         .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dsCard()
+        .appSurface()
     }
 
     private var previewWallpaper: WallpaperChoice {
@@ -124,7 +124,7 @@ struct ThemeStyleView: View {
         }
         .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dsCard()
+        .appSurface()
     }
 
     // MARK: - 深浅模式
@@ -156,7 +156,7 @@ struct ThemeStyleView: View {
         }
         .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dsCard()
+        .appSurface()
     }
 
     // MARK: - 聊天壁纸
@@ -196,7 +196,7 @@ struct ThemeStyleView: View {
         }
         .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dsCard()
+        .appSurface()
     }
 
     private func wallpaperTile(_ choice: WallpaperChoice) -> some View {

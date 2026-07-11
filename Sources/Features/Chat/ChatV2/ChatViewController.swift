@@ -113,9 +113,13 @@ final class ChatViewController: UIViewController {
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
         applyAccentColor()
         installStickerPanel()
-        store.ensureLocalMessages(channel)
         store.markRead(channel)
         reloadTimeline(animated: false)
+        Task { [weak self] in
+            guard let self else { return }
+            await store.ensureLocalMessages(channel)
+            reloadTimeline(animated: false)
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -198,8 +202,11 @@ final class ChatViewController: UIViewController {
         activeJumpID = command.id
         switch command.action {
         case .message(let message):
-            store.ensureMessageLoaded(message, channel: channel)
-            completeJump(to: message)
+            Task { [weak self] in
+                guard let self else { return }
+                _ = await store.ensureMessageLoaded(message, channel: channel)
+                completeJump(to: message)
+            }
         case .date(let date):
             Task { @MainActor [weak self] in
                 guard let self,
@@ -281,10 +288,12 @@ final class ChatViewController: UIViewController {
         jumpToBottomButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             timelineController.browsingHistoricalWindow = false
-            store.ensureLocalMessages(channel)
-            reloadTimeline(animated: false)
-            timelineController.scrollToBottom(animated: true)
-            updateJumpToBottomVisibility(animated: true)
+            Task {
+                await store.ensureLocalMessages(channel)
+                reloadTimeline(animated: false)
+                timelineController.scrollToBottom(animated: true)
+                updateJumpToBottomVisibility(animated: true)
+            }
         }, for: .touchUpInside)
         jumpToBottomBackground.addSubview(jumpToBottomButton)
         NSLayoutConstraint.activate([

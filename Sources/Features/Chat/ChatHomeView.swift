@@ -51,6 +51,14 @@ struct ChatHomeView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
+                RootPageHeader(
+                    "悄悄话",
+                    subtitle: store.presenceKnown
+                        ? (store.partnerOnline ? "对方在线" : "对方离线")
+                        : "正在连接"
+                ) {
+                    PairedEchoIndicator()
+                }
                 shortPullRefreshProbe
                 mainPanel
                     .padding(.horizontal, DS.Spacing.page)
@@ -60,7 +68,7 @@ struct ChatHomeView: View {
             }
             .coordinateSpace(name: "chatHomeScroll")
             .scrollIndicators(.hidden)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(AppPageBackground())
             .overlay(alignment: .top) { pullRefreshIndicator }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
@@ -134,9 +142,9 @@ struct ChatHomeView: View {
         .frame(maxWidth: .infinity)
         .frame(minHeight: 0, alignment: .top)
         .background(homeCardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(
                     LinearGradient(
                         colors: [.white.opacity(0.62), theme.accent.color.opacity(0.16)],
@@ -146,8 +154,6 @@ struct ChatHomeView: View {
                     lineWidth: 1
                 )
         )
-        .shadow(color: theme.accent.color.opacity(0.055), radius: 5, y: -1)
-        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius + 3, y: DS.Surface.shadowY + 2)
     }
 
     private var sectionDivider: some View {

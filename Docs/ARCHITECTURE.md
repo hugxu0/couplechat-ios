@@ -27,7 +27,12 @@ Fastify + Socket.IO · 127.0.0.1:8080
 
 `Sources/Core` 还包含：
 
-- `ChatLocalDatabase`：SQLite 缓存、读状态、共享状态和发送队列；
+- `ChatPersistence` actor：生产代码访问 SQLite 的唯一入口，实现 `ChatPersistenceProtocol`；
+- `ChatLocalDatabase`：actor 内部的 SQLite connection 与 SQL 实现，页面和 Store 不直接调用；
+- `ChatTimelineStore`：MainActor 上的消息窗口、已读和分页状态事实源；
+- `OutboxProcessor`：串行化 outbox flush，并通过 `clientId` 读写待发项；
+- `MediaUploadService`：multipart 拼装、文件流式上传和上传响应解码；
+- `DailyContentRepository`、`PersonalItemsRepository`、`LocalDataRepository`：每日内容、提醒/备忘、统计/存储各自的领域入口；
 - `HistorySyncCoordinator`：拥有历史与图片全量同步任务；离开存储页面不取消，显式暂停或登出才取消；
 - `SocketContract`：事件名和出站 payload；
 - `HTTPClient`：可注入 REST 边界；
@@ -45,7 +50,7 @@ ChatView
       └─ UIKit cell 与贴纸面板
 ```
 
-消息列表与输入区保持 UIKit 管理，避免在滚动、键盘和媒体交互的高频路径混用多套状态生命周期。
+消息列表与输入区保持 UIKit 管理，避免在滚动、键盘和媒体交互的高频路径混用多套状态生命周期。`ChatViewController` 直接观察 `ChatTimelineStore`，不再通过父 Store 转发普通消息更新。
 
 ## 服务端
 
@@ -69,7 +74,7 @@ ChatView
 
 服务端 PostgreSQL 是业务事实源，iOS SQLite 是设备缓存。启动流程：
 
-1. 从 Keychain 恢复 token，并读取 SQLite 快照快速出首屏。
+1. 从 Keychain 恢复 token，并通过 `ChatPersistence` actor 读取 SQLite 快照快速出首屏。
 2. 请求 `/api/bootstrap` 获取账号、最近消息、已读和共享状态。
 3. 建立 Socket.IO 连接，接收后续实时增量。
 4. 通过 `/api/messages` 分页补齐历史或按时间增量同步。

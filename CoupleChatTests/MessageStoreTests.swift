@@ -244,12 +244,12 @@ final class MessageStoreFailedOutboxTests: XCTestCase {
         XCTAssertFalse(store.messages(for: .couple).contains { $0.clientId == item.clientId })
     }
 
-    func testOfflineSendImmediatelyBecomesFailed() {
+    func testOfflineSendImmediatelyBecomesFailed() async {
         let provider = DisconnectedSocketProvider()
         let store = MessageStore()
         store.socketProvider = provider
 
-        store.sendText(
+        await store.sendText(
             "offline", session: Session(token: "token", username: "xu", name: "小旭"))
 
         let message = store.messages(for: .couple).last

@@ -17,10 +17,15 @@ final class AuthStore: ObservableObject {
 
     private var verifyingSession = false
     private let httpClient: any HTTPClient
+    private let persistence: any ChatPersistenceProtocol
     weak var socketProvider: SocketProvider?
 
-    init(httpClient: any HTTPClient = URLSessionHTTPClient()) {
+    init(
+        httpClient: any HTTPClient = URLSessionHTTPClient(),
+        persistence: any ChatPersistenceProtocol = ChatPersistence.shared
+    ) {
         self.httpClient = httpClient
+        self.persistence = persistence
     }
 
     // MARK: - 启动
@@ -67,7 +72,7 @@ final class AuthStore: ObservableObject {
         session = nil
         partner = nil
         accounts = []
-        ChatLocalDatabase.shared.close()
+        Task { await persistence.close() }
     }
 
     // MARK: - 账号

@@ -20,6 +20,8 @@
 - R4 已验收：时间线构建、滚动决策、消息动作和 `ChatTimelineController` 已拆分；分页、搜索定位、发送及初始定位回归已修复。
 - 最新真机包为 `CoupleChat-unsigned-222`，用户已确认聊天顶部、表情面板、媒体气泡、分页和 Viewer 回归通过。
 - 当前只实施 R5/R6；全部代码和完整自动验证通过后再生成一次快速 IPA，由用户统一真机验收。
+- R5/R6 代码已实现但尚未验收：生产 SQLite 入口已收敛到 `ChatPersistence` actor，新增 Timeline/Outbox/Upload/Repository 边界，并迁移聊天外页面语义组件。
+- 本地 `server npm test`、`npm run build` 与 `git diff --check` 已通过；下一步是完整 iOS Actions，失败时只修复真实编译/测试根因。
 
 ## 2. 已提交改动
 
