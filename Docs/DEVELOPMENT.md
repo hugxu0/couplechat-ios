@@ -3,7 +3,7 @@
 ## 环境要求
 
 - Windows 11 + PowerShell、Node.js、npm、SSH：可开发和验证服务端
-- macOS + Xcode、XcodeGen：可本地构建 iOS
+- macOS + Xcode 26.3、XcodeGen：可本地构建最低版本为 iOS 26 的客户端
 - GitHub Actions：当前 Windows 开发流程的 iOS 构建入口
 
 服务端依赖安装：
@@ -76,7 +76,7 @@ xcodebuild test -project CoupleChat.xcodeproj -scheme CoupleChat \
   -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
 
-GitHub Actions 的 `iOS 日常验证与构建` 会在 push/PR 到 `main` 或手动触发时依次执行 SwiftLint、单元测试和 unsigned Archive，并上传未签名 IPA。
+GitHub Actions 的 `iOS 日常验证与构建` 会在 push/PR 到 `main` 或手动触发时并行验证服务端与客户端。客户端固定使用 Xcode 26.3，执行 SwiftLint、新 Swift 文件结构护栏、iPhone 单元测试、iPad Simulator 构建和 unsigned Archive，并上传未签名 IPA、构建环境报告与 `.xcresult` 诊断包。
 
 生成的 `.xcodeproj`、`build/` 和 `build-artifacts/` 不提交。
 

@@ -6,24 +6,17 @@ import UIKit
 
 struct StorageView: View {
     @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var historySync: HistorySyncCoordinator
     @EnvironmentObject private var app: AppState
 
     @State private var breakdown: ChatStore.StorageBreakdown?
-    @State private var operation: SyncOperation = .idle
-    @State private var operationTask: Task<Void, Never>?
-    @State private var remoteCounts: [String: Int] = [:]
-    @State private var statusText: String?
-    @State private var statusIsError = false
     @State private var showClearConfirm = false
     @State private var showClearMessagesConfirm = false
 
-    private enum SyncOperation: Equatable {
-        case idle
-        case history(name: String, current: Int, total: Int?)
-        case images(done: Int, total: Int, failed: Int)
-
-        var isRunning: Bool { self != .idle }
-    }
+    private var operation: HistorySyncCoordinator.Operation { historySync.operation }
+    private var remoteCounts: [String: Int] { historySync.remoteCounts }
+    private var statusText: String? { historySync.outcome.text }
+    private var statusIsError: Bool { historySync.outcome.isError }
 
     private static let byteFormatter: ByteCountFormatter = {
         let f = ByteCountFormatter()
@@ -49,6 +42,7 @@ struct StorageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { app.pushSubpage(); refresh() }
         .onDisappear { app.popSubpage() }
+        .onChange(of: historySync.operation) { refresh() }
         .confirmationDialog("清理图片缓存", isPresented: $showClearConfirm, titleVisibility: .visible) {
             Button("清理", role: .destructive) { clearCache() }
             Button("取消", role: .cancel) {}
@@ -61,7 +55,6 @@ struct StorageView: View {
         } message: {
             Text("只删除这台设备上的消息数据库，服务器上的聊天记录和上传文件不会删除；之后可以重新同步。")
         }
-        .onDisappear { operationTask?.cancel() }
     }
 
     // MARK: - 总览
@@ -170,7 +163,7 @@ struct StorageView: View {
             } else if !store.connected {
                 Text("需要先连接服务器才能同步聊天记录。")
             } else {
-                Text("聊天记录支持断点续传；退出后再次同步会从上次位置继续。图片单独下载，失败项会显示数量。")
+                Text("离开此页面会继续同步；App 被系统暂停后，下次会从已保存进度继续。图片单独下载，失败项会显示数量。")
             }
         }
     }
@@ -270,78 +263,29 @@ struct StorageView: View {
     }
 
     private func runFullSync() {
-        guard !operation.isRunning, store.loggedIn else { return }
-        statusText = nil
-        statusIsError = false
-        operationTask = Task {
-            var downloaded = 0
-            var errors: [String] = []
-            for (channel, name) in [(ChatChannel.couple, "两人聊天"), (.ai, "大橘聊天")] {
-                if Task.isCancelled { break }
-                let result = await store.syncAllHistory(channel) { current, total in
-                    operation = .history(name: name, current: current, total: total)
-                    if let total { remoteCounts[channel.rawValue] = total }
-                    refresh()
-                }
-                downloaded += result.downloaded
-                if let total = result.remoteTotal { remoteCounts[channel.rawValue] = total }
-                if let error = result.error, error != "同步已暂停" { errors.append("\(name)：\(error)") }
-            }
-            operation = .idle
-            refresh()
-            if Task.isCancelled {
-                statusText = "同步已暂停，下次会从当前位置继续"
-            } else if errors.isEmpty {
-                statusText = downloaded > 0 ? "同步完成，本次新增 \(downloaded) 条消息" : "本地聊天记录已是最新"
-                Haptics.medium()
-            } else {
-                statusIsError = true
-                statusText = errors.joined(separator: "；")
-            }
-        }
+        historySync.startHistorySync()
     }
 
     private func runCacheImages() {
-        guard !operation.isRunning, store.loggedIn else { return }
-        statusText = nil
-        statusIsError = false
-        operationTask = Task {
-            let result = await store.cacheAllImages { done, total, failed in
-                operation = .images(done: done, total: total, failed: failed)
-            }
-            operation = .idle
-            refresh()
-            if Task.isCancelled {
-                statusText = "图片下载已暂停"
-            } else if result.failed == 0 {
-                statusText = result.total == 0 ? "当前没有需要下载的聊天图片" : "\(result.succeeded) 张图片已保存在本地"
-                Haptics.medium()
-            } else {
-                statusIsError = true
-                statusText = "已保存 \(result.succeeded) 张，\(result.failed) 张下载失败，可稍后重试"
-            }
-        }
+        historySync.startImageCaching()
     }
 
     private func pauseOperation() {
-        operationTask?.cancel()
-        operationTask = nil
+        historySync.pause()
     }
 
     private func clearCache() {
         store.clearImageCache()
         refresh()
-        statusText = "图片缓存已清理"
-        statusIsError = false
+        historySync.showNotice("图片缓存已清理")
         Haptics.light()
     }
 
     private func clearLocalMessages() {
         store.clearLocalHistory()
-        remoteCounts = [:]
+        historySync.resetHistoryCounts()
         refresh()
-        statusText = "本地聊天记录已清除，云端数据未受影响"
-        statusIsError = false
+        historySync.showNotice("本地聊天记录已清除，云端数据未受影响")
         Haptics.light()
     }
 }

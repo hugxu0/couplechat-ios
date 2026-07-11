@@ -26,6 +26,7 @@ struct CoupleChatApp: App {
                 }
             }
             .environmentObject(store)
+            .environmentObject(store.historySync)
             .environmentObject(theme)
             .environmentObject(mediaFavorites)
             .preferredColorScheme(theme.appearance.colorScheme)

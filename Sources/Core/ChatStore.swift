@@ -45,6 +45,29 @@ final class ChatStore: ObservableObject {
     let auth: AuthStore
     let messageStore: MessageStore
     let shared: SharedStore
+    lazy var historySync = HistorySyncCoordinator(
+        isLoggedIn: { [weak self] in self?.loggedIn == true },
+        historyWorker: { [weak self] channel, onProgress in
+            guard let self else {
+                return HistorySyncCoordinator.HistoryResult(
+                    remoteTotal: nil, downloaded: 0, error: "同步服务不可用")
+            }
+            let result = await self.syncAllHistory(channel, onProgress: onProgress)
+            return HistorySyncCoordinator.HistoryResult(
+                remoteTotal: result.remoteTotal,
+                downloaded: result.downloaded,
+                error: result.error)
+        },
+        imageWorker: { [weak self] onProgress in
+            guard let self else {
+                return HistorySyncCoordinator.ImageResult(total: 0, completed: 0, failed: 0)
+            }
+            let result = await self.cacheAllImages(onProgress: onProgress)
+            return HistorySyncCoordinator.ImageResult(
+                total: result.total,
+                completed: result.completed,
+                failed: result.failed)
+        })
 
     // MARK: - 对外聚合状态
 
@@ -305,6 +328,7 @@ final class ChatStore: ObservableObject {
     }
 
     func logout() {
+        historySync.cancelForLogout()
         socket?.disconnect()
         manager = nil
         socket = nil

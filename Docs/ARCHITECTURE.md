@@ -28,6 +28,7 @@ Fastify + Socket.IO · 127.0.0.1:8080
 `Sources/Core` 还包含：
 
 - `ChatLocalDatabase`：SQLite 缓存、读状态、共享状态和发送队列；
+- `HistorySyncCoordinator`：拥有历史与图片全量同步任务；离开存储页面不取消，显式暂停或登出才取消；
 - `SocketContract`：事件名和出站 payload；
 - `HTTPClient`：可注入 REST 边界；
 - `ServerConfig`：服务端地址；

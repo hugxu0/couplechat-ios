@@ -25,10 +25,10 @@
 
 | 阶段 | 任务 | 状态 | 前置任务 |
 |---|---|---|---|
-| 0 | R0.1 建立 Bug/体验基线 | 进行中 | 无 |
-| 0 | R0.2 改造 GitHub Actions | 待执行 | R0.1 |
-| 0 | R0.3 确认 iOS 26 最低版本 | 待执行 | R0.2 |
-| 1 | R1.1 同步任务移出页面 | 待执行 | R0.3 |
+| 0 | R0.1 建立 Bug/体验基线 | 已验收 | 无 |
+| 0 | R0.2 改造 GitHub Actions | 进行中 | R0.1 |
+| 0 | R0.3 确认 iOS 26 最低版本 | 进行中 | R0.2 |
+| 1 | R1.1 同步任务移出页面 | 进行中 | R0.3 |
 | 1 | R1.2 失败消息重试与删除 | 待执行 | R1.1 |
 | 2 | R2.1 顶部视觉 Fixture | 待执行 | R1.2 |
 | 2 | R2.2 原生导航栏 Spike | 待执行 | R2.1 |
@@ -222,7 +222,7 @@ ChatScene
 - 输出并保存 `xcodebuild -version`、可用 Simulator 和 SDK 信息。
 - 首次绿灯后，把工作流从浮动 `latest-stable` 固定到 CI 已安装且支持 iOS 26 SDK 的明确 Xcode 小版本。
 - 新增独立 backend job：`npm ci`、`npm test`、`npm run build`。
-- SwiftLint 使用 baseline：旧债务进入 baseline，新文件不能新增 `file_length`、`type_body_length`、`function_body_length`、`cyclomatic_complexity` 违规。不要一次打开规则导致全仓红灯。
+- 旧文件继续使用现有 SwiftLint 规则；新增 Swift 文件额外启用严格结构配置，不能新增 `file_length`、`type_body_length`、`function_body_length`、`cyclomatic_complexity` 违规。这样不让旧债务导致全仓红灯，同时所有新文件从第一天受约束。
 
 验收：一次 workflow 能分别看出 lint、Swift tests、Archive、server tests 哪一步失败，并能下载 xcresult 与 IPA。
 
