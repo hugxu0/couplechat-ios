@@ -60,13 +60,9 @@ struct MediaGallerySheet: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: Binding(
-            get: { selectedMediaId != nil },
-            set: { if !$0 { selectedMediaId = nil } }
-        )) {
-            MediaPagerView(messages: previewableMessages, selectedId: $selectedMediaId)
-                .presentationBackground(.clear)
-        }
+        .background(MediaViewerPresenter(
+            items: previewableMessages.flatMap(MediaBrowserItem.items(for:)),
+            selectedId: $selectedMediaId))
     }
 
     @ViewBuilder

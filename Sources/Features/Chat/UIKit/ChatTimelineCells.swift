@@ -803,6 +803,17 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         return albumPhotos[index].id
     }
 
+    func mediaTransitionSourceView(for identifier: String) -> UIView? {
+        if let index = albumPhotos.firstIndex(where: { $0.id == identifier }),
+           let container = albumScrollView.viewWithTag(index + 1),
+           let imageView = container.viewWithTag(100) {
+            return imageView
+        }
+        guard message?.id == identifier
+                || message?.attachments?.contains(where: { $0.id == identifier }) == true else { return nil }
+        return mediaImageView.superview == nil ? nil : mediaImageView
+    }
+
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         guard scrollView === albumScrollView, scrollView.bounds.width > 0 else { return }
         let page = min(albumPhotos.count - 1, max(0, Int(round(scrollView.contentOffset.x / scrollView.bounds.width))))

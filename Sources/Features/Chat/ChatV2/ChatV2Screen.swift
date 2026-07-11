@@ -10,7 +10,6 @@ struct ChatV2Screen: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
 
-    @State private var mediaViewerMessageId: String?
     @State private var jumpCommand: ChatV2JumpCommand?
     @State private var isShowingDetail = false
 
@@ -50,10 +49,6 @@ struct ChatV2Screen: View {
 
     private var peerAvatarURL: URL? {
         channel == .ai ? store.avatarURL(for: "ai") : store.avatarURL(for: store.partner?.username)
-    }
-
-    private var mediaMessages: [ChatMessage] {
-        Array(store.mediaMessages(for: channel, includeFiles: false).reversed())
     }
 
     /// 顶栏和输入栏是两块独立的“表面”：它们应该由实际壁纸采样决定，
@@ -127,8 +122,7 @@ struct ChatV2Screen: View {
                     dynamicallySamplesComposerTone: theme.hasCustomWallpaper(for: channel),
                     usesDarkChatSurface: usesDarkChatSurface,
                     timelineUsesLightContent: timelineUsesLightContent,
-                    jumpCommand: $jumpCommand,
-                    onMediaTap: { mediaViewerMessageId = $0 }
+                    jumpCommand: $jumpCommand
                 )
                 .frame(width: stableWidth, height: stableHeight)
                 .position(x: stableWidth / 2, y: stableHeight / 2)
@@ -149,13 +143,6 @@ struct ChatV2Screen: View {
                 isShowingDetail = true
             },
             destination: { chatDetailSettings })
-        .fullScreenCover(isPresented: Binding(
-            get: { mediaViewerMessageId != nil },
-            set: { if !$0 { mediaViewerMessageId = nil } }
-        )) {
-            MediaPagerView(messages: mediaMessages, selectedId: $mediaViewerMessageId)
-                .presentationBackground(.clear)
-        }
         .onAppear {
             app.pushSubpage()
         }
@@ -237,7 +224,6 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
     let usesDarkChatSurface: Bool
     let timelineUsesLightContent: Bool
     @Binding var jumpCommand: ChatV2JumpCommand?
-    let onMediaTap: (String) -> Void
 
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
@@ -250,8 +236,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             composerUsesLightContent: composerUsesLightContent,
             dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
-            timelineUsesLightContent: timelineUsesLightContent,
-            onMediaTap: onMediaTap
+            timelineUsesLightContent: timelineUsesLightContent
         )
         controller.setTopOverlayInset(topOverlayInset)
         return controller
@@ -265,8 +250,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             composerUsesLightContent: composerUsesLightContent,
             dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
-            timelineUsesLightContent: timelineUsesLightContent,
-            onMediaTap: onMediaTap
+            timelineUsesLightContent: timelineUsesLightContent
         )
         if let command = jumpCommand {
             controller.performJump(command)

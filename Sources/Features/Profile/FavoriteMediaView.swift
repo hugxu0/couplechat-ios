@@ -29,12 +29,7 @@ struct FavoriteMediaView: View {
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle("收藏")
         .navigationBarTitleDisplayMode(.inline)
-        .fullScreenCover(isPresented: Binding(
-            get: { selectedId != nil },
-            set: { if !$0 { selectedId = nil } }
-        )) {
-            MediaPagerView(items: favorites.items, selectedId: $selectedId)
-        }
+        .background(MediaViewerPresenter(items: favorites.items, selectedId: $selectedId))
     }
 
     private func favoriteTile(_ item: MediaBrowserItem) -> some View {

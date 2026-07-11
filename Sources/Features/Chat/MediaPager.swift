@@ -8,19 +8,30 @@ import Photos
 struct MediaPagerView: View {
     let items: [MediaBrowserItem]
     @Binding var selectedId: String?
+    var onZoomScaleChange: (CGFloat) -> Void = { _ in }
 
     @EnvironmentObject private var favorites: MediaFavoriteStore
     @State private var saving = false
     @State private var toast: String?
 
-    init(messages: [ChatMessage], selectedId: Binding<String?>) {
+    init(
+        messages: [ChatMessage],
+        selectedId: Binding<String?>,
+        onZoomScaleChange: @escaping (CGFloat) -> Void = { _ in }
+    ) {
         self.items = messages.flatMap(MediaBrowserItem.items(for:))
         _selectedId = selectedId
+        self.onZoomScaleChange = onZoomScaleChange
     }
 
-    init(items: [MediaBrowserItem], selectedId: Binding<String?>) {
+    init(
+        items: [MediaBrowserItem],
+        selectedId: Binding<String?>,
+        onZoomScaleChange: @escaping (CGFloat) -> Void = { _ in }
+    ) {
         self.items = items
         _selectedId = selectedId
+        self.onZoomScaleChange = onZoomScaleChange
     }
 
     private var selectedIndex: Int {
@@ -56,13 +67,13 @@ struct MediaPagerView: View {
                             shouldLoadMedia: abs(index - selectedIndex) <= 1,
                             isFavorite: favorites.contains(item),
                             onSave: { save(item) },
-                            onToggleFavorite: { toggleFavorite(item) }
+                            onToggleFavorite: { toggleFavorite(item) },
+                            onZoomScaleChange: onZoomScaleChange
                         )
                         .tag(item.id)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
-                .simultaneousGesture(dismissGesture)
                 .task(id: selectedId) {
                     prefetchAroundSelection()
                 }
@@ -102,16 +113,6 @@ struct MediaPagerView: View {
             .padding(.trailing, 14)
         }
         .preferredColorScheme(.dark)
-    }
-
-    private var dismissGesture: some Gesture {
-        DragGesture(minimumDistance: 10)
-            .onEnded { value in
-                guard (value.translation.height > 90 || value.predictedEndTranslation.height > 190),
-                      abs(value.translation.height) > abs(value.translation.width) else { return }
-                // 只修改 fullScreenCover 的绑定，让系统负责完整的退出转场。
-                selectedId = nil
-            }
     }
 
     private func prefetchAroundSelection() {
@@ -169,15 +170,19 @@ private struct MediaPage: View {
     let isFavorite: Bool
     let onSave: () -> Void
     let onToggleFavorite: () -> Void
+    let onZoomScaleChange: (CGFloat) -> Void
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
                 if item.isVideo, let url = item.mediaURL, shouldLoadMedia {
-                    VideoPlayer(player: AVPlayer(url: url))
+                    MediaViewerVideoPage(url: url)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 } else if let url = item.mediaURL, shouldLoadMedia {
-                    ZoomableRemoteImage(url: url, size: geometry.size)
+                    ZoomableRemoteImage(
+                        url: url,
+                        size: geometry.size,
+                        onScaleChange: onZoomScaleChange)
                 } else if item.mediaURL != nil {
                     ProgressView().tint(.white.opacity(0.7))
                 } else {
@@ -239,12 +244,22 @@ private struct MediaPage: View {
 private struct ZoomableRemoteImage: View {
     let url: URL
     let size: CGSize
+    let onScaleChange: (CGFloat) -> Void
 
     @State private var settledScale: CGFloat = 1
+    @State private var settledOffset: CGSize = .zero
     @GestureState private var magnification: CGFloat = 1
+    @GestureState private var dragTranslation: CGSize = .zero
 
     private var scale: CGFloat {
         min(4, max(1, settledScale * magnification))
+    }
+
+    private var offset: CGSize {
+        guard scale > 1 else { return .zero }
+        return clampedOffset(CGSize(
+            width: settledOffset.width + dragTranslation.width,
+            height: settledOffset.height + dragTranslation.height))
     }
 
     var body: some View {
@@ -253,11 +268,16 @@ private struct ZoomableRemoteImage: View {
         }
         .frame(maxWidth: size.width, maxHeight: size.height)
         .scaleEffect(scale)
+        .offset(offset)
         .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.86), value: scale)
-        .gesture(magnifyGesture)
+        .simultaneousGesture(magnifyGesture)
+        .simultaneousGesture(dragGesture)
+        .onChange(of: scale) { onScaleChange(scale) }
+        .onDisappear { onScaleChange(1) }
         .onTapGesture(count: 2) {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
                 settledScale = settledScale > 1 ? 1 : 2
+                settledOffset = .zero
             }
         }
     }
@@ -269,7 +289,54 @@ private struct ZoomableRemoteImage: View {
             }
             .onEnded { value in
                 settledScale = min(4, max(1, settledScale * value))
+                settledOffset = clampedOffset(settledOffset)
             }
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .updating($dragTranslation) { value, state, _ in
+                guard scale > 1 else { return }
+                state = value.translation
+            }
+            .onEnded { value in
+                guard scale > 1 else { return }
+                settledOffset = clampedOffset(CGSize(
+                    width: settledOffset.width + value.translation.width,
+                    height: settledOffset.height + value.translation.height))
+            }
+    }
+
+    private func clampedOffset(_ proposed: CGSize) -> CGSize {
+        let horizontalLimit = max(0, size.width * (scale - 1) / 2)
+        let verticalLimit = max(0, size.height * (scale - 1) / 2)
+        return CGSize(
+            width: min(horizontalLimit, max(-horizontalLimit, proposed.width)),
+            height: min(verticalLimit, max(-verticalLimit, proposed.height)))
+    }
+}
+
+private struct MediaViewerVideoPage: View {
+    let url: URL
+    @State private var player: AVPlayer
+    @State private var resumeAfterCancellation = false
+
+    init(url: URL) {
+        self.url = url
+        _player = State(initialValue: AVPlayer(url: url))
+    }
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .onReceive(NotificationCenter.default.publisher(for: .mediaViewerPauseVideo)) { _ in
+                resumeAfterCancellation = player.timeControlStatus == .playing
+                player.pause()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .mediaViewerResumeVideo)) { _ in
+                if resumeAfterCancellation { player.play() }
+                resumeAfterCancellation = false
+            }
+            .onDisappear { player.pause() }
     }
 }
 
