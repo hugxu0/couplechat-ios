@@ -5,8 +5,8 @@ import { initDatabase, closeDatabase } from "./db";
 import { seedAccounts } from "./auth/accounts";
 import { registerRealtime } from "./socket/realtime";
 import { setSocketIO } from "./personalItems/routes";
-import { initAi } from "./ai/aiService";
-import { startReminderScheduler } from "./ai/reminderScheduler";
+import { initAi, setAiSocketIO } from "./ai";
+import { startReminderScheduler } from "./personalItems/reminderScheduler";
 import { startUploadCleanup } from "./upload/cleanup";
 
 async function main() {
@@ -20,9 +20,10 @@ async function main() {
       origin: true,
     },
   });
+  setAiSocketIO(io);
   setSocketIO(io);
   registerRealtime(io);
-  startReminderScheduler(io);
+  startReminderScheduler();
 
   await app.listen({ host: config.host, port: config.port });
   const stopUploadCleanup = startUploadCleanup();

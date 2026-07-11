@@ -51,20 +51,24 @@ function embeddingPoolFromEnv(prefix: string): EmbeddingPool | undefined {
   return { name, baseUrl, apiKeys };
 }
 
-// 模型只分两档（对比旧后端 15 个 profile 大幅精简）：
-//   chat = 直面用户的对话回复（要快、要有人味）
-//   task = 后台任务（记忆提取/日记/卡片/收口，可以慢、要稳定输出 JSON）
-// 只配 AI_* 时两档共用同一个模型；AI_CHAT_* / AI_TASK_* 可分别覆盖。
+// chat 用于用户回复，task 用于记忆提取和后台任务。
 const aiShared = providerFromEnv("AI");
+const aiTask = providerFromEnv("AI_TASK", aiShared);
+const migrationBase = aiTask ?? aiShared;
+const aiMigration = migrationBase ? {
+  baseUrl: process.env.AI_MIGRATION_BASE_URL ?? migrationBase.baseUrl,
+  apiKey: process.env.AI_MIGRATION_API_KEY ?? migrationBase.apiKey,
+  model: process.env.AI_MIGRATION_MODEL ?? "deepseek-v4-flash",
+} satisfies AiProvider : undefined;
 
 // 向量池：优先用新的多 key 池格式（EMBEDDING_<NAME>_PROVIDER/_BASE_URL/_API_KEYS）；
 // 没配的话退回旧的单 key 格式（EMBEDDING_BASE_URL/_API_KEY/_MODEL），保持兼容。
 const embeddingPools = [embeddingPoolFromEnv("VOYAGE"), embeddingPoolFromEnv("MONGODB")].filter(
   (p): p is EmbeddingPool => Boolean(p),
 );
-const legacyEmbedding = providerFromEnv("EMBEDDING");
-if (embeddingPools.length === 0 && legacyEmbedding) {
-  embeddingPools.push({ name: "legacy", baseUrl: legacyEmbedding.baseUrl, apiKeys: [legacyEmbedding.apiKey] });
+const fallbackEmbedding = providerFromEnv("EMBEDDING");
+if (embeddingPools.length === 0 && fallbackEmbedding) {
+  embeddingPools.push({ name: "fallback", baseUrl: fallbackEmbedding.baseUrl, apiKeys: [fallbackEmbedding.apiKey] });
 }
 
 export const config = {
@@ -82,16 +86,18 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL ?? "postgres://couplechat:couplechat@localhost:5432/couplechat",
   ai: {
     chat: providerFromEnv("AI_CHAT", aiShared),
-    task: providerFromEnv("AI_TASK", aiShared),
+    task: aiTask,
+    migration: aiMigration,
     // couple 频道召唤词；ai 私聊频道每条都答，不需要召唤。
     triggerAliases: (process.env.AI_TRIGGER_ALIASES ?? "@大橘")
       .split(/[,，;；]/)
       .map((s) => s.trim())
       .filter(Boolean),
   },
+  aiMcpUrl: process.env.AI_MCP_URL ?? `http://127.0.0.1:${Number(process.env.PORT ?? 8080)}/api/ai-mcp`,
   // 图片识图（多模态）：只有消息带图片时才调用，未配置则直接跳过图片。
   aiVision: providerFromEnv("AI_VISION"),
   embeddingPools,
-  embeddingModel: process.env.EMBEDDING_MODEL ?? legacyEmbedding?.model ?? "voyage-4",
+  embeddingModel: process.env.EMBEDDING_MODEL ?? fallbackEmbedding?.model ?? "voyage-4",
   embeddingDim: Number(process.env.EMBEDDING_DIM ?? 1024),
 };

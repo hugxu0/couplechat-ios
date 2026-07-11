@@ -1,10 +1,8 @@
 // 到点提醒扫描：定时扫 personal_items 表，把到点的未完成提醒推送给主人（Bark）。
 // 内存里记 lastScanTs 游标，启动时初始化为「现在」——别回推服务挂掉之前攒下的旧提醒。
 
-import type { Server } from "socket.io";
 import { all, get, type AccountRow, type PersonalItemRow } from "../db";
 import { sendBarkPush } from "../push/bark";
-import { config } from "../config";
 
 const SCAN_INTERVAL_MS = 60_000;
 
@@ -12,7 +10,7 @@ let lastScanTs = Date.now();
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
-async function scanOnce(io: Server) {
+async function scanOnce() {
   if (running) return;
   running = true;
   try {
@@ -44,12 +42,12 @@ async function scanOnce(io: Server) {
   }
 }
 
-export function startReminderScheduler(io: Server) {
+export function startReminderScheduler() {
   if (timer) return;
   lastScanTs = Date.now();
-  void scanOnce(io).catch(() => {});
+  void scanOnce().catch(() => {});
   timer = setInterval(() => {
-    void scanOnce(io).catch(() => {});
+    void scanOnce().catch(() => {});
   }, SCAN_INTERVAL_MS);
   console.log("[reminder] 到点提醒扫描已启动（60s 间隔）");
 }

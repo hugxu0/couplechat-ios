@@ -4,6 +4,7 @@ import { all, get, run, transaction, type MessageRow, type ReadReceiptRow, type 
 import type { SendMessagePayload } from "../contracts/realtime";
 import type { AuthUser, ClientChannel, ClientMessage, ClientMessageAttachment, MessageKind, MessageType, StoredChannel } from "../types";
 import { toClientChannel, toStoredChannel } from "../types";
+import { invalidateMemoriesForRecalledMessage } from "../ai/memory/store";
 
 export type SendMessageInput = SendMessagePayload;
 export interface FetchMessagesInput {
@@ -379,6 +380,9 @@ export async function recallMessage(user: AuthUser, id: string) {
     };
   });
   if (!result) return null;
+  await invalidateMemoriesForRecalledMessage(id).catch((error) => {
+    console.warn(`[memory] 撤回证据传播失败 id=${id}: ${error instanceof Error ? error.message : String(error)}`);
+  });
   for (const uploadPath of result.uploadPaths) {
     await fs.rm(uploadPath, { force: true }).catch((error) => {
       console.warn(`[upload] 撤回消息后删除文件失败 id=${id}: ${error instanceof Error ? error.message : String(error)}`);

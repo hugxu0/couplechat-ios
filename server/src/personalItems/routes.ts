@@ -8,7 +8,6 @@ import {
   deletePersonalItem,
   listPersonalItems,
   updatePersonalItem,
-  type PersonalItemScope,
 } from "./itemService";
 
 let io: Server | null = null;

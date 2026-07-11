@@ -48,6 +48,8 @@ npx tsx scripts/import-legacy-production.ts
 
 该脚本保留 `accounts`（密码、Bark、登录配置），事务式替换其余业务表，完成 `alice/bob → xu/si`、提醒备忘、媒体索引和 AI 文档转换。运行前必须先执行 `npm run smoke:legacy-import`。
 
+导入得到的 `ai_facts / ai_episodes / ai_docs` 只作为待清洗历史数据保留，不参与当前 Agent 和 Memory 运行时。正式记忆写入 `ai_memory / ai_memory_evidence`，提取游标位于 `ai_memory_cursor`。
+
 ## 四、配置服务
 
 在服务的环境（`.env` 或 systemd unit）里加：
@@ -76,7 +78,32 @@ npx tsx scripts/smoke-postgres.ts
 ```
 
 也可以直接运行 `npm test`。它会起临时 PG → 执行迁移 → 从 `.data/couplechat.sqlite` 全量迁移 → 跑消息分页/搜索/幂等发送/
-已读回执/shared/提醒备忘 CRUD/AI 记忆向量/统计聚合与 Socket 契约断言。
+已读回执/shared/提醒备忘 CRUD/Memory 版本与证据/历史 AI 表保留/统计聚合与 Socket 契约断言。
+
+## 七、本机 AI 调试数据库
+
+项目的 `embedded-postgres` 开发依赖可以在 Windows 上运行持久化的本地 PostgreSQL，不需要安装系统服务或占用默认 5432 端口：
+
+```powershell
+cd server
+npm run postgres:local
+```
+
+默认数据目录为 `.data/local-postgres`，监听 `127.0.0.1:55432`，数据库、用户和密码均为 `couplechat`。该进程所在终端关闭后数据库停止，但数据目录会保留；下次执行相同命令会直接复用。
+
+本机生产快照恢复完成后，可在另一个终端运行：
+
+```powershell
+npm run dev:local-ai
+```
+
+该入口会：
+
+- 强制使用 `postgres://couplechat:couplechat@127.0.0.1:55432/couplechat`，不会连接生产数据库。
+- 从 `.data/production-ai.env` 只读取 `AI_*` / `EMBEDDING_*`，其他生产配置不会注入。
+- 以 development 模式监听 `127.0.0.1:8080`，可打开 `http://127.0.0.1:8080/ai-debug`。
+
+`.data/` 已被 Git 忽略，其中的数据库、生产快照配置和日志都不能提交。
 
 ## 实现说明
 

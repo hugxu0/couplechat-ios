@@ -1,6 +1,6 @@
 // 北京时间作息日工具：早 6 点切日，半夜聊天算「昨天」。海外服务器也不跑偏。
 
-import { DAY_ROLLOVER_HOUR } from "./params";
+import { DAY_ROLLOVER_HOUR } from "./settings";
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 

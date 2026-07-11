@@ -10,6 +10,8 @@ import { registerPersonalItemRoutes } from "./personalItems/routes";
 import { registerSyncRoutes } from "./sync/routes";
 import { registerMediaAccessRoutes } from "./upload/mediaAccess";
 import { pingDatabase } from "./db";
+import { registerAiDebugRoutes } from "./ai/debug/routes";
+import { registerAiMcpRoutes } from "./ai/mcp/routes";
 
 export async function buildApp() {
   fs.mkdirSync(config.uploadDir, { recursive: true });
@@ -42,6 +44,8 @@ export async function buildApp() {
   await registerStatsRoutes(app);
   await registerPersonalItemRoutes(app);
   await registerSyncRoutes(app);
+  await registerAiMcpRoutes(app);
+  await registerAiDebugRoutes(app);
 
   return app;
 }

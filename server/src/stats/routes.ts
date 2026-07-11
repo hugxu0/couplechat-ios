@@ -3,7 +3,7 @@
 import type { FastifyInstance } from "fastify";
 import { all } from "../db";
 import { requireAuth } from "../auth/httpAuth";
-import { dailyContent, ensureRecommendation } from "../ai/dailyContent";
+import { dailyContent, ensureRecommendation } from "../ai/background/dailyContent";
 import { cycleDate } from "../ai/time";
 
 interface CountRow {

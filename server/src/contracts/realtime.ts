@@ -113,7 +113,7 @@ export const searchMessagesSchema = z.object({
 export const sharedSetSchema = z.object({
   key: z.string().min(1).max(80).regex(/^[a-zA-Z0-9:_-]+$/),
   // 原生共享状态统一为 JSON 对象，避免旧客户端写入顶层标量后破坏启动同步。
-  value: z.record(z.unknown()),
+  value: z.record(z.string(), z.unknown()),
 });
 
 export const recallMessageSchema = z.object({

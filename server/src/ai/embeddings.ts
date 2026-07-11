@@ -1,8 +1,5 @@
-// 向量客户端：OpenAI 兼容 POST /embeddings（Voyage / OpenAI / 硅基流动 / MongoDB AI Gateway 等通吃）。
-// 未配置时所有函数优雅降级——召回退化为「高重要度事实兜底」，聊天照常。
-// 支持多账号池：按 provider 顺序、每个 provider 内按 key 顺序试，某个 key 失败立刻换下一个，
-// 全部试完还失败才真正放弃（保留旧的优雅降级行为）。
-// 向量在写入时归一化，余弦相似度 = 点积；体量只有两个人，JS 里全量扫足够快。
+// OpenAI 兼容的 embedding 客户端。未配置时 Memory 退化为字面检索。
+// Provider 和 key 按配置顺序轮换；向量写入前统一归一化。
 
 import { config } from "../config";
 

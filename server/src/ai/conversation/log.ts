@@ -1,9 +1,8 @@
-// AI 侧的聊天记录读取与压缩：直接按存储频道查 messages 表，
-// 并把消息压成「HH:MM 名字: 内容」的单行文本喂给模型。
+// 读取聊天记录并压缩为适合模型输入的单行文本。
 
-import { all, type MessageRow } from "../db";
-import { beijingClock } from "./time";
-import { CONTEXT } from "./params";
+import { all, type MessageRow } from "../../db";
+import { beijingClock } from "../time";
+import { CONTEXT } from "../settings";
 
 export interface LogMessage {
   id: string;
@@ -14,6 +13,11 @@ export interface LogMessage {
   text: string;
   url: string | null;
   ts: number;
+}
+
+export interface LogCursor {
+  ts: number;
+  id: string;
 }
 
 function mapRow(row: MessageRow): LogMessage {
@@ -29,7 +33,7 @@ function mapRow(row: MessageRow): LogMessage {
   };
 }
 
-// 找最近一条图片消息（needImages 命中时拿它去识图）。
+// 查找最近一条图片消息。
 export function latestImage(messages: LogMessage[]): LogMessage | undefined {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i].type === "image" && messages[i].url) return messages[i];
@@ -37,7 +41,7 @@ export function latestImage(messages: LogMessage[]): LogMessage | undefined {
   return undefined;
 }
 
-// 最近 N 条（按时间正序返回）。
+// 最近 N 条消息，按时间正序返回。
 export async function recentMessages(storedChannel: string, limit: number): Promise<LogMessage[]> {
   const rows = await all<MessageRow>(
     "SELECT * FROM messages WHERE channel = ? ORDER BY ts DESC LIMIT ?",
@@ -54,10 +58,23 @@ export async function messagesBetween(storedChannel: string, start: number, end:
   return rows.map(mapRow);
 }
 
-export async function messagesAfter(storedChannel: string, ts: number, limit: number): Promise<LogMessage[]> {
+export async function messagesAfter(storedChannel: string, cursor: LogCursor, limit: number): Promise<LogMessage[]> {
   const rows = await all<MessageRow>(
-    "SELECT * FROM messages WHERE channel = ? AND ts > ? ORDER BY ts ASC LIMIT ?",
-    [storedChannel, ts, limit],
+    `SELECT * FROM messages
+     WHERE channel = ? AND (ts > ? OR (ts = ? AND id > ?))
+     ORDER BY ts ASC, id ASC LIMIT ?`,
+    [storedChannel, cursor.ts, cursor.ts, cursor.id, limit],
+  );
+  return rows.map(mapRow);
+}
+
+export async function ownerTextMessagesAfter(storedChannel: string, cursor: LogCursor, limit: number): Promise<LogMessage[]> {
+  const rows = await all<MessageRow>(
+    `SELECT * FROM messages
+     WHERE channel = ? AND (ts > ? OR (ts = ? AND id > ?))
+       AND kind = 'user' AND sender <> 'ai' AND type = 'text' AND BTRIM(text) <> ''
+     ORDER BY ts ASC, id ASC LIMIT ?`,
+    [storedChannel, cursor.ts, cursor.ts, cursor.id, limit],
   );
   return rows.map(mapRow);
 }

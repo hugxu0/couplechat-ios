@@ -72,12 +72,17 @@ async function main() {
     );
     assertOk(
       "schema_migrations 记录全部迁移",
-      migrations.length === 5 &&
+      migrations.length === 10 &&
         migrations[0].version === 1 && migrations[0].name === "initial_schema" &&
         migrations[1].version === 2 && migrations[1].name === "bind_uploads_to_messages" &&
         migrations[2].version === 3 && migrations[2].name === "classify_upload_purpose" &&
         migrations[3].version === 4 && migrations[3].name === "preserve_recalled_text" &&
-        migrations[4].version === 5 && migrations[4].name === "message_attachments",
+        migrations[4].version === 5 && migrations[4].name === "message_attachments" &&
+        migrations[5].version === 6 && migrations[5].name === "memory_v2" &&
+        migrations[6].version === 7 && migrations[6].name === "canonical_memory_names" &&
+        migrations[7].version === 8 && migrations[7].name === "ensure_ai_runtime_state" &&
+        migrations[8].version === 9 && migrations[8].name === "memory_import_staging" &&
+        migrations[9].version === 10 && migrations[9].name === "memory_cursor_tie_breaker",
     );
 
     const { readReceiptSchema } = await import("../src/contracts/realtime");
@@ -93,7 +98,7 @@ async function main() {
     );
 
     // AI 可靠性：超时必须发兜底；队列过载必须保留最新请求而不是静默丢弃。
-    const { ReplyQueue, runReplyTaskWithTimeout } = await import("../src/ai/replyEngine");
+    const { ReplyQueue, runReplyTaskWithTimeout } = await import("../src/ai/agent/replyQueue");
     const aiTrigger = {
       storedChannel: "ai:smoke",
       question: "测试",
@@ -113,15 +118,14 @@ async function main() {
       5,
     );
     assertOk("AI 超时会发送兜底回复", timeoutReplies.length === 1);
-
-    const { hasTaskIntentHint } = await import("../src/ai/intent");
-    assertOk(
-      "AI 任务意图在分类模型失败时仍可确定",
-      hasTaskIntentHint("十分钟后提醒我吃药")
-        && hasTaskIntentHint("把购物清单记到备忘录")
-        && hasTaskIntentHint("明早喊我起床")
-        && !hasTaskIntentHint("今晚吃什么好"),
+    const backgroundTimeoutReplies: string[] = [];
+    await runReplyTaskWithTimeout(
+      { ...aiTrigger, origin: "conflict" },
+      { ...timeoutSink, emit: async (_channel, value) => { backgroundTimeoutReplies.push(value); } },
+      async () => new Promise<void>(() => undefined),
+      5,
     );
+    assertOk("后台介入 Agent 超时保持沉默", backgroundTimeoutReplies.length === 0);
 
     const startedQuestions: string[] = [];
     let releaseFirst: (() => void) | undefined;
@@ -353,16 +357,156 @@ async function main() {
     assertOk("updatePersonalItem isDone", patched?.isDone === true);
     assertOk("deletePersonalItem", await items.deletePersonalItem(user, item!.id));
 
-    // AI 记忆：embedding BYTEA 读回 + 向量解包
-    const { listFacts, getDoc, setDoc, listEpisodes } = await import("../src/ai/memoryStore");
-    const facts = await listFacts({ limit: 2000 });
-    const withVector = facts.filter((f) => f.vector && f.vector.length > 0);
-    assertOk(`ai_facts → ${facts.length} 条（${withVector.length} 条带向量）`, facts.length === 95 && withVector.length > 0);
-    const episodes = await listEpisodes("couple");
-    assertOk(`ai_episodes(couple) → ${episodes.length} 张卡`, episodes.length > 0);
-    await setDoc("smoke-doc", "hello");
-    await setDoc("smoke-doc", "hello2");
-    assertOk("ai_docs upsert", (await getDoc("smoke-doc")) === "hello2");
+    const archivedFacts = await db.get<{ count: number }>("SELECT COUNT(*)::int AS count FROM ai_facts");
+    const archivedEpisodes = await db.get<{ count: number }>("SELECT COUNT(*)::int AS count FROM ai_episodes");
+    const archivedDocs = await db.get<{ count: number }>("SELECT COUNT(*)::int AS count FROM ai_docs");
+    assertOk(
+      "旧事实、事件和文档表保留为待清洗数据源",
+      archivedFacts?.count === 95 && (archivedEpisodes?.count ?? 0) > 0 && (archivedDocs?.count ?? 0) > 0,
+    );
+    const runtimeState = await import("../src/ai/runtimeState");
+    await runtimeState.writeRuntimeState("smoke", "ok");
+    assertOk("AI 运行状态与历史文档表隔离", (await runtimeState.readRuntimeState("smoke")) === "ok");
+
+    const { rankChatSearchRows, searchTerms } = await import("../src/ai/conversation/search");
+    const searchRow = (id: string, text: string, ts: number) => ({
+      id, channel: "couple", sender: user.username, sender_name: user.name, kind: "user", type: "text",
+      text, url: null, reply_json: null, meta_json: null, attachments_json: null, recalled_text: null, ts, client_id: null,
+    });
+    const expandedSearch = rankChatSearchRows([
+      searchRow("search-alternative-content", "使用替代表述记录了答案", 200),
+      searchRow("search-subject", "甲方正在讨论另一个话题", 100),
+    ], ["甲方", "核心主题", "替代表述"], "all", 5);
+    assertOk(
+      "原文搜索使用 Agent alternatives 发散并统一重排",
+      searchTerms("核心 主题").includes("主题") &&
+        expandedSearch.relaxed &&
+        expandedSearch.hits.some((hit) => hit.row.id === "search-alternative-content"),
+    );
+
+    const tiedTs = Date.now() + 10_000;
+    await db.run(
+      `INSERT INTO messages (id, channel, sender, sender_name, kind, type, text, ts)
+       VALUES (?, 'couple', ?, ?, 'user', 'text', '游标 A', ?),
+              (?, 'couple', ?, ?, 'user', 'text', '游标 B', ?)`,
+      ["cursor-smoke-a", user.username, user.name, tiedTs, "cursor-smoke-b", user.username, user.name, tiedTs],
+    );
+    const { messagesAfter, ownerTextMessagesAfter } = await import("../src/ai/conversation/log");
+    const tiedMessages = await messagesAfter("couple", { ts: tiedTs, id: "cursor-smoke-a" }, 10);
+    const ownerTiedMessages = await ownerTextMessagesAfter("couple", { ts: tiedTs, id: "cursor-smoke-a" }, 30);
+    const { MEMORY_SOURCE_BATCH_SIZE, shouldExtractMemoryBatch } = await import("../src/ai/memory/extractor");
+    assertOk(
+      "Memory 按30条主人文字分批且使用 (ts,id) 游标",
+      MEMORY_SOURCE_BATCH_SIZE === 30 &&
+        !shouldExtractMemoryBatch(29) && shouldExtractMemoryBatch(30) && shouldExtractMemoryBatch(1, true) &&
+        tiedMessages.some((message) => message.id === "cursor-smoke-b") &&
+        !tiedMessages.some((message) => message.id === "cursor-smoke-a") &&
+        ownerTiedMessages.some((message) => message.id === "cursor-smoke-b"),
+    );
+
+    const memory = await import("../src/ai/memory/store");
+    const firstMemory = await memory.addMemory({
+      layer: "fact", scope: "couple", memoryKey: "preference.smoke.color",
+      subjects: [user.username], speakers: [user.username], content: "喜欢蓝色",
+      category: "preference", confidence: 0.9, importance: 3, sourceMessageIds: [created.id],
+    });
+    const nextMemory = await memory.addMemory({
+      layer: "fact", scope: "couple", memoryKey: "preference.smoke.color",
+      subjects: [user.username], speakers: [user.username], content: "现在更喜欢绿色",
+      category: "preference", confidence: 0.95, importance: 3, sourceMessageIds: [created.id],
+    });
+    const memoryResults = await memory.searchMemory({
+      query: "", layers: ["fact"], scopes: ["couple"], subjects: [user.username], limit: 20,
+    });
+    const previousMemory = await db.get<{ status: string }>("SELECT status FROM ai_memory WHERE id = ?", [firstMemory!.id]);
+    const evidence = await memory.memoryEvidence(nextMemory!.id, ["couple"]);
+    assertOk(
+      "Memory 同 key 版本替代并保留主人原文证据",
+      previousMemory?.status === "superseded" &&
+        memoryResults.some((item) => item.id === nextMemory!.id && item.content === "现在更喜欢绿色") &&
+        evidence.some((item) => item.message_id === created.id),
+    );
+    const correctedMemory = await memory.addMemory({
+      layer: "fact", scope: "couple", memoryKey: "model.generated.different.key",
+      subjects: [user.username], speakers: [user.username], content: "现在最喜欢黄色",
+      category: "preference", confidence: 0.96, importance: 3, sourceMessageIds: [created.id],
+      targetMemoryId: nextMemory!.id,
+    });
+    const replacedTarget = await db.get<{ status: string }>("SELECT status FROM ai_memory WHERE id = ?", [nextMemory!.id]);
+    assertOk(
+      "Memory 定向更新复用目标 key，不依赖模型再次生成相同 key",
+      correctedMemory?.memoryKey === nextMemory?.memoryKey && replacedTarget?.status === "superseded",
+    );
+    const eventInput = {
+      layer: "event" as const, scope: "couple", memoryKey: "health.smoke.medication",
+      subjects: [user.username], speakers: [user.username], content: "服用了测试药物",
+      category: "health", confidence: 0.95, importance: 4,
+      occurredAt: created.ts, sourceMessageIds: [created.id],
+    };
+    const firstEvent = await memory.addMemory(eventInput);
+    const repeatedEvent = await memory.addMemory(eventInput);
+    const duplicateEventCount = await db.get<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM ai_memory
+       WHERE layer = 'event' AND scope = 'couple' AND memory_key = ? AND content = ?`,
+      [eventInput.memoryKey, eventInput.content],
+    );
+    assertOk(
+      "Memory 同一原文事件重复抽取保持幂等",
+      firstEvent?.id === repeatedEvent?.id && duplicateEventCount?.count === 1,
+    );
+    await memory.addMemory({
+      layer: "state", scope: "couple", memoryKey: "state.smoke.temporary",
+      subjects: [user.username], speakers: [user.username], content: "暂时很困",
+      category: "mood", confidence: 0.9, importance: 2,
+      validFrom: Date.now() - 1000, validUntil: Date.now() - 1, sourceMessageIds: [created.id],
+    });
+    await memory.expireMemoryStates();
+    const activeStates = await memory.searchMemory({ query: "", layers: ["state"], scopes: ["couple"] });
+    assertOk("Memory 状态 TTL 自动失效", !activeStates.some((item) => item.memoryKey === "state.smoke.temporary"));
+
+    const plan = await memory.addMemory({
+      layer: "plan", scope: "couple", memoryKey: "plan.smoke.trip",
+      subjects: [user.username], speakers: [user.username], content: "准备完成测试行程",
+      category: "plan", confidence: 0.9, importance: 3, sourceMessageIds: [created.id],
+    });
+    const completed = await memory.transitionMemory({
+      memoryId: plan!.id, scope: "couple", status: "completed",
+      sourceMessageIds: [created.id], reason: "主人明确表示已经完成",
+    });
+    const completedPlan = await db.get<{ status: string }>("SELECT status FROM ai_memory WHERE id = ?", [plan!.id]);
+    assertOk("Memory 计划支持完成/取消生命周期", completed && completedPlan?.status === "completed");
+
+    const { minimumEvidenceForLayer } = await import("../src/ai/memory/extractor");
+    assertOk("Memory 洞察强制至少三条新消息证据", minimumEvidenceForLayer("insight") === 3);
+
+    const reviewedLegacy = await memory.addMemory({
+      layer: "fact", scope: "couple", memoryKey: "legacy.smoke.reviewed",
+      subjects: [user.username], speakers: [], content: "人工确认的旧资料",
+      category: "legacy", confidence: 0.3, importance: 2, sourceMessageIds: [],
+      allowWithoutEvidence: true,
+      metadata: { importedFromLegacy: true, legacyReviewed: true, provenance: "legacy_manual_approval" },
+    });
+    await memory.reconcileMemoryLifecycle();
+    const reviewedLegacyRow = await db.get<{ status: string }>(
+      "SELECT status FROM ai_memory WHERE id = ?",
+      [reviewedLegacy!.id],
+    );
+    assertOk("人工批准的无原文旧记忆保留低置信度来源标记", reviewedLegacyRow?.status === "active");
+
+    const recallEvidence = await createMessage(user, {
+      channel: "couple", type: "text", text: "这是一条即将撤回的记忆证据", clientId: "smoke-memory-recall",
+    });
+    const recallBoundMemory = await memory.addMemory({
+      layer: "fact", scope: "couple", memoryKey: "fact.smoke.recall",
+      subjects: [user.username], speakers: [user.username], content: "临时撤回测试事实",
+      category: "test", confidence: 0.9, importance: 2, sourceMessageIds: [recallEvidence.id],
+    });
+    await recallMessage(user, recallEvidence.id);
+    const invalidatedMemory = await db.get<{ status: string }>(
+      "SELECT status FROM ai_memory WHERE id = ?",
+      [recallBoundMemory!.id],
+    );
+    assertOk("主人撤回原消息会传播到 Memory 证据链", invalidatedMemory?.status === "retracted");
 
     // 统计（to_char 方言改写）
     const buckets = await db.all<{ sender: string; bucket: string; c: number }>(

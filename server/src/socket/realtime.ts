@@ -16,8 +16,8 @@ import {
   searchMessages,
   upsertReadReceipt,
 } from "../chat/messageService";
-import { handleUserMessage } from "../ai/aiService";
-import { confirmAction } from "../ai/actionService";
+import { handleUserMessage } from "../ai";
+import { confirmAction } from "../ai/actions/personalItems";
 import { setSharedItem } from "../shared/sharedService";
 import {
   broadcastPresence,

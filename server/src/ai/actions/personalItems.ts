@@ -1,18 +1,17 @@
-// AI Actions 系统：大橘在回复里输出 actions（建提醒/备忘/删减/完成），
-// 先以「确认卡」挂在 AI 消息的 meta_json 上展示给主人，主人点确认后才真正写入 personal_items。
-// 移植自旧后端 chat/src/ai/actions.js，适配新的 itemService + PostgreSQL + Socket.IO。
+// 解析、展示并执行需要主人确认的提醒和备忘操作。
 
 import type { Server } from "socket.io";
-import { socketEvents } from "../contracts/realtime";
-import { all, get, run, type AccountRow, type MessageRow } from "../db";
+import { socketEvents } from "../../contracts/realtime";
+import { all, get, run, type AccountRow, type MessageRow } from "../../db";
 import {
   createPersonalItem,
   deletePersonalItem,
   updatePersonalItem,
   type PersonalItem,
   type PersonalItemScope,
-} from "../personalItems/itemService";
-import { accounts } from "./memoryStore";
+} from "../../personalItems/itemService";
+import { accounts } from "../accounts";
+import { extractJson } from "../provider";
 
 export interface AiAction {
   type:
@@ -45,14 +44,12 @@ export interface ConfirmMeta {
   };
 }
 
-// 时间换算：把模型可能给的相对/绝对时间字符串归一成毫秒时间戳。
-// 模型 system prompt 已经要求输出 "YYYY-MM-DD HH:mm"，这里兜底处理。
+// 模型应输出北京时间；此处只负责确定性格式转换。
 function parseReminderTime(time: string | undefined): number | null {
   if (!time) return null;
   const s = String(time).trim();
   if (!s) return null;
 
-  // 已经是 "YYYY-MM-DD HH:mm" 形式
   const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T]+(\d{1,2}):(\d{1,2})/);
   if (m) {
     const dt = new Date(
@@ -62,11 +59,10 @@ function parseReminderTime(time: string | undefined): number | null {
       Number(m[4]),
       Number(m[5]),
     );
-    // 当作北京时间：偏移 +8 小时
+    // Date 使用服务器本地时区构造，因此显式换算为北京时间时间戳。
     return dt.getTime() - 8 * 60 * 60 * 1000;
   }
 
-  // 只到分钟 "HH:mm"
   const hm = s.match(/^(\d{1,2}):(\d{1,2})$/);
   if (hm) {
     const now = new Date();
@@ -74,7 +70,6 @@ function parseReminderTime(time: string | undefined): number | null {
     return dt.getTime() - 8 * 60 * 60 * 1000;
   }
 
-  // 直接数字（毫秒戳）
   const num = Number(s);
   if (Number.isFinite(num) && num > 0) return num;
 
@@ -91,11 +86,8 @@ function resolveScope(scope: "personal" | "shared" | undefined): PersonalItemSco
   return scope === "personal" ? "personal" : "shared";
 }
 
-// 通过 text 关键词从 personal_items 里找一条（id 不可靠时退化方案）。
+// ID 缺失时只在当前可见事项中做精确范围的文字定位。
 async function findReminderByText(ownerName: string, textKeyword: string): Promise<PersonalItem | undefined> {
-  const match = accounts().find((a) => a.username === ownerName);
-  const ownerName2 = match?.name ?? ownerName;
-  // 共享 + 个人都要能命中
   const rows = await all<AccountRow & { title: string }>(
     `SELECT * FROM personal_items
      WHERE kind = 'reminder' AND (
@@ -119,7 +111,7 @@ async function findMemoByText(ownerName: string, textKeyword: string): Promise<P
   return rows.length ? (rows[0] as unknown as PersonalItem) : undefined;
 }
 
-// 校验+格式化确认卡 label（不入库，只展示）。
+// 生成确认卡文案，不写数据库。
 export function describeAction(action: AiAction): string | null {
   if (!action || typeof action !== "object") return null;
   switch (action.type) {
@@ -153,7 +145,7 @@ export function describeAction(action: AiAction): string | null {
   }
 }
 
-// 真正执行 action（写 personal_items）。调用方需要传 requester 的 username（@召唤者）。
+// 用户确认后才写 personal_items。
 export async function applyAction(
   action: AiAction,
   context: { requesterUsername: string },
@@ -243,8 +235,7 @@ export async function applyAction(
   }
 }
 
-// 从模型输出里抽出 actions 数组。容忍 JSON 解析失败时直接返回空。
-import { extractJson } from "./provider";
+// 模型输出不合法时不生成任何待确认操作。
 export function parseActions(out: string | null): AiAction[] {
   const parsed = extractJson<{ actions?: unknown }>(out);
   if (!parsed || !Array.isArray(parsed.actions)) return [];
@@ -253,7 +244,6 @@ export function parseActions(out: string | null): AiAction[] {
     .slice(0, 8);
 }
 
-// 读出一条消息的 meta 字段，并解析。
 async function getMessageMeta(messageId: string): Promise<ConfirmMeta | null> {
   const row = await get<MessageRow>("SELECT * FROM messages WHERE id = ?", [messageId]);
   if (!row || !row.meta_json) return null;
@@ -268,7 +258,6 @@ async function updateMessageMeta(messageId: string, meta: ConfirmMeta): Promise<
   await run("UPDATE messages SET meta_json = ? WHERE id = ?", [JSON.stringify(meta), messageId]);
 }
 
-// 确认/取消 AI 提议的 action（用户在 iOS 上点确认/取消）。
 export async function confirmAction(
   io: Server,
   messageId: string,
@@ -286,7 +275,6 @@ export async function confirmAction(
     return { ok: true };
   }
 
-  // confirm：逐条执行
   let failed = 0;
   for (const item of meta.confirm.items) {
     const r = await applyAction(item.action, {

@@ -9,19 +9,39 @@ import { createAiMessage } from "../chat/messageService";
 import { pushCoupleMessageToUnavailableRecipients } from "../push/pushService";
 import { config } from "../config";
 import { aiEnabled } from "./provider";
-import { loadAccounts } from "./memoryStore";
-import { queueRespond, type ReplySink } from "./replyEngine";
-import { onCoupleUserMessage } from "./extractor";
-import { maybeUpdate as maybeUpdateSummary } from "./sessionSummary";
-import { startScheduler } from "./nightly";
-import { maybeCheck as maybeCheckConflict } from "./conflictDetector";
-import { maybeInterject } from "./interjector";
+import { loadAccounts } from "./accounts";
+import { queueRespond, type ReplySink } from "./agent/replyQueue";
+import { agentRuntimeEnabled } from "./agent/runtime";
+import {
+  initializeMemory,
+  onMemoryMessage,
+  setMemoryEngagementHandler,
+  type MemoryEngagementSignal,
+} from "./memory/extractor";
+import { updateConversationContext } from "./conversation/context";
+import { startDailyScheduler } from "./background/dailyScheduler";
+import { startMemoryMaintenance } from "./memory/maintenance";
+
+const engagementCooldowns: Record<MemoryEngagementSignal["kind"], number> = {
+  conflict: 15 * 60 * 1000,
+  interject: 2 * 60 * 60 * 1000,
+};
+const lastEngagementAt: Partial<Record<MemoryEngagementSignal["kind"], number>> = {};
+let activeIo: Server | null = null;
+let pendingEngagement: MemoryEngagementSignal | null = null;
 
 export async function initAi(): Promise<void> {
   await loadAccounts();
+  setMemoryEngagementHandler((signal) => {
+    if (activeIo) handleMemoryEngagement(activeIo, signal);
+    else pendingEngagement = signal;
+  });
+  await initializeMemory();
+  startMemoryMaintenance();
   if (aiEnabled()) {
-    startScheduler();
+    startDailyScheduler();
     console.log("[ai] 大橘已就位（AI 模型已配置）");
+    console.log(`[ai] Agent + MCP ${agentRuntimeEnabled() ? "已就绪" : "不可用，请检查模型兼容性"}`);
   } else {
     console.log("[ai] 未配置 AI_* 环境变量，大橘走本地兜底回复");
   }
@@ -91,6 +111,35 @@ function makeSink(io: Server): ReplySink {
   };
 }
 
+export function setAiSocketIO(io: Server): void {
+  activeIo = io;
+  if (pendingEngagement) {
+    const signal = pendingEngagement;
+    pendingEngagement = null;
+    handleMemoryEngagement(io, signal);
+  }
+}
+
+function handleMemoryEngagement(io: Server, signal: MemoryEngagementSignal): void {
+  const now = Date.now();
+  const lastAt = lastEngagementAt[signal.kind] ?? 0;
+  if (now - lastAt < engagementCooldowns[signal.kind]) return;
+  lastEngagementAt[signal.kind] = now;
+  const trigger = {
+    storedChannel: "couple",
+    question: signal.kind === "conflict" ? "后台冲突介入候选" : "后台主动搭话候选",
+    requesterName: signal.requesterName,
+    requesterUsername: signal.requesterUsername,
+    origin: signal.kind,
+    backgroundReason: signal.reason,
+    backgroundContext: signal.context,
+  } as const;
+  const result = queueRespond(trigger, makeSink(io));
+  console.log(
+    `[ai] 30条批处理提交 ${signal.kind} Agent 候选 confidence=${signal.confidence.toFixed(2)} queue=${result}`,
+  );
+}
+
 // 收到一条真人消息后的 AI 流水线入口（fire-and-forget，绝不阻塞消息主流程）。
 export function handleUserMessage(io: Server, user: AuthUser, message: ClientMessage): void {
   if (message.kind !== "user") return;
@@ -100,9 +149,9 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
   if (!isText && !isImage) return;
   const sink = makeSink(io);
 
-  // 滚动摘要由「收到真人消息」驱动（阈值不够会早退，近乎零成本）。
-  if (aiEnabled()) {
-    void maybeUpdateSummary(storedChannel).catch(() => {});
+  if (isText && aiEnabled()) {
+    onMemoryMessage(storedChannel);
+    void updateConversationContext(storedChannel).catch(() => undefined);
   }
 
   if (storedChannel === "couple") {
@@ -126,10 +175,6 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
       }
       return;
     }
-    onCoupleUserMessage(); // 攒够 N 条触发一次事实提取
-    // 后台管道：冲突检测 + 主动插话（fire-and-forget，绝不阻塞 @召唤应答）
-    void maybeCheckConflict(io, storedChannel).catch(() => {});
-    void maybeInterject(io, storedChannel).catch(() => {});
     if (triggered) {
       const trigger = {
           storedChannel,
@@ -162,8 +207,7 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
     return;
   }
 
-  // 文本 / 图片统一走一条流水线：图片消息此时已经落库，回复引擎里的意图判断
-  // 会自己决定要不要识图（needImages 命中才去看最近这张图，不强求）。
+  // 文本和图片统一交给 Agent；图片是否需要识别由 Agent 选择工具。
   const trigger = {
       storedChannel,
       question: message.text.trim(),

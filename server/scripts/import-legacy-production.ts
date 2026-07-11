@@ -289,7 +289,11 @@ export async function importLegacyProduction(): Promise<void> {
     // TRUNCATE 在事务内可回滚，且会立即清空旧索引页；比逐表 DELETE 后顶着
     // 38 万条 dead tuples 重建快得多。accounts/schema_migrations 明确保留。
     await db.run(
-      "TRUNCATE TABLE uploads, messages, read_receipts, shared_items, personal_items, ai_facts, ai_episodes, ai_docs",
+      `TRUNCATE TABLE
+       message_attachments, ai_memory_import_evidence, ai_memory_evidence,
+       ai_memory_import_candidates, ai_memory_import_runs, ai_memory, ai_memory_cursor,
+       ai_runtime_state, uploads, messages, read_receipts, shared_items, personal_items,
+       ai_facts, ai_episodes, ai_docs`,
     );
 
     const importedMessages = await insertLegacyMessages(db, sqlite);
