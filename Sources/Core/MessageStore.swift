@@ -2,6 +2,12 @@ import Foundation
 import SocketIO
 import UIKit
 
+enum OutboxRetryResult: Equatable {
+    case started
+    case missingLocalFile
+    case notFound
+}
+
 /// 消息 CRUD、发送、搜索、历史同步，从 ChatStore 拆出。
 /// 通过 SocketProvider 访问 socket，不直接依赖 ChatStore。
 @MainActor
@@ -499,18 +505,45 @@ final class MessageStore: ObservableObject {
         return uploaded.url
     }
 
-    func resend(_ message: ChatMessage, session: Session) {
-        guard message.failed else { return }
-        let channel = ChatChannel(rawValue: message.channel) ?? .couple
-        if var pending = ChatLocalDatabase.shared.pendingOutbound(clientId: message.id) {
-            pending.lastError = nil
-            pending.attempts = 0
-            _ = ChatLocalDatabase.shared.upsertPendingOutbound(pending)
-            markPendingSending(clientId: message.id, channel: channel)
-            flushOutbox(session: session)
-        } else if message.type == "text" {
-            updateMessages(channel) { $0.removeAll { $0.id == message.id } }
-            sendText(message.text, channel: channel, session: session)
+    func retryFailedMessage(clientId: String, session: Session) async -> OutboxRetryResult {
+        guard var pending = ChatLocalDatabase.shared.pendingOutbound(clientId: clientId) else {
+            return .notFound
+        }
+        let requiredPaths = pending.attachments
+            .filter { $0.uploadId == nil }
+            .map(\.localFilePath)
+        let singleMediaPath = pending.isMedia && pending.attachments.isEmpty && pending.uploadId == nil
+            ? pending.localFilePath.map { [$0] } ?? []
+            : []
+        guard (requiredPaths + singleMediaPath).allSatisfy(FileManager.default.fileExists(atPath:)) else {
+            return .missingLocalFile
+        }
+
+        pending.lastError = nil
+        pending.attempts = 0
+        guard ChatLocalDatabase.shared.upsertPendingOutbound(pending) else { return .notFound }
+        let channel = ChatChannel(rawValue: pending.channel) ?? .couple
+        markPendingSending(clientId: clientId, channel: channel)
+        flushOutbox(session: session)
+        return .started
+    }
+
+    func discardFailedMessage(clientId: String) async {
+        guard let pending = ChatLocalDatabase.shared.pendingOutbound(clientId: clientId) else {
+            removeOptimisticMessage(clientId: clientId)
+            return
+        }
+        ChatLocalDatabase.shared.deletePendingOutbound(clientId: clientId)
+        removeOptimisticMessage(clientId: clientId, channel: ChatChannel(rawValue: pending.channel))
+        removeLocalFiles(for: pending)
+    }
+
+    private func removeOptimisticMessage(clientId: String, channel: ChatChannel? = nil) {
+        let channels = channel.map { [$0] } ?? ChatChannel.allCases
+        for channel in channels {
+            updateMessages(channel) { list in
+                list.removeAll { ($0.clientId ?? $0.id) == clientId || $0.id == clientId }
+            }
         }
     }
 
@@ -929,14 +962,20 @@ final class MessageStore: ObservableObject {
 
     private func completePendingOutbound(clientId: String) {
         if let item = ChatLocalDatabase.shared.pendingOutbound(clientId: clientId) {
-            if let path = item.localFilePath {
-                try? FileManager.default.removeItem(at: URL(fileURLWithPath: path))
-            }
-            for attachment in item.attachments {
-                try? FileManager.default.removeItem(atPath: attachment.localFilePath)
-            }
+            removeLocalFiles(for: item)
         }
         ChatLocalDatabase.shared.deletePendingOutbound(clientId: clientId)
+    }
+
+    private func removeLocalFiles(for item: PendingOutboundMessage) {
+        let paths = (item.localFilePath.map { [$0] } ?? []) + item.attachments.map(\.localFilePath)
+        for path in Set(paths) where FileManager.default.fileExists(atPath: path) {
+            do {
+                try FileManager.default.removeItem(atPath: path)
+            } catch {
+                print("[MessageStore] Failed to remove outbox file clientId=\(item.clientId)")
+            }
+        }
     }
 
     private func persistOutboundMedia(data: Data, mimeType: String, clientId: String, username: String) -> URL? {

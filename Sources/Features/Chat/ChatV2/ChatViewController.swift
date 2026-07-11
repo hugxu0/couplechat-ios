@@ -1215,6 +1215,34 @@ extension ChatViewController: UICollectionViewDelegateFlowLayout {
                     self.beginEditingRecalledMessage(message)
                 })
             } else if message.kind != "system" {
+                if message.failed {
+                    actions.append(UIAction(title: "重新发送", image: UIImage(systemName: "arrow.clockwise")) { _ in
+                        Task { @MainActor in
+                            let result = await self.store.retryFailedMessage(message)
+                            if result == .missingLocalFile {
+                                let alert = UIAlertController(
+                                    title: "无法重新发送",
+                                    message: "原文件已不存在，可删除后重新选择。",
+                                    preferredStyle: .alert)
+                                alert.addAction(UIAlertAction(title: "知道了", style: .default))
+                                self.present(alert, animated: true)
+                            }
+                        }
+                    })
+                    actions.append(UIAction(
+                        title: "删除", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
+                            let alert = UIAlertController(
+                                title: "删除失败消息？",
+                                message: "这只会删除本机尚未发送的消息。",
+                                preferredStyle: .alert)
+                            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+                            alert.addAction(UIAlertAction(title: "删除", style: .destructive) { _ in
+                                Task { await self.store.discardFailedMessage(message) }
+                            })
+                            self.present(alert, animated: true)
+                        })
+                    return UIMenu(children: actions)
+                }
                 if message.type == "text" {
                     actions.append(UIAction(title: "复制", image: UIImage(systemName: "doc.on.doc")) { _ in
                         UIPasteboard.general.string = message.displayText
@@ -1268,7 +1296,16 @@ extension ChatViewController: ChatTimelineCellDelegate {
         guard let indexPath = collectionView.indexPath(for: cell),
               case .message(let id) = timelineItems[indexPath.item],
               let message = messagesById[id] else { return }
-        store.resend(message)
+        Task { @MainActor in
+            let result = await store.retryFailedMessage(message)
+            guard result == .missingLocalFile else { return }
+            let alert = UIAlertController(
+                title: "无法重新发送",
+                message: "原文件已不存在，可删除后重新选择。",
+                preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            present(alert, animated: true)
+        }
     }
 }
 

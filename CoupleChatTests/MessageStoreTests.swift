@@ -196,3 +196,144 @@ final class MessageStoreMediaPlaceholderTests: XCTestCase {
         XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "sticker"), "[图片]")
     }
 }
+
+@MainActor
+final class MessageStoreFailedOutboxTests: XCTestCase {
+    private var databaseURL: URL?
+    private var temporaryURLs: [URL] = []
+
+    override func setUp() {
+        super.setUp()
+        let username = "failed-outbox-\(UUID().uuidString)"
+        XCTAssertTrue(ChatLocalDatabase.shared.open(username: username))
+        databaseURL = ChatLocalDatabase.shared.currentDatabaseURL
+    }
+
+    override func tearDown() {
+        ChatLocalDatabase.shared.close()
+        for url in temporaryURLs { try? FileManager.default.removeItem(at: url) }
+        if let databaseURL {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+        }
+        super.tearDown()
+    }
+
+    func testDiscardFailedTextClearsOutboxAndTimeline() async {
+        let item = makeItem(clientId: "tmp-failed-text", type: "text")
+        let store = makeStore(containing: item)
+
+        await store.discardFailedMessage(clientId: item.clientId)
+
+        XCTAssertNil(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId))
+        XCTAssertFalse(store.messages(for: .couple).contains { $0.clientId == item.clientId })
+    }
+
+    func testDiscardFailedMediaClearsOutboxTimelineAndFile() async throws {
+        let file = try makeTemporaryFile(extension: "jpg")
+        let item = makeItem(clientId: "tmp-failed-image", type: "image", localFilePath: file.path)
+        let store = makeStore(containing: item)
+
+        await store.discardFailedMessage(clientId: item.clientId)
+
+        XCTAssertNil(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertTrue(store.messages(for: .couple).isEmpty)
+    }
+
+    func testDiscardFailedLivePhotoClearsBothFiles() async throws {
+        let photo = try makeTemporaryFile(extension: "jpg")
+        let video = try makeTemporaryFile(extension: "mov")
+        let attachments = [
+            PendingOutboundAttachment(
+                assetId: "asset", role: "photo", order: 0, localFilePath: photo.path, mimeType: "image/jpeg"),
+            PendingOutboundAttachment(
+                assetId: "asset", role: "pairedVideo", order: 0, localFilePath: video.path, mimeType: "video/quicktime"),
+        ]
+        let item = makeItem(clientId: "tmp-live-photo", type: "image", attachments: attachments)
+        let store = makeStore(containing: item)
+
+        await store.discardFailedMessage(clientId: item.clientId)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: photo.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: video.path))
+    }
+
+    func testRetryMissingFileKeepsFailedState() async {
+        let item = makeItem(
+            clientId: "tmp-missing-image", type: "image",
+            localFilePath: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path)
+        let store = makeStore(containing: item)
+
+        let result = await store.retryFailedMessage(
+            clientId: item.clientId, session: Session(token: "token", username: "xu", name: "小旭"))
+
+        XCTAssertEqual(result, .missingLocalFile)
+        XCTAssertTrue(store.messages(for: .couple).first?.failed == true)
+        XCTAssertFalse(store.messages(for: .couple).first?.pending == true)
+        XCTAssertEqual(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId)?.attempts, 1)
+    }
+
+    func testRetryChecksEverySingleMediaTypeForMissingFile() async {
+        let store = MessageStore()
+        let session = Session(token: "token", username: "xu", name: "小旭")
+
+        for type in ["image", "video", "voice", "file"] {
+            let item = makeItem(
+                clientId: "tmp-missing-\(type)", type: type,
+                localFilePath: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString).path)
+            XCTAssertTrue(ChatLocalDatabase.shared.upsertPendingOutbound(item))
+            store.updateMessages(.couple) { $0.append(item.optimisticMessage(session: session)) }
+
+            let result = await store.retryFailedMessage(clientId: item.clientId, session: session)
+
+            XCTAssertEqual(result, .missingLocalFile, "type=\(type)")
+            XCTAssertTrue(store.messages(for: .couple).first { $0.clientId == item.clientId }?.failed == true)
+        }
+    }
+
+    func testDiscardSameClientIdTwiceIsSafe() async {
+        let item = makeItem(clientId: "tmp-idempotent-delete", type: "text")
+        let store = makeStore(containing: item)
+
+        await store.discardFailedMessage(clientId: item.clientId)
+        await store.discardFailedMessage(clientId: item.clientId)
+
+        XCTAssertNil(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId))
+        XCTAssertTrue(store.messages(for: .couple).isEmpty)
+    }
+
+    private func makeStore(containing item: PendingOutboundMessage) -> MessageStore {
+        XCTAssertTrue(ChatLocalDatabase.shared.upsertPendingOutbound(item))
+        let store = MessageStore()
+        store.updateMessages(.couple) {
+            $0 = [item.optimisticMessage(session: Session(token: "token", username: "xu", name: "小旭"))]
+        }
+        return store
+    }
+
+    private func makeItem(
+        clientId: String,
+        type: String,
+        localFilePath: String? = nil,
+        attachments: [PendingOutboundAttachment] = []
+    ) -> PendingOutboundMessage {
+        PendingOutboundMessage(
+            clientId: clientId, channel: "couple", type: type,
+            text: type == "text" ? "failed" : "[媒体]",
+            replyTo: nil, replyPreview: nil, localFilePath: localFilePath,
+            mimeType: localFilePath == nil ? nil : "image/jpeg",
+            uploadId: nil, uploadURL: nil, createdAt: 1_710_000_000_000,
+            attempts: 1, lastError: "offline", attachments: attachments)
+    }
+
+    private func makeTemporaryFile(extension ext: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+        try Data("test".utf8).write(to: url)
+        temporaryURLs.append(url)
+        return url
+    }
+}

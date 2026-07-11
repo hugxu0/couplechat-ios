@@ -670,9 +670,14 @@ final class ChatStore: ObservableObject {
         return true
     }
 
-    func resend(_ message: ChatMessage) {
-        guard let session = auth.session else { return }
-        messageStore.resend(message, session: session)
+    func retryFailedMessage(_ message: ChatMessage) async -> OutboxRetryResult {
+        guard let session = auth.session else { return .notFound }
+        return await messageStore.retryFailedMessage(
+            clientId: message.clientId ?? message.id, session: session)
+    }
+
+    func discardFailedMessage(_ message: ChatMessage) async {
+        await messageStore.discardFailedMessage(clientId: message.clientId ?? message.id)
     }
 
     func markRead(_ channel: ChatChannel = .couple) { messageStore.markRead(channel) }
