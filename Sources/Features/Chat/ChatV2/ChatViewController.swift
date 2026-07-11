@@ -287,12 +287,12 @@ final class ChatViewController: UIViewController {
         jumpToBottomButton.translatesAutoresizingMaskIntoConstraints = false
         jumpToBottomButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            timelineController.browsingHistoricalWindow = false
+            self.timelineController.browsingHistoricalWindow = false
             Task {
-                await store.ensureLocalMessages(channel)
-                reloadTimeline(animated: false)
-                timelineController.scrollToBottom(animated: true)
-                updateJumpToBottomVisibility(animated: true)
+                await self.store.ensureLocalMessages(self.channel)
+                self.reloadTimeline(animated: false)
+                self.timelineController.scrollToBottom(animated: true)
+                self.updateJumpToBottomVisibility(animated: true)
             }
         }, for: .touchUpInside)
         jumpToBottomBackground.addSubview(jumpToBottomButton)
