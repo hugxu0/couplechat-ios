@@ -127,6 +127,7 @@ final class ChatViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         timelineController.invalidateLayoutIfNeeded()
+        applyInputLayout(duration: 0, curve: .curveEaseOut)
         refreshComposerSurfaceTone()
         timelineController.scheduleInitialPositioning()
     }

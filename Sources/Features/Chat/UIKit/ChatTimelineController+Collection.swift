@@ -95,7 +95,12 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        completeFollowingLatest()
         delegate?.timelineDidBeginDragging()
+    }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        completeFollowingLatest()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

@@ -536,6 +536,17 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             return
         }
         representedImageURL = url
+        if message.type == "video" {
+            Task { [weak self] in
+                let image = await VideoThumbnailGenerator.image(for: url)
+                await MainActor.run {
+                    guard let self, self.representedImageURL == url else { return }
+                    self.mediaImageView.image = image
+                    self.mediaIconView.isHidden = false
+                }
+            }
+            return
+        }
         if let cached = ImageCache.shared.memoryImage(for: url) {
             mediaImageView.image = cached
             mediaIconView.isHidden = message.type != "video"

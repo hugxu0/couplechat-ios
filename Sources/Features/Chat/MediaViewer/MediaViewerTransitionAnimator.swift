@@ -5,6 +5,8 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
     private let selectedId: String?
     private let sourceProvider: ((String) -> UIView?)?
     private let completion: (() -> Void)?
+    private var animator: UIViewPropertyAnimator?
+    private var completedDismissal = false
 
     init(
         presenting: Bool,
@@ -23,10 +25,18 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        let animator = interruptibleAnimator(using: transitionContext)
+        if animator.state == .inactive { animator.startAnimation() }
+    }
+
+    func interruptibleAnimator(
+        using transitionContext: UIViewControllerContextTransitioning
+    ) -> UIViewImplicitlyAnimating {
+        if let animator { return animator }
         let key: UITransitionContextViewControllerKey = presenting ? .to : .from
         guard let controller = transitionContext.viewController(forKey: key) else {
             transitionContext.completeTransition(false)
-            return
+            return UIViewPropertyAnimator(duration: 0, curve: .linear)
         }
         let container = transitionContext.containerView
         let view = controller.view!
@@ -36,30 +46,43 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
         }
 
         let source = selectedId.flatMap { sourceProvider?($0) }
-        let initialTransform = transform(from: source, in: container, target: view.bounds)
+        let sourceTransform = transform(from: source, in: container, target: view.bounds)
         if presenting {
             view.alpha = 0
-            view.transform = initialTransform
+            view.transform = sourceTransform
         }
 
-        UIView.animate(
-            withDuration: transitionDuration(using: transitionContext),
-            delay: 0,
-            usingSpringWithDamping: 0.9,
-            initialSpringVelocity: 0,
-            options: [.curveEaseOut, .allowUserInteraction]
+        let animator = UIViewPropertyAnimator(
+            duration: transitionDuration(using: transitionContext),
+            dampingRatio: 0.9
         ) {
             view.alpha = self.presenting ? 1 : 0
-            view.transform = self.presenting ? .identity : initialTransform
-        } completion: { _ in
-            let completed = !transitionContext.transitionWasCancelled
+            view.transform = self.presenting ? .identity : sourceTransform
+        }
+        animator.addCompletion { [weak self] position in
+            guard let self else { return }
+            let completed = position == .end && !transitionContext.transitionWasCancelled
             if !completed {
                 view.alpha = 1
                 view.transform = .identity
             }
             transitionContext.completeTransition(completed)
-            if completed && !self.presenting { self.completion?() }
+            self.animator = nil
+            if completed { self.completeDismissalIfNeeded() }
         }
+        self.animator = animator
+        return animator
+    }
+
+    func animationEnded(_ transitionCompleted: Bool) {
+        if transitionCompleted { completeDismissalIfNeeded() }
+        animator = nil
+    }
+
+    private func completeDismissalIfNeeded() {
+        guard !presenting, !completedDismissal else { return }
+        completedDismissal = true
+        completion?()
     }
 
     private func transform(from source: UIView?, in container: UIView, target: CGRect) -> CGAffineTransform {

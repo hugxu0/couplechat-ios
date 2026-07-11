@@ -306,6 +306,11 @@ async function main() {
       method: "GET", url: "/api/messages?channel=couple&limit=20", headers: { authorization },
     });
     const signedResponse = await app.inject({ method: "GET", url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search });
+    const rangeResponse = await app.inject({
+      method: "GET",
+      url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search,
+      headers: { range: "bytes=2-7" },
+    });
     const compatibleRouteResponse = await app.inject({ method: "GET", url: `/uploads/${compatibleRouteFilename}` });
     const invalidSignatureResponse = await app.inject({ method: "GET", url: `/media/${routeMediaId}?sig=invalid-signature-value-000000000000` });
     const bypassResponse = await app.inject({ method: "GET", url: `/uploads/${path.basename(routeMediaPath)}` });
@@ -322,6 +327,9 @@ async function main() {
       "签名媒体路由拒绝伪造签名和裸路径旁路",
       healthResponse.statusCode === 200 && healthResponse.json().database === "ok" &&
         signedResponse.statusCode === 200 && signedResponse.body === "signed-media" &&
+        rangeResponse.statusCode === 206 && rangeResponse.body === "gned-m" &&
+        rangeResponse.headers["accept-ranges"] === "bytes" &&
+        rangeResponse.headers["content-range"] === "bytes 2-7/12" &&
         compatibleRouteResponse.statusCode === 200 && compatibleRouteResponse.body === "compatible-media" &&
         invalidSignatureResponse.statusCode === 404 && bypassResponse.statusCode === 404,
     );

@@ -51,6 +51,9 @@ struct ChatNativeHeaderModifier<Destination: View>: ViewModifier {
                 ToolbarItem(placement: .principal) {
                     Button(action: onOpenDetails) {
                         ChatNativeHeaderTitle(model: model)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .dsGlassInteractive(in: Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("打开聊天设置")
@@ -60,7 +63,10 @@ struct ChatNativeHeaderModifier<Destination: View>: ViewModifier {
                         destination()
                     } label: {
                         ChatNativeHeaderAvatar(model: model, avatarURL: avatarURL)
+                            .padding(4)
+                            .dsGlassInteractive(in: Circle())
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .toolbarBackground(.automatic, for: .navigationBar)

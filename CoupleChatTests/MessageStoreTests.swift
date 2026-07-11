@@ -203,6 +203,12 @@ final class MessageStoreMediaPlaceholderTests: XCTestCase {
         XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "image"), "[图片]")
         XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "sticker"), "[图片]")
     }
+
+    func testMediaFileExtensionPreservesQuickTimeContainer() {
+        XCTAssertEqual(MessageStore.fileExtension(for: "video/quicktime"), "mov")
+        XCTAssertEqual(MessageStore.fileExtension(for: "video/mp4"), "mp4")
+        XCTAssertEqual(MessageStore.fileExtension(for: "image/png"), "png")
+    }
 }
 
 @MainActor

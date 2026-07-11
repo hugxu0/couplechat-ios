@@ -49,16 +49,17 @@ final class MediaViewerInteractionController: UIPercentDrivenInteractiveTransiti
                 translationY: translation.y,
                 velocityY: velocity.y,
                 height: view.bounds.height)
-            isInteracting = false
             if shouldFinish {
                 finish()
+                isInteracting = false
             } else {
                 cancel()
+                isInteracting = false
                 NotificationCenter.default.post(name: .mediaViewerResumeVideo, object: nil)
             }
         case .cancelled, .failed:
-            isInteracting = false
             cancel()
+            isInteracting = false
             NotificationCenter.default.post(name: .mediaViewerResumeVideo, object: nil)
         default:
             break

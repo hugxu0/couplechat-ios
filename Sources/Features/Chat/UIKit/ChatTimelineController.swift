@@ -40,7 +40,7 @@ final class ChatTimelineController: NSObject {
     var pendingTopAnchor: (itemId: String, offset: CGFloat)?
     var stickToLatestAfterNextReload = false
     var scrollState = ChatScrollState()
-    private var initialPositioningScheduled = false
+    private var suppressesJumpToLatest = false
     var topInset: CGFloat = 96
     var bottomInset: CGFloat = 0
     private var lastMeasuredWidth: CGFloat = 0
@@ -103,7 +103,7 @@ final class ChatTimelineController: NSObject {
     var hasInitialPosition: Bool { scrollState.didInitialPosition }
 
     var shouldShowJumpToLatest: Bool {
-        !(isNearBottom() && isNearLatestWindow())
+        !suppressesJumpToLatest && !(isNearBottom() && isNearLatestWindow())
     }
 
     func setInsets(top: CGFloat, bottom: CGFloat) {
@@ -131,16 +131,16 @@ final class ChatTimelineController: NSObject {
     }
 
     func scheduleInitialPositioning() {
-        guard !scrollState.didInitialPosition, !initialPositioningScheduled, !items.isEmpty else { return }
-        initialPositioningScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.initialPositioningScheduled = false
-            guard !self.scrollState.didInitialPosition, !self.items.isEmpty else { return }
-            self.collectionView.layoutIfNeeded()
-            let commands = ChatScrollReducer.reduce(state: &self.scrollState, event: .initialContent)
-            self.execute(commands)
-        }
+        guard !scrollState.didInitialPosition,
+              !items.isEmpty,
+              collectionView.bounds.width > 0,
+              collectionView.bounds.height > 0,
+              bottomInset > 0 else { return }
+        collectionView.collectionViewLayout.invalidateLayout()
+        collectionView.layoutIfNeeded()
+        let commands = ChatScrollReducer.reduce(state: &scrollState, event: .initialContent)
+        execute(commands)
+        collectionView.alpha = 1
     }
 
     private func configureCollectionView() {
@@ -148,6 +148,7 @@ final class ChatTimelineController: NSObject {
         collectionView.alwaysBounceVertical = true
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.keyboardDismissMode = .interactive
+        collectionView.alpha = 0
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.register(ChatTimeCell.self, forCellWithReuseIdentifier: ChatTimeCell.reuseId)
@@ -168,14 +169,14 @@ final class ChatTimelineController: NSObject {
         case .forceLatest:
             stickToLatestAfterNextReload = false
             browsingHistoricalWindow = false
-            scrollToBottom(animated: animated)
+            followLatest(animated: false)
         case .restorePendingAnchor:
             if let anchor = pendingTopAnchor { restore(anchor) }
             pendingTopAnchor = nil
         case .restoreVisibleAnchor:
             if let oldAnchor { restore(oldAnchor) }
         case .followLatest:
-            scrollToBottom(animated: animated)
+            followLatest(animated: animated)
         case .preservePosition:
             break
         }
@@ -234,5 +235,20 @@ final class ChatTimelineController: NSObject {
                 break
             }
         }
+    }
+
+    private func followLatest(animated: Bool) {
+        suppressesJumpToLatest = true
+        scrollToBottom(animated: animated)
+        guard animated else {
+            suppressesJumpToLatest = false
+            return
+        }
+    }
+
+    func completeFollowingLatest() {
+        guard suppressesJumpToLatest else { return }
+        suppressesJumpToLatest = false
+        delegate?.timelineDidScroll()
     }
 }

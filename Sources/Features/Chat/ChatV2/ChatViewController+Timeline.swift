@@ -75,7 +75,6 @@ extension ChatViewController {
         Task { [weak self] in
             guard let self else { return }
             await store.loadOlderAsync(channel)
-            reloadTimeline(animated: false)
             timelineController.refreshControl.endRefreshing()
             isHistoryRefreshing = false
             updateJumpToBottomVisibility(animated: true)
@@ -92,7 +91,6 @@ extension ChatViewController {
         Task { [weak self] in
             guard let self else { return }
             await store.loadNewerAsync(channel)
-            reloadTimeline(animated: false)
             if isNearLatestWindow() {
                 timelineController.browsingHistoricalWindow = false
             }

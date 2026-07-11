@@ -1001,14 +1001,7 @@ final class MessageStore: ObservableObject {
         let directory = applicationSupport
             .appendingPathComponent("ChatOutboxMedia", isDirectory: true)
             .appendingPathComponent(safeUsername, isDirectory: true)
-        let ext: String
-        if mimeType.contains("png") { ext = "png" }
-        else if mimeType.contains("gif") { ext = "gif" }
-        else if mimeType.contains("webp") { ext = "webp" }
-        else if mimeType.contains("video") { ext = "mp4" }
-        else if mimeType.contains("audio") { ext = "m4a" }
-        else if mimeType.contains("pdf") { ext = "pdf" }
-        else { ext = "jpg" }
+        let ext = Self.fileExtension(for: mimeType)
         let url = directory.appendingPathComponent(clientId).appendingPathExtension(ext)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1121,16 +1114,27 @@ final class MessageStore: ObservableObject {
 
     static func multipartBody(data: Data, mimeType: String, boundary: String) -> Data {
         var body = Data()
-        let filename: String
-        if mimeType.contains("video") { filename = "media.mp4" }
-        else if mimeType.contains("audio") { filename = "media.m4a" }
-        else { filename = "media.jpg" }
+        let filename = "media.\(fileExtension(for: mimeType))"
         body.append("--\(boundary)\r\n")
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
         body.append("Content-Type: \(mimeType)\r\n\r\n")
         body.append(data)
         body.append("\r\n--\(boundary)--\r\n")
         return body
+    }
+
+    static func fileExtension(for mimeType: String) -> String {
+        switch mimeType.lowercased() {
+        case "video/quicktime": return "mov"
+        case "video/x-m4v": return "m4v"
+        case let value where value.contains("video"): return "mp4"
+        case let value where value.contains("png"): return "png"
+        case let value where value.contains("gif"): return "gif"
+        case let value where value.contains("webp"): return "webp"
+        case let value where value.contains("audio"): return "m4a"
+        case let value where value.contains("pdf"): return "pdf"
+        default: return "jpg"
+        }
     }
 
     private static func uploadURL(purpose: UploadPurpose) -> URL {

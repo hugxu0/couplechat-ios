@@ -18,7 +18,8 @@ final class MediaViewerSession: ObservableObject {
 }
 
 @MainActor
-final class ChatMediaViewerCoordinator: NSObject, UIViewControllerTransitioningDelegate {
+final class ChatMediaViewerCoordinator: NSObject, UIViewControllerTransitioningDelegate,
+    UIAdaptivePresentationControllerDelegate {
     private weak var host: MediaViewerHostController?
     private var session: MediaViewerSession?
     private var sourceProvider: ((String) -> UIView?)?
@@ -46,6 +47,7 @@ final class ChatMediaViewerCoordinator: NSObject, UIViewControllerTransitioningD
             canStart: { session.zoomScale <= 1.01 })
         session.onDismiss = { [weak host] in host?.dismiss(animated: true) }
         presenter.present(host, animated: true)
+        host.presentationController?.delegate = self
     }
 
     func animationController(
@@ -64,19 +66,26 @@ final class ChatMediaViewerCoordinator: NSObject, UIViewControllerTransitioningD
             presenting: false,
             selectedId: session?.selectedId,
             sourceProvider: sourceProvider,
-            completion: { [weak self] in
-                self?.host = nil
-                self?.session = nil
-                self?.interactionController = nil
-                self?.sourceProvider = nil
-                self?.onDismiss?()
-            })
+            completion: { [weak self] in self?.finishSession() })
     }
 
     func interactionControllerForDismissal(
         using animator: UIViewControllerAnimatedTransitioning
     ) -> UIViewControllerInteractiveTransitioning? {
         interactionController?.isInteracting == true ? interactionController : nil
+    }
+
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        finishSession()
+    }
+
+    private func finishSession() {
+        guard host != nil || session != nil else { return }
+        host = nil
+        session = nil
+        interactionController = nil
+        sourceProvider = nil
+        onDismiss?()
     }
 }
 

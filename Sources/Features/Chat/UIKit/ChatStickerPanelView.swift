@@ -32,7 +32,7 @@ final class ChatStickerPanelView: UIView {
     private var usesLightContent = false
     private let collectionView: UICollectionView
     private let backgroundGlass = ChatGlassView(style: .systemThinMaterial, cornerRadius: 30)
-    private let tabGlass = ChatGlassView(style: .systemThinMaterial, cornerRadius: 20)
+    private let tabGlass = ChatGlassView(style: .systemThinMaterial, cornerRadius: 21)
     private let tabScrollView = UIScrollView()
     private let tabStack = UIStackView()
     private var cancellables: Set<AnyCancellable> = []
@@ -47,7 +47,7 @@ final class ChatStickerPanelView: UIView {
         let layout = UICollectionViewFlowLayout()
         layout.minimumLineSpacing = 6
         layout.minimumInteritemSpacing = 6
-        layout.sectionInset = UIEdgeInsets(top: 10, left: 10, bottom: 12, right: 10)
+        layout.sectionInset = UIEdgeInsets(top: 8, left: 10, bottom: 4, right: 10)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
 
         super.init(frame: .zero)
@@ -105,7 +105,7 @@ final class ChatStickerPanelView: UIView {
         tabScrollView.translatesAutoresizingMaskIntoConstraints = false
         tabGlass.translatesAutoresizingMaskIntoConstraints = false
         tabGlass.clipsToBounds = true
-        tabGlass.update(cornerRadius: 20, tintAlpha: 0.04, borderAlpha: 0.10)
+        tabGlass.update(cornerRadius: 21, tintAlpha: 0.04, borderAlpha: 0.10)
         tabStack.axis = .horizontal
         tabStack.spacing = 4
         tabStack.alignment = .center
@@ -122,13 +122,13 @@ final class ChatStickerPanelView: UIView {
 
             collectionView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             collectionView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            collectionView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            collectionView.bottomAnchor.constraint(equalTo: tabGlass.topAnchor, constant: -6),
+            collectionView.topAnchor.constraint(equalTo: tabGlass.bottomAnchor, constant: 4),
+            collectionView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
 
             tabGlass.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             tabGlass.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            tabGlass.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
-            tabGlass.heightAnchor.constraint(equalToConstant: 34),
+            tabGlass.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            tabGlass.heightAnchor.constraint(equalToConstant: 42),
 
             tabScrollView.leadingAnchor.constraint(equalTo: tabGlass.leadingAnchor),
             tabScrollView.trailingAnchor.constraint(equalTo: tabGlass.trailingAnchor),
@@ -185,19 +185,20 @@ final class ChatStickerPanelView: UIView {
     }
 
     private func makeTabButton(for tab: Tab) -> UIButton {
-        var config = UIButton.Configuration.filled()
-        config.cornerStyle = .capsule
-        config.contentInsets = NSDirectionalEdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8)
-        config.imagePadding = 3
-        config.baseBackgroundColor = tab == selectedTab ? accentColor.withAlphaComponent(0.92) : neutralFill
-        config.baseForegroundColor = tab == selectedTab ? .white : secondaryColor
-        config.title = title(for: tab)
-        config.image = UIImage(systemName: icon(for: tab))
-
+        var config = UIButton.Configuration.plain()
+        config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4)
         let button = UIButton(configuration: config)
-        button.titleLabel?.font = .systemFont(ofSize: 11, weight: .semibold)
-        button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        button.backgroundColor = tab == selectedTab ? accentColor.withAlphaComponent(0.92) : neutralFill
+        button.layer.cornerCurve = .continuous
+        button.layer.cornerRadius = 17
+        button.imageView?.contentMode = .scaleAspectFit
+        button.titleLabel?.font = .systemFont(ofSize: 20)
+        button.tintColor = tab == selectedTab ? .white : secondaryColor
+        button.accessibilityLabel = title(for: tab)
+        button.widthAnchor.constraint(equalToConstant: 38).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 34).isActive = true
         button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        configureIcon(for: tab, button: button)
         button.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.selectedTab = tab
@@ -206,6 +207,36 @@ final class ChatStickerPanelView: UIView {
             self.reloadItems()
         }, for: .touchUpInside)
         return button
+    }
+
+    private func configureIcon(for tab: Tab, button: UIButton) {
+        if tab == .emoji {
+            button.setTitle(EmojiCatalog.sections.first?.emojis.first ?? "😀", for: .normal)
+            return
+        }
+        guard let sticker = firstSticker(for: tab), let url = sticker.mediaURL else {
+            button.setImage(UIImage(systemName: icon(for: tab)), for: .normal)
+            return
+        }
+        Task { [weak button] in
+            let image = await ImageCache.shared.image(for: url)
+            await MainActor.run {
+                button?.setImage(image ?? UIImage(systemName: self.icon(for: tab)), for: .normal)
+            }
+        }
+    }
+
+    private func firstSticker(for tab: Tab) -> Sticker? {
+        switch tab {
+        case .emoji:
+            return nil
+        case .favorites:
+            return store.favorites.first
+        case .all:
+            return store.stickers.sorted { $0.addedAt > $1.addedAt }.first
+        case .group(let id):
+            return store.stickers(in: id).first
+        }
     }
 
     private func reloadItems() {

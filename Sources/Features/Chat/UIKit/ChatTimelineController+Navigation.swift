@@ -2,13 +2,7 @@ import UIKit
 
 extension ChatTimelineController {
     func captureBoundaryAnchor() {
-        let boundary = items.first { if case .message = $0 { return true }; return false }
-        if let boundary {
-            let offset = max(topInset + 18, collectionView.bounds.height - bottomInset - 96)
-            pendingTopAnchor = (boundary.id, offset)
-        } else {
-            pendingTopAnchor = visibleAnchor()
-        }
+        pendingTopAnchor = visibleAnchor()
     }
 
     func captureVisibleAnchor() {
