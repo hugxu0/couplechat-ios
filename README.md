@@ -17,6 +17,7 @@
 ## 快速入口
 
 - [文档导航](Docs/README.md)：新开发者或 AI 的阅读起点
+- [AI 接手说明](Docs/AI_HANDOFF.md)：当前进度、接手步骤、验证记录和下一任务提示词
 - [项目现状](Docs/PROJECT_STATUS.md)：已实现功能、限制和待处理问题
 - [体验与架构优化计划](Docs/REFACTOR_PLAN.md)：本轮重构顺序、任务边界和逐项验收标准
 - [系统架构](Docs/ARCHITECTURE.md)：前后端模块、数据流和关键约束
