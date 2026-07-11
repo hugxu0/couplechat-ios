@@ -193,7 +193,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             aiActivityDots.append(dot)
         }
 
-        mediaImageView.contentMode = .scaleAspectFit
+        mediaImageView.contentMode = .scaleAspectFill
         mediaImageView.clipsToBounds = true
         mediaImageView.layer.cornerCurve = .continuous
         mediaImageView.layer.cornerRadius = 8
@@ -543,6 +543,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
                     guard let self, self.representedImageURL == url else { return }
                     self.mediaImageView.image = image
                     self.mediaIconView.isHidden = false
+                    self.setNeedsLayout()
                 }
             }
             return
@@ -550,6 +551,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         if let cached = ImageCache.shared.memoryImage(for: url) {
             mediaImageView.image = cached
             mediaIconView.isHidden = message.type != "video"
+            setNeedsLayout()
             return
         }
         Task { [weak self] in
@@ -558,6 +560,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
                 guard let self, self.representedImageURL == url else { return }
                 self.mediaImageView.image = image
                 self.mediaIconView.isHidden = message.type != "video" && image != nil
+                self.setNeedsLayout()
             }
         }
     }
@@ -662,11 +665,16 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             } else {
                 captionHeight = 0
             }
-            let mediaFrame = CGRect(
+            let availableMediaFrame = CGRect(
                 x: inset,
                 y: y,
                 width: bubbleView.bounds.width - inset * 2,
                 height: bubbleView.bounds.height - y - inset - captionHeight
+            )
+            let mediaFrame = fittedMediaFrame(
+                in: availableMediaFrame,
+                image: mediaImageView.image,
+                preservesFullImage: message.type == "image" || message.type == "video"
             )
             mediaImageView.frame = mediaFrame
             if !albumPhotos.isEmpty, albumPhotos.count > 1 {
@@ -709,6 +717,28 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         default:
             return min(maxWidth, ChatTimelineMetrics.textBubbleWidth(for: message, containerWidth: contentView.bounds.width))
         }
+    }
+
+    private func fittedMediaFrame(
+        in availableFrame: CGRect,
+        image: UIImage?,
+        preservesFullImage: Bool
+    ) -> CGRect {
+        guard preservesFullImage,
+              let image,
+              image.size.width > 0,
+              image.size.height > 0 else { return availableFrame }
+
+        let scale = min(
+            availableFrame.width / image.size.width,
+            availableFrame.height / image.size.height
+        )
+        let fittedSize = CGSize(
+            width: floor(image.size.width * scale),
+            height: floor(image.size.height * scale)
+        )
+        let x = mine ? availableFrame.maxX - fittedSize.width : availableFrame.minX
+        return CGRect(x: x, y: availableFrame.minY, width: fittedSize.width, height: fittedSize.height)
     }
 
     private func cornerRadius(for message: ChatMessage) -> CGFloat {
