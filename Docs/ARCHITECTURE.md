@@ -36,6 +36,7 @@ Fastify + Socket.IO · 127.0.0.1:8080
 - `HistorySyncCoordinator`：拥有历史与图片全量同步任务；离开存储页面不取消，显式暂停或登出才取消；
 - `SocketContract`：事件名和出站 payload；
 - `RealtimeConnectionCoordinator`：Socket.IO 生命周期、认证握手、重连、健康检查和连接状态；
+- `RealtimeEventRouter`：消息、已读、AI、presence 和共享状态等领域事件路由；
 - `HTTPClient`：可注入 REST 边界；
 - `ServerConfig`：服务端地址；
 - `ImageCache`、`StickerStore`、`MediaFavoriteStore`：本机媒体状态。
