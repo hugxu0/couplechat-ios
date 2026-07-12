@@ -23,6 +23,8 @@ import {
   setAway,
 } from "./presence";
 import { createRealtimeMessageUseCases } from "../chat/realtimeUseCases";
+import { nanoid } from "nanoid";
+import { errorCodeFor, errorCodes } from "../errors/errorCodes";
 
 type Ack = (value: unknown) => void;
 
@@ -39,7 +41,7 @@ async function safeAck(fn: () => Promise<unknown>, ack?: Ack) {
     const result = await fn();
     ack?.(result);
   } catch (error) {
-    ack?.({ ok: false, error: error instanceof Error ? error.message : "unknown_error" });
+    ack?.({ ok: false, error: errorCodeFor(error) });
   }
 }
 
@@ -88,9 +90,10 @@ export function registerRealtime(io: Server) {
     socket.on(socketEvents.messageSend, (payload: unknown, ack?: Ack) =>
       safeAck(async () => {
         const input = sendMessageSchema.parse(payload ?? {});
-        const message = await messages.send(user, input);
+        const requestId = `evt_${nanoid(12)}`;
+        const message = await messages.send(user, input, requestId);
         io.to(roomFor(input.channel, user)).emit(socketEvents.messageNew, message);
-        return { ok: true, id: message.id, message };
+        return { ok: true, id: message.id, message, requestId };
       }, ack),
     );
 
@@ -98,7 +101,7 @@ export function registerRealtime(io: Server) {
       safeAck(async () => {
         const input = recallMessageSchema.parse(payload ?? {});
         const recalled = await messages.recall(user, input.id);
-        if (!recalled) return { ok: false, error: "not_found" };
+        if (!recalled) return { ok: false, error: errorCodes.notFound };
         io.to(roomFor(recalled.channel, user)).emit(socketEvents.messageRecalled, recalled);
         return { ok: true };
       }, ack),

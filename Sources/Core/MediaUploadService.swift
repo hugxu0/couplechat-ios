@@ -89,11 +89,12 @@ struct MediaUploadService {
 
     private func decode(_ data: Data, response: URLResponse) throws -> MediaUploadResult {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let message = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            let message = ServerErrorCode.message(for: code, fallback: "上传失败")
             throw NSError(
                 domain: "upload",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: message ?? "上传失败"])
+                userInfo: [NSLocalizedDescriptionKey: message])
         }
         return try JSONDecoder().decode(MediaUploadResult.self, from: data)
     }

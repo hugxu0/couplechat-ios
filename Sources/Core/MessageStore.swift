@@ -961,8 +961,9 @@ final class MessageStore: ObservableObject {
         if succeeded {
             await completePendingOutbound(clientId: item.clientId)
         } else {
-            let error = (ack.first as? [String: Any])?["error"] as? String ?? "发送确认超时"
-            await recordPendingFailure(item, channel: channel, message: error)
+            let code = (ack.first as? [String: Any])?["error"] as? String
+            let message = ServerErrorCode.message(for: code, fallback: "发送确认超时")
+            await recordPendingFailure(item, channel: channel, message: message)
         }
         return succeeded
     }

@@ -212,8 +212,9 @@ final class ChatStore: ObservableObject {
         guard let http = response as? HTTPURLResponse else { throw BootstrapError.invalidResponse }
         if http.statusCode == 401 { throw BootstrapError.unauthorized }
         guard (200..<300).contains(http.statusCode) else {
-            let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
-            throw BootstrapError.server(detail ?? "初始化失败（\(http.statusCode)）")
+            let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            let detail = ServerErrorCode.message(for: code, fallback: "初始化失败（\(http.statusCode)）")
+            throw BootstrapError.server(detail)
         }
         return try AppBootstrapSnapshot.decode(data)
     }

@@ -32,10 +32,18 @@ test("personal items preserve owner isolation and shared visibility", async () =
       headers: { authorization: `Bearer ${createToken(xu)}` },
       payload: { kind: "memo", scope: "shared", title: "路由广播测试" },
     });
-    await app.close();
     assert.equal(response.statusCode, 201);
     assert.equal(events[0]?.action, "created");
     assert.equal((events[0]?.item as { scope?: string })?.scope, "shared");
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/login",
+      payload: { username: "missing", password: "wrong" },
+    });
+    assert.equal(login.statusCode, 401);
+    assert.equal(login.json().error, "invalid_credentials");
+    await app.close();
   });
 });
 

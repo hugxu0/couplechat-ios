@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticate, listPublicAccounts, setBarkKey } from "./accounts";
 import { createToken } from "./token";
 import { requireAuth } from "./httpAuth";
+import { errorCodes } from "../errors/errorCodes";
 
 const loginBody = z.object({
   username: z.string().min(1),
@@ -18,10 +19,10 @@ export async function registerAuthRoutes(app: FastifyInstance) {
 
   app.post("/api/login", async (request, reply) => {
     const parsed = loginBody.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return reply.code(400).send({ error: errorCodes.invalidRequest });
 
     const user = await authenticate(parsed.data.username, parsed.data.password);
-    if (!user) return reply.code(401).send({ error: "用户名或密码不对" });
+    if (!user) return reply.code(401).send({ error: errorCodes.invalidCredentials });
 
     return {
       token: createToken(user),

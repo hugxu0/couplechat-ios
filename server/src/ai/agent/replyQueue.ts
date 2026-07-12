@@ -2,6 +2,8 @@ import { describeAction, type ConfirmMeta } from "../actions/personalItems";
 import { runAgentReply } from "./runtime";
 import { PACE } from "../settings";
 import { traceBegin, traceError, traceFlush, traceReply, traceTiming } from "../debug/trace";
+import { startOperation } from "../../observability/operationLog";
+import { errorCodeFor } from "../../errors/errorCodes";
 
 export interface ReplySink {
   emit(storedChannel: string, text: string, isFirst: boolean, meta?: unknown): Promise<void>;
@@ -138,12 +140,20 @@ export async function runReplyTaskWithTimeout(
   timeoutMs: number = PACE.respondTimeoutMs,
 ): Promise<void> {
   const state: ResponseRunState = { cancelled: false, emitted: false };
+  const operation = startOperation("ai.reply", {
+    requestId: trigger.messageId ?? "background",
+    channel: trigger.storedChannel,
+    origin: trigger.origin ?? "user",
+  });
   const background = trigger.origin === "conflict" || trigger.origin === "interject";
   let timer: NodeJS.Timeout | null = null;
+  let timedOut = false;
+  let failure: unknown;
   const timeout = new Promise<void>((resolve) => {
     timer = setTimeout(() => {
       void (async () => {
         state.cancelled = true;
+        timedOut = true;
         console.warn(`[ai] 应答超时，已释放频道队列: ${trigger.storedChannel}`);
         if (!background && !state.emitted) {
           await sink.emit(trigger.storedChannel, TIMEOUT_REPLY, true).catch(() => undefined);
@@ -158,8 +168,14 @@ export async function runReplyTaskWithTimeout(
   });
   try {
     await Promise.race([task(state), timeout]);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     if (timer) clearTimeout(timer);
+    if (timedOut) operation.timeout({ emitted: state.emitted });
+    else if (failure) operation.failure(errorCodeFor(failure), { emitted: state.emitted });
+    else operation.success({ emitted: state.emitted });
   }
 }
 

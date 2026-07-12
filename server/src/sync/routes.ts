@@ -4,6 +4,8 @@ import { listPublicAccounts } from "../auth/accounts";
 import { requireAuth } from "../auth/httpAuth";
 import { countMessages, fetchMessages, getReadReceipts } from "../chat/messageService";
 import { getSharedState } from "../shared/sharedService";
+import { errorCodeFor, errorCodes } from "../errors/errorCodes";
+import { startOperation } from "../observability/operationLog";
 
 const channelSchema = z.enum(["couple", "ai"]);
 const optionalTimestamp = z.coerce.number().finite().optional();
@@ -23,35 +25,53 @@ const messagesQuerySchema = z.object({
 export async function registerSyncRoutes(app: FastifyInstance) {
   app.get("/api/bootstrap", { preHandler: requireAuth }, async (request, reply) => {
     const user = request.user;
-    if (!user) return reply.code(401).send({ error: "unauthorized" });
+    if (!user) return reply.code(401).send({ error: errorCodes.unauthorized });
+    const operation = startOperation("sync.bootstrap", { requestId: request.id, channel: "all" });
 
-    const [accounts, couple, ai, coupleRead, sharedState] = await Promise.all([
-      listPublicAccounts(),
-      fetchMessages(user, { channel: "couple", limit: 40 }),
-      fetchMessages(user, { channel: "ai", limit: 40 }),
-      getReadReceipts(user, "couple"),
-      getSharedState(),
-    ]);
+    try {
+      const [accounts, couple, ai, coupleRead, sharedState] = await Promise.all([
+        listPublicAccounts(),
+        fetchMessages(user, { channel: "couple", limit: 40 }),
+        fetchMessages(user, { channel: "ai", limit: 40 }),
+        getReadReceipts(user, "couple"),
+        getSharedState(),
+      ]);
+      operation.success({ coupleCount: couple.length, aiCount: ai.length });
 
-    return {
-      ok: true,
-      serverTime: Date.now(),
-      accounts,
-      messages: { couple, ai },
-      readStates: { couple: coupleRead, ai: {} },
-      sharedState,
-    };
+      return {
+        ok: true,
+        serverTime: Date.now(),
+        accounts,
+        messages: { couple, ai },
+        readStates: { couple: coupleRead, ai: {} },
+        sharedState,
+      };
+    } catch (error) {
+      operation.failure(errorCodeFor(error));
+      throw error;
+    }
   });
 
   app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => {
     const user = request.user;
-    if (!user) return reply.code(401).send({ error: "unauthorized" });
+    if (!user) return reply.code(401).send({ error: errorCodes.unauthorized });
     const parsed = messagesQuerySchema.safeParse(request.query);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const [list, total] = await Promise.all([
-      fetchMessages(user, parsed.data),
-      countMessages(user, parsed.data.channel),
-    ]);
-    return { ok: true, list, total };
+    if (!parsed.success) return reply.code(400).send({ error: errorCodes.invalidRequest });
+    const operation = startOperation("sync.messages", {
+      requestId: request.id,
+      channel: parsed.data.channel,
+      direction: parsed.data.before !== undefined ? "before" : parsed.data.around !== undefined ? "around" : "latest",
+    });
+    try {
+      const [list, total] = await Promise.all([
+        fetchMessages(user, parsed.data),
+        countMessages(user, parsed.data.channel),
+      ]);
+      operation.success({ resultCount: list.length, total });
+      return { ok: true, list, total };
+    } catch (error) {
+      operation.failure(errorCodeFor(error));
+      throw error;
+    }
   });
 }

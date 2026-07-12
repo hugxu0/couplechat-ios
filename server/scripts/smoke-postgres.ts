@@ -301,6 +301,8 @@ async function main() {
     const app = await buildApp();
     const authorization = `Bearer ${createToken(user)}`;
     const healthResponse = await app.inject({ method: "GET", url: "/health" });
+    const liveResponse = await app.inject({ method: "GET", url: "/live" });
+    const readyResponse = await app.inject({ method: "GET", url: "/ready" });
     const bootstrapResponse = await app.inject({
       method: "GET", url: "/api/bootstrap", headers: { authorization },
     });
@@ -328,6 +330,8 @@ async function main() {
     assertOk(
       "签名媒体路由拒绝伪造签名和裸路径旁路",
       healthResponse.statusCode === 200 && healthResponse.json().database === "ok" &&
+        liveResponse.statusCode === 200 && liveResponse.json().process === "alive" &&
+        readyResponse.statusCode === 200 && readyResponse.json().database === "ok" &&
         signedResponse.statusCode === 200 && signedResponse.body === "signed-media" &&
         rangeResponse.statusCode === 206 && rangeResponse.body === "gned-m" &&
         rangeResponse.headers["accept-ranges"] === "bytes" &&

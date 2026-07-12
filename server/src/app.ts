@@ -12,6 +12,7 @@ import { registerMediaAccessRoutes } from "./upload/mediaAccess";
 import { pingDatabase } from "./db";
 import { registerAiDebugRoutes } from "./ai/debug/routes";
 import { registerAiMcpRoutes } from "./ai/mcp/routes";
+import { errorCodeFor } from "./errors/errorCodes";
 
 export interface AppDependencies {
   personalItemEvents?: PersonalItemRouteEvents;
@@ -26,6 +27,14 @@ export async function buildApp(dependencies: AppDependencies = {}) {
     },
   });
 
+  app.setErrorHandler((error, request, reply) => {
+    const errorCode = errorCodeFor(error);
+    const candidate = error as { statusCode?: unknown };
+    const statusCode = typeof candidate.statusCode === "number" ? candidate.statusCode : 500;
+    request.log.warn({ errorCode, statusCode }, "request failed");
+    return reply.code(statusCode).send({ error: errorCode });
+  });
+
   await app.register(cors, { origin: true });
   await app.register(multipart, {
     limits: {
@@ -33,14 +42,17 @@ export async function buildApp(dependencies: AppDependencies = {}) {
       files: 1,
     },
   });
-  app.get("/health", async (_request, reply) => {
+  const readiness = async (_request: unknown, reply: { code(status: number): { send(value: unknown): unknown } }) => {
     try {
       await pingDatabase();
       return { ok: true, database: "ok", ts: Date.now() };
     } catch {
       return reply.code(503).send({ ok: false, database: "unavailable", ts: Date.now() });
     }
-  });
+  };
+  app.get("/live", async () => ({ ok: true, process: "alive", ts: Date.now() }));
+  app.get("/ready", readiness);
+  app.get("/health", readiness);
 
   await registerAuthRoutes(app);
   await registerMediaAccessRoutes(app);

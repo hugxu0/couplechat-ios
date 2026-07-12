@@ -8,6 +8,8 @@ import { run } from "../db";
 import { config } from "../config";
 import { requireAuth } from "../auth/httpAuth";
 import { signedMediaURL } from "./mediaAccess";
+import { errorCodeFor, errorCodes } from "../errors/errorCodes";
+import { startOperation } from "../observability/operationLog";
 
 const allowedMime = new Set([
   "image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif",
@@ -95,17 +97,23 @@ export async function registerUploadRoutes(app: FastifyInstance) {
 
   app.post("/api/upload", { preHandler: requireAuth }, async (request, reply) => {
     if (!config.uploadsWritable) {
-      return reply.code(503).send({ error: "uploads_disabled_in_cloud_db_debug" });
+      return reply.code(503).send({ error: errorCodes.uploadDisabled });
     }
-    if (!request.user) return reply.code(401).send({ error: "unauthorized" });
+    if (!request.user) return reply.code(401).send({ error: errorCodes.unauthorized });
     const query = uploadQuerySchema.safeParse(request.query ?? {});
-    if (!query.success) return reply.code(400).send({ error: "invalid_upload_purpose" });
+    if (!query.success) return reply.code(400).send({ error: errorCodes.invalidRequest });
 
     const file = await request.file();
-    if (!file) return reply.code(400).send({ error: "file_required" });
-    if (!allowedMime.has(file.mimetype)) return reply.code(415).send({ error: "unsupported_media_type" });
+    if (!file) return reply.code(400).send({ error: errorCodes.fileRequired });
+    if (!allowedMime.has(file.mimetype)) return reply.code(415).send({ error: errorCodes.unsupportedMediaType });
 
     const id = `up_${nanoid(16)}`;
+    const operation = startOperation("upload.create", {
+      requestId: request.id,
+      uploadId: id,
+      purpose: query.data.purpose,
+      mimeType: file.mimetype,
+    });
     const filename = `${id}${extensionFor(file.mimetype)}`;
     const fullPath = path.join(config.uploadDir, filename);
     const tempPath = path.join(config.uploadDir, `.${filename}.uploading`);
@@ -122,6 +130,7 @@ export async function registerUploadRoutes(app: FastifyInstance) {
         [id, request.user.username, fullPath, url, file.mimetype, stat.size, Date.now(), query.data.purpose],
       );
       fs.renameSync(tempPath, fullPath);
+      operation.success({ sizeBytes: stat.size });
 
       return {
         id,
@@ -135,6 +144,7 @@ export async function registerUploadRoutes(app: FastifyInstance) {
       fs.rmSync(tempPath, { force: true });
       fs.rmSync(fullPath, { force: true });
       await run("DELETE FROM uploads WHERE id = ?", [id]).catch(() => undefined);
+      operation.failure(errorCodeFor(error));
       throw error;
     }
 
