@@ -21,12 +21,6 @@ final class MessageStore: ObservableObject {
         let error: String?
     }
 
-    private struct HistoryPage {
-        let messages: [ChatMessage]
-        let total: Int?
-        let error: String?
-    }
-
     private struct LocalCacheSnapshot {
         let messagesByChannel: [String: [ChatMessage]]
         let readStates: [String: [String: Double]]
@@ -60,9 +54,21 @@ final class MessageStore: ObservableObject {
         set { timelineStore.latestPersistedMessageIDs = newValue }
     }
 
-    /// 消息解析计数：帮助追踪静默丢弃的消息
-    private static var parseFailureCount: Int = 0
-    private static var parseSuccessCount: Int = 0
+    // MARK: - 消息解析兼容入口
+
+    nonisolated static func parseMessage(
+        _ dictionary: [String: Any],
+        context: String = ""
+    ) -> ChatMessage? {
+        ChatMessageMapper.parse(dictionary, context: context)
+    }
+
+    nonisolated static func parseMessages(
+        _ rows: [[String: Any]],
+        context: String = ""
+    ) -> [ChatMessage] {
+        ChatMessageMapper.parse(rows, context: context)
+    }
 
     private var restoringCache = false
     private var lastLoadOlderAt: [String: Date] = [:]
@@ -71,6 +77,7 @@ final class MessageStore: ObservableObject {
 
     private let httpClient: any HTTPClient
     private let persistence: any ChatPersistenceProtocol
+    private let remoteDataSource: ChatRemoteDataSource
     private let mediaUploadService: MediaUploadService
     private let outboxProcessor: OutboxProcessor
 
@@ -87,37 +94,12 @@ final class MessageStore: ObservableObject {
         self.httpClient = httpClient
         self.persistence = persistence
         self.timelineStore = timelineStore ?? ChatTimelineStore()
+        remoteDataSource = ChatRemoteDataSource(httpClient: httpClient)
         mediaUploadService = MediaUploadService(httpClient: httpClient)
         outboxProcessor = OutboxProcessor(persistence: persistence)
     }
 
     var messages: [ChatMessage] { messages(for: .couple) }
-
-    // MARK: - 消息解析
-
-    static func parseMessage(_ dict: [String: Any], context: String = "") -> ChatMessage? {
-        if let msg = ChatMessage(dict: dict) {
-            parseSuccessCount += 1
-            return msg
-        }
-        parseFailureCount += 1
-        let id = dict["id"] as? String ?? "?"
-        let sender = dict["sender"] as? String ?? "?"
-        let channel = dict["channel"] as? String ?? "?"
-        let keys = dict.keys.joined(separator: ",")
-        print("[MessageStore] ⚠️ 消息解析失败 #\(parseFailureCount) | id=\(id) sender=\(sender) channel=\(channel) context=\(context) keys=[\(keys)]")
-        return nil
-    }
-
-    static func parseMessages(_ list: [[String: Any]], context: String = "") -> [ChatMessage] {
-        let before = parseFailureCount
-        let result = list.compactMap { parseMessage($0, context: context) }
-        let failed = parseFailureCount - before
-        if failed > 0 {
-            print("[MessageStore] ⚠️ 批量解析完成: \(result.count)/\(list.count) 成功, \(failed) 失败 | context=\(context)")
-        }
-        return result
-    }
 
     // MARK: - 消息读写
 
@@ -288,30 +270,7 @@ final class MessageStore: ObservableObject {
 
     private func fetchRemoteMessages(_ request: MessagePageRequest, context: String) async -> [ChatMessage] {
         guard let session = socketProvider?.currentSession else { return [] }
-        var components = URLComponents(
-            url: ServerConfig.baseURL.appendingPathComponent("api/messages"),
-            resolvingAgainstBaseURL: false)
-        var query = [
-            URLQueryItem(name: "channel", value: request.channel),
-            URLQueryItem(name: "limit", value: String(request.limit)),
-        ]
-        let optionalItems: [(String, Double?)] = [
-            ("since", request.since), ("after", request.after), ("before", request.before), ("around", request.around),
-        ]
-        for (name, value) in optionalItems {
-            if let value { query.append(URLQueryItem(name: name, value: String(value))) }
-        }
-        components?.queryItems = query
-        guard let url = components?.url else { return [] }
-        var urlRequest = URLRequest(url: url)
-        urlRequest.timeoutInterval = 15
-        urlRequest.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        guard let (data, response) = try? await httpClient.data(for: urlRequest),
-              let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let list = root["list"] as? [[String: Any]] else { return [] }
-        return Self.parseMessages(list, context: context)
+        return await remoteDataSource.fetchMessages(request, session: session, context: context)
     }
 
     func ensureLocalMessages(_ channel: ChatChannel) async {
@@ -818,36 +777,12 @@ final class MessageStore: ObservableObject {
 
     private func fetchHistoryPageREST(
         channel: ChatChannel, before: Double?, limit: Int, session: Session
-    ) async -> HistoryPage {
-        var components = URLComponents(
-            url: ServerConfig.baseURL.appendingPathComponent("api/messages"),
-            resolvingAgainstBaseURL: false)
-        var query = [
-            URLQueryItem(name: "channel", value: channel.rawValue),
-            URLQueryItem(name: "limit", value: String(limit)),
-        ]
-        if let before { query.append(URLQueryItem(name: "before", value: String(before))) }
-        components?.queryItems = query
-        guard let url = components?.url else {
-            return HistoryPage(messages: [], total: nil, error: "同步地址无效")
-        }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 20
-        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        do {
-            let (data, response) = try await httpClient.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                  let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let rows = root["list"] as? [[String: Any]] else {
-                return HistoryPage(messages: [], total: nil, error: "服务器同步响应无效")
-            }
-            let total = (root["total"] as? NSNumber)?.intValue ?? root["total"] as? Int
-            return HistoryPage(
-                messages: Self.parseMessages(rows, context: "syncAllREST:\(channel.rawValue)"),
-                total: total, error: nil)
-        } catch {
-            return HistoryPage(messages: [], total: nil, error: error.localizedDescription)
-        }
+    ) async -> ChatHistoryPage {
+        await remoteDataSource.fetchHistoryPage(
+            channel: channel,
+            before: before,
+            limit: limit,
+            session: session)
     }
 
     func clearLocalHistory() async {
