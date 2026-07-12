@@ -443,7 +443,7 @@ final class MessageStore: ObservableObject {
         let clientId = "tmp-" + UUID().uuidString
         let outgoingText = displayText ?? Self.mediaPlaceholderText(for: preferredType)
         let createdAt = Date().timeIntervalSince1970 * 1000
-        let durableURL = persistOutboundMedia(
+        let durableURL = await outboxProcessor.persistMedia(
             data: data, mimeType: mimeType, clientId: clientId, username: session.username)
         var optimistic = ChatMessage(
             optimisticMedia: preferredType,
@@ -521,13 +521,7 @@ final class MessageStore: ObservableObject {
         guard var pending = await outboxProcessor.pending(clientId: clientId) else {
             return .notFound
         }
-        let requiredPaths = pending.attachments
-            .filter { $0.uploadId == nil }
-            .map(\.localFilePath)
-        let singleMediaPath = pending.isMedia && pending.attachments.isEmpty && pending.uploadId == nil
-            ? pending.localFilePath.map { [$0] } ?? []
-            : []
-        guard (requiredPaths + singleMediaPath).allSatisfy(FileManager.default.fileExists(atPath:)) else {
+        guard await outboxProcessor.canRetry(pending) else {
             return .missingLocalFile
         }
 
@@ -540,12 +534,11 @@ final class MessageStore: ObservableObject {
     }
 
     func discardFailedMessage(clientId: String) async {
-        guard let pending = await outboxProcessor.remove(clientId: clientId) else {
+        guard let pending = await outboxProcessor.discard(clientId: clientId) else {
             removeOptimisticMessage(clientId: clientId)
             return
         }
         removeOptimisticMessage(clientId: clientId, channel: ChatChannel(rawValue: pending.channel))
-        removeLocalFiles(for: pending)
     }
 
     private func removeOptimisticMessage(clientId: String, channel: ChatChannel? = nil) {
@@ -812,17 +805,14 @@ final class MessageStore: ObservableObject {
               socketProvider?.socket != nil else { return }
         Task { [weak self] in
             guard let self else { return }
-            guard await self.outboxProcessor.beginFlush() else { return }
-            for item in await self.outboxProcessor.allPending() {
-                guard self.socketProvider?.isConnected == true else { break }
-                let channel = ChatChannel(rawValue: item.channel) ?? .couple
-                self.markPendingSending(clientId: item.clientId, channel: channel)
-                let sent = await self.transmitPendingOutbound(item, session: session)
-                if !sent, self.socketProvider?.isConnected != true { break }
-            }
-            if await self.outboxProcessor.finishFlush() {
-                self.flushOutbox(session: session)
-            }
+            await self.outboxProcessor.replay(
+                isConnected: { [weak self] in self?.socketProvider?.isConnected == true },
+                send: { [weak self] item in
+                    guard let self else { return false }
+                    let channel = ChatChannel(rawValue: item.channel) ?? .couple
+                    self.markPendingSending(clientId: item.clientId, channel: channel)
+                    return await self.transmitPendingOutbound(item, session: session)
+                })
         }
     }
 
@@ -966,46 +956,7 @@ final class MessageStore: ObservableObject {
     }
 
     private func completePendingOutbound(clientId: String) async {
-        if let item = await outboxProcessor.remove(clientId: clientId) {
-            removeLocalFiles(for: item)
-        }
-    }
-
-    private func removeLocalFiles(for item: PendingOutboundMessage) {
-        let paths = (item.localFilePath.map { [$0] } ?? []) + item.attachments.map(\.localFilePath)
-        for path in Set(paths) where FileManager.default.fileExists(atPath: path) {
-            do {
-                try FileManager.default.removeItem(atPath: path)
-            } catch {
-                print("[MessageStore] Failed to remove outbox file clientId=\(item.clientId)")
-            }
-        }
-    }
-
-    private func persistOutboundMedia(data: Data, mimeType: String, clientId: String, username: String) -> URL? {
-        guard data.count <= 50 * 1024 * 1024,
-              let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        let safeUsername = username
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        let directory = applicationSupport
-            .appendingPathComponent("ChatOutboxMedia", isDirectory: true)
-            .appendingPathComponent(safeUsername, isDirectory: true)
-        let ext = Self.fileExtension(for: mimeType)
-        let url = directory.appendingPathComponent(clientId).appendingPathExtension(ext)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try data.write(to: url, options: .atomic)
-            var values = URLResourceValues()
-            values.isExcludedFromBackup = true
-            var mutableURL = url
-            try? mutableURL.setResourceValues(values)
-            return url
-        } catch {
-            return nil
-        }
+        await outboxProcessor.complete(clientId: clientId)
     }
 
     @discardableResult
