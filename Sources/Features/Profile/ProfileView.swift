@@ -148,29 +148,29 @@ struct ProfileView: View {
 
     // MARK: - 身份横栏
     private var header: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: DS.Spacing.card - 4) {
             avatarView
                 .onTapGesture {
                     Haptics.light()
                     openAvatarPicker(for: .me)
                 }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DS.Spacing.tight) {
                 Text(store.session?.name ?? "未登录")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(DS.Typo.button)
                     .foregroundStyle(DS.Palette.textPrimary)
                 if let partner = store.partner {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DS.Spacing.tight) {
                         Text("和")
                         Text(partner.name).fontWeight(.semibold).foregroundStyle(theme.accent.color)
                         Text("在一起")
                     }
-                    .font(.system(size: 14))
+                    .font(DS.Typo.secondary)
                     .foregroundStyle(DS.Palette.textSecondary)
                 }
                 Text(store.connected ? "已连接 · hoo66.top" : (store.lastConnectionError ?? "未连接"))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(store.connected ? DS.Palette.textSecondary : .red)
+                    .font(DS.Typo.caption.weight(.medium))
+                    .foregroundStyle(store.connected ? DS.Palette.textSecondary : DS.Palette.red)
             }
 
             Spacer()
@@ -180,15 +180,16 @@ struct ProfileView: View {
                 openAvatarPicker(for: .me)
             } label: {
                 Image(systemName: "camera.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DS.Typo.secondary.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(width: 34, height: 34)
                     .background(theme.accent.color, in: Circle())
             }
             .buttonStyle(PressableStyle())
+            .accessibilityLabel("更换头像")
         }
         .padding(.horizontal, DS.Spacing.card)
-        .padding(.vertical, 14)
+        .padding(.vertical, DS.Spacing.card - 4)
         .dsCard()
     }
 
@@ -203,13 +204,13 @@ struct ProfileView: View {
             } else if let url = store.avatarURL(for: store.session?.username) {
                 CachedImage(url: url) {
                     Text(myEmoji)
-                        .font(.system(size: 28))
+                        .font(DS.Typo.pageTitle)
                         .frame(width: 52, height: 52)
                         .background(theme.accent.color.opacity(0.12))
                 }
             } else {
                 Text(myEmoji)
-                    .font(.system(size: 28))
+                    .font(DS.Typo.pageTitle)
                     .frame(width: 52, height: 52)
                     .background(theme.accent.color.opacity(0.12))
             }
@@ -219,7 +220,7 @@ struct ProfileView: View {
         .overlay(Circle().stroke(theme.accent.color.opacity(0.35), lineWidth: 2))
         .overlay(alignment: .bottomTrailing) {
             Circle()
-                .fill(store.connected ? DS.Palette.green : .red)
+                .fill(store.connected ? DS.Palette.green : DS.Palette.red)
                 .frame(width: 11, height: 11)
                 .overlay(Circle().stroke(DS.Palette.cardSurface, lineWidth: 2))
         }
@@ -277,10 +278,10 @@ struct ProfileView: View {
             showLogoutConfirm = true
         } label: {
             Text("退出登录")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.red)
+                .font(DS.Typo.button)
+                .foregroundStyle(DS.Palette.red)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 15)
+                .padding(.vertical, DS.Spacing.card - 3)
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
@@ -302,26 +303,26 @@ struct ProfileView: View {
     }
 
     private func settingRowLabel(icon: String, title: String, subtitle: String) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: DS.Spacing.card - 4) {
             Image(systemName: icon)
-                .font(.system(size: 17))
+                .font(DS.Typo.button)
                 .foregroundStyle(theme.accent.color)
                 .frame(width: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 16))
+                    .font(DS.Typo.body)
                     .foregroundStyle(DS.Palette.textPrimary)
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(DS.Typo.caption)
                     .foregroundStyle(DS.Palette.textSecondary)
             }
             Spacer()
             Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.Typo.caption.weight(.semibold))
                 .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
         }
         .padding(.horizontal, DS.Spacing.card)
-        .padding(.vertical, 12)
+        .padding(.vertical, DS.Spacing.gap)
         .contentShape(Rectangle())
     }
 
@@ -337,17 +338,17 @@ struct ProfileView: View {
             Haptics.light()
             action()
         } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: DS.Spacing.card - 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 17))
+                    .font(DS.Typo.button)
                     .foregroundStyle(theme.accent.color)
                     .frame(width: 30)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 16))
+                        .font(DS.Typo.body)
                         .foregroundStyle(DS.Palette.textPrimary)
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(DS.Typo.caption)
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
                 Spacer()
@@ -358,11 +359,11 @@ struct ProfileView: View {
                     background: theme.accent.color.opacity(0.12)
                 )
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DS.Typo.caption.weight(.semibold))
                     .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
             }
             .padding(.horizontal, DS.Spacing.card)
-            .padding(.vertical, 10)
+            .padding(.vertical, DS.Spacing.gap - 2)
             .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
@@ -440,7 +441,7 @@ private struct BarkSettingsSheet: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                     if let errorText {
-                        Text(errorText).font(.footnote).foregroundStyle(.red)
+                        Text(errorText).font(DS.Typo.caption).foregroundStyle(DS.Palette.red)
                     }
                 }
             }

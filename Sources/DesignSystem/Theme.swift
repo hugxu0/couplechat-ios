@@ -280,7 +280,7 @@ struct WallpaperPreviewSurface: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: height)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous))
     }
 }
 

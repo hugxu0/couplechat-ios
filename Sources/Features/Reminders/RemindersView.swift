@@ -35,7 +35,7 @@ struct RemindersView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: DS.Spacing.card - 2) {
                     header
                     tabSwitcher
                     scopePicker
@@ -43,8 +43,8 @@ struct RemindersView: View {
                     itemList
                 }
                 .padding(.horizontal, DS.Spacing.page)
-                    .padding(.top, 12)
-                    .padding(.bottom, 96)
+                .padding(.top, DS.Spacing.gap)
+                .padding(.bottom, 96)
             }
             .scrollIndicators(.hidden)
             .background(AppPageBackground())
@@ -73,7 +73,7 @@ struct RemindersView: View {
                 editorMode = .create(tab)
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(DS.Typo.button)
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.circle)
@@ -83,25 +83,25 @@ struct RemindersView: View {
     }
 
     private var tabSwitcher: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DS.Spacing.tight + 2) {
             switchButton(.reminder, icon: "bell.badge.fill", title: "提醒")
             switchButton(.memo, icon: "doc.text.fill", title: "备忘")
         }
         .frame(maxWidth: .infinity)
-        .padding(5)
+        .padding(DS.Spacing.tight + 1)
         .background(DS.Palette.innerSurface)
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
     }
 
     private var scopePicker: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DS.Spacing.tight + 2) {
             scopeButton("personal", icon: "person.fill", title: "我的")
             scopeButton("shared", icon: "person.2.fill", title: "共享")
         }
         .frame(maxWidth: .infinity)
-        .padding(5)
+        .padding(DS.Spacing.tight + 1)
         .background(DS.Palette.innerSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
     }
 
     private func scopeButton(_ value: String, icon: String, title: String) -> some View {
@@ -112,14 +112,14 @@ struct RemindersView: View {
             Task { await reload(scope: value) }
         } label: {
             Label(title, systemImage: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(DS.Typo.button)
                 .foregroundStyle(scope == value ? .white : DS.Palette.textSecondary)
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 48)
                 .contentShape(Rectangle())
                 .background {
                     if scope == value {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
                             .fill(value == "shared" ? DS.Palette.purple : DS.Palette.accent)
                     }
                 }
@@ -136,14 +136,14 @@ struct RemindersView: View {
             Haptics.selection()
         } label: {
             Label(title, systemImage: icon)
-                .font(.system(size: 15, weight: .semibold))
+                .font(DS.Typo.button)
                 .foregroundStyle(tab == kind ? .white : DS.Palette.textSecondary)
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 52)
                 .contentShape(Rectangle())
                 .background {
                     if tab == kind {
-                        RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                        RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
                             .fill(DS.Palette.accent)
                     }
                 }
@@ -154,7 +154,7 @@ struct RemindersView: View {
     }
 
     private var summaryStrip: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.Spacing.gap - 2) {
             metricTile(title: "待办", value: "\(reminders.filter { !$0.isDone }.count)", color: DS.Palette.accent)
             metricTile(title: "今日", value: "\(reminders.filter { $0.isToday }.count)", color: DS.Palette.blue)
             metricTile(title: "备忘", value: "\(memos.count)", color: DS.Palette.pink)
@@ -162,18 +162,17 @@ struct RemindersView: View {
     }
 
     private func metricTile(title: String, value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Spacing.compact) {
             Text(value)
-                .font(.system(size: 24, weight: .bold))
+                .font(DS.Typo.pageTitle)
                 .foregroundStyle(color)
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.Typo.caption.weight(.medium))
                 .foregroundStyle(DS.Palette.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .padding(DS.Spacing.card - 4)
+        .dsCard(radius: DS.Radius.tile)
     }
 
     @ViewBuilder
@@ -185,7 +184,7 @@ struct RemindersView: View {
         } else if visibleItems.isEmpty {
             emptyState
         } else {
-            LazyVStack(spacing: 12) {
+            LazyVStack(spacing: DS.Spacing.gap) {
                 ForEach(visibleItems) { item in
                     PersonalItemCard(item: item) {
                         editorMode = .edit(item)
@@ -348,21 +347,22 @@ private struct PersonalItemCard: View {
     let onDelete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Spacing.gap) {
+            HStack(alignment: .top, spacing: DS.Spacing.gap) {
                 if item.kind == .reminder {
                     Button(action: onToggleDone) {
                         Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 24, weight: .semibold))
+                            .font(DS.Typo.pageTitle.weight(.semibold))
                             .foregroundStyle(item.isDone ? DS.Palette.green : DS.Palette.accent)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(item.isDone ? "标记未完成" : "标记完成")
                 }
 
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: DS.Spacing.compact - 1) {
+                    HStack(spacing: DS.Spacing.tight + 2) {
                         Text(item.title)
-                            .font(.system(size: 18, weight: .bold))
+                            .font(DS.Typo.cardTitle)
                             .foregroundStyle(item.isDone ? DS.Palette.textSecondary : DS.Palette.textPrimary)
                             .strikethrough(item.isDone)
 
@@ -378,12 +378,12 @@ private struct PersonalItemCard: View {
 
                     if item.kind == .reminder, let dueDate = item.dueDate {
                         Label(dueDate.smartLabel, systemImage: item.isOverdue ? "exclamationmark.circle.fill" : "clock.fill")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(DS.Typo.caption.weight(.semibold))
                             .foregroundStyle(item.isOverdue ? DS.Palette.pink : DS.Palette.textSecondary)
                     }
                     if item.kind == .memo {
                         Text("更新于 \(updatedDateText)")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DS.Typo.caption.weight(.medium))
                             .foregroundStyle(DS.Palette.textSecondary)
                     }
                 }
@@ -396,24 +396,23 @@ private struct PersonalItemCard: View {
                     Button("删除", role: .destructive, action: onDelete)
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(DS.Typo.cardTitle)
                         .foregroundStyle(DS.Palette.textSecondary)
                         .frame(width: 32, height: 32)
                 }
+                .accessibilityLabel("更多操作")
             }
 
             if !displayMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 MarkdownPreview(markdown: displayMarkdown)
-                    .font(.system(size: 15))
+                    .font(DS.Typo.body)
                     .foregroundStyle(DS.Palette.textPrimary)
                     .lineLimit(item.kind == .memo ? nil : 3)
             }
         }
         .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.Palette.cardSurface)
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .shadow(color: DS.Surface.shadow, radius: 12, y: 5)
+        .dsCard()
         .opacity(item.isDone ? 0.68 : 1)
         .contentShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
         .onTapGesture(perform: onEdit)
@@ -457,52 +456,53 @@ private struct PersonalItemEditor: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: DS.Spacing.card - 2) {
                     TextField(mode.kind == .reminder ? "提醒标题" : "备忘标题", text: $title)
-                        .font(.system(size: 24, weight: .bold))
-                        .padding(16)
-                        .background(DS.Palette.innerSurface)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .font(DS.Typo.pageTitle)
+                        .padding(DS.Spacing.card - 2)
+                        .background(DS.Palette.fieldSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous)
+                                .stroke(DS.Palette.hairline, lineWidth: 0.5)
+                        }
 
                     if mode.kind == .reminder {
-                        VStack(spacing: 12) {
+                        VStack(spacing: DS.Spacing.gap) {
                             Toggle("通知提醒", isOn: $hasDueDate)
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(DS.Typo.button)
                             if hasDueDate {
                                 DatePicker("时间", selection: $dueDate, displayedComponents: [.date, .hourAndMinute])
                                     .datePickerStyle(.compact)
                             }
                         }
-                        .padding(16)
-                        .background(DS.Palette.cardSurface)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .padding(DS.Spacing.card - 2)
+                        .dsCard(radius: DS.Radius.bubble)
                     }
 
                     HStack {
                         Text("正文")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(DS.Typo.button)
                             .foregroundStyle(DS.Palette.textPrimary)
                         Spacer()
                         Button(preview ? "编辑" : "预览") {
                             preview.toggle()
                         }
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DS.Typo.secondary.weight(.semibold))
                     }
 
                     if preview {
                         MarkdownPreview(markdown: markdown.isEmpty ? " " : markdown)
                             .frame(maxWidth: .infinity, minHeight: 260, alignment: .topLeading)
-                            .padding(16)
-                            .background(DS.Palette.cardSurface)
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .padding(DS.Spacing.card - 2)
+                            .dsCard(radius: DS.Radius.bubble)
                     } else {
                         TextEditor(text: $markdown)
-                            .font(.system(size: 16))
+                            .font(DS.Typo.body)
                             .scrollContentBackground(.hidden)
                             .frame(minHeight: 260)
-                            .padding(12)
-                            .background(DS.Palette.cardSurface)
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .padding(DS.Spacing.gap)
+                            .dsCard(radius: DS.Radius.bubble)
                     }
                 }
                 .padding(DS.Spacing.page)
@@ -521,7 +521,7 @@ private struct PersonalItemEditor: View {
                         onSave(trimmed, markdown, dueAt)
                     }
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(DS.Typo.button)
                 }
             }
         }
@@ -548,10 +548,10 @@ private struct MarkdownPreview: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .heading(let level, let text):
             inlineText(text)
-                .font(.system(size: level == 1 ? 21 : level == 2 ? 18 : 16, weight: .bold))
+                .font(level == 1 ? DS.Typo.pageTitle : (level == 2 ? DS.Typo.cardTitle : DS.Typo.button))
                 .foregroundStyle(DS.Palette.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, level == 1 ? 4 : 1)
+                .padding(.top, level == 1 ? DS.Spacing.tight : 1)
         case .bullets(let items):
             VStack(alignment: .leading, spacing: 5) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
@@ -584,18 +584,18 @@ private struct MarkdownPreview: View {
             .padding(.vertical, 2)
         case .code(let text):
             Text(text)
-                .font(.system(size: 13, design: .monospaced))
+                .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(DS.Palette.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(DS.Spacing.gap - 2)
+                .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous))
         case .mermaid(let source):
             Text(MermaidFlowchartFormatter.render(source) ?? source)
-                .font(.system(size: 12, design: .monospaced))
+                .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(DS.Palette.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(DS.Spacing.gap)
+                .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous))
         case .table(let headers, let rows):
             tableView(headers: headers, rows: rows)
         case .rule:
@@ -641,7 +641,7 @@ private struct MarkdownPreview: View {
 
     private func tableCell(_ text: String, header: Bool, alternate: Bool = false) -> some View {
         inlineText(text)
-            .font(.system(size: 13, weight: header ? .semibold : .regular))
+            .font(header ? DS.Typo.caption.weight(.semibold) : DS.Typo.caption)
             .foregroundStyle(DS.Palette.textPrimary)
             .frame(minWidth: 92, maxWidth: 220, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
