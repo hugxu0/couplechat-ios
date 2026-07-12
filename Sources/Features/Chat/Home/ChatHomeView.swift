@@ -1,6 +1,7 @@
 import SwiftUI
 
 // 聊天首页：把两个人的状态、互动和最近消息收进一张柔软的情侣卡片。
+// 视觉块与模型拆到 Home/ 子目录，本文件只负责装配与状态逻辑。
 
 struct ChatHomeView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -38,19 +39,19 @@ struct ChatHomeView: View {
         store.sharedValue("chat_statuses") as? [String: String] ?? [:]
     }
 
-    private var storedStatuses: [StoredStatus] {
+    private var storedStatuses: [ChatHomeStoredStatus] {
         if !statusesJSON.isEmpty,
            let data = statusesJSON.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode([StoredStatus].self, from: data),
+           let decoded = try? JSONDecoder().decode([ChatHomeStoredStatus].self, from: data),
            !decoded.isEmpty {
             return decoded
         }
         return migratedDefaultStatuses()
     }
 
-    private var statusOptions: [StatusOption] {
+    private var statusOptions: [ChatHomeStatusOption] {
         storedStatuses.enumerated().map { index, stored in
-            paletteOption(stored: stored, index: index)
+            ChatHomeCatalog.statusOption(stored: stored, index: index)
         }
     }
 
@@ -61,7 +62,7 @@ struct ChatHomeView: View {
                     shortPullRefreshProbe {
                         Task { @MainActor in
                             await Task.yield()
-                            withAnimation(DS.Anim.springFast) {
+                            DS.Anim.withMotion(DS.Anim.springFast) {
                                 proxy.scrollTo("chat-home-top", anchor: .top)
                             }
                         }
@@ -107,7 +108,7 @@ struct ChatHomeView: View {
                         .padding(.vertical, 9)
                         .background(
                             Capsule(style: .continuous)
-                                .fill((refreshMessage == "刷新成功" ? DS.Palette.green : Color.red).opacity(0.92))
+                                .fill((refreshMessage == "刷新成功" ? DS.Palette.green : DS.Palette.red).opacity(0.92))
                                 .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
                         )
                         .padding(.top, 8)
@@ -127,19 +128,19 @@ struct ChatHomeView: View {
             coupleHeader
                 .padding(.bottom, 14)
 
-            sectionDivider
+            ChatHomeSectionDivider()
 
             statusStrip
                 .padding(.top, 10)
                 .padding(.bottom, 6)
 
-            sectionDivider
+            ChatHomeSectionDivider()
 
             actionStrip
                 .padding(.top, 8)
                 .padding(.bottom, 8)
 
-            sectionDivider
+            ChatHomeSectionDivider()
 
             latestMessages
                 .padding(.top, 10)
@@ -197,22 +198,6 @@ struct ChatHomeView: View {
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
-    }
-
-    private var sectionDivider: some View {
-        Rectangle()
-            .fill(
-                LinearGradient(
-                    colors: [
-                        DS.Palette.textSecondary.opacity(0.04),
-                        DS.Palette.textSecondary.opacity(0.22),
-                        DS.Palette.textSecondary.opacity(0.04),
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .frame(height: 1)
     }
 
     private var homeCardBackground: some View {
@@ -309,15 +294,15 @@ struct ChatHomeView: View {
         .frame(width: 30, height: 30)
         .background(DS.Palette.innerSurface, in: Circle())
         .opacity(refreshingHome ? 1 : pullProgress)
-        .scaleEffect(refreshingHome ? 1 : 0.6 + 0.4 * pullProgress)
-        .padding(.top, 8)
-        .animation(DS.Anim.springFast, value: pullProgress >= 1)
-        .animation(DS.Anim.ease, value: refreshingHome)
+        .scaleEffect(refreshingHome || UIAccessibility.isReduceMotionEnabled ? 1 : 0.6 + 0.4 * pullProgress)
+        .padding(.top, DS.Spacing.compact)
+        .animation(DS.Anim.motion(DS.Anim.springFast), value: pullProgress >= 1)
+        .animation(DS.Anim.motion(DS.Anim.ease), value: refreshingHome)
     }
 
     private var coupleHeader: some View {
         HStack(alignment: .center, spacing: 0) {
-            CoupleAvatarColumn(
+            ChatHomeCoupleAvatarColumn(
                 name: myName,
                 avatar: myAvatar,
                 avatarURL: store.avatarURL(for: myUsername),
@@ -357,7 +342,7 @@ struct ChatHomeView: View {
             }
             .frame(width: 70)
 
-            CoupleAvatarColumn(
+            ChatHomeCoupleAvatarColumn(
                 name: partnerName,
                 avatar: partnerAvatar,
                 avatarURL: store.avatarURL(for: partnerUsername),
@@ -375,9 +360,15 @@ struct ChatHomeView: View {
 
     private var statusStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Spacing.compact) {
                 ForEach(statusOptions) { status in
-                    statusChip(status)
+                    ChatHomeStatusChip(
+                        status: status,
+                        selected: statusMap[myUsername] == status.title,
+                        onTap: { toggleStatus(status) },
+                        onEdit: { beginEditingStatus(status) },
+                        onDelete: { deleteStatus(id: status.id) }
+                    )
                 }
 
                 Button {
@@ -399,94 +390,16 @@ struct ChatHomeView: View {
         }
     }
 
-    private func statusChip(_ status: StatusOption) -> some View {
-        let selected = statusMap[myUsername] == status.title
-        return Button {
-            toggleStatus(status)
-        } label: {
-            HStack(spacing: 6) {
-                if selected {
-                    Circle()
-                        .fill(status.color)
-                        .frame(width: 6, height: 6)
-                }
-                Text(status.title)
-                    .lineLimit(1)
-            }
-            .font(.system(size: 13, weight: .bold, design: .rounded))
-            .foregroundStyle(selected ? status.color : DS.Palette.textPrimary.opacity(0.72))
-            .padding(.horizontal, 14)
-            .frame(height: 36)
-            .background(
-                Capsule().fill(
-                    selected
-                        ? AnyShapeStyle(status.color.opacity(0.14))
-                        : AnyShapeStyle(.white.opacity(0.52))
-                )
-            )
-            .overlay(Capsule().stroke(selected ? status.color.opacity(0.22) : .white.opacity(0.72), lineWidth: 1))
-            .shadow(color: selected ? status.color.opacity(0.12) : .clear, radius: 7, y: 3)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(PressableStyle())
-        .contextMenu {
-            Button {
-                beginEditingStatus(status)
-            } label: {
-                Label("编辑状态", systemImage: "pencil")
-            }
-            Button(role: .destructive) {
-                deleteStatus(id: status.id)
-            } label: {
-                Label("删除状态", systemImage: "trash")
-            }
-        }
-        .accessibilityHint("点按切换状态，长按可编辑或删除")
-    }
-
     private var actionStrip: some View {
-        HStack(spacing: 8) {
-            ForEach(Self.actions) { action in
-                actionButton(action)
+        HStack(spacing: DS.Spacing.compact) {
+            ForEach(ChatHomeCatalog.actions) { action in
+                ChatHomeActionButton(
+                    action: action,
+                    sent: sentAction == action.id,
+                    onTap: { send(action) }
+                )
             }
         }
-    }
-
-    private func actionButton(_ action: QuickAction) -> some View {
-        let sent = sentAction == action.id
-        return Button {
-            send(action)
-        } label: {
-            VStack(spacing: 4) {
-                ZStack {
-                    // 柔和渐变 + 细描边取代大块纯色，跟卡片的玻璃感统一
-                    RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [action.background.opacity(0.82), action.background.opacity(0.42)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay {
-                            RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
-                                .stroke(.white.opacity(0.5), lineWidth: 1)
-                        }
-                        .frame(height: 40)
-                    Text(sent ? "✓" : action.emoji)
-                        .font(.system(size: 22, weight: .bold))
-                        .contentTransition(.numericText())
-                }
-                Text(action.title)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(DS.Palette.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(PressableStyle())
-        .disabled(sent)
     }
 
     private var latestMessages: some View {
@@ -508,14 +421,23 @@ struct ChatHomeView: View {
 
             if coupleMessages.isEmpty {
                 Text("还没有消息，进去说第一句吧")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.Typo.secondary)
                     .foregroundStyle(DS.Palette.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 14)
             } else {
                 VStack(spacing: 7) {
                     ForEach(Array(coupleMessages.suffix(3))) { message in
-                        latestRow(message)
+                        let mine = message.sender == store.session?.username
+                        let username = mine ? myUsername : message.sender
+                        ChatHomeLatestRow(
+                            message: message,
+                            mine: mine,
+                            avatarURL: store.avatarURL(for: username),
+                            avatarText: store.avatarText(for: username),
+                            accent: theme.accent.color,
+                            preview: preview(message)
+                        )
                     }
                 }
             }
@@ -524,83 +446,11 @@ struct ChatHomeView: View {
         .padding(.vertical, 11)
         .frame(maxWidth: .infinity, minHeight: 136, alignment: .top)
         .background(conversationWindowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
                 .stroke(theme.accent.color.opacity(0.12), lineWidth: 1)
         )
-    }
-
-    private var connectionSummary: String {
-        if store.connectionState.isTransient { return "正在连接" }
-        if !store.connected { return "实时连接不可用" }
-        if !store.presenceKnown { return "正在获取在线状态" }
-        return store.partnerOnline ? "都在线" : "等 TA 出现"
-    }
-
-    private var conversationWindowBackground: some View {
-        ZStack(alignment: .bottomTrailing) {
-            LinearGradient(
-                colors: [
-                    theme.accent.color.opacity(0.12),
-                    DS.Palette.innerSurface.opacity(0.92),
-                    DS.Palette.pink.opacity(0.06)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            Image(systemName: "sparkles")
-                .font(.system(size: 56, weight: .thin))
-                .foregroundStyle(theme.accent.color.opacity(0.09))
-                .rotationEffect(.degrees(-14))
-                .offset(x: 13, y: 15)
-            Image(systemName: "heart.fill")
-                .font(.system(size: 17))
-                .foregroundStyle(DS.Palette.pink.opacity(0.14))
-                .offset(x: -40, y: -16)
-        }
-    }
-
-    private func latestRow(_ message: ChatMessage) -> some View {
-        let mine = message.sender == store.session?.username
-        return HStack(alignment: .bottom, spacing: 8) {
-            if !mine {
-                latestAvatar(for: message)
-            } else {
-                Spacer(minLength: 54)
-            }
-
-            Text(preview(message))
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundStyle(mine ? DS.Palette.textPrimary : DS.Palette.textPrimary)
-                .lineLimit(2)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(
-                    mine ? theme.accent.color.opacity(0.16) : Color.white.opacity(0.62),
-                    in: RoundedRectangle(cornerRadius: 17, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 17, style: .continuous)
-                        .stroke(mine ? theme.accent.color.opacity(0.12) : .white.opacity(0.56), lineWidth: 1)
-                )
-
-            if mine {
-                latestAvatar(for: message)
-            } else {
-                Spacer(minLength: 54)
-            }
-        }
-    }
-
-    private func latestAvatar(for message: ChatMessage) -> some View {
-        let mine = message.sender == store.session?.username
-        let username = mine ? myUsername : message.sender
-        return AvatarBadge(
-            url: store.avatarURL(for: username),
-            fallbackEmoji: store.avatarText(for: username),
-            size: 31,
-            background: .white.opacity(0.7))
     }
 
     private var enterChatButton: some View {
@@ -627,13 +477,13 @@ struct ChatHomeView: View {
 
     /// 刷新结束后弹一条结果提示，1.8s 后自动消失（独立于下拉手势的生命周期）
     private func flashRefreshResult(_ result: HomeRefreshResult) {
-        withAnimation(DS.Anim.ease) {
+        DS.Anim.withMotion(DS.Anim.ease) {
             refreshMessage = (result.dataUpdated || result.realtimeConnected) ? "刷新成功" : "刷新失败"
         }
         Task {
             try? await Task.sleep(nanoseconds: 1_800_000_000)
             await MainActor.run {
-                withAnimation(DS.Anim.ease) { refreshMessage = nil }
+                DS.Anim.withMotion(DS.Anim.ease) { refreshMessage = nil }
             }
         }
     }
@@ -649,7 +499,7 @@ struct ChatHomeView: View {
         }
     }
 
-    private func send(_ action: QuickAction) {
+    private func send(_ action: ChatHomeQuickAction) {
         Haptics.medium()
         if action.kind == .note {
             noteText = ""
@@ -657,11 +507,11 @@ struct ChatHomeView: View {
             return
         }
         store.sendInteraction(kind: action.kind, text: action.message, channel: .couple)
-        withAnimation(DS.Anim.springFast) { sentAction = action.id }
+        DS.Anim.withMotion(DS.Anim.springFast) { sentAction = action.id }
         Task {
             try? await Task.sleep(nanoseconds: 1_300_000_000)
             await MainActor.run {
-                withAnimation(DS.Anim.ease) {
+                DS.Anim.withMotion(DS.Anim.ease) {
                     if sentAction == action.id { sentAction = nil }
                 }
             }
@@ -670,29 +520,29 @@ struct ChatHomeView: View {
 
     private func sendNote() {
         let raw = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let body = raw.isEmpty ? Self.randomNoteText() : String(raw.prefix(36))
+        let body = raw.isEmpty ? ChatHomeCatalog.randomNoteText() : String(raw.prefix(36))
         let message = "🪧 \(body)"
         store.sendInteraction(kind: .note, text: message, channel: .couple)
-        withAnimation(DS.Anim.springFast) { sentAction = "note" }
+        DS.Anim.withMotion(DS.Anim.springFast) { sentAction = "note" }
         noteText = ""
         Task {
             try? await Task.sleep(nanoseconds: 1_300_000_000)
             await MainActor.run {
-                withAnimation(DS.Anim.ease) {
+                DS.Anim.withMotion(DS.Anim.ease) {
                     if sentAction == "note" { sentAction = nil }
                 }
             }
         }
     }
 
-    private func setStatus(_ status: StatusOption) {
+    private func setStatus(_ status: ChatHomeStatusOption) {
         Haptics.selection()
         var next = statusMap
         next[myUsername] = status.title
         store.setShared("chat_statuses", value: next)
     }
 
-    private func toggleStatus(_ status: StatusOption) {
+    private func toggleStatus(_ status: ChatHomeStatusOption) {
         if statusMap[myUsername] == status.title {
             clearStatus()
         } else {
@@ -700,7 +550,7 @@ struct ChatHomeView: View {
         }
     }
 
-    private func beginEditingStatus(_ status: StatusOption) {
+    private func beginEditingStatus(_ status: ChatHomeStatusOption) {
         Haptics.medium()
         editingStatusID = status.id
         customStatusText = status.title
@@ -730,7 +580,7 @@ struct ChatHomeView: View {
                 store.setShared("chat_statuses", value: next)
             }
         } else if !list.contains(where: { $0.title == title }) {
-            list.append(StoredStatus(id: UUID().uuidString, title: title))
+            list.append(ChatHomeStoredStatus(id: UUID().uuidString, title: title))
             saveStatuses(list)
             var next = statusMap
             next[myUsername] = title
@@ -747,7 +597,7 @@ struct ChatHomeView: View {
         let removed = storedStatuses.first(where: { $0.id == id })
         var list = storedStatuses.filter { $0.id != id }
         if list.isEmpty {
-            list = Self.defaultStatuses
+            list = ChatHomeCatalog.defaultStatuses
         }
         saveStatuses(list)
         if let removed, statusMap[myUsername] == removed.title {
@@ -755,14 +605,14 @@ struct ChatHomeView: View {
         }
     }
 
-    private func saveStatuses(_ list: [StoredStatus]) {
+    private func saveStatuses(_ list: [ChatHomeStoredStatus]) {
         guard let data = try? JSONEncoder().encode(list),
               let json = String(data: data, encoding: .utf8) else { return }
         statusesJSON = json
     }
 
-    private func migratedDefaultStatuses() -> [StoredStatus] {
-        var list = Self.defaultStatuses
+    private func migratedDefaultStatuses() -> [ChatHomeStoredStatus] {
+        var list = ChatHomeCatalog.defaultStatuses
         let legacy = legacyCustomStatusData
             .split(separator: "\n")
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -770,202 +620,10 @@ struct ChatHomeView: View {
         for title in legacy {
             let trimmed = String(title.prefix(8))
             guard !list.contains(where: { $0.title == trimmed }) else { continue }
-            list.append(StoredStatus(id: UUID().uuidString, title: trimmed))
+            list.append(ChatHomeStoredStatus(id: UUID().uuidString, title: trimmed))
         }
         saveStatuses(list)
         return list
     }
 
-    private func paletteOption(stored: StoredStatus, index: Int) -> StatusOption {
-        let palette = Self.statusPalettes[index % Self.statusPalettes.count]
-        return StatusOption(id: stored.id, title: stored.title, color: palette.color)
-    }
-
-    private struct StoredStatus: Codable, Identifiable, Equatable {
-        let id: String
-        var title: String
-    }
-
-    private struct StatusPalette {
-        let color: Color
-    }
-
-    private static let defaultStatuses: [StoredStatus] = [
-        .init(id: "miss", title: "在想你"),
-        .init(id: "cling", title: "想贴贴"),
-        .init(id: "busy", title: "忙完找你"),
-        .init(id: "kiss", title: "要亲亲"),
-    ]
-
-    private static let statusPalettes: [StatusPalette] = [
-        .init(color: Color(red: 0.78, green: 0.28, blue: 0.46)),
-        .init(color: Color(red: 0.72, green: 0.30, blue: 0.48)),
-        .init(color: Color(red: 0.38, green: 0.56, blue: 0.82)),
-        .init(color: Color(red: 0.82, green: 0.54, blue: 0.26)),
-    ]
-
-    private static func randomNoteText() -> String {
-        [
-            "先别划走，想你一下",
-            "今天也要被我惦记",
-            "看到这里就亲亲",
-            "把坏心情撕掉",
-            "给你贴一朵小开心",
-        ].randomElement() ?? "想你一下"
-    }
-
-    fileprivate struct StatusOption: Identifiable {
-        let id: String
-        let title: String
-        let color: Color
-    }
-
-    fileprivate struct QuickAction: Identifiable {
-        let id: String
-        let emoji: String
-        let title: String
-        let message: String
-        let background: Color
-        let kind: InteractionEffectKind
-    }
-
-    private static let actions: [QuickAction] = [
-        .init(id: "miss", emoji: "💗", title: "想你了", message: "💗 想你了", background: Color(red: 1.00, green: 0.91, blue: 0.95), kind: .miss),
-        .init(id: "pat", emoji: "🖐️", title: "拍一拍", message: "🖐️ 拍了拍你", background: Color(red: 1.00, green: 0.94, blue: 0.86), kind: .pat),
-        .init(id: "flower", emoji: "🌸", title: "送花花", message: "🌸 送你一朵花花", background: Color(red: 1.00, green: 0.91, blue: 0.94), kind: .flower),
-        .init(id: "poop", emoji: "💩", title: "扔粑粑", message: "💩 扔了个粑粑", background: Color(red: 0.96, green: 0.91, blue: 0.83), kind: .poop),
-        .init(id: "note", emoji: "🪧", title: "贴条", message: "🪧 给你贴了一张小纸条", background: Color(red: 0.94, green: 0.95, blue: 0.97), kind: .note),
-    ]
-}
-
-private struct CoupleAvatarColumn: View {
-    let name: String
-    let avatar: String
-    var avatarURL: URL? = nil
-    let image: AvatarArt
-    let status: String?
-    let online: Bool
-    let ring: Color
-    let editable: Bool
-    let statusOptions: [ChatHomeView.StatusOption]
-    let onStatusPick: (ChatHomeView.StatusOption) -> Void
-    @State private var showStatusPicker = false
-
-    var body: some View {
-        VStack(spacing: 9) {
-            statusCapsule
-
-            ZStack(alignment: .bottomTrailing) {
-                Group {
-                    if let avatarURL {
-                        CachedImage(url: avatarURL) {
-                            AvatarIllustration(kind: image, fallback: avatar)
-                        }
-                    } else {
-                        AvatarIllustration(kind: image, fallback: avatar)
-                    }
-                }
-                    .frame(width: 88, height: 88)
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 4))
-                    .shadow(color: ring.opacity(0.18), radius: 10, y: 5)
-
-                Circle()
-                    .fill(online ? DS.Palette.green : DS.Palette.textSecondary.opacity(0.55))
-                    .frame(width: 16, height: 16)
-                    .overlay(Circle().stroke(DS.Palette.cardSurface, lineWidth: 4))
-                    .offset(x: -9, y: -10)
-            }
-
-            Text(name)
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(DS.Palette.textPrimary)
-        }
-    }
-
-    @ViewBuilder
-    private var statusCapsule: some View {
-        if editable {
-            Button {
-                Haptics.light()
-                showStatusPicker = true
-            } label: {
-                Text(status ?? "加状态")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.pink)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.white.opacity(0.64), in: Capsule())
-            }
-            .frame(minWidth: 76, minHeight: 34)
-            .contentShape(Capsule())
-            .buttonStyle(PressableStyle())
-            .confirmationDialog("选择状态", isPresented: $showStatusPicker, titleVisibility: .visible) {
-                ForEach(statusOptions) { option in
-                    Button(option.title) { onStatusPick(option) }
-                }
-            }
-            .contextMenu {
-                ForEach(statusOptions) { option in
-                    Button(option.title) { onStatusPick(option) }
-                }
-            }
-        } else {
-            Text(status ?? "想贴贴")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.textPrimary.opacity(0.62))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.white.opacity(0.54), in: Capsule())
-        }
-    }
-}
-
-private enum AvatarArt {
-    case dog
-    case bunny
-}
-
-private struct AvatarIllustration: View {
-    let kind: AvatarArt
-    let fallback: String
-
-    var body: some View {
-        ZStack {
-            // 半透明柔光底，透出卡片玻璃感，避免大块纯白
-            LinearGradient(
-                colors: [Color.white.opacity(0.75), Color(red: 1.0, green: 0.95, blue: 0.97).opacity(0.6)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            decorativeMarks
-            Text(fallback)
-                .font(.system(size: 38))
-                .offset(y: 6)
-        }
-    }
-
-    @ViewBuilder
-    private var decorativeMarks: some View {
-        switch kind {
-        case .dog:
-            Image(systemName: "bone.fill")
-                .font(.system(size: 24))
-                .foregroundStyle(Color(red: 0.42, green: 0.46, blue: 0.56).opacity(0.22))
-                .offset(x: 28, y: -30)
-            Circle()
-                .fill(Color(red: 0.97, green: 0.57, blue: 0.68).opacity(0.28))
-                .frame(width: 18, height: 18)
-                .offset(x: -32, y: -28)
-        case .bunny:
-            Image(systemName: "heart.fill")
-                .font(.system(size: 18))
-                .foregroundStyle(DS.Palette.pink.opacity(0.22))
-                .offset(x: -32, y: -32)
-            Image(systemName: "sparkle")
-                .font(.system(size: 20))
-                .foregroundStyle(DS.Palette.pink.opacity(0.30))
-                .offset(x: 32, y: -24)
-        }
-    }
 }

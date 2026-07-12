@@ -49,6 +49,7 @@ Sources/
   Features/
     Auth/                    登录
     Chat/
+      Home/                  聊天首页装配、状态/动作模型与子视图
       ChatV2/                聊天页面装配、composer 与控制器扩展
       UIKit/                 时间线、消息 cell、滚动状态、消息动作、贴纸面板
                              （ChatNativeMessageCell 主实现在 ChatTimelineCells.swift；
@@ -63,15 +64,16 @@ Sources/
 
 `MessageStore` 与 `ChatStore` 为兼容现有页面保留 facade，但不再拥有全部底层实现。新增功能应优先进入已有的 Repository、Coordinator 或专用 Store；只有跨模块装配和向后兼容转发可以留在 facade，避免重新形成单体状态对象。
 
-聊天会话由 SwiftUI 外壳和 UIKit 高频路径组成：
+聊天入口与会话由 SwiftUI 外壳和 UIKit 高频路径组成：
 
 ```text
-ChatView
-  → ChatV2Screen
-    → ChatViewController
-      ├─ UICollectionView 消息时间线
-      ├─ UIKit 输入栏、键盘、附件和录音
-      └─ UIKit cell 与贴纸面板
+ChatHomeView
+  → ChatView
+    → ChatV2Screen
+      → ChatViewController
+        ├─ UICollectionView 消息时间线
+        ├─ UIKit 输入栏、键盘、附件和录音
+        └─ UIKit cell 与贴纸面板
 ```
 
 消息列表与输入区保持 UIKit 管理，避免在滚动、键盘和媒体交互的高频路径混用多套状态生命周期。`ChatViewController` 直接观察 `ChatTimelineStore`，不再通过父 Store 转发普通消息更新。

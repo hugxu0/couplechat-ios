@@ -189,7 +189,7 @@ struct ProfileView: View {
         }
         .padding(.horizontal, DS.Spacing.card)
         .padding(.vertical, 14)
-        .appSurface()
+        .dsCard()
     }
 
     @ViewBuilder
@@ -268,7 +268,7 @@ struct ProfileView: View {
             .buttonStyle(PressableStyle())
         }
         .padding(.vertical, 6)
-        .appSurface()
+        .dsCard()
     }
 
     private var logoutCard: some View {
@@ -284,7 +284,7 @@ struct ProfileView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
-        .appSurface()
+        .dsCard()
     }
 
     private var divider: some View {
