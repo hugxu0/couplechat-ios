@@ -61,6 +61,8 @@ docker run --rm --network host --env-file .env \
 docker compose -f compose.production.yml up -d
 ```
 
+`npm run migrate` 必须运行编译进生产镜像的 `dist/migrate.js`；不得依赖 runtime 中不存在的 `tsx` 或 TypeScript 源文件。构建候选后可先执行 `docker run --rm couplechat-server:local test -f dist/migrate.js` 验证入口存在。
+
 高风险 migration 应通过 `BACKUP_QUIESCE_HOOK` 暂停写入；如果没有停写能力，至少先停止 Web 容器，再运行 migrator。迁移失败时不要反复重启新版服务，应保留现场并按已验证备份恢复。
 
 在服务器项目目录执行：
