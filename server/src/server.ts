@@ -1,30 +1,37 @@
 import { Server } from "socket.io";
 import { buildApp } from "./app";
 import { config } from "./config";
-import { initDatabase, closeDatabase } from "./db";
+import { closeDatabase, initDatabase } from "./db";
 import { seedAccounts } from "./auth/accounts";
 import { registerRealtime } from "./socket/realtime";
-import { setSocketIO } from "./personalItems/routes";
-import { initAi, setAiSocketIO } from "./ai";
-import { startReminderScheduler } from "./personalItems/reminderScheduler";
+import { initAi, setAiSocketIO, shutdownAi } from "./ai";
+import { createReminderScheduler } from "./personalItems/reminderScheduler";
 import { startUploadCleanup } from "./upload/cleanup";
+import { socketEvents } from "./contracts/realtime";
+import { shutdownServer } from "./lifecycle/shutdown";
 
 async function main() {
   await initDatabase();
   await seedAccounts();
   await initAi();
 
-  const app = await buildApp();
-  const io = new Server(app.server, {
-    cors: {
-      origin: true,
+  let io: Server | null = null;
+  const app = await buildApp({
+    personalItemEvents: {
+      sharedItemChanged(action, item) {
+        const value = item as { scope?: string } | null;
+        if (value?.scope === "shared") {
+          io?.to("channel:couple").emit(socketEvents.personalItemChanged, { action, item });
+        }
+      },
     },
   });
+  io = new Server(app.server, { cors: { origin: true } });
   setAiSocketIO(io);
-  setSocketIO(io);
   registerRealtime(io);
-  if (config.scheduledJobsEnabled) startReminderScheduler();
 
+  const reminderScheduler = createReminderScheduler();
+  if (config.scheduledJobsEnabled) reminderScheduler.start();
   await app.listen({ host: config.host, port: config.port });
   const stopUploadCleanup = config.scheduledJobsEnabled ? startUploadCleanup() : () => undefined;
 
@@ -32,12 +39,29 @@ async function main() {
     console.log("[cloud-db-debug] 已连接云端数据库；定时任务、推送和上传写入按环境开关控制");
   }
 
-  const shutdown = () => {
-    stopUploadCleanup();
-    void closeDatabase().finally(() => process.exit(0));
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      await shutdownServer({
+        stopSchedulers: () => {
+          reminderScheduler.stop();
+          shutdownAi();
+        },
+        stopUploadCleanup,
+        closeSocket: () => new Promise((resolve) => io?.close(() => resolve()) ?? resolve()),
+        closeHttp: () => app.close(),
+        closeDatabase,
+      });
+      process.exit(0);
+    } catch (error) {
+      console.error("[shutdown] 关闭失败:", error);
+      process.exit(1);
+    }
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
 }
 
 main().catch((error) => {

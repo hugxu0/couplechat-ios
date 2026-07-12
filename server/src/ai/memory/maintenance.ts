@@ -1,6 +1,7 @@
 import { reconcileMemoryLifecycle, repairMissingMemoryEmbeddings } from "./store";
 
 let running = false;
+let timer: NodeJS.Timeout | null = null;
 
 async function maintain(): Promise<void> {
   if (running) return;
@@ -20,6 +21,12 @@ async function maintain(): Promise<void> {
 }
 
 export function startMemoryMaintenance(): void {
+  if (timer) return;
   void maintain();
-  setInterval(() => void maintain(), 60 * 60 * 1000);
+  timer = setInterval(() => void maintain(), 60 * 60 * 1000);
+}
+
+export function stopMemoryMaintenance(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
 }

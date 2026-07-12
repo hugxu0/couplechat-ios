@@ -1,7 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { Server } from "socket.io";
 import { z } from "zod";
-import { socketEvents } from "../contracts/realtime";
 import { requireAuth } from "../auth/httpAuth";
 import {
   createPersonalItem,
@@ -10,18 +8,11 @@ import {
   updatePersonalItem,
 } from "./itemService";
 
-let io: Server | null = null;
-
-export function setSocketIO(socketServer: Server) {
-  io = socketServer;
+export interface PersonalItemRouteEvents {
+  sharedItemChanged(action: string, item: unknown): void;
 }
 
-function broadcastSharedChange(action: string, item: unknown) {
-  if (!io) return;
-  const it = item as { scope?: string } | null;
-  if (!it || it.scope !== "shared") return;
-  io.to("channel:couple").emit(socketEvents.personalItemChanged, { action, item });
-}
+const noEvents: PersonalItemRouteEvents = { sharedItemChanged: () => undefined };
 
 const kindSchema = z.enum(["reminder", "memo"]);
 const scopeSchema = z.enum(["personal", "shared"]);
@@ -51,7 +42,10 @@ const paramsSchema = z.object({
   id: z.string().min(1),
 });
 
-export async function registerPersonalItemRoutes(app: FastifyInstance) {
+export async function registerPersonalItemRoutes(
+  app: FastifyInstance,
+  events: PersonalItemRouteEvents = noEvents,
+) {
   app.get("/api/me/items", { preHandler: requireAuth }, async (request, reply) => {
     const parsed = querySchema.safeParse(request.query);
     if (!parsed.success || !request.user) return reply.code(400).send({ error: "invalid_request" });
@@ -64,7 +58,7 @@ export async function registerPersonalItemRoutes(app: FastifyInstance) {
     const parsed = createBody.safeParse(request.body);
     if (!parsed.success || !request.user) return reply.code(400).send({ error: "invalid_request" });
     const item = await createPersonalItem(request.user, parsed.data);
-    broadcastSharedChange("created", item);
+    events.sharedItemChanged("created", item);
     return reply.code(201).send({ item });
   });
 
@@ -77,7 +71,7 @@ export async function registerPersonalItemRoutes(app: FastifyInstance) {
 
     const item = await updatePersonalItem(request.user, params.data.id, body.data);
     if (!item) return reply.code(404).send({ error: "not_found" });
-    broadcastSharedChange("updated", item);
+    events.sharedItemChanged("updated", item);
     return { item };
   });
 
@@ -87,7 +81,7 @@ export async function registerPersonalItemRoutes(app: FastifyInstance) {
 
     const ok = await deletePersonalItem(request.user, params.data.id);
     if (!ok) return reply.code(404).send({ error: "not_found" });
-    broadcastSharedChange("deleted", { id: params.data.id });
+    events.sharedItemChanged("deleted", { id: params.data.id });
     return { ok: true };
   });
 }

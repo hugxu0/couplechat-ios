@@ -6,14 +6,18 @@ import { config } from "./config";
 import { registerAuthRoutes } from "./auth/routes";
 import { registerUploadRoutes } from "./upload/routes";
 import { registerDailyRoutes } from "./daily/routes";
-import { registerPersonalItemRoutes } from "./personalItems/routes";
+import { registerPersonalItemRoutes, type PersonalItemRouteEvents } from "./personalItems/routes";
 import { registerSyncRoutes } from "./sync/routes";
 import { registerMediaAccessRoutes } from "./upload/mediaAccess";
 import { pingDatabase } from "./db";
 import { registerAiDebugRoutes } from "./ai/debug/routes";
 import { registerAiMcpRoutes } from "./ai/mcp/routes";
 
-export async function buildApp() {
+export interface AppDependencies {
+  personalItemEvents?: PersonalItemRouteEvents;
+}
+
+export async function buildApp(dependencies: AppDependencies = {}) {
   fs.mkdirSync(config.uploadDir, { recursive: true });
 
   const app = Fastify({
@@ -42,7 +46,7 @@ export async function buildApp() {
   await registerMediaAccessRoutes(app);
   await registerUploadRoutes(app);
   await registerDailyRoutes(app);
-  await registerPersonalItemRoutes(app);
+  await registerPersonalItemRoutes(app, dependencies.personalItemEvents);
   await registerSyncRoutes(app);
   await registerAiMcpRoutes(app);
   await registerAiDebugRoutes(app);

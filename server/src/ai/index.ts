@@ -19,8 +19,9 @@ import {
   type MemoryEngagementSignal,
 } from "./memory/extractor";
 import { updateConversationContext } from "./conversation/context";
-import { startDailyScheduler } from "./background/dailyScheduler";
-import { startMemoryMaintenance } from "./memory/maintenance";
+import { startDailyScheduler, stopDailyScheduler } from "./background/dailyScheduler";
+import { startMemoryMaintenance, stopMemoryMaintenance } from "./memory/maintenance";
+import { subscribeMemoryDomainEvents } from "./memory/events";
 
 const engagementCooldowns: Record<MemoryEngagementSignal["kind"], number> = {
   conflict: 15 * 60 * 1000,
@@ -29,8 +30,10 @@ const engagementCooldowns: Record<MemoryEngagementSignal["kind"], number> = {
 const lastEngagementAt: Partial<Record<MemoryEngagementSignal["kind"], number>> = {};
 let activeIo: Server | null = null;
 let pendingEngagement: MemoryEngagementSignal | null = null;
+let stopMemoryEvents: (() => void) | null = null;
 
 export async function initAi(): Promise<void> {
+  stopMemoryEvents ??= subscribeMemoryDomainEvents();
   await loadAccounts();
   setMemoryEngagementHandler((signal) => {
     if (activeIo) handleMemoryEngagement(activeIo, signal);
@@ -45,6 +48,15 @@ export async function initAi(): Promise<void> {
   } else {
     console.log("[ai] 未配置 AI_* 环境变量，大橘走本地兜底回复");
   }
+}
+
+export function shutdownAi(): void {
+  stopDailyScheduler();
+  stopMemoryMaintenance();
+  stopMemoryEvents?.();
+  stopMemoryEvents = null;
+  activeIo = null;
+  pendingEngagement = null;
 }
 
 // 未配置模型时的本地兜底（保持 ai 频道基本可用）。

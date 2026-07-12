@@ -4,6 +4,8 @@ import { aiEnabled } from "../provider";
 import { addDays, beijingParts, cycleDate } from "../time";
 
 let running = false;
+let initialTimer: NodeJS.Timeout | null = null;
+let intervalTimer: NodeJS.Timeout | null = null;
 
 async function maintainDailyContent(): Promise<void> {
   if (running || !aiEnabled()) return;
@@ -21,9 +23,13 @@ async function maintainDailyContent(): Promise<void> {
 }
 
 export function startDailyScheduler(): void {
-  setTimeout(() => void maintainDailyContent(), 30_000);
+  if (initialTimer || intervalTimer) return;
+  initialTimer = setTimeout(() => {
+    initialTimer = null;
+    void maintainDailyContent();
+  }, 30_000);
   let lastRun = "";
-  setInterval(() => {
+  intervalTimer = setInterval(() => {
     const now = beijingParts();
     const date = cycleDate();
     if (now.hour === DAY_ROLLOVER_HOUR && now.minute <= 5 && lastRun !== date) {
@@ -31,4 +37,11 @@ export function startDailyScheduler(): void {
       void maintainDailyContent();
     }
   }, 60_000);
+}
+
+export function stopDailyScheduler(): void {
+  if (initialTimer) clearTimeout(initialTimer);
+  if (intervalTimer) clearInterval(intervalTimer);
+  initialTimer = null;
+  intervalTimer = null;
 }

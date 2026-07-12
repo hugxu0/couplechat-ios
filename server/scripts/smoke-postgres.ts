@@ -150,6 +150,8 @@ async function main() {
     assertOk(`listPublicAccounts → ${accounts.length} 个账号`, accounts.length === 2);
 
     // 消息：分页 / since / after+before / around / 搜索 / LIKE
+    const { subscribeMemoryDomainEvents } = await import("../src/ai/memory/events");
+    const stopMemoryEvents = subscribeMemoryDomainEvents();
     const { fetchMessages, searchMessages, createMessage, recallMessage, upsertReadReceipt, getReadReceipts } = await import("../src/chat/messageService");
     const user = { username: accounts[0].username, name: accounts[0].name };
     const latest = await fetchMessages(user, { channel: "couple", limit: 50 });
@@ -487,6 +489,7 @@ async function main() {
       [recallBoundMemory!.id],
     );
     assertOk("主人撤回原消息会传播到 Memory 证据链", invalidatedMemory?.status === "retracted");
+    stopMemoryEvents();
 
     console.log("[5/5] 清理…");
     await db.closeDatabase();
