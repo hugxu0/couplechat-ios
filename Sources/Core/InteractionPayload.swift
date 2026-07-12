@@ -193,7 +193,7 @@ struct IncomingInteractionOverlay: View {
 
     private func noteLayer(in size: CGSize) -> some View {
         let cardWidth = min(270, max(220, size.width - 48))
-        ZStack {
+        return ZStack {
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .overlay(Color.black.opacity(0.08))
