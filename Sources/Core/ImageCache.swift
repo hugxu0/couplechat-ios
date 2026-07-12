@@ -43,6 +43,21 @@ final class ImageCache {
         return fileManager.fileExists(atPath: fileURL(for: url).path)
     }
 
+    /// 只读取现有缓存，不在未命中时发起网络请求。视频封面使用合成 key，
+    /// 需要复用图片缓存的内存和磁盘能力，但不能把合成 URL 当成远程资源下载。
+    func cachedImage(for url: URL) async -> UIImage? {
+        if let hit = memoryImage(for: url) { return hit }
+        let file = fileURL(for: url)
+        let decoded = await Task.detached(priority: .utility) { () -> UIImage? in
+            guard let data = try? Data(contentsOf: file) else { return nil }
+            return Self.decodeForDisplay(data)
+        }.value
+        if let decoded {
+            memory.setObject(decoded, forKey: url.absoluteString as NSString)
+        }
+        return decoded
+    }
+
     /// 命中内存直接返回；否则在后台线程读磁盘 / 下载 + 解码（preparingForDisplay），
     /// 避免在滚动时于主线程解码大图造成掉帧。
     @discardableResult

@@ -567,10 +567,32 @@ final class ChatStore: ObservableObject {
             await messageStore.sendInteraction(
                 id: id, kind: kind, text: text, channel: channel, session: session)
         }
-        localInteractionPresentation = InteractionPresentation(
-            payload: InteractionPayload(id: id, kind: kind, text: text),
-            senderName: "已送达",
-            duration: kind == .note ? 2.1 : 1.15)
+        if kind == .note {
+            shared.setShared("screen_note", value: [
+                "id": id,
+                "from": session.username,
+                "fromName": session.name,
+                "text": text,
+                "ts": Date().timeIntervalSince1970 * 1_000,
+                "dismissed": false,
+            ], session: session)
+        } else {
+            localInteractionPresentation = InteractionPresentation(
+                payload: InteractionPayload(id: id, kind: kind, text: text),
+                senderName: "已送达",
+                duration: 1.15)
+        }
+    }
+
+    func dismissScreenNote(id: String) {
+        guard let session = auth.session,
+              shared.sharedValue("screen_note")?["id"] as? String == id else { return }
+        shared.setShared("screen_note", value: [
+            "id": id,
+            "dismissed": true,
+            "dismissedBy": session.username,
+            "dismissedAt": Date().timeIntervalSince1970 * 1_000,
+        ], session: session)
     }
 
     func aiActivity(for channel: ChatChannel) -> AIActivity? {

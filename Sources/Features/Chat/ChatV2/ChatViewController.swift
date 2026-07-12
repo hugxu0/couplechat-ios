@@ -45,6 +45,7 @@ final class ChatViewController: UIViewController {
     var activeJumpID: UUID?
     var isHistoryRefreshing = false
     var isNewerRefreshing = false
+    var lastRenderedMessageID: String?
     var replyTarget: ChatMessage?
     var pendingMedia: [ChatPendingMedia] = []
     var photoPickerPurpose: PhotoPickerPurpose = .messageMedia

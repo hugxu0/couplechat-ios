@@ -26,6 +26,13 @@ extension ChatViewController {
     func handleStoreChange() {
         composer.setTypingVisible(false)
         composer.setCatThinking(store.isAIComposing(in: channel))
+        let newestMessageID = store.messages(for: channel).last?.id
+        if keyboardOverlap > 0,
+           newestMessageID != lastRenderedMessageID,
+           lastRenderedMessageID != nil,
+           isNearLatestWindow() {
+            stickToLatestAfterNextReload = true
+        }
         reloadTimeline(animated: true)
         store.markRead(channel)
     }
@@ -34,25 +41,10 @@ extension ChatViewController {
         guard timelineController != nil else { return }
         timelineController.updatePresentation(makeTimelinePresentation())
         timelineController.browsingHistoricalWindow = !isNearLatestWindow()
-        timelineController.reload(
-            messages: store.messages(for: channel),
-            activity: aiActivityMessage(),
-            animated: animated)
+        let messages = store.messages(for: channel)
+        timelineController.reload(messages: messages, activity: nil, animated: animated)
+        lastRenderedMessageID = messages.last?.id
         updateJumpToBottomVisibility(animated: animated)
-    }
-
-    func aiActivityMessage() -> ChatMessage? {
-        guard let activity = store.aiActivity(for: channel), activity.isVisible else { return nil }
-        return ChatMessage(dict: [
-            "id": "__ai_activity__\(channel.rawValue)",
-            "sender": "ai",
-            "senderName": "大橘",
-            "kind": "user",
-            "type": "text",
-            "text": "大橘正在输入…",
-            "channel": channel.rawValue,
-            "ts": Date().timeIntervalSince1970 * 1_000,
-        ])
     }
 
     func isNearLatestWindow() -> Bool {

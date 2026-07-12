@@ -51,3 +51,33 @@ final class CoupleDatesTests: XCTestCase {
         XCTAssertEqual(days, 1)
     }
 }
+
+final class InteractionNoteLayoutTests: XCTestCase {
+    func testRandomPositionsKeepCardInsidePhoneBounds() {
+        let container = CGSize(width: 390, height: 844)
+        let card = CGSize(width: 270, height: 260)
+
+        for seed in 0..<997 {
+            let point = InteractionNoteLayout.position(
+                seed: seed,
+                container: container,
+                cardSize: card)
+            XCTAssertGreaterThanOrEqual(point.x - card.width / 2, 24)
+            XCTAssertLessThanOrEqual(point.x + card.width / 2, container.width - 24)
+            XCTAssertGreaterThanOrEqual(point.y - card.height / 2, 72)
+            XCTAssertLessThanOrEqual(point.y + card.height / 2, container.height - 52)
+        }
+    }
+
+    func testCompactPhoneStillProducesAValidPosition() {
+        let point = InteractionNoteLayout.position(
+            seed: 428,
+            container: CGSize(width: 320, height: 568),
+            cardSize: CGSize(width: 270, height: 260))
+
+        XCTAssertGreaterThanOrEqual(point.x - 135, 24)
+        XCTAssertLessThanOrEqual(point.x + 135, 296)
+        XCTAssertGreaterThanOrEqual(point.y - 130, 72)
+        XCTAssertLessThanOrEqual(point.y + 130, 516)
+    }
+}

@@ -46,6 +46,7 @@ struct RootTabView: View {
     @State private var lastSeenNoteId: String?
     @State private var activePresentation: InteractionPresentation?
     @State private var effectQueue: [InteractionPresentation] = []
+    @AppStorage("screen_note.dismissed_id") private var dismissedNoteId = ""
 
     private var screenNoteId: String? {
         store.sharedValue("screen_note")?["id"] as? String
@@ -95,7 +96,7 @@ struct RootTabView: View {
                     payload: presentation.payload,
                     senderName: presentation.senderName,
                     onDismiss: {
-                        finishActiveEffect()
+                        dismissActivePresentation(presentation)
                     },
                     duration: presentation.duration
                 )
@@ -106,7 +107,7 @@ struct RootTabView: View {
         .animation(DS.Anim.spring, value: app.hidesTabBar)
         .onAppear {
             lastSeenEffectMessageId = coupleMessages.last?.id
-            lastSeenNoteId = screenNoteId
+            handleIncomingNote()
         }
         .onChange(of: coupleMessages.last?.id) {
             handleIncomingInteraction()
@@ -128,7 +129,8 @@ struct RootTabView: View {
         guard message.channel == ChatChannel.couple.rawValue,
               message.sender != store.session?.username,
               Date().timeIntervalSince1970 * 1000 - message.ts < 20_000,
-              let payload = message.interactionPayload else { return }
+              let payload = message.interactionPayload,
+              payload.kind != .note else { return }
         enqueueEffect(InteractionPresentation(
             payload: payload,
             senderName: message.senderName.isEmpty ? "TA" : message.senderName,
@@ -142,16 +144,24 @@ struct RootTabView: View {
     private func handleIncomingNote() {
         guard let value = store.sharedValue("screen_note"),
               let id = value["id"] as? String,
-              id != lastSeenNoteId else { return }
-        lastSeenNoteId = id
+              id != lastSeenNoteId,
+              id != dismissedNoteId,
+              value["dismissed"] as? Bool != true else { return }
         guard value["from"] as? String != store.session?.username,
-              let text = value["text"] as? String,
-              let ts = (value["ts"] as? NSNumber)?.doubleValue ?? (value["ts"] as? Double),
-              Date().timeIntervalSince1970 * 1000 - ts < 300_000 else { return }
+              let text = value["text"] as? String else { return }
+        lastSeenNoteId = id
         enqueueEffect(InteractionPresentation(
-            payload: InteractionPayload(id: "note-\(id)", kind: .note, text: text),
+            payload: InteractionPayload(id: id, kind: .note, text: text),
             senderName: value["fromName"] as? String ?? "TA",
             duration: 2.8))
+    }
+
+    private func dismissActivePresentation(_ presentation: InteractionPresentation) {
+        if presentation.payload.kind == .note {
+            dismissedNoteId = presentation.payload.id
+            store.dismissScreenNote(id: presentation.payload.id)
+        }
+        finishActiveEffect()
     }
 
     private func enqueueEffect(_ presentation: InteractionPresentation) {

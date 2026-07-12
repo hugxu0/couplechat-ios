@@ -192,6 +192,7 @@ struct IncomingInteractionOverlay: View {
     }
 
     private func noteLayer(in size: CGSize) -> some View {
+        let cardWidth = min(270, max(220, size.width - 48))
         ZStack {
             Rectangle()
                 .fill(.ultraThinMaterial)
@@ -229,7 +230,7 @@ struct IncomingInteractionOverlay: View {
                 .buttonStyle(PressableStyle())
             }
             .padding(18)
-            .frame(width: min(270, size.width * 0.72))
+            .frame(width: cardWidth)
             .background(
                 LinearGradient(
                     colors: [Color(red: 1.0, green: 0.93, blue: 0.48), Color(red: 1.0, green: 0.80, blue: 0.62)],
@@ -248,7 +249,11 @@ struct IncomingInteractionOverlay: View {
             .rotationEffect(.degrees(torn ? 15 : noteRotation))
             .scaleEffect(appeared ? 1 : 0.72)
             .opacity(torn ? 0 : (appeared ? 1 : 0))
-            .offset(noteOffset(in: size))
+            .position(InteractionNoteLayout.position(
+                seed: stableSeed,
+                container: size,
+                cardSize: CGSize(width: cardWidth, height: 260)))
+            .offset(y: torn ? -size.height : 0)
             .gesture(
                 DragGesture(minimumDistance: 12)
                     .onEnded { value in
@@ -310,13 +315,6 @@ struct IncomingInteractionOverlay: View {
         return CGPoint(x: x, y: y)
     }
 
-    private func noteOffset(in size: CGSize) -> CGSize {
-        let x = CGFloat((stableSeed % 55) - 27) / 100 * size.width
-        let y = CGFloat(((stableSeed / 3) % 45) - 18) / 100 * size.height
-        let tearY = torn ? -size.height : 0
-        return CGSize(width: x, height: y + tearY)
-    }
-
     private func tearAway() {
         Haptics.medium()
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
@@ -326,5 +324,26 @@ struct IncomingInteractionOverlay: View {
             try? await Task.sleep(nanoseconds: 430_000_000)
             await MainActor.run { onDismiss() }
         }
+    }
+}
+
+enum InteractionNoteLayout {
+    static func position(
+        seed: Int,
+        container: CGSize,
+        cardSize: CGSize
+    ) -> CGPoint {
+        let sideMargin: CGFloat = 24
+        let topMargin: CGFloat = 72
+        let bottomMargin: CGFloat = 52
+        let minX = min(container.width / 2, cardSize.width / 2 + sideMargin)
+        let maxX = max(minX, container.width - cardSize.width / 2 - sideMargin)
+        let minY = min(container.height / 2, cardSize.height / 2 + topMargin)
+        let maxY = max(minY, container.height - cardSize.height / 2 - bottomMargin)
+        let xFraction = CGFloat(seed % 101) / 100
+        let yFraction = CGFloat((seed * 37) % 101) / 100
+        return CGPoint(
+            x: minX + (maxX - minX) * xFraction,
+            y: minY + (maxY - minY) * yFraction)
     }
 }
