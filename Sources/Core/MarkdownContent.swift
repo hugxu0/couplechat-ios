@@ -25,108 +25,132 @@ enum MarkdownBlock: Equatable {
                 index += 1
                 continue
             }
-            if line.hasPrefix("```") {
-                let language = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces).lowercased()
-                index += 1
-                var codeLines: [String] = []
-                while index < lines.count, !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                    codeLines.append(lines[index])
-                    index += 1
-                }
-                if index < lines.count { index += 1 }
-                let first = codeLines.first?.trimmingCharacters(in: .whitespaces).lowercased()
-                if language == "mermaid" || (language.isEmpty && first == "mermaid") {
-                    if first == "mermaid" { codeLines.removeFirst() }
-                    result.append(.mermaid(codeLines.joined(separator: "\n")))
-                } else {
-                    result.append(.code(codeLines.joined(separator: "\n")))
-                }
-                continue
+            if let block = fencedBlock(lines, index: &index)
+                ?? standaloneBlock(lines, index: &index) {
+                result.append(block)
+            } else {
+                result.append(paragraphBlock(lines, index: &index))
             }
-            if line.lowercased() == "mermaid", index + 1 < lines.count,
-               isMermaidStart(lines[index + 1]) {
-                index += 1
-                var mermaidLines: [String] = []
-                while index < lines.count, !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
-                    mermaidLines.append(lines[index])
-                    index += 1
-                }
-                result.append(.mermaid(mermaidLines.joined(separator: "\n")))
-                continue
-            }
-            if isRule(line) {
-                result.append(.rule)
-                index += 1
-                continue
-            }
-            if let heading = headingLine(line) {
-                result.append(.heading(level: heading.level, text: heading.text))
-                index += 1
-                continue
-            }
-            if index + 1 < lines.count,
-               let headers = tableRow(line),
-               isTableSeparator(lines[index + 1]) {
-                index += 2
-                var rows: [[String]] = []
-                while index < lines.count, let row = tableRow(lines[index]), !row.isEmpty {
-                    rows.append(row)
-                    index += 1
-                }
-                result.append(.table(headers: headers, rows: rows))
-                continue
-            }
-            if let item = bulletLine(line) {
-                var items = [item]
-                index += 1
-                while index < lines.count, let next = bulletLine(lines[index].trimmingCharacters(in: .whitespaces)) {
-                    items.append(next)
-                    index += 1
-                }
-                result.append(.bullets(items))
-                continue
-            }
-            if let item = numberLine(line) {
-                var items = [item]
-                index += 1
-                while index < lines.count, let next = numberLine(lines[index].trimmingCharacters(in: .whitespaces)) {
-                    items.append(next)
-                    index += 1
-                }
-                result.append(.numbers(items))
-                continue
-            }
-            if line.hasPrefix(">") {
-                var quotes: [String] = []
-                while index < lines.count {
-                    let next = lines[index].trimmingCharacters(in: .whitespaces)
-                    guard next.hasPrefix(">") else { break }
-                    quotes.append(String(next.dropFirst()).trimmingCharacters(in: .whitespaces))
-                    index += 1
-                }
-                result.append(.quote(quotes.joined(separator: "\n")))
-                continue
-            }
-
-            var paragraph = [line]
-            index += 1
-            while index < lines.count {
-                let next = lines[index].trimmingCharacters(in: .whitespaces)
-                guard !next.isEmpty,
-                      !next.hasPrefix("```"),
-                      next.lowercased() != "mermaid",
-                      !isRule(next),
-                      headingLine(next) == nil,
-                      bulletLine(next) == nil,
-                      numberLine(next) == nil,
-                      !next.hasPrefix(">") else { break }
-                if index + 1 < lines.count, tableRow(next) != nil, isTableSeparator(lines[index + 1]) { break }
-                paragraph.append(next)
-                index += 1
-            }
-            result.append(.paragraph(paragraph.joined(separator: "\n")))
         }
         return result
+    }
+
+    private static func fencedBlock(_ lines: [String], index: inout Int) -> MarkdownBlock? {
+        let line = lines[index].trimmingCharacters(in: .whitespaces)
+        guard line.hasPrefix("```") else { return nil }
+        let language = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces).lowercased()
+        index += 1
+        var content: [String] = []
+        while index < lines.count, !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+            content.append(lines[index])
+            index += 1
+        }
+        if index < lines.count { index += 1 }
+        let first = content.first?.trimmingCharacters(in: .whitespaces).lowercased()
+        let isMermaid = language == "mermaid" || (language.isEmpty && first == "mermaid")
+        if first == "mermaid" { content.removeFirst() }
+        return isMermaid ? .mermaid(content.joined(separator: "\n")) : .code(content.joined(separator: "\n"))
+    }
+
+    private static func standaloneBlock(_ lines: [String], index: inout Int) -> MarkdownBlock? {
+        if let block = looseMermaidBlock(lines, index: &index) { return block }
+        if let block = simpleBlock(lines, index: &index) { return block }
+        if let block = tableBlock(lines, index: &index) { return block }
+        if let block = listBlock(lines, index: &index) { return block }
+        return quoteBlock(lines, index: &index)
+    }
+
+    private static func looseMermaidBlock(_ lines: [String], index: inout Int) -> MarkdownBlock? {
+        let line = lines[index].trimmingCharacters(in: .whitespaces)
+        guard line.lowercased() == "mermaid", index + 1 < lines.count,
+              isMermaidStart(lines[index + 1]) else { return nil }
+        index += 1
+        var content: [String] = []
+        while index < lines.count, !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
+            content.append(lines[index])
+            index += 1
+        }
+        return .mermaid(content.joined(separator: "\n"))
+    }
+
+    private static func simpleBlock(_ lines: [String], index: inout Int) -> MarkdownBlock? {
+        let line = lines[index].trimmingCharacters(in: .whitespaces)
+        if isRule(line) {
+            index += 1
+            return .rule
+        }
+        guard let heading = headingLine(line) else { return nil }
+        index += 1
+        return .heading(level: heading.level, text: heading.text)
+    }
+
+    private static func tableBlock(_ lines: [String], index: inout Int) -> MarkdownBlock? {
+        guard index + 1 < lines.count,
+              let headers = tableRow(lines[index]),
+              isTableSeparator(lines[index + 1]) else { return nil }
+        index += 2
+        var rows: [[String]] = []
+        while index < lines.count, let row = tableRow(lines[index]), !row.isEmpty {
+            rows.append(row)
+            index += 1
+        }
+        return .table(headers: headers, rows: rows)
+    }
+
+    private static func listBlock(_ lines: [String], index: inout Int) -> MarkdownBlock? {
+        let line = lines[index].trimmingCharacters(in: .whitespaces)
+        if let item = bulletLine(line) {
+            return .bullets(collectList(lines, index: &index, first: item, parser: bulletLine))
+        }
+        if let item = numberLine(line) {
+            return .numbers(collectList(lines, index: &index, first: item, parser: numberLine))
+        }
+        return nil
+    }
+
+    private static func collectList(
+        _ lines: [String],
+        index: inout Int,
+        first: String,
+        parser: (String) -> String?
+    ) -> [String] {
+        var items = [first]
+        index += 1
+        while index < lines.count, let item = parser(lines[index].trimmingCharacters(in: .whitespaces)) {
+            items.append(item)
+            index += 1
+        }
+        return items
+    }
+
+    private static func quoteBlock(_ lines: [String], index: inout Int) -> MarkdownBlock? {
+        guard lines[index].trimmingCharacters(in: .whitespaces).hasPrefix(">") else { return nil }
+        var content: [String] = []
+        while index < lines.count {
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix(">") else { break }
+            content.append(String(line.dropFirst()).trimmingCharacters(in: .whitespaces))
+            index += 1
+        }
+        return .quote(content.joined(separator: "\n"))
+    }
+
+    private static func paragraphBlock(_ lines: [String], index: inout Int) -> MarkdownBlock {
+        var content: [String] = []
+        while index < lines.count {
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            guard isParagraphLine(line, lines: lines, index: index) else { break }
+            content.append(line)
+            index += 1
+        }
+        return .paragraph(content.joined(separator: "\n"))
+    }
+
+    private static func isParagraphLine(_ line: String, lines: [String], index: Int) -> Bool {
+        guard !line.isEmpty, !line.hasPrefix("```"), line.lowercased() != "mermaid",
+              !isRule(line), headingLine(line) == nil, bulletLine(line) == nil,
+              numberLine(line) == nil, !line.hasPrefix(">") else { return false }
+        return index + 1 >= lines.count || tableRow(line) == nil || !isTableSeparator(lines[index + 1])
     }
 
     private static func isMermaidStart(_ line: String) -> Bool {
