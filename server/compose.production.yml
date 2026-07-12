@@ -1,0 +1,24 @@
+services:
+  couplechat-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: couplechat-server:local
+    container_name: couplechat-server
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 127.0.0.1
+      PORT: 8080
+    volumes:
+      - ./uploads:/app/uploads
+      - ./.data:/app/.data
+    restart: unless-stopped
+    mem_limit: 300m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

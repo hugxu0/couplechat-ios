@@ -17,10 +17,15 @@ final class AuthStore: ObservableObject {
 
     private var verifyingSession = false
     private let httpClient: any HTTPClient
+    private let persistence: any ChatPersistenceProtocol
     weak var socketProvider: SocketProvider?
 
-    init(httpClient: any HTTPClient = URLSessionHTTPClient()) {
+    init(
+        httpClient: any HTTPClient = URLSessionHTTPClient(),
+        persistence: any ChatPersistenceProtocol = ChatPersistence.shared
+    ) {
         self.httpClient = httpClient
+        self.persistence = persistence
     }
 
     // MARK: - 启动
@@ -47,8 +52,9 @@ final class AuthStore: ObservableObject {
         req.httpBody = try JSONEncoder().encode(["username": username, "password": password])
         let (data, resp) = try await httpClient.data(for: req)
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
-            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
-            throw NSError(domain: "login", code: 1, userInfo: [NSLocalizedDescriptionKey: msg ?? "登录失败"])
+            let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            let message = ServerErrorCode.message(for: code, fallback: "登录失败")
+            throw NSError(domain: "login", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
         }
         return try JSONDecoder().decode(Session.self, from: data)
     }
@@ -67,7 +73,7 @@ final class AuthStore: ObservableObject {
         session = nil
         partner = nil
         accounts = []
-        ChatLocalDatabase.shared.close()
+        Task { await persistence.close() }
     }
 
     // MARK: - 账号

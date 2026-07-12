@@ -1,0 +1,27 @@
+only_rules:
+  - file_length
+  - type_body_length
+  - function_body_length
+  - cyclomatic_complexity
+
+file_length:
+  warning: 400
+  error: 500
+
+type_body_length:
+  warning: 250
+  error: 350
+
+function_body_length:
+  warning: 60
+  error: 100
+
+cyclomatic_complexity:
+  warning: 10
+  error: 20
+
+excluded:
+  - build
+  - build-artifacts
+  - DerivedData
+  - server

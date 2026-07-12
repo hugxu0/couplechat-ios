@@ -16,7 +16,7 @@ struct LoginView: View {
             Spacer()
 
             VStack(spacing: 8) {
-                Text("💗").font(.system(size: 52))
+                PairedEchoIndicator()
                 Text("悄悄话")
                     .font(.system(size: 30, weight: .bold))
                     .foregroundStyle(DS.Palette.textPrimary)
@@ -60,8 +60,8 @@ struct LoginView: View {
                     .font(.system(size: 16))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                    .background(DS.Palette.bubbleOther)
-                    .clipShape(Capsule())
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .onSubmit(submit)
 
                 if let error {
@@ -81,8 +81,8 @@ struct LoginView: View {
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(DS.Palette.accentGradient)
-                    .clipShape(Capsule())
+                    .background(DS.Palette.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .opacity(selected == nil || password.isEmpty ? 0.5 : 1)
                 }
                 .buttonStyle(PressableStyle())
@@ -94,9 +94,9 @@ struct LoginView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(AppPageBackground())
         .task {
-            accounts = await store.fetchAccounts()
+            accounts = await store.auth.fetchAccounts()
         }
     }
 

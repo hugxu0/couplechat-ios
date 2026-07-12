@@ -1,5 +1,4 @@
-// PostgreSQL 冒烟测试：起一个内嵌 PG → 建表 → 从 .data/couplechat.sqlite 全量迁移 →
-// 跑一遍代表性读写路径，验证 SQL 方言/占位符转换/BYTEA/BIGINT 解析都正确。
+// PostgreSQL 日常冒烟测试：启动临时数据库，建表并跑代表性业务读写路径。
 // 用法（server/ 下）：npx tsx scripts/smoke-postgres.ts
 
 import path from "node:path";
@@ -25,6 +24,10 @@ async function main() {
   await pg.createDatabase("couplechat");
 
   process.env.DATABASE_URL = `postgres://couplechat:couplechat@localhost:${PORT}/couplechat`;
+  process.env.TOKEN_SECRET = "smoke-test-token-secret-not-for-production";
+  process.env.PUBLIC_BASE_URL = "http://127.0.0.1:8080";
+  process.env.DATA_DIR = dataDir;
+  process.env.UPLOAD_DIR = dataDir;
 
   try {
     // 动态 import：确保 config 读到上面设置的 DATABASE_URL
@@ -32,34 +35,28 @@ async function main() {
     console.log("[2/5] 建表…");
     await db.initDatabase();
 
-    console.log("[3/5] 迁移 SQLite 数据…");
-    const { DatabaseSync } = await import("node:sqlite");
-    const sqlite = new DatabaseSync(path.resolve(".data/couplechat.sqlite"), { readOnly: true });
-
-    const tables: Array<{ name: string; columns: string[] }> = [
-      { name: "accounts", columns: ["username", "display_name", "password_hash", "avatar", "bark_key", "created_at", "updated_at"] },
-      { name: "messages", columns: ["id", "channel", "sender", "sender_name", "kind", "type", "text", "url", "reply_json", "meta_json", "ts", "client_id"] },
-      { name: "read_receipts", columns: ["channel", "username", "ts", "updated_at"] },
-      { name: "shared_items", columns: ["key", "value_json", "updated_by", "updated_at"] },
-      { name: "personal_items", columns: ["id", "owner", "kind", "scope", "title", "body_markdown", "due_at", "is_done", "created_at", "updated_at"] },
-      { name: "uploads", columns: ["id", "owner", "path", "url", "mime_type", "size", "created_at"] },
-      { name: "ai_facts", columns: ["id", "subject", "category", "text", "importance", "status", "embedding", "created_at", "updated_at", "last_seen_at"] },
-      { name: "ai_episodes", columns: ["id", "channel", "date", "title", "summary", "key_points_json", "mood", "conclusion", "keywords", "embedding", "created_at"] },
-      { name: "ai_docs", columns: ["key", "text", "updated_at"] },
-    ];
-    for (const t of tables) {
-      const rows = sqlite.prepare(`SELECT ${t.columns.map((c) => `"${c}"`).join(",")} FROM "${t.name}"`).all() as Record<string, unknown>[];
-      for (let i = 0; i < rows.length; i += 500) {
-        const chunk = rows.slice(i, i + 500);
-        const values = chunk.map(() => `(${t.columns.map(() => "?").join(",")})`).join(",");
-        await db.run(
-          `INSERT INTO ${t.name} (${t.columns.join(",")}) VALUES ${values} ON CONFLICT DO NOTHING`,
-          chunk.flatMap((r) => t.columns.map((c) => r[c] ?? null)),
-        );
-      }
-      console.log(`  ${t.name}: ${rows.length} 行`);
+    console.log("[3/5] 写入测试夹具…");
+    const now = Date.now();
+    await db.run(
+      `INSERT INTO accounts (username, display_name, password_hash, avatar, created_at, updated_at)
+       VALUES (?, ?, ?, '', ?, ?), (?, ?, ?, '', ?, ?)`,
+      ["xu", "小旭", "smoke-hash", now, now, "si", "小偲", "smoke-hash", now, now],
+    );
+    for (let index = 0; index < 120; index += 1) {
+      const sender = index % 2 === 0 ? "xu" : "si";
+      await db.run(
+        `INSERT INTO messages
+         (id, channel, sender, sender_name, kind, type, text, ts)
+         VALUES (?, 'couple', ?, ?, 'user', 'text', ?, ?)`,
+        [
+          `smoke-source-${index}`,
+          sender,
+          sender === "xu" ? "小旭" : "小偲",
+          index % 7 === 0 ? `第 ${index} 条喵消息` : `第 ${index} 条测试消息`,
+          now - (120 - index) * 60_000,
+        ],
+      );
     }
-    sqlite.close();
 
     console.log("[4/5] 服务层冒烟…");
     const assertOk = (label: string, cond: boolean) => {
@@ -71,7 +68,7 @@ async function main() {
       "SELECT version, name FROM schema_migrations ORDER BY version ASC",
     );
     assertOk(
-      "schema_migrations 记录全部迁移",
+      "数据库结构版本完整",
       migrations.length === 10 &&
         migrations[0].version === 1 && migrations[0].name === "initial_schema" &&
         migrations[1].version === 2 && migrations[1].name === "bind_uploads_to_messages" &&
@@ -153,6 +150,8 @@ async function main() {
     assertOk(`listPublicAccounts → ${accounts.length} 个账号`, accounts.length === 2);
 
     // 消息：分页 / since / after+before / around / 搜索 / LIKE
+    const { subscribeMemoryDomainEvents } = await import("../src/ai/memory/events");
+    const stopMemoryEvents = subscribeMemoryDomainEvents();
     const { fetchMessages, searchMessages, createMessage, recallMessage, upsertReadReceipt, getReadReceipts } = await import("../src/chat/messageService");
     const user = { username: accounts[0].username, name: accounts[0].name };
     const latest = await fetchMessages(user, { channel: "couple", limit: 50 });
@@ -287,14 +286,14 @@ async function main() {
       "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       [routeMediaId, user.username, routeMediaPath, routeMediaURL, "text/plain", 12, Date.now(), "avatar"],
     );
-    const legacyRouteFilename = "1783639852451-95c29e3767ff.jpg";
-    const legacyRoutePath = path.join(dataDir, legacyRouteFilename);
-    fs.writeFileSync(legacyRoutePath, "legacy-media");
+    const compatibleRouteFilename = "1783639852451-95c29e3767ff.jpg";
+    const compatibleRoutePath = path.join(dataDir, compatibleRouteFilename);
+    fs.writeFileSync(compatibleRoutePath, "compatible-media");
     await db.run(
       "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       [
-        "legacy_route_timestamp_hash", user.username, legacyRoutePath,
-        `https://example.com/uploads/${legacyRouteFilename}`, "image/jpeg", 12, Date.now(), "legacy",
+        "compatible_route_timestamp_hash", user.username, compatibleRoutePath,
+        `https://example.com/uploads/${compatibleRouteFilename}`, "image/jpeg", 16, Date.now(), "legacy",
       ],
     );
     const { buildApp } = await import("../src/app");
@@ -302,6 +301,8 @@ async function main() {
     const app = await buildApp();
     const authorization = `Bearer ${createToken(user)}`;
     const healthResponse = await app.inject({ method: "GET", url: "/health" });
+    const liveResponse = await app.inject({ method: "GET", url: "/live" });
+    const readyResponse = await app.inject({ method: "GET", url: "/ready" });
     const bootstrapResponse = await app.inject({
       method: "GET", url: "/api/bootstrap", headers: { authorization },
     });
@@ -309,7 +310,12 @@ async function main() {
       method: "GET", url: "/api/messages?channel=couple&limit=20", headers: { authorization },
     });
     const signedResponse = await app.inject({ method: "GET", url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search });
-    const legacyRouteResponse = await app.inject({ method: "GET", url: `/uploads/${legacyRouteFilename}` });
+    const rangeResponse = await app.inject({
+      method: "GET",
+      url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search,
+      headers: { range: "bytes=2-7" },
+    });
+    const compatibleRouteResponse = await app.inject({ method: "GET", url: `/uploads/${compatibleRouteFilename}` });
     const invalidSignatureResponse = await app.inject({ method: "GET", url: `/media/${routeMediaId}?sig=invalid-signature-value-000000000000` });
     const bypassResponse = await app.inject({ method: "GET", url: `/uploads/${path.basename(routeMediaPath)}` });
     await app.close();
@@ -324,8 +330,13 @@ async function main() {
     assertOk(
       "签名媒体路由拒绝伪造签名和裸路径旁路",
       healthResponse.statusCode === 200 && healthResponse.json().database === "ok" &&
+        liveResponse.statusCode === 200 && liveResponse.json().process === "alive" &&
+        readyResponse.statusCode === 200 && readyResponse.json().database === "ok" &&
         signedResponse.statusCode === 200 && signedResponse.body === "signed-media" &&
-        legacyRouteResponse.statusCode === 200 && legacyRouteResponse.body === "legacy-media" &&
+        rangeResponse.statusCode === 206 && rangeResponse.body === "gned-m" &&
+        rangeResponse.headers["accept-ranges"] === "bytes" &&
+        rangeResponse.headers["content-range"] === "bytes 2-7/12" &&
+        compatibleRouteResponse.statusCode === 200 && compatibleRouteResponse.body === "compatible-media" &&
         invalidSignatureResponse.statusCode === 404 && bypassResponse.statusCode === 404,
     );
 
@@ -339,14 +350,10 @@ async function main() {
     const { setSharedItem, getSharedState } = await import("../src/shared/sharedService");
     await setSharedItem(user, "smoke", { hello: "pg" });
     await setSharedItem(user, "smoke", { hello: "pg2" });
-    await setSharedItem(user, "legacy-scalar", "old web value");
-    await setSharedItem(user, "loveDate", "2024-01-01");
     const shared = await getSharedState();
     assertOk(
-      "shared_items upsert 与旧标量隔离",
-      (shared.smoke?.value as { hello?: string })?.hello === "pg2" &&
-        !shared["legacy-scalar"] &&
-        (shared.dates?.value as { together?: string })?.together === "2024-01-01",
+      "shared_items upsert",
+      (shared.smoke?.value as { hello?: string })?.hello === "pg2",
     );
 
     // personal items CRUD
@@ -357,16 +364,9 @@ async function main() {
     assertOk("updatePersonalItem isDone", patched?.isDone === true);
     assertOk("deletePersonalItem", await items.deletePersonalItem(user, item!.id));
 
-    const archivedFacts = await db.get<{ count: number }>("SELECT COUNT(*)::int AS count FROM ai_facts");
-    const archivedEpisodes = await db.get<{ count: number }>("SELECT COUNT(*)::int AS count FROM ai_episodes");
-    const archivedDocs = await db.get<{ count: number }>("SELECT COUNT(*)::int AS count FROM ai_docs");
-    assertOk(
-      "旧事实、事件和文档表保留为待清洗数据源",
-      archivedFacts?.count === 95 && (archivedEpisodes?.count ?? 0) > 0 && (archivedDocs?.count ?? 0) > 0,
-    );
     const runtimeState = await import("../src/ai/runtimeState");
     await runtimeState.writeRuntimeState("smoke", "ok");
-    assertOk("AI 运行状态与历史文档表隔离", (await runtimeState.readRuntimeState("smoke")) === "ok");
+    assertOk("AI 运行状态读写", (await runtimeState.readRuntimeState("smoke")) === "ok");
 
     const { rankChatSearchRows, searchTerms } = await import("../src/ai/conversation/search");
     const searchRow = (id: string, text: string, ts: number) => ({
@@ -479,20 +479,6 @@ async function main() {
     const { minimumEvidenceForLayer } = await import("../src/ai/memory/extractor");
     assertOk("Memory 洞察强制至少三条新消息证据", minimumEvidenceForLayer("insight") === 3);
 
-    const reviewedLegacy = await memory.addMemory({
-      layer: "fact", scope: "couple", memoryKey: "legacy.smoke.reviewed",
-      subjects: [user.username], speakers: [], content: "人工确认的旧资料",
-      category: "legacy", confidence: 0.3, importance: 2, sourceMessageIds: [],
-      allowWithoutEvidence: true,
-      metadata: { importedFromLegacy: true, legacyReviewed: true, provenance: "legacy_manual_approval" },
-    });
-    await memory.reconcileMemoryLifecycle();
-    const reviewedLegacyRow = await db.get<{ status: string }>(
-      "SELECT status FROM ai_memory WHERE id = ?",
-      [reviewedLegacy!.id],
-    );
-    assertOk("人工批准的无原文旧记忆保留低置信度来源标记", reviewedLegacyRow?.status === "active");
-
     const recallEvidence = await createMessage(user, {
       channel: "couple", type: "text", text: "这是一条即将撤回的记忆证据", clientId: "smoke-memory-recall",
     });
@@ -507,15 +493,7 @@ async function main() {
       [recallBoundMemory!.id],
     );
     assertOk("主人撤回原消息会传播到 Memory 证据链", invalidatedMemory?.status === "retracted");
-
-    // 统计（to_char 方言改写）
-    const buckets = await db.all<{ sender: string; bucket: string; c: number }>(
-      `SELECT sender, to_char(to_timestamp(ts / 1000.0) AT TIME ZONE 'UTC' + interval '8 hours', 'YYYY-MM-DD') AS bucket, COUNT(*) AS c
-       FROM messages WHERE channel = 'couple' AND kind = 'user' AND sender != 'ai' AND ts >= ?
-       GROUP BY sender, bucket ORDER BY bucket DESC LIMIT 5`,
-      [Date.now() - 30 * 24 * 3600 * 1000],
-    );
-    assertOk(`统计聚合 → ${buckets.length} 桶，COUNT 是 number`, buckets.length > 0 && typeof buckets[0].c === "number");
+    stopMemoryEvents();
 
     console.log("[5/5] 清理…");
     await db.closeDatabase();

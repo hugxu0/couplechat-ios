@@ -29,6 +29,10 @@ struct ProfileView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: DS.Spacing.gap) {
+                    RootPageHeader("我的", subtitle: store.auth.session?.name ?? "账号与设置") {
+                        PairedEchoIndicator()
+                    }
+                    .padding(.horizontal, -DS.Spacing.page)
                     header
                     settingsCard
                     logoutCard
@@ -37,7 +41,7 @@ struct ProfileView: View {
                 .padding(.bottom, 90)
             }
             .scrollIndicators(.hidden)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showDateEditor) {
                 DateEditorSheet()
@@ -187,7 +191,7 @@ struct ProfileView: View {
         }
         .padding(.horizontal, DS.Spacing.card)
         .padding(.vertical, 14)
-        .dsCard()
+        .appSurface()
     }
 
     @ViewBuilder
@@ -266,7 +270,7 @@ struct ProfileView: View {
             .buttonStyle(PressableStyle())
         }
         .padding(.vertical, 6)
-        .dsCard()
+        .appSurface()
     }
 
     private var logoutCard: some View {
@@ -282,7 +286,7 @@ struct ProfileView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
-        .dsCard(radius: DS.Radius.tile + 4)
+        .appSurface()
     }
 
     private var divider: some View {
@@ -470,7 +474,12 @@ private struct BarkSettingsSheet: View {
         busy = true
         errorText = nil
         Task {
-            let ok = await store.saveBarkKey(enabled ? key : nil)
+            let ok: Bool
+            if let token = store.auth.session?.token {
+                ok = await store.shared.saveBarkKey(enabled ? key : nil, token: token)
+            } else {
+                ok = false
+            }
             await MainActor.run {
                 busy = false
                 if ok {

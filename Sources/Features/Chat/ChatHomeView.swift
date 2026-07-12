@@ -3,6 +3,7 @@ import SwiftUI
 // 聊天首页：把两个人的状态、互动和最近消息收进一张柔软的情侣卡片。
 
 struct ChatHomeView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
     @State private var showChat = false
@@ -50,18 +51,29 @@ struct ChatHomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                shortPullRefreshProbe
-                mainPanel
-                    .padding(.horizontal, DS.Spacing.page)
-                // 卡片外保留一小段真实的滚动缓冲，供下拉刷新和底部标签栏呼吸，
-                // 不再把这块空间塞进「最新消息」里造成一片空白。
-                Color.clear.frame(height: 58)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    shortPullRefreshProbe {
+                        Task { @MainActor in
+                            await Task.yield()
+                            withAnimation(DS.Anim.springFast) {
+                                proxy.scrollTo("chat-home-top", anchor: .top)
+                            }
+                        }
+                    }
+                    mainPanel
+                        .padding(.horizontal, DS.Spacing.page)
+                        .padding(.top, 8)
+                        .id("chat-home-top")
+                    // 卡片外保留一小段真实的滚动缓冲，供下拉刷新和底部标签栏呼吸，
+                    // 不再把这块空间塞进「最新消息」里造成一片空白。
+                    Color.clear.frame(height: 58)
+                }
+                .coordinateSpace(name: "chatHomeScroll")
+                .scrollIndicators(.hidden)
+                .background(AppPageBackground())
+                .overlay(alignment: .top) { pullRefreshIndicator }
             }
-            .coordinateSpace(name: "chatHomeScroll")
-            .scrollIndicators(.hidden)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .overlay(alignment: .top) { pullRefreshIndicator }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
             .alert(editingStatusID == nil ? "添加状态" : "编辑状态", isPresented: $showCustomStatusPrompt) {
@@ -103,51 +115,83 @@ struct ChatHomeView: View {
 
     private var mainPanel: some View {
         VStack(spacing: 0) {
+            brandHeader
+                .padding(.top, 16)
+                .padding(.bottom, 14)
+
             coupleHeader
-                .padding(.top, 14)
-                .padding(.bottom, 18)
+                .padding(.bottom, 14)
 
             sectionDivider
 
             statusStrip
-                .padding(.top, 12)
-                .padding(.bottom, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
 
             sectionDivider
 
             actionStrip
                 .padding(.top, 8)
-                .padding(.bottom, 12)
+                .padding(.bottom, 8)
 
             sectionDivider
 
             latestMessages
-                .padding(.top, 16)
-                .padding(.bottom, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
 
             enterChatButton
-                .padding(.bottom, 16)
+                .padding(.bottom, 10)
         }
         .padding(.horizontal, DS.Spacing.card)
-        .padding(.top, 4)
-        .padding(.bottom, 4)
+        .padding(.top, 2)
+        .padding(.bottom, 2)
         .frame(maxWidth: .infinity)
         .frame(minHeight: 0, alignment: .top)
         .background(homeCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                .stroke(
+        .shadow(color: theme.accent.color.opacity(0.08), radius: 16, y: 6)
+    }
+
+    private var brandHeader: some View {
+        VStack(spacing: 7) {
+            ZStack {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 18, weight: .semibold))
+                    Text("漫长悄悄话")
+                        .font(.system(size: 35, weight: .heavy, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .foregroundStyle(
                     LinearGradient(
-                        colors: [.white.opacity(0.62), theme.accent.color.opacity(0.16)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 1
+                        colors: [DS.Palette.blue, DS.Palette.purple],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
                 )
-        )
-        .shadow(color: theme.accent.color.opacity(0.055), radius: 5, y: -1)
-        .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius + 3, y: DS.Surface.shadowY + 2)
+                .shadow(
+                    color: colorScheme == .dark
+                        ? theme.accent.color.opacity(0.32)
+                        : .white.opacity(0.9),
+                    radius: 3
+                )
+
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(DS.Palette.pink.opacity(0.58))
+                    .offset(y: -30)
+            }
+
+            Text("慢慢说，悄悄听")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(theme.accent.color.opacity(0.62))
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     private var sectionDivider: some View {
@@ -168,22 +212,40 @@ struct ChatHomeView: View {
 
     private var homeCardBackground: some View {
         ZStack(alignment: .top) {
-            LinearGradient(
-                colors: [
-                    DS.Palette.cardSurface,
-                    theme.accent.color.opacity(0.13),
-                    DS.Palette.pink.opacity(0.075),
-                    DS.Palette.cardSurface.opacity(0.96),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            RadialGradient(
-                colors: [.white.opacity(0.58), theme.accent.color.opacity(0.07), .clear],
-                center: .top,
-                startRadius: 4,
-                endRadius: 185
-            )
+            if colorScheme == .dark {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.17, green: 0.075, blue: 0.13),
+                        Color(red: 0.12, green: 0.045, blue: 0.09),
+                        Color(red: 0.075, green: 0.045, blue: 0.115),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                RadialGradient(
+                    colors: [theme.accent.color.opacity(0.18), DS.Palette.pink.opacity(0.08), .clear],
+                    center: .top,
+                    startRadius: 8,
+                    endRadius: 210
+                )
+            } else {
+                LinearGradient(
+                    colors: [
+                        Color(red: 1, green: 0.975, blue: 0.985),
+                        theme.accent.color.opacity(0.12),
+                        DS.Palette.pink.opacity(0.09),
+                        Color(red: 0.95, green: 0.93, blue: 0.99),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                RadialGradient(
+                    colors: [.white.opacity(0.42), theme.accent.color.opacity(0.06), .clear],
+                    center: .top,
+                    startRadius: 6,
+                    endRadius: 195
+                )
+            }
             HStack {
                 Image(systemName: "sparkles")
                 Spacer()
@@ -197,7 +259,7 @@ struct ChatHomeView: View {
         }
     }
 
-    private var shortPullRefreshProbe: some View {
+    private func shortPullRefreshProbe(onRefreshFinished: @escaping () -> Void) -> some View {
         GeometryReader { geo in
             Color.clear
                 .onChange(of: geo.frame(in: .named("chatHomeScroll")).minY) { _, value in
@@ -217,6 +279,7 @@ struct ChatHomeView: View {
                             flashRefreshResult(result)
                             refreshingHome = false
                             pullProgress = 0
+                            onRefreshFinished()
                         }
                     }
                 }
@@ -422,7 +485,7 @@ struct ChatHomeView: View {
     }
 
     private var latestMessages: some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("最新消息", systemImage: "bubble.left.and.bubble.right.fill")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
@@ -445,19 +508,20 @@ struct ChatHomeView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 14)
             } else {
-                VStack(spacing: 10) {
+                VStack(spacing: 7) {
                     ForEach(Array(store.messages.suffix(3))) { message in
                         latestRow(message)
                     }
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 148, alignment: .top)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, minHeight: 136, alignment: .top)
         .background(conversationWindowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .stroke(theme.accent.color.opacity(0.12), lineWidth: 1)
         )
     }
@@ -506,7 +570,7 @@ struct ChatHomeView: View {
                 .foregroundStyle(mine ? DS.Palette.textPrimary : DS.Palette.textPrimary)
                 .lineLimit(2)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
                 .background(
                     mine ? theme.accent.color.opacity(0.16) : Color.white.opacity(0.62),
                     in: RoundedRectangle(cornerRadius: 17, style: .continuous)
@@ -550,7 +614,7 @@ struct ChatHomeView: View {
             .padding(.vertical, 13)
             .background(
                 theme.accent.gradient,
-                in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
+                in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
             )
             .shadow(color: theme.accent.color.opacity(0.22), radius: 10, y: 5)
         }

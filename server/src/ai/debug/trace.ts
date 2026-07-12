@@ -63,10 +63,6 @@ export function traceBegin(channel: string, requesterName: string, question: str
   return trace;
 }
 
-export function tracePrompt(trace: TraceEntry, system: string, user: string) {
-  trace.prompt = { system, user };
-}
-
 export function traceTiming(trace: TraceEntry, stage: string, startedAt: number) {
   trace.timings = trace.timings ?? {};
   trace.timings[stage] = Date.now() - startedAt;

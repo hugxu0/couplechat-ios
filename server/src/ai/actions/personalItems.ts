@@ -11,7 +11,6 @@ import {
   type PersonalItemScope,
 } from "../../personalItems/itemService";
 import { accounts } from "../accounts";
-import { extractJson } from "../provider";
 
 export interface AiAction {
   type:
@@ -233,15 +232,6 @@ export async function applyAction(
     default:
       return { ok: false, label: "（不认识的 action）" };
   }
-}
-
-// 模型输出不合法时不生成任何待确认操作。
-export function parseActions(out: string | null): AiAction[] {
-  const parsed = extractJson<{ actions?: unknown }>(out);
-  if (!parsed || !Array.isArray(parsed.actions)) return [];
-  return parsed.actions
-    .filter((a): a is AiAction => Boolean(a) && typeof a === "object" && typeof (a as AiAction).type === "string")
-    .slice(0, 8);
 }
 
 async function getMessageMeta(messageId: string): Promise<ConfirmMeta | null> {

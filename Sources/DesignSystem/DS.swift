@@ -12,7 +12,7 @@ enum DS {
     // MARK: - 圆角
     enum Radius {
         /// 大卡片（首页情侣卡、记录页统计卡）
-        static let card: CGFloat = 28
+        static let card: CGFloat = 30
         /// 小卡片（互动按钮、状态格子）
         static let tile: CGFloat = 20
         /// 消息气泡
@@ -144,35 +144,6 @@ struct PressableStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
             .animation(DS.Anim.springFast, value: configuration.isPressed)
-    }
-}
-
-struct DynamicGradientBackground: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var shifted = false
-
-    var body: some View {
-        LinearGradient(
-            colors: [
-                DS.Palette.accent.opacity(0.16),
-                Color(UIColor { $0.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.10, green: 0.09, blue: 0.16, alpha: 1)
-                    : UIColor(red: 1.00, green: 0.93, blue: 0.93, alpha: 1)
-                }),
-                Color(UIColor { $0.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.07, green: 0.10, blue: 0.15, alpha: 1)
-                    : UIColor(red: 0.93, green: 0.96, blue: 1.00, alpha: 1)
-                }),
-                ThemeManager.shared.accent.colorAlt.opacity(0.13),
-            ],
-            startPoint: shifted ? .topTrailing : .topLeading,
-            endPoint: shifted ? .bottomLeading : .bottomTrailing
-        )
-        .animation(reduceMotion ? nil : .easeInOut(duration: 7.5).repeatForever(autoreverses: true), value: shifted)
-        .onAppear {
-            guard !reduceMotion else { return }
-            shifted = true
-        }
     }
 }
 

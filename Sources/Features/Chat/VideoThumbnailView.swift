@@ -29,7 +29,13 @@ struct VideoThumbnailView: View {
     }
 
     private func loadThumbnail() async {
-        let image = await Task.detached(priority: .utility) { () -> UIImage? in
+        thumbnail = await VideoThumbnailGenerator.image(for: url)
+    }
+}
+
+enum VideoThumbnailGenerator {
+    static func image(for url: URL) async -> UIImage? {
+        await Task.detached(priority: .utility) { () -> UIImage? in
             let asset = AVURLAsset(url: url)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
@@ -39,6 +45,5 @@ struct VideoThumbnailView: View {
             }
             return UIImage(cgImage: cgImage).preparingForDisplay() ?? UIImage(cgImage: cgImage)
         }.value
-        thumbnail = image
     }
 }

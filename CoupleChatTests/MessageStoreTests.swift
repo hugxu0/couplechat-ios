@@ -1,5 +1,13 @@
+import SocketIO
 import XCTest
 @testable import CoupleChat
+
+private final class DisconnectedSocketProvider: SocketProvider {
+    var socket: SocketIOClient? { nil }
+    var isConnected: Bool { false }
+    var sessionUsername: String? { "xu" }
+    var currentSession: Session? { Session(token: "token", username: "xu", name: "小旭") }
+}
 
 @MainActor
 final class MessageStoreParseTests: XCTestCase {
@@ -194,5 +202,187 @@ final class MessageStoreMediaPlaceholderTests: XCTestCase {
         XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "file"), "[文件]")
         XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "image"), "[图片]")
         XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "sticker"), "[图片]")
+    }
+
+    func testMediaFileExtensionPreservesQuickTimeContainer() {
+        XCTAssertEqual(MessageStore.fileExtension(for: "video/quicktime"), "mov")
+        XCTAssertEqual(MessageStore.fileExtension(for: "video/mp4"), "mp4")
+        XCTAssertEqual(MessageStore.fileExtension(for: "image/png"), "png")
+    }
+}
+
+@MainActor
+final class MessageStoreFailedOutboxTests: XCTestCase {
+    private var databaseURL: URL?
+    private var temporaryURLs: [URL] = []
+
+    override func setUp() {
+        super.setUp()
+        let username = "failed-outbox-\(UUID().uuidString)"
+        XCTAssertTrue(ChatLocalDatabase.shared.open(username: username))
+        databaseURL = ChatLocalDatabase.shared.currentDatabaseURL
+    }
+
+    override func tearDown() {
+        ChatLocalDatabase.shared.close()
+        for url in temporaryURLs { try? FileManager.default.removeItem(at: url) }
+        if let databaseURL {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+        }
+        super.tearDown()
+    }
+
+    func testDiscardFailedTextClearsOutboxAndTimeline() async {
+        let item = makeItem(clientId: "tmp-failed-text", type: "text")
+        let store = makeStore(containing: item)
+
+        await store.discardFailedMessage(clientId: item.clientId)
+
+        XCTAssertNil(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId))
+        XCTAssertFalse(store.messages(for: .couple).contains { $0.clientId == item.clientId })
+    }
+
+    func testOfflineSendImmediatelyBecomesFailed() async {
+        let provider = DisconnectedSocketProvider()
+        let store = MessageStore()
+        store.socketProvider = provider
+
+        await store.sendText(
+            "offline", session: Session(token: "token", username: "xu", name: "小旭"))
+
+        let message = store.messages(for: .couple).last
+        XCTAssertNotNil(message)
+        XCTAssertFalse(message?.pending == true)
+        XCTAssertTrue(message?.failed == true)
+        XCTAssertEqual(
+            message.flatMap { ChatLocalDatabase.shared.pendingOutbound(clientId: $0.clientId ?? $0.id)?.attempts },
+            1)
+    }
+
+    func testDiscardFailedMediaClearsOutboxTimelineAndFile() async throws {
+        let file = try makeTemporaryFile(extension: "jpg")
+        let item = makeItem(clientId: "tmp-failed-image", type: "image", localFilePath: file.path)
+        let store = makeStore(containing: item)
+
+        await store.discardFailedMessage(clientId: item.clientId)
+
+        XCTAssertNil(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertTrue(store.messages(for: .couple).isEmpty)
+    }
+
+    func testDiscardFailedLivePhotoClearsBothFiles() async throws {
+        let photo = try makeTemporaryFile(extension: "jpg")
+        let video = try makeTemporaryFile(extension: "mov")
+        let attachments = [
+            PendingOutboundAttachment(
+                assetId: "asset", role: "photo", order: 0, localFilePath: photo.path, mimeType: "image/jpeg"),
+            PendingOutboundAttachment(
+                assetId: "asset", role: "pairedVideo", order: 0, localFilePath: video.path, mimeType: "video/quicktime"),
+        ]
+        let item = makeItem(clientId: "tmp-live-photo", type: "image", attachments: attachments)
+        let store = makeStore(containing: item)
+
+        await store.discardFailedMessage(clientId: item.clientId)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: photo.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: video.path))
+    }
+
+    func testRetryMissingFileKeepsFailedState() async {
+        let item = makeItem(
+            clientId: "tmp-missing-image", type: "image",
+            localFilePath: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path)
+        let store = makeStore(containing: item)
+
+        let result = await store.retryFailedMessage(
+            clientId: item.clientId, session: Session(token: "token", username: "xu", name: "小旭"))
+
+        XCTAssertEqual(result, .missingLocalFile)
+        XCTAssertTrue(store.messages(for: .couple).first?.failed == true)
+        XCTAssertFalse(store.messages(for: .couple).first?.pending == true)
+        XCTAssertEqual(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId)?.attempts, 1)
+    }
+
+    func testRetryChecksEverySingleMediaTypeForMissingFile() async {
+        let store = MessageStore()
+        let session = Session(token: "token", username: "xu", name: "小旭")
+
+        for type in ["image", "video", "voice", "file"] {
+            let item = makeItem(
+                clientId: "tmp-missing-\(type)", type: type,
+                localFilePath: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString).path)
+            XCTAssertTrue(ChatLocalDatabase.shared.upsertPendingOutbound(item))
+            store.updateMessages(.couple) { $0.append(item.optimisticMessage(session: session)) }
+
+            let result = await store.retryFailedMessage(clientId: item.clientId, session: session)
+
+            XCTAssertEqual(result, .missingLocalFile, "type=\(type)")
+            XCTAssertTrue(store.messages(for: .couple).first { $0.clientId == item.clientId }?.failed == true)
+        }
+    }
+
+    func testDiscardSameClientIdTwiceIsSafe() async {
+        let item = makeItem(clientId: "tmp-idempotent-delete", type: "text")
+        let store = makeStore(containing: item)
+
+        await store.discardFailedMessage(clientId: item.clientId)
+        await store.discardFailedMessage(clientId: item.clientId)
+
+        XCTAssertNil(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId))
+        XCTAssertTrue(store.messages(for: .couple).isEmpty)
+    }
+
+    private func makeStore(containing item: PendingOutboundMessage) -> MessageStore {
+        XCTAssertTrue(ChatLocalDatabase.shared.upsertPendingOutbound(item))
+        let store = MessageStore()
+        store.updateMessages(.couple) {
+            $0 = [item.optimisticMessage(session: Session(token: "token", username: "xu", name: "小旭"))]
+        }
+        return store
+    }
+
+    private func makeItem(
+        clientId: String,
+        type: String,
+        localFilePath: String? = nil,
+        attachments: [PendingOutboundAttachment] = []
+    ) -> PendingOutboundMessage {
+        PendingOutboundMessage(
+            clientId: clientId, channel: "couple", type: type,
+            text: type == "text" ? "failed" : "[媒体]",
+            replyTo: nil, replyPreview: nil, localFilePath: localFilePath,
+            mimeType: localFilePath == nil ? nil : "image/jpeg",
+            uploadId: nil, uploadURL: nil, createdAt: 1_710_000_000_000,
+            attempts: 1, lastError: "offline", attachments: attachments)
+    }
+
+    private func makeTemporaryFile(extension ext: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+        try Data("test".utf8).write(to: url)
+        temporaryURLs.append(url)
+        return url
+    }
+}
+
+@MainActor
+final class ChatTimelineMediaPreviewStateTests: XCTestCase {
+    func testPendingAndFailedMediaCannotOpenPager() {
+        let session = Session(token: "token", username: "xu", name: "小旭")
+        var message = ChatMessage(
+            optimisticMedia: "image", text: "[图片]", localURL: "file:///tmp/pending.jpg",
+            me: session, clientId: "tmp-preview", channel: "couple")
+        XCTAssertFalse(ChatNativeMessageCell.canOpenMediaPreview(message))
+
+        message.pending = false
+        message.failed = true
+        XCTAssertFalse(ChatNativeMessageCell.canOpenMediaPreview(message))
+
+        message.failed = false
+        XCTAssertTrue(ChatNativeMessageCell.canOpenMediaPreview(message))
     }
 }

@@ -26,6 +26,10 @@ struct RecordsView: View {
             ZStack {
                 ScrollView {
                     VStack(spacing: DS.Spacing.gap) {
+                        RootPageHeader("记录", subtitle: "我们的共同时间") {
+                            PairedEchoIndicator()
+                        }
+                        .padding(.horizontal, -DS.Spacing.page)
                         heroCard
                         anniversaryGrid
                         ChatStatsCard()
@@ -47,7 +51,7 @@ struct RecordsView: View {
                     .zIndex(5)
                 }
             }
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
             .refreshable { await reload() }
             .task { await reload() }
@@ -102,7 +106,8 @@ struct RecordsView: View {
     }
 
     private func reload() async {
-        guard let newDaily = await store.fetchDaily() else { return }
+        guard let token = store.auth.session?.token,
+              let newDaily = await store.dailyContent.fetch(token: token) else { return }
         withAnimation(DS.Anim.ease) {
             daily = newDaily
         }
@@ -199,7 +204,7 @@ struct RecordsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.Spacing.card)
-        .dsCard(radius: DS.Radius.tile + 4)
+        .appSurface()
     }
 
     // MARK: - 大橘日记
@@ -232,7 +237,7 @@ struct RecordsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.Spacing.card)
-        .dsCard()
+        .appSurface()
     }
 
     // MARK: - 今日推荐
@@ -304,14 +309,15 @@ struct RecordsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.Spacing.card)
-        .dsCard()
+        .appSurface()
     }
 
     private func regenerate() {
         recommendBusy = true
         recommendSent = false
         Task {
-            let rec = await store.regenerateRecommendation()
+            guard let token = store.auth.session?.token else { return }
+            let rec = await store.dailyContent.regenerateRecommendation(token: token)
             await MainActor.run {
                 recommendBusy = false
                 if let rec, let current = daily {
@@ -397,7 +403,7 @@ private struct RecommendComposerSheet: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(AppPageBackground())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -502,7 +508,7 @@ private struct ChatStatsCard: View {
     private enum Mode: String, CaseIterable { case days = "近 30 天", months = "月度" }
     @State private var mode: Mode = .days
     @State private var selectedIndex: Int?
-    @State private var buckets = ChatStore.LocalStatsBuckets(days: [], months: [])
+    @State private var buckets = AppLocalStatsBuckets(days: [], months: [])
 
     private var globalSelectedDayIndex: Int {
         selectedIndex ?? max(0, buckets.days.count - 1)
@@ -520,18 +526,16 @@ private struct ChatStatsCard: View {
             legendRow
         }
         .padding(DS.Spacing.card)
-        .dsCard()
+        .appSurface()
         .onChange(of: mode) { selectedIndex = nil }
-        .onAppear {
-            refreshBuckets()
-        }
-        .onChange(of: store.messagesByChannel) { _, _ in
-            refreshBuckets()
+        .task { await refreshBuckets() }
+        .onReceive(store.messageStore.timelineStore.$messagesByChannel) { _ in
+            Task { await refreshBuckets() }
         }
     }
 
-    private func refreshBuckets() {
-        buckets = store.localStats(for: .couple)
+    private func refreshBuckets() async {
+        buckets = await store.localData.stats(for: .couple)
     }
 
     private var header: some View {

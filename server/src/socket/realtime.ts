@@ -11,12 +11,9 @@ import {
   socketEvents,
 } from "../contracts/realtime";
 import {
-  createMessage,
-  recallMessage,
   searchMessages,
   upsertReadReceipt,
 } from "../chat/messageService";
-import { handleUserMessage } from "../ai";
 import { confirmAction } from "../ai/actions/personalItems";
 import { setSharedItem } from "../shared/sharedService";
 import {
@@ -25,7 +22,9 @@ import {
   markDisconnected,
   setAway,
 } from "./presence";
-import { pushCoupleMessageToUnavailableRecipients } from "../push/pushService";
+import { createRealtimeMessageUseCases } from "../chat/realtimeUseCases";
+import { nanoid } from "nanoid";
+import { errorCodeFor, errorCodes } from "../errors/errorCodes";
 
 type Ack = (value: unknown) => void;
 
@@ -42,11 +41,12 @@ async function safeAck(fn: () => Promise<unknown>, ack?: Ack) {
     const result = await fn();
     ack?.(result);
   } catch (error) {
-    ack?.({ ok: false, error: error instanceof Error ? error.message : "unknown_error" });
+    ack?.({ ok: false, error: errorCodeFor(error) });
   }
 }
 
 export function registerRealtime(io: Server) {
+  const messages = createRealtimeMessageUseCases(io);
   io.use((socket, next) => {
     // Token 必须走 Socket.IO auth payload，不能落进握手 URL 的 query string，
     // 否则默认的反向代理访问日志可能记录完整 token。
@@ -90,24 +90,18 @@ export function registerRealtime(io: Server) {
     socket.on(socketEvents.messageSend, (payload: unknown, ack?: Ack) =>
       safeAck(async () => {
         const input = sendMessageSchema.parse(payload ?? {});
-        const message = await createMessage(user, input);
+        const requestId = `evt_${nanoid(12)}`;
+        const message = await messages.send(user, input, requestId);
         io.to(roomFor(input.channel, user)).emit(socketEvents.messageNew, message);
-
-        if (input.channel === "couple") {
-          void pushCoupleMessageToUnavailableRecipients(message);
-        }
-        // AI 流水线（couple 召唤应答 / ai 私聊应答 / 记忆提取 / 滚动摘要）
-        handleUserMessage(io, user, message);
-
-        return { ok: true, id: message.id, message };
+        return { ok: true, id: message.id, message, requestId };
       }, ack),
     );
 
     socket.on(socketEvents.messageRecall, (payload: unknown, ack?: Ack) =>
       safeAck(async () => {
         const input = recallMessageSchema.parse(payload ?? {});
-        const recalled = await recallMessage(user, input.id);
-        if (!recalled) return { ok: false, error: "not_found" };
+        const recalled = await messages.recall(user, input.id);
+        if (!recalled) return { ok: false, error: errorCodes.notFound };
         io.to(roomFor(recalled.channel, user)).emit(socketEvents.messageRecalled, recalled);
         return { ok: true };
       }, ack),

@@ -26,7 +26,7 @@ struct PetView: View {
                 .padding(.bottom, 100)
             }
             .scrollIndicators(.hidden)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showAIChat) { ChatView(channel: .ai) }
         }

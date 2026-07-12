@@ -20,8 +20,3 @@ export async function loadAccounts(): Promise<AccountInfo[]> {
 export function accounts(): AccountInfo[] {
   return cachedAccounts;
 }
-
-export function resolveUsername(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  return cachedAccounts.find((account) => account.username === value || account.name === value)?.username ?? value;
-}

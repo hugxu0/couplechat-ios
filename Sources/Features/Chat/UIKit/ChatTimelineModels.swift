@@ -22,6 +22,43 @@ enum ChatInputState: Equatable {
     case mediaPreview
 }
 
+/// 时间线 reload 后只决定“位置如何保持”，不执行任何 UIKit 操作。
+/// 把这条高风险规则保持为纯逻辑，后续拆分 TimelineController 时可直接复用测试。
+enum ChatTimelineReloadDecision: Equatable {
+    case forceLatest
+    case restorePendingAnchor
+    case restoreVisibleAnchor
+    case followLatest
+    case preservePosition
+
+    static func decide(
+        stickToLatest: Bool,
+        hasPendingAnchor: Bool,
+        hasValidPendingAnchor: Bool,
+        hasValidVisibleAnchor: Bool,
+        wasNearLatestBottom: Bool,
+        lastMessageChanged: Bool,
+        messageCountIncreased: Bool,
+        wasShowingAIActivity: Bool
+    ) -> ChatTimelineReloadDecision {
+        if stickToLatest {
+            return .forceLatest
+        }
+        if hasPendingAnchor, hasValidPendingAnchor {
+            return .restorePendingAnchor
+        }
+        if !hasPendingAnchor, !wasNearLatestBottom, hasValidVisibleAnchor {
+            return .restoreVisibleAnchor
+        }
+        if wasNearLatestBottom,
+           lastMessageChanged,
+           messageCountIncreased || wasShowingAIActivity {
+            return .followLatest
+        }
+        return .preservePosition
+    }
+}
+
 struct ChatMessageLayout: Hashable {
     let messageId: String
     let width: CGFloat
@@ -68,7 +105,7 @@ enum ChatTimelineMetrics {
     static let otherSenderTopGap: CGFloat = 10
     static let statusOutsideWidth: CGFloat = 22
     static let statusOutsideGap: CGFloat = 2
-    static let mediaSize = CGSize(width: 230, height: 260)
+    static let mediaSize = CGSize(width: 200, height: 230)
     static let fileHeight: CGFloat = 58
     static let voiceHeight: CGFloat = 36
     static let stickerSize = CGSize(width: 132, height: 132)

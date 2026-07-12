@@ -79,14 +79,6 @@ export async function ownerTextMessagesAfter(storedChannel: string, cursor: LogC
   return rows.map(mapRow);
 }
 
-export async function latestTs(storedChannel: string): Promise<number> {
-  const rows = await all<MessageRow>(
-    "SELECT * FROM messages WHERE channel = ? ORDER BY ts DESC LIMIT 1",
-    [storedChannel],
-  );
-  return rows[0]?.ts ?? 0;
-}
-
 function bodyOf(m: LogMessage): string {
   if (m.type === "image") return "[图片]";
   if (m.type === "video") return "[视频]";

@@ -4,7 +4,7 @@ import { all, get, run, transaction, type MessageRow, type ReadReceiptRow, type 
 import type { SendMessagePayload } from "../contracts/realtime";
 import type { AuthUser, ClientChannel, ClientMessage, ClientMessageAttachment, MessageKind, MessageType, StoredChannel } from "../types";
 import { toClientChannel, toStoredChannel } from "../types";
-import { invalidateMemoriesForRecalledMessage } from "../ai/memory/store";
+import { domainEvents } from "../events/domainEvents";
 
 export type SendMessageInput = SendMessagePayload;
 export interface FetchMessagesInput {
@@ -187,46 +187,6 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
   });
 }
 
-export async function createSystemMessage(channel: StoredChannel, text: string): Promise<ClientMessage> {
-  const row: MessageRow = {
-    id: `sys_${nanoid(16)}`,
-    channel,
-    sender: "system",
-    sender_name: "系统",
-    kind: "system",
-    type: "text",
-    text,
-    url: null,
-    reply_json: null,
-    meta_json: null,
-    attachments_json: null,
-    recalled_text: null,
-    ts: Date.now(),
-    client_id: null,
-  };
-  await run(
-    `INSERT INTO messages
-      (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json, attachments_json, ts, client_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      row.id,
-      row.channel,
-      row.sender,
-      row.sender_name,
-      row.kind,
-      row.type,
-      row.text,
-      row.url,
-      row.reply_json,
-      row.meta_json,
-      row.attachments_json,
-      row.ts,
-      row.client_id,
-    ],
-  );
-  return mapMessage(row);
-}
-
 export async function createAiMessage(channel: StoredChannel, text: string, meta?: unknown): Promise<ClientMessage> {
   const metaJson = meta !== undefined && meta !== null ? JSON.stringify(meta) : null;
   const row: MessageRow = {
@@ -380,9 +340,7 @@ export async function recallMessage(user: AuthUser, id: string) {
     };
   });
   if (!result) return null;
-  await invalidateMemoriesForRecalledMessage(id).catch((error) => {
-    console.warn(`[memory] 撤回证据传播失败 id=${id}: ${error instanceof Error ? error.message : String(error)}`);
-  });
+  await domainEvents.publish("message.recalled", { messageId: id });
   for (const uploadPath of result.uploadPaths) {
     await fs.rm(uploadPath, { force: true }).catch((error) => {
       console.warn(`[upload] 撤回消息后删除文件失败 id=${id}: ${error instanceof Error ? error.message : String(error)}`);

@@ -14,7 +14,6 @@ export const GEN = {
   search: { maxTokens: 1800, temperature: 0.3, timeoutMs: 45_000 },
   conflict: { maxTokens: 1400, temperature: 0.25, timeoutMs: 30_000 },
   interject: { maxTokens: 900, temperature: 0.8, timeoutMs: 20_000 },
-  migration: { maxTokens: 4000, temperature: 0.1, timeoutMs: 90_000 },
 } satisfies Record<string, GenProfile>;
 
 export const CONTEXT = {

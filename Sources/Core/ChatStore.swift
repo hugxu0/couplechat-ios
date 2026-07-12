@@ -45,6 +45,32 @@ final class ChatStore: ObservableObject {
     let auth: AuthStore
     let messageStore: MessageStore
     let shared: SharedStore
+    let localData: LocalDataRepository
+    let dailyContent: DailyContentRepository
+    let personalItems: PersonalItemsRepository
+    lazy var historySync = HistorySyncCoordinator(
+        isLoggedIn: { [weak self] in self?.loggedIn == true },
+        historyWorker: { [weak self] channel, onProgress in
+            guard let self else {
+                return HistorySyncCoordinator.HistoryResult(
+                    remoteTotal: nil, downloaded: 0, error: "同步服务不可用")
+            }
+            let result = await self.syncAllHistory(channel, onProgress: onProgress)
+            return HistorySyncCoordinator.HistoryResult(
+                remoteTotal: result.remoteTotal,
+                downloaded: result.downloaded,
+                error: result.error)
+        },
+        imageWorker: { [weak self] onProgress in
+            guard let self else {
+                return HistorySyncCoordinator.ImageResult(total: 0, completed: 0, failed: 0)
+            }
+            let result = await self.localData.cacheAllImages(onProgress: onProgress)
+            return HistorySyncCoordinator.ImageResult(
+                total: result.total,
+                completed: result.completed,
+                failed: result.failed)
+        })
 
     // MARK: - 对外聚合状态
 
@@ -70,8 +96,6 @@ final class ChatStore: ObservableObject {
     /// 向后兼容：store.messages 返回 couple 频道消息数组
     var messages: [ChatMessage] { messageStore.messages(for: .couple) }
 
-    static let personalItemChangedNotification = SharedStore.personalItemChangedNotification
-
     private var manager: SocketManager?
     private(set) var socket: SocketIOClient?
     /// Socket.IO 自己会在意外断开后重连；这个标志只负责避免前台恢复等调用重复发起握手。
@@ -81,6 +105,7 @@ final class ChatStore: ObservableObject {
     /// 健康检查失败时的受控重连。手动 disconnect 不会触发 Socket.IO 自动重连，
     /// 因而必须在 disconnect 回调中明确重新握手。
     private let httpClient: any HTTPClient
+    private let persistence: any ChatPersistenceProtocol
     private var childStateCancellables = Set<AnyCancellable>()
     private var localAIActivityTokens: [String: UUID] = [:]
     var isConnected: Bool { connected }
@@ -89,110 +114,20 @@ final class ChatStore: ObservableObject {
 
     // MARK: - 统计/存储
 
-    struct LocalStatsBuckets {
-        let days: [DayStat]
-        let months: [MonthStat]
-    }
-
-    struct StorageBreakdown {
-        var imageCacheBytes: Int64
-        var databaseBytes: Int64
-        var cachedImageFiles: Int
-        var coupleMessages: Int
-        var aiMessages: Int
-        var totalBytes: Int64 { imageCacheBytes + databaseBytes }
-    }
-
-    struct MediaCacheResult: Equatable {
-        let total: Int
-        let completed: Int
-        let failed: Int
-        var succeeded: Int { completed - failed }
-    }
-
-    private static let statsDayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
-        return f
-    }()
-
-    private static let statsMonthFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM"
-        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
-        return f
-    }()
-
-    private static var shanghaiCalendar: Calendar = {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
-        return cal
-    }()
-
-    private static let weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"]
-
-    static func computeLocalStats(for channel: ChatChannel = .couple) -> LocalStatsBuckets {
-        let cal = shanghaiCalendar
-        let now = Date()
-        let today = cal.startOfDay(for: now)
-        let recentDayCount = 30
-
-        var dayCounts: [String: [String: Int]] = [:]
-        let earliestDay = cal.date(byAdding: .day, value: -(recentDayCount - 1), to: today) ?? today
-        var monthCounts: [String: [String: Int]] = [:]
-        let thisMonthStartInit = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
-        var earliestMonth = thisMonthStartInit
-
-        for row in ChatLocalDatabase.shared.dayCounts(channel: channel.rawValue) {
-            guard let date = statsDayFormatter.date(from: row.date),
-                  cal.startOfDay(for: date) >= earliestDay else { continue }
-            var counts = dayCounts[row.date] ?? [:]
-            counts[row.sender] = row.count
-            dayCounts[row.date] = counts
-        }
-
-        for row in ChatLocalDatabase.shared.monthCounts(channel: channel.rawValue) {
-            var counts = monthCounts[row.date] ?? [:]
-            counts[row.sender] = row.count
-            monthCounts[row.date] = counts
-            if let date = statsMonthFormatter.date(from: row.date),
-               let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: date)),
-               monthStart < earliestMonth {
-                earliestMonth = monthStart
-            }
-        }
-
-        var days: [DayStat] = []
-        var cursor = earliestDay
-        while cursor <= today {
-            let key = statsDayFormatter.string(from: cursor)
-            let weekday = cal.isDate(cursor, inSameDayAs: today) ? "今" : weekdayLabels[cal.component(.weekday, from: cursor) - 1]
-            days.append(DayStat(date: key, weekday: weekday, counts: dayCounts[key] ?? [:]))
-            guard let next = cal.date(byAdding: .day, value: 1, to: cursor) else { break }
-            cursor = next
-        }
-
-        var months: [MonthStat] = []
-        var monthCursor = cal.date(from: cal.dateComponents([.year, .month], from: earliestMonth)) ?? earliestMonth
-        let thisMonthStart = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
-        while monthCursor <= thisMonthStart {
-            let key = statsMonthFormatter.string(from: monthCursor)
-            months.append(MonthStat(month: key, counts: monthCounts[key] ?? [:]))
-            guard let next = cal.date(byAdding: .month, value: 1, to: monthCursor) else { break }
-            monthCursor = next
-        }
-
-        return LocalStatsBuckets(days: days, months: months)
-    }
-
     // MARK: - 初始化
 
-    init(httpClient: any HTTPClient = URLSessionHTTPClient()) {
+    init(
+        httpClient: any HTTPClient = URLSessionHTTPClient(),
+        persistence: any ChatPersistenceProtocol = ChatPersistence.shared
+    ) {
         self.httpClient = httpClient
-        auth = AuthStore(httpClient: httpClient)
-        messageStore = MessageStore(httpClient: httpClient)
-        shared = SharedStore(httpClient: httpClient)
+        self.persistence = persistence
+        auth = AuthStore(httpClient: httpClient, persistence: persistence)
+        messageStore = MessageStore(httpClient: httpClient, persistence: persistence)
+        shared = SharedStore(httpClient: httpClient, persistence: persistence)
+        localData = LocalDataRepository(persistence: persistence)
+        dailyContent = DailyContentRepository(httpClient: httpClient)
+        personalItems = PersonalItemsRepository(httpClient: httpClient)
         auth.socketProvider = self
         messageStore.socketProvider = self
         shared.socketProvider = self
@@ -221,7 +156,7 @@ final class ChatStore: ObservableObject {
         localCacheAvailable = await openLocalDatabase(username: session.username)
         if localCacheAvailable {
             await messageStore.restoreLocalCache(for: session)
-            shared.restoreCachedSharedState()
+            await shared.restoreCachedSharedState()
         }
         auth.activate(session, accounts: [], persist: false)
         auth.restoreCachedPartner()
@@ -247,7 +182,7 @@ final class ChatStore: ObservableObject {
         localCacheAvailable = await openLocalDatabase(username: session.username)
         if localCacheAvailable {
             await messageStore.restoreLocalCache(for: session)
-            shared.restoreCachedSharedState()
+            await shared.restoreCachedSharedState()
         }
         auth.activate(session, accounts: [], persist: true)
         auth.restoreCachedPartner()
@@ -266,9 +201,7 @@ final class ChatStore: ObservableObject {
     }
 
     private func openLocalDatabase(username: String) async -> Bool {
-        await Task.detached(priority: .utility) {
-            ChatLocalDatabase.shared.open(username: username)
-        }.value
+        await persistence.open(username: username)
     }
 
     private func fetchBootstrap(session: Session) async throws -> AppBootstrapSnapshot {
@@ -279,8 +212,9 @@ final class ChatStore: ObservableObject {
         guard let http = response as? HTTPURLResponse else { throw BootstrapError.invalidResponse }
         if http.statusCode == 401 { throw BootstrapError.unauthorized }
         guard (200..<300).contains(http.statusCode) else {
-            let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
-            throw BootstrapError.server(detail ?? "初始化失败（\(http.statusCode)）")
+            let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            let detail = ServerErrorCode.message(for: code, fallback: "初始化失败（\(http.statusCode)）")
+            throw BootstrapError.server(detail)
         }
         return try AppBootstrapSnapshot.decode(data)
     }
@@ -305,6 +239,7 @@ final class ChatStore: ObservableObject {
     }
 
     func logout() {
+        historySync.cancelForLogout()
         socket?.disconnect()
         manager = nil
         socket = nil
@@ -568,7 +503,14 @@ final class ChatStore: ObservableObject {
             beginLocalAIActivity(channel: channel, requesterUsername: session.username)
         }
         if channel == .ai { messageStore.aiReplying = true }
-        messageStore.sendText(text, channel: channel, replyTo: replyTo, replyPreview: replyPreview, session: session)
+        Task {
+            await messageStore.sendText(
+                text,
+                channel: channel,
+                replyTo: replyTo,
+                replyPreview: replyPreview,
+                session: session)
+        }
     }
 
     private func beginLocalAIActivity(channel: ChatChannel, requesterUsername: String) {
@@ -592,12 +534,21 @@ final class ChatStore: ObservableObject {
     func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?, channel: ChatChannel = .couple, displayText: String? = nil) {
         guard let session = auth.session else { return }
         if channel == .ai, preferredType == "image" { messageStore.aiReplying = true }
-        messageStore.sendMedia(data: data, mimeType: mimeType, preferredType: preferredType, localPreviewURL: localPreviewURL, channel: channel, displayText: displayText, session: session)
+        Task {
+            await messageStore.sendMedia(
+                data: data,
+                mimeType: mimeType,
+                preferredType: preferredType,
+                localPreviewURL: localPreviewURL,
+                channel: channel,
+                displayText: displayText,
+                session: session)
+        }
     }
 
     func sendSticker(url: String, channel: ChatChannel = .couple) {
         guard let session = auth.session else { return }
-        messageStore.sendSticker(url: url, channel: channel, session: session)
+        Task { await messageStore.sendSticker(url: url, channel: channel, session: session) }
     }
 
     func uploadSticker(_ image: UIImage) async -> String? {
@@ -612,7 +563,10 @@ final class ChatStore: ObservableObject {
     func sendInteraction(kind: InteractionEffectKind, text: String, channel: ChatChannel = .couple) {
         guard let session = auth.session else { return }
         let id = UUID().uuidString
-        messageStore.sendInteraction(id: id, kind: kind, text: text, channel: channel, session: session)
+        Task {
+            await messageStore.sendInteraction(
+                id: id, kind: kind, text: text, channel: channel, session: session)
+        }
         localInteractionPresentation = InteractionPresentation(
             payload: InteractionPayload(id: id, kind: kind, text: text),
             senderName: "已送达",
@@ -646,9 +600,14 @@ final class ChatStore: ObservableObject {
         return true
     }
 
-    func resend(_ message: ChatMessage) {
-        guard let session = auth.session else { return }
-        messageStore.resend(message, session: session)
+    func retryFailedMessage(_ message: ChatMessage) async -> OutboxRetryResult {
+        guard let session = auth.session else { return .notFound }
+        return await messageStore.retryFailedMessage(
+            clientId: message.clientId ?? message.id, session: session)
+    }
+
+    func discardFailedMessage(_ message: ChatMessage) async {
+        await messageStore.discardFailedMessage(clientId: message.clientId ?? message.id)
     }
 
     func markRead(_ channel: ChatChannel = .couple) { messageStore.markRead(channel) }
@@ -665,27 +624,36 @@ final class ChatStore: ObservableObject {
         await messageStore.searchMessages(query, channel: channel)
     }
 
-    func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) -> Bool {
-        messageStore.ensureMessageLoaded(target, channel: channel)
+    func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) async -> Bool {
+        await messageStore.ensureMessageLoaded(target, channel: channel)
     }
 
     func ensureDateLoaded(_ date: Date, channel: ChatChannel) async -> ChatMessage? {
         await messageStore.ensureDateLoaded(date, channel: channel)
     }
 
-    func ensureLocalMessages(_ channel: ChatChannel) { messageStore.ensureLocalMessages(channel) }
+    func ensureLocalMessages(_ channel: ChatChannel) async {
+        await messageStore.ensureLocalMessages(channel)
+    }
 
     func isLoadingOlder(_ channel: ChatChannel) -> Bool { messageStore.isLoadingOlder(channel) }
     func isLoadingNewer(_ channel: ChatChannel) -> Bool { messageStore.isLoadingNewer(channel) }
+    func isShowingLatestWindow(_ channel: ChatChannel) -> Bool {
+        messageStore.isShowingLatestWindow(channel)
+    }
     func loadOlderAsync(_ channel: ChatChannel = .couple) async { await messageStore.loadOlderAsync(channel) }
     func loadNewerAsync(_ channel: ChatChannel = .couple) async { await messageStore.loadNewerAsync(channel) }
 
-    func mediaMessages(for channel: ChatChannel, includeFiles: Bool = false, limit: Int? = nil) -> [ChatMessage] {
-        messageStore.mediaMessages(for: channel, includeFiles: includeFiles, limit: limit)
+    func mediaMessages(
+        for channel: ChatChannel,
+        includeFiles: Bool = false,
+        limit: Int? = nil
+    ) async -> [ChatMessage] {
+        await messageStore.mediaMessages(for: channel, includeFiles: includeFiles, limit: limit)
     }
 
-    func mediaItemCount(for channel: ChatChannel, includeFiles: Bool = false) -> Int {
-        messageStore.mediaItemCount(for: channel, includeFiles: includeFiles)
+    func mediaItemCount(for channel: ChatChannel, includeFiles: Bool = false) async -> Int {
+        await messageStore.mediaItemCount(for: channel, includeFiles: includeFiles)
     }
 
     func reportAway(_ away: Bool) { socket?.emit(SocketEvent.away.rawValue, away) }
@@ -736,47 +704,6 @@ final class ChatStore: ObservableObject {
         return healthy
     }
 
-    // REST 桥接
-    func fetchAccounts() async -> [Account] { await auth.fetchAccounts() }
-    func fetchDaily() async -> DailyContent? {
-        guard let token = auth.session?.token else { return nil }
-        return await shared.fetchDaily(token: token)
-    }
-    func regenerateRecommendation() async -> Recommendation? {
-        guard let token = auth.session?.token else { return nil }
-        return await shared.regenerateRecommendation(token: token)
-    }
-    func fetchPersonalItems(kind: PersonalItemKind? = nil, scope: String = "personal") async -> [PersonalItem] {
-        guard let token = auth.session?.token else { return [] }
-        return await shared.fetchPersonalItems(kind: kind, scope: scope, token: token)
-    }
-    func createPersonalItem(kind: PersonalItemKind, scope: String = "personal", title: String, bodyMarkdown: String, dueAt: Int?) async -> PersonalItem? {
-        guard let token = auth.session?.token else { return nil }
-        return await shared.createPersonalItem(kind: kind, scope: scope, title: title, bodyMarkdown: bodyMarkdown, dueAt: dueAt, token: token)
-    }
-    func updatePersonalItem(_ item: PersonalItem, title: String? = nil, bodyMarkdown: String? = nil, dueAt: Int? = nil, clearsDueAt: Bool = false, isDone: Bool? = nil) async -> PersonalItem? {
-        guard let token = auth.session?.token else { return nil }
-        return await shared.updatePersonalItem(item, title: title, bodyMarkdown: bodyMarkdown, dueAt: dueAt, clearsDueAt: clearsDueAt, isDone: isDone, token: token)
-    }
-    func deletePersonalItem(_ item: PersonalItem) async -> Bool {
-        guard let token = auth.session?.token else { return false }
-        return await shared.deletePersonalItem(item, token: token)
-    }
-    func saveBarkKey(_ barkKey: String?) async -> Bool {
-        guard let token = auth.session?.token else { return false }
-        return await shared.saveBarkKey(barkKey, token: token)
-    }
-
-    func localStats(for channel: ChatChannel = .couple) -> LocalStatsBuckets {
-        Self.computeLocalStats(for: channel)
-    }
-
-    func storageBreakdown() -> StorageBreakdown {
-        shared.storageBreakdown()
-    }
-
-    func clearImageCache() { ImageCache.shared.clearAll() }
-
     @discardableResult
     func syncAllHistory(
         _ channel: ChatChannel,
@@ -785,31 +712,8 @@ final class ChatStore: ObservableObject {
         await messageStore.syncAllHistory(channel, onProgress: onProgress)
     }
 
-    func cacheAllImages(
-        _ channels: [ChatChannel] = ChatChannel.allCases,
-        onProgress: @escaping (_ completed: Int, _ total: Int, _ failed: Int) -> Void
-    ) async -> MediaCacheResult {
-        let raws = channels.flatMap {
-            ChatLocalDatabase.shared.mediaURLs(channel: $0.rawValue, types: ["image", "sticker"])
-        }
-        let urls = Array(Set(raws.compactMap { ServerConfig.resolveMediaURL($0) }))
-        let total = urls.count
-        onProgress(0, total, 0)
-        var done = 0
-        var failed = 0
-        for url in urls {
-            if Task.isCancelled { break }
-            if !ImageCache.shared.isCached(url), await ImageCache.shared.image(for: url) == nil {
-                failed += 1
-            }
-            done += 1
-            onProgress(done, total, failed)
-        }
-        return MediaCacheResult(total: total, completed: done, failed: failed)
-    }
-
-    func clearLocalHistory() {
-        messageStore.clearLocalHistory()
+    func clearLocalHistory() async {
+        await messageStore.clearLocalHistory()
         Task { _ = await refreshBootstrap() }
     }
 }

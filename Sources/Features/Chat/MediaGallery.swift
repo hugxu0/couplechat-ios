@@ -10,12 +10,9 @@ struct MediaGallerySheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedFile: ChatMessage?
     @State private var selectedMediaId: String?
+    @State private var mediaMessages: [ChatMessage] = []
 
     private let columns = [GridItem(.adaptive(minimum: 100), spacing: 2)]
-
-    private var mediaMessages: [ChatMessage] {
-        store.mediaMessages(for: channel, includeFiles: true)
-    }
 
     private var previewableMessages: [ChatMessage] {
         mediaMessages.filter { $0.type != "file" }
@@ -60,12 +57,11 @@ struct MediaGallerySheet: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: Binding(
-            get: { selectedMediaId != nil },
-            set: { if !$0 { selectedMediaId = nil } }
-        )) {
-            MediaPagerView(messages: previewableMessages, selectedId: $selectedMediaId)
-                .presentationBackground(.clear)
+        .background(MediaViewerPresenter(
+            items: previewableMessages.flatMap(MediaBrowserItem.items(for:)),
+            selectedId: $selectedMediaId))
+        .task {
+            mediaMessages = await store.mediaMessages(for: channel, includeFiles: true)
         }
     }
 

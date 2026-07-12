@@ -5,21 +5,34 @@ import Fastify from "fastify";
 import { config } from "./config";
 import { registerAuthRoutes } from "./auth/routes";
 import { registerUploadRoutes } from "./upload/routes";
-import { registerStatsRoutes } from "./stats/routes";
-import { registerPersonalItemRoutes } from "./personalItems/routes";
+import { registerDailyRoutes } from "./daily/routes";
+import { registerPersonalItemRoutes, type PersonalItemRouteEvents } from "./personalItems/routes";
 import { registerSyncRoutes } from "./sync/routes";
 import { registerMediaAccessRoutes } from "./upload/mediaAccess";
 import { pingDatabase } from "./db";
 import { registerAiDebugRoutes } from "./ai/debug/routes";
 import { registerAiMcpRoutes } from "./ai/mcp/routes";
+import { errorCodeFor } from "./errors/errorCodes";
 
-export async function buildApp() {
+export interface AppDependencies {
+  personalItemEvents?: PersonalItemRouteEvents;
+}
+
+export async function buildApp(dependencies: AppDependencies = {}) {
   fs.mkdirSync(config.uploadDir, { recursive: true });
 
   const app = Fastify({
     logger: {
       level: config.isProduction ? "info" : "debug",
     },
+  });
+
+  app.setErrorHandler((error, request, reply) => {
+    const errorCode = errorCodeFor(error);
+    const candidate = error as { statusCode?: unknown };
+    const statusCode = typeof candidate.statusCode === "number" ? candidate.statusCode : 500;
+    request.log.warn({ errorCode, statusCode }, "request failed");
+    return reply.code(statusCode).send({ error: errorCode });
   });
 
   await app.register(cors, { origin: true });
@@ -29,20 +42,23 @@ export async function buildApp() {
       files: 1,
     },
   });
-  app.get("/health", async (_request, reply) => {
+  const readiness = async (_request: unknown, reply: { code(status: number): { send(value: unknown): unknown } }) => {
     try {
       await pingDatabase();
       return { ok: true, database: "ok", ts: Date.now() };
     } catch {
       return reply.code(503).send({ ok: false, database: "unavailable", ts: Date.now() });
     }
-  });
+  };
+  app.get("/live", async () => ({ ok: true, process: "alive", ts: Date.now() }));
+  app.get("/ready", readiness);
+  app.get("/health", readiness);
 
   await registerAuthRoutes(app);
   await registerMediaAccessRoutes(app);
   await registerUploadRoutes(app);
-  await registerStatsRoutes(app);
-  await registerPersonalItemRoutes(app);
+  await registerDailyRoutes(app);
+  await registerPersonalItemRoutes(app, dependencies.personalItemEvents);
   await registerSyncRoutes(app);
   await registerAiMcpRoutes(app);
   await registerAiDebugRoutes(app);

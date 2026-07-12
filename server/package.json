@@ -5,18 +5,16 @@
   "description": "Sustainable backend for CoupleChat native clients.",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "dev:local-ai": "tsx watch scripts/local-ai-server.ts",
+    "dev:cloud-db": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-cloud-db.ps1",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "node --import tsx --test --test-concurrency=1 tests/auth/auth.test.ts tests/message/message.test.ts tests/upload/upload.test.ts tests/sync/sync.test.ts tests/personal-items/personal-items.test.ts tests/ai-memory/ai-memory.test.ts tests/ai-queue/ai-queue.test.ts tests/db/migrations.test.ts tests/events/domain-events.test.ts tests/lifecycle/shutdown.test.ts tests/observability/operation-log.test.ts",
     "smoke:postgres": "tsx scripts/smoke-postgres.ts",
-    "smoke:legacy-import": "tsx scripts/smoke-legacy-import.ts",
-    "test": "npm run typecheck && npm run smoke:postgres",
-    "healthcheck": "node scripts/healthcheck.mjs",
-    "postgres:local": "tsx scripts/local-postgres.ts",
-    "memory:import": "tsx scripts/migrate-legacy-memory.ts"
+    "perf:queries": "tsx scripts/explain-message-queries.ts",
+    "test": "npm run typecheck && npm run test:unit && npm run smoke:postgres",
+    "healthcheck": "node scripts/healthcheck.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.1",
