@@ -170,3 +170,17 @@ sha256sum "$backup"/* > "$backup/SHA256SUMS"
 备份包含 PostgreSQL custom dump、uploads、配置归档和 `SHA256SUMS`，校验已通过。候选先在 `127.0.0.1:18080` 运行 canary，再切换正式容器。切换后本机与公网 health/readiness、固定账号、启动日志和重启次数均正常；用户随后完成普通消息、`@大橘`、AI 私聊和图片上传/预览冒烟。
 
 VPS 内存有限，完整 Docker build 的 `npm ci` 可能触发内存不足。本次候选使用已验证的旧运行时镜像，仅覆盖本地 `npm run build` 生成的 `dist`。后续若继续采用该方式，必须先通过与 CI 同版本依赖的 `npm test`/`npm run build`，并在独立端口完成 canary；不得直接覆盖正式标签。
+
+## 2026-07-13 V2 发布记录
+
+| 项目 | 记录 |
+|---|---|
+| 主分支 | `32ec642` |
+| 主分支 CI | `29211595691`，全部通过 |
+| 客户端候选 | `CoupleChat-unsigned-252`，待真机 V2 回归 |
+| 服务端候选 | `couplechat-server:candidate-32ec642` / image `35ce3ca0…` |
+| 正式 schema | v22 |
+| 应用回滚镜像 | `couplechat-server:rollback-20260713-064437-v10` |
+| v10 恢复备份 | `/root/codex-backups/couplechat-v2-release/daily/20260712T223100Z-d9e287e294f5` |
+
+发布前备份已完整恢复验证，并两次在隔离生产快照上完成 v10→v22；第二次同时启动完整 Web canary。正式切换后内外网 live/ready/health、nginx、账号列表、旧 token、bootstrap、消息读取、宠物与 Sync V2 均通过，容器 restart count 为 0。`COUPLECHAT_ACCOUNTS` 仅用于首次 seed，当前环境中的 seed 密码与历史数据库哈希不一致，因此发布自动化没有重置 legacy 密码；真机登录密码仍以数据库现有值为准。

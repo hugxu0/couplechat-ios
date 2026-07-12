@@ -279,7 +279,7 @@ nginx -> Fastify / Socket.IO
 ### 数据库候选
 
 - v1–v10 是已发布冻结边界，哈希测试保持不变。
-- v11–v22 是同一批尚未生产发布的 additive 候选：硬删除旧撤回、Bark ledger、身份/设备、conversation ownership、Sync V2、tenant Memory、转写、相册、日历和宠物。
+- v11–v22 已于 2026-07-13 作为同一批 additive migration 生产执行：硬删除旧撤回、Bark ledger、身份/设备、conversation ownership、Sync V2、tenant Memory、转写、相册、日历和宠物。自执行起内容冻结。
 - 生产 Web 默认 `RUN_MIGRATIONS=false`；发布必须先做并恢复验证备份，再单独运行 `npm run migrate`，不能依赖 Web 进程启动自动迁移。
 
 ### 当前验证
@@ -287,9 +287,9 @@ nginx -> Fastify / Socket.IO
 - Windows 本地已通过应用代码与运维脚本两套 TypeScript typecheck。
 - 服务端 29/29 单元与 PostgreSQL 集成测试已通过；覆盖认证/设备/配对、严格已读、硬撤回、Bark、Sync、Memory、转写、相册、日历、宠物、迁移升级、presence 和 AI 确认卡并发收敛。
 - 独立 PostgreSQL smoke 已通过，服务端 production build 已通过。由于工具单次执行时限，最终验证采用与 `npm test` 等价的 typecheck、`test:unit`、`smoke:postgres` 分步执行。
-- 备份脚本 `bash -n` 通过；真实生产凭据和真实生产恢复演练尚未执行。
+- 生产 v10 备份已原子生成并恢复到临时数据库，核心表计数与 20/368 个媒体抽样校验通过；随后两次完成生产快照 v10→v22 隔离迁移，其中一次启动了完整候选 Web canary。
 - Windows 没有 Xcode/Swift 工具链；V2 代码提交 `a4e1d74` 已由 GitHub Actions run `29211061229` 在 macOS/Xcode 26.3 完整通过 SwiftLint、结构护栏、iPhone 单测、聊天视觉 Fixture、iPad Simulator build、无签名 Archive 与 IPA 打包。
-- CI 产物为 `CoupleChat-unsigned-252`。它是未签名、未部署、未做 v10→v22 生产迁移和真机 V2 回归的安装候选，不是新的正式发布版本。
+- CI 产物为 `CoupleChat-unsigned-252`。服务端与 v10→v22 迁移已经生产发布，但该无签名 IPA 尚未完成两台真机 V2 回归，仍不是新的正式客户端发布版本。
 
 ### 仍然明确保留的边界
 

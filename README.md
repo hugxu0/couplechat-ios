@@ -1,6 +1,6 @@
 # 悄悄话
 
-当前生产是侧载给两位 legacy 用户的原生 iOS 共同生活与聊天 App；仓库工作树包含尚未部署的可注册/邀请码配对 V2 候选。客户端使用 SwiftUI + UIKit，服务端使用 Fastify + Socket.IO + PostgreSQL，并集成“大橘”AI。
+当前生产后端已升级为可注册/邀请码配对的 V2，现有两位 legacy 用户继续无感使用；V2 iOS 候选仍需在真机安装回归。客户端使用 SwiftUI + UIKit，服务端使用 Fastify + Socket.IO + PostgreSQL，并集成“大橘”AI。
 
 生产服务地址：`https://hoo66.top`
 
@@ -77,4 +77,4 @@ iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLin
 - 生产数据库是线上事实源；开发与 AI 调试不得直接写生产聊天或 Memory，必须使用隔离恢复库。
 - `.env`、`server/.data/`、`server/uploads/` 和任何数据库备份不得提交。
 - Socket 字段变化必须同时更新 `server/src/contracts/realtime.ts` 与 `Sources/Core/Networking/SocketContract.swift`。
-- 已生产执行的 v1–v10 只能追加；当前未发布的 v11–v22 候选可在首次生产迁移前修正。
+- 生产已执行 v1–v22，全部 migration 自 2026-07-13 起冻结；后续数据库变化只能追加新版本。
