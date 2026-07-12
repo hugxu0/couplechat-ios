@@ -35,13 +35,36 @@ final class MediaFavoriteStore: ObservableObject {
     static let shared = MediaFavoriteStore()
 
     @Published private(set) var items: [MediaBrowserItem] = []
-    private let storageKey = "media_favorites_v1"
+    private let storagePrefix = "media_favorites_v2"
+    private let legacyStorageKey = "media_favorites_v1"
+    private var activeUsername: String?
 
-    private init() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
+    private init() {}
+
+    func activate(username: String) {
+        guard activeUsername != username else { return }
+        activeUsername = username
+        let key = storageKey(for: username)
+        if let data = UserDefaults.standard.data(forKey: key),
            let saved = try? JSONDecoder().decode([MediaBrowserItem].self, from: data) {
             items = saved
+            return
         }
+        // 旧版本未分账号。只迁移明确属于双方公共频道的收藏；AI/未知频道可能
+        // 暴露另一账号的私有内容，因此升级时直接丢弃。
+        if let legacy = UserDefaults.standard.data(forKey: legacyStorageKey) {
+            let decoded = (try? JSONDecoder().decode([MediaBrowserItem].self, from: legacy)) ?? []
+            items = Self.legacyItemsEligibleForMigration(decoded)
+            save()
+            UserDefaults.standard.removeObject(forKey: legacyStorageKey)
+        } else {
+            items = []
+        }
+    }
+
+    func deactivate() {
+        activeUsername = nil
+        items = []
     }
 
     func contains(_ item: MediaBrowserItem) -> Bool {
@@ -65,8 +88,25 @@ final class MediaFavoriteStore: ObservableObject {
         save()
     }
 
+    func remove(messageId: String) {
+        let originalCount = items.count
+        items.removeAll { $0.id == messageId }
+        if items.count != originalCount { save() }
+    }
+
     private func save() {
-        guard let data = try? JSONEncoder().encode(items) else { return }
-        UserDefaults.standard.set(data, forKey: storageKey)
+        guard let username = activeUsername,
+              let data = try? JSONEncoder().encode(items) else { return }
+        UserDefaults.standard.set(data, forKey: storageKey(for: username))
+    }
+
+    private func storageKey(for username: String) -> String {
+        "\(storagePrefix).\(username)"
+    }
+
+    nonisolated static func legacyItemsEligibleForMigration(
+        _ items: [MediaBrowserItem]
+    ) -> [MediaBrowserItem] {
+        items.filter { $0.channel == ChatChannel.couple.rawValue }
     }
 }

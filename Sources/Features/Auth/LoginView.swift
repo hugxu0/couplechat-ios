@@ -1,6 +1,6 @@
 import SwiftUI
 
-// 登录页：从 /api/accounts 拉两个账号 → 选人 → 输密码。
+// 当前两人的快捷入口保留；扩展账号通过用户名登录或注册后完成配对。
 
 struct LoginView: View {
     @EnvironmentObject private var store: ChatStore
@@ -9,6 +9,7 @@ struct LoginView: View {
     @State private var password = ""
     @State private var error: String?
     @State private var busy = false
+    @State private var showsAccountAccess = false
     @FocusState private var pwFocused: Bool
 
     var body: some View {
@@ -78,6 +79,10 @@ struct LoginView: View {
                     enabled: selected != nil && !password.isEmpty,
                     action: submit
                 )
+
+                Button("其他账号登录或注册") { showsAccountAccess = true }
+                    .font(DS.Typo.secondary.weight(.semibold))
+                    .foregroundStyle(DS.Palette.accent)
             }
             .padding(.horizontal, 34)
 
@@ -88,6 +93,10 @@ struct LoginView: View {
         .background(AppPageBackground())
         .task {
             accounts = await store.auth.fetchAccounts()
+        }
+        .sheet(isPresented: $showsAccountAccess) {
+            AccountAccessSheet()
+                .environmentObject(store)
         }
     }
 

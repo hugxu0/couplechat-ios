@@ -34,7 +34,6 @@ extension ChatViewController {
             stickToLatestAfterNextReload = true
         }
         reloadTimeline(animated: true)
-        store.markRead(channel)
     }
 
     func reloadTimeline(animated: Bool) {
@@ -182,16 +181,22 @@ extension ChatViewController: ChatTimelineControllerDelegate {
         handleNewerRefresh()
     }
 
+    func timelineDidDisplay(_ message: ChatMessage) {
+        guard isChatVisible,
+              isForegroundWindowActive else { return }
+        store.markRead(channel, through: message.ts)
+    }
+
     func timelineDidSelect(_ action: ChatMessageAction, message: ChatMessage) {
         switch action {
         case .copy:
             UIPasteboard.general.string = message.displayText
         case .reply:
             setReplyTarget(message)
+        case .addToAlbum:
+            presentAlbumPicker(for: message)
         case .recall:
             store.recallMessage(message, channel: channel)
-        case .reedit:
-            beginEditingRecalledMessage(message)
         case .retry:
             retry(message)
         case .discard:
@@ -209,6 +214,14 @@ extension ChatViewController: ChatTimelineControllerDelegate {
 
     func timelineDidTapRetry(cell: ChatNativeMessageCell, message: ChatMessage) {
         retry(message)
+    }
+
+    func timelineDidTapTranscript(message: ChatMessage) {
+        handleTranscriptTap(message)
+    }
+
+    func timelineDidCorrectTranscript(message: ChatMessage) {
+        presentTranscriptCorrection(message)
     }
 }
 

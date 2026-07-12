@@ -36,7 +36,11 @@ struct CoupleChatApp: App {
             if !bootstrapped {
                 LaunchSplashView()
             } else if store.loggedIn {
-                RootTabView()
+                if store.requiresPairing {
+                    CouplePairingView()
+                } else {
+                    RootTabView()
+                }
             } else {
                 LoginView()
             }

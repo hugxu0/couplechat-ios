@@ -18,6 +18,7 @@ final class ChatViewController: UIViewController {
 
     let composer = ChatComposerView()
     let mediaViewerCoordinator = ChatMediaViewerCoordinator()
+    let voiceTranscriptRepository = VoiceTranscriptRepository()
     var timelineController: ChatTimelineController!
     var collectionView: UICollectionView!
     let bottomStack = UIStackView()
@@ -49,6 +50,7 @@ final class ChatViewController: UIViewController {
     var replyTarget: ChatMessage?
     var pendingMedia: [ChatPendingMedia] = []
     var photoPickerPurpose: PhotoPickerPurpose = .messageMedia
+    var isChatVisible = false
 
     var voicePlayer: AVPlayer?
     var voicePlaybackEndObserver: NSObjectProtocol?
@@ -63,6 +65,7 @@ final class ChatViewController: UIViewController {
     var audioRecorder: AVAudioRecorder?
     var recordingURL: URL?
     var recordingStartDate: Date?
+    var recordingRequestID: UUID?
 
     var stickToLatestAfterNextReload: Bool {
         get { timelineController?.stickToLatestAfterNextReload ?? false }
@@ -94,6 +97,11 @@ final class ChatViewController: UIViewController {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        recordingRequestID = nil
+        recordingTimer?.invalidate()
+        audioRecorder?.stop()
+        if let recordingURL { try? FileManager.default.removeItem(at: recordingURL) }
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         voicePlayer?.pause()
         if let observer = voicePlaybackEndObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -114,7 +122,36 @@ final class ChatViewController: UIViewController {
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
         applyAccentColor()
         installStickerPanel()
-        store.markRead(channel)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(messageWasDeleted(_:)),
+            name: MessageStore.messageDeletedNotification,
+            object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(persistentSyncDidChange(_:)),
+            name: .persistentSyncChanged,
+            object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(audioSessionWasInterrupted(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance())
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(audioSessionRouteChanged(_:)),
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance())
         reloadTimeline(animated: false)
         Task { [weak self] in
             guard let self else { return }
@@ -125,8 +162,51 @@ final class ChatViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        isChatVisible = true
         applyInputLayout(duration: 0, curve: .curveEaseOut)
         timelineController.scheduleInitialPositioning()
+        DispatchQueue.main.async { [weak self] in self?.reportDisplayedMessagesAsRead() }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        isChatVisible = false
+        cancelRecordingForInterruption()
+    }
+
+    @objc private func appDidBecomeActive() {
+        reportDisplayedMessagesAsRead()
+    }
+
+    @objc private func appDidEnterBackground() {
+        cancelRecordingForInterruption()
+    }
+
+    func cancelRecordingForInterruption() {
+        guard isRecording || recordingRequestID != nil || audioRecorder != nil else { return }
+        inputState = .idle
+        finishRecording(cancelled: true)
+    }
+
+    var isForegroundWindowActive: Bool {
+        viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive
+    }
+
+    @objc private func messageWasDeleted(_ notification: Notification) {
+        guard let id = notification.userInfo?["messageId"] as? String else { return }
+        mediaViewerCoordinator.dismissIfShowing(messageId: id)
+        if playingVoiceMessageID == id { stopVoicePlayback() }
+        if replyTarget?.id == id { clearReplyTarget() }
+    }
+
+    func reportDisplayedMessagesAsRead() {
+        guard isChatVisible,
+              isForegroundWindowActive else { return }
+        let timestamp = timelineController.displayedMessages()
+            .filter { !$0.pending && !$0.failed }
+            .map(\.ts)
+            .max()
+        if let timestamp { store.markRead(channel, through: timestamp) }
     }
 
     override func viewDidLayoutSubviews() {

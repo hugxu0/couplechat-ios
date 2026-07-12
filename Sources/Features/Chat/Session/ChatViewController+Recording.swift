@@ -1,9 +1,20 @@
 import AVFoundation
 import UIKit
 
+private enum ChatRecordingPolicy {
+    static let maximumDuration: TimeInterval = 10 * 60
+}
+
 extension ChatViewController {
     func beginRecording() {
         guard !isRecording else { return }
+        guard isForegroundWindowActive else {
+            inputState = .idle
+            composer.clearRecording()
+            return
+        }
+        let requestID = UUID()
+        recordingRequestID = requestID
         isRecording = true
         recordingCancelled = false
         recordingElapsed = 0
@@ -11,32 +22,41 @@ extension ChatViewController {
 
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
-            startRecorder()
+            startRecorder(requestID: requestID)
         case .denied:
-            isRecording = false
+            failRecordingRequest(requestID)
             showMicPermissionAlert()
         case .undetermined:
-            Task {
+            Task { [weak self] in
                 let granted = await AVAudioApplication.requestRecordPermission()
-                if granted {
-                    startRecorder()
-                } else {
-                    isRecording = false
+                guard let self,
+                      recordingRequestID == requestID,
+                      isRecording else { return }
+                guard granted else {
+                    failRecordingRequest(requestID)
                     showMicPermissionAlert()
+                    return
                 }
+                startRecorder(requestID: requestID)
             }
         @unknown default:
-            isRecording = false
+            failRecordingRequest(requestID)
         }
     }
 
-    private func startRecorder() {
+    private func startRecorder(requestID: UUID) {
+        guard recordingRequestID == requestID,
+              isRecording else { return }
+        guard isForegroundWindowActive else {
+            failRecordingRequest(requestID)
+            return
+        }
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
             try session.setActive(true)
         } catch {
-            isRecording = false
+            failRecordingRequest(requestID)
             return
         }
 
@@ -48,30 +68,73 @@ extension ChatViewController {
             AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
         ]
         guard let recorder = try? AVAudioRecorder(url: url, settings: settings) else {
-            isRecording = false
+            failRecordingRequest(requestID)
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
             return
         }
         recorder.isMeteringEnabled = true
-        recorder.record()
+        guard recorder.record() else {
+            failRecordingRequest(requestID)
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            return
+        }
         audioRecorder = recorder
         recordingURL = url
         recordingStartDate = Date()
         composer.setRecording(elapsed: 0, cancelled: false)
 
         recordingTimer?.invalidate()
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.recordingElapsed = Date().timeIntervalSince(self.recordingStartDate ?? Date())
-                self.audioRecorder?.updateMeters()
-                let power = self.audioRecorder?.averagePower(forChannel: 0) ?? -45
-                let level = CGFloat(max(0.05, min(1, (power + 45) / 45)))
-                self.composer.setRecording(elapsed: self.recordingElapsed, cancelled: self.recordingCancelled, level: level)
-            }
+        let timer = Timer(
+            timeInterval: 0.05,
+            target: self,
+            selector: #selector(recordingTimerDidFire(_:)),
+            userInfo: nil,
+            repeats: true)
+        recordingTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    @objc func recordingTimerDidFire(_ timer: Timer) {
+        guard timer === recordingTimer,
+              isRecording,
+              let start = recordingStartDate else { return }
+        recordingElapsed = min(
+            Date().timeIntervalSince(start),
+            ChatRecordingPolicy.maximumDuration)
+        if recordingElapsed >= ChatRecordingPolicy.maximumDuration {
+            inputState = .idle
+            finishRecording(cancelled: false)
+            return
+        }
+        audioRecorder?.updateMeters()
+        let power = audioRecorder?.averagePower(forChannel: 0) ?? -45
+        let level = CGFloat(max(0.05, min(1, (power + 45) / 45)))
+        composer.setRecording(
+            elapsed: recordingElapsed,
+            cancelled: recordingCancelled,
+            level: level)
+    }
+
+    @objc func audioSessionWasInterrupted(_ notification: Notification) {
+        guard let rawValue = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue,
+              AVAudioSession.InterruptionType(rawValue: rawValue) == .began else { return }
+        cancelRecordingForInterruption()
+    }
+
+    @objc func audioSessionRouteChanged(_ notification: Notification) {
+        guard isRecording || recordingRequestID != nil || audioRecorder != nil,
+              let rawValue = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: rawValue) else { return }
+        switch reason {
+        case .oldDeviceUnavailable, .noSuitableRouteForCategory:
+            cancelRecordingForInterruption()
+        default:
+            break
         }
     }
 
     func finishRecording(cancelled: Bool) {
+        recordingRequestID = nil
         recordingTimer?.invalidate()
         recordingTimer = nil
         let duration = recordingElapsed
@@ -79,6 +142,7 @@ extension ChatViewController {
         audioRecorder?.stop()
         audioRecorder = nil
         recordingURL = nil
+        recordingStartDate = nil
         isRecording = false
         recordingCancelled = false
         recordingElapsed = 0
@@ -91,6 +155,24 @@ extension ChatViewController {
         }
         stickToLatestAfterNextReload = true
         store.sendMedia(data: data, mimeType: "audio/m4a", preferredType: "voice", localPreviewURL: url, channel: channel)
+    }
+
+    private func failRecordingRequest(_ requestID: UUID) {
+        guard recordingRequestID == requestID else { return }
+        recordingRequestID = nil
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        audioRecorder?.stop()
+        audioRecorder = nil
+        if let recordingURL { try? FileManager.default.removeItem(at: recordingURL) }
+        recordingURL = nil
+        recordingStartDate = nil
+        isRecording = false
+        recordingCancelled = false
+        recordingElapsed = 0
+        inputState = .idle
+        composer.clearRecording()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private func showMicPermissionAlert() {

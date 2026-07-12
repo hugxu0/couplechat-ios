@@ -31,6 +31,9 @@ final class ChatStore: ObservableObject {
     let localData: LocalDataRepository
     let dailyContent: DailyContentRepository
     let personalItems: PersonalItemsRepository
+    let memoryControl: AIMemoryRepository
+    let syncV2: SyncV2Repository
+    let coupleOnboarding: CoupleOnboardingRepository
     lazy var historySync = HistorySyncCoordinator(
         isLoggedIn: { [weak self] in self?.loggedIn == true },
         historyWorker: { [weak self] channel, onProgress in
@@ -69,6 +72,7 @@ final class ChatStore: ObservableObject {
     // 便捷访问（保持向后兼容）
     var session: Session? { auth.session }
     var loggedIn: Bool { auth.loggedIn }
+    var requiresPairing: Bool { auth.session?.paired == false }
     var partner: Account? { auth.partner }
     var messagesByChannel: [String: [ChatMessage]] { messageStore.messagesByChannel }
     var readStates: [String: [String: Double]] { messageStore.readStates }
@@ -84,7 +88,10 @@ final class ChatStore: ObservableObject {
         onSocketCreated: { [weak self] socket in self?.eventRouter.bind(socket) },
         onConnected: { [weak self] in
             guard let self, let session = self.auth.session else { return }
+            self.messageStore.flushPendingReadReceipts()
             self.messageStore.flushOutbox(session: session)
+            self.startPersistentSyncLoop()
+            Task { await self.recoverSyncV2() }
         },
         onUnauthorized: { [weak self] in self?.auth.verifySessionOrLogout() })
     private lazy var eventRouter = RealtimeEventRouter(
@@ -106,6 +113,8 @@ final class ChatStore: ObservableObject {
     private let persistence: any ChatPersistenceProtocol
     private var childStateCancellables = Set<AnyCancellable>()
     private var localAIActivityTokens: [String: UUID] = [:]
+    private var syncingV2 = false
+    private var persistentSyncTask: Task<Void, Never>?
 
     // MARK: - 统计/存储
 
@@ -123,6 +132,9 @@ final class ChatStore: ObservableObject {
         localData = LocalDataRepository(persistence: persistence)
         dailyContent = DailyContentRepository(httpClient: httpClient)
         personalItems = PersonalItemsRepository(httpClient: httpClient)
+        memoryControl = AIMemoryRepository(httpClient: httpClient)
+        syncV2 = SyncV2Repository(httpClient: httpClient)
+        coupleOnboarding = CoupleOnboardingRepository(httpClient: httpClient)
         auth.socketProvider = realtime
         messageStore.socketProvider = realtime
         shared.socketProvider = realtime
@@ -151,6 +163,11 @@ final class ChatStore: ObservableObject {
 
     func bootstrap() async {
         guard let session = auth.savedSession() else { return }
+        if session.paired == false {
+            auth.activate(session, accounts: [], persist: false)
+            MediaFavoriteStore.shared.activate(username: session.username)
+            return
+        }
         let snapshotTask = Task { try await fetchBootstrap(session: session) }
         localCacheAvailable = await openLocalDatabase(username: session.username)
         if localCacheAvailable {
@@ -158,6 +175,7 @@ final class ChatStore: ObservableObject {
             await shared.restoreCachedSharedState()
         }
         auth.activate(session, accounts: [], persist: false)
+        MediaFavoriteStore.shared.activate(username: session.username)
         auth.restoreCachedPartner()
         realtime.connect()
         do {
@@ -165,6 +183,7 @@ final class ChatStore: ObservableObject {
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
             auth.activate(session, accounts: snapshot.accounts, persist: false)
+            await recoverSyncV2()
         } catch BootstrapError.unauthorized {
             auth.logout()
         } catch {
@@ -177,6 +196,11 @@ final class ChatStore: ObservableObject {
 
     func login(username: String, password: String) async throws {
         let session = try await auth.authenticate(username: username, password: password)
+        if session.paired == false {
+            auth.activate(session, accounts: [], persist: true)
+            MediaFavoriteStore.shared.activate(username: session.username)
+            return
+        }
         let snapshotTask = Task { try await fetchBootstrap(session: session) }
         localCacheAvailable = await openLocalDatabase(username: session.username)
         if localCacheAvailable {
@@ -184,6 +208,7 @@ final class ChatStore: ObservableObject {
             await shared.restoreCachedSharedState()
         }
         auth.activate(session, accounts: [], persist: true)
+        MediaFavoriteStore.shared.activate(username: session.username)
         auth.restoreCachedPartner()
         realtime.connect()
         do {
@@ -191,6 +216,7 @@ final class ChatStore: ObservableObject {
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
             auth.activate(session, accounts: snapshot.accounts, persist: false)
+            await recoverSyncV2()
         } catch BootstrapError.unauthorized {
             logout()
             throw BootstrapError.unauthorized
@@ -238,6 +264,8 @@ final class ChatStore: ObservableObject {
     }
 
     func logout() {
+        let sessionToRevoke = auth.session
+        stopPersistentSyncLoop()
         historySync.cancelForLogout()
         realtime.disconnect()
         partnerOnline = false
@@ -245,8 +273,13 @@ final class ChatStore: ObservableObject {
         aiActivityByChannel.removeAll()
         messageStore.aiTyping = false
         messageStore.aiReplying = false
+        messageStore.resetPendingReadReceipts()
         realtime.setLastError(nil)
+        MediaFavoriteStore.shared.deactivate()
         auth.logout()
+        if let sessionToRevoke {
+            Task { await auth.revokeCurrentDevice(sessionToRevoke) }
+        }
     }
 
     // MARK: - 便捷方法（桥接到子 store）
@@ -413,7 +446,9 @@ final class ChatStore: ObservableObject {
         await messageStore.discardFailedMessage(clientId: message.clientId ?? message.id)
     }
 
-    func markRead(_ channel: ChatChannel = .couple) { messageStore.markRead(channel) }
+    func markRead(_ channel: ChatChannel, through timestamp: Double) {
+        messageStore.markRead(channel, through: timestamp)
+    }
 
     func partnerHasRead(_ msg: ChatMessage) -> Bool {
         messageStore.partnerHasRead(msg, username: auth.session?.username)
@@ -462,7 +497,10 @@ final class ChatStore: ObservableObject {
         await messageStore.mediaItemCount(for: channel, includeFiles: includeFiles)
     }
 
-    func reportAway(_ away: Bool) { realtime.reportAway(away) }
+    func reportAway(_ away: Bool) {
+        realtime.reportAway(away)
+        if away { stopPersistentSyncLoop() } else { startPersistentSyncLoop() }
+    }
 
     func recoverOnForeground() {
         guard auth.session != nil else { return }
@@ -471,6 +509,7 @@ final class ChatStore: ObservableObject {
         if !connected { realtime.forceReconnect() }
         Task {
             _ = await refreshBootstrap()
+            await recoverSyncV2()
             _ = await verifyRealtimeHealth()
             if connected, let session = auth.session {
                 messageStore.flushOutbox(session: session)
@@ -489,6 +528,117 @@ final class ChatStore: ObservableObject {
 
     private func verifyRealtimeHealth() async -> Bool {
         await realtime.verifyHealth()
+    }
+
+    private func recoverSyncV2() async {
+        guard !syncingV2, let session = auth.session else { return }
+        syncingV2 = true
+        defer { syncingV2 = false }
+        let defaults = UserDefaults.standard
+        let key = "sync.v2.cursor.\(session.username).\(Keychain.installationID())"
+        var cursor = Int64(defaults.object(forKey: key) as? Int ?? 0)
+        var changedEntityTypes = Set<String>()
+        do {
+            var hasMore = true
+            while hasMore {
+                let page = try await syncV2.fetch(after: cursor, token: session.token)
+                for event in page.events where event.entityType == "message" && event.operation == "delete" {
+                    let channel = event.payload.channel.flatMap(ChatChannel.init(rawValue:))
+                    messageStore.applyRecall(id: event.payload.id ?? event.entityId, channel: channel)
+                }
+                changedEntityTypes.formUnion(page.events.map(\.entityType))
+                cursor = max(cursor, page.nextCursor)
+                defaults.set(Int(cursor), forKey: key)
+                hasMore = page.hasMore
+            }
+            await syncV2.acknowledge(cursor, token: session.token)
+            if !changedEntityTypes.isEmpty {
+                NotificationCenter.default.post(
+                    name: .persistentSyncChanged,
+                    object: nil,
+                    userInfo: ["entityTypes": Array(changedEntityTypes)])
+            }
+        } catch SyncV2Error.unauthorized {
+            auth.verifySessionOrLogout()
+        } catch {
+            // Socket/前台恢复会再次尝试；cursor 只在一页完整应用后推进。
+        }
+    }
+
+    private func startPersistentSyncLoop() {
+        guard persistentSyncTask == nil, auth.session != nil else { return }
+        persistentSyncTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: 10_000_000_000)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, let self else { return }
+                await self.recoverSyncV2()
+            }
+        }
+    }
+
+    private func stopPersistentSyncLoop() {
+        persistentSyncTask?.cancel()
+        persistentSyncTask = nil
+    }
+
+    func register(username: String, displayName: String, password: String) async throws {
+        let session = try await auth.register(
+            username: username,
+            displayName: displayName,
+            password: password)
+        auth.activate(session, accounts: [], persist: true)
+        MediaFavoriteStore.shared.activate(username: session.username)
+    }
+
+    func refreshPairingStatus() async {
+        guard let session = auth.session, session.paired == false else { return }
+        guard (try? await coupleOnboarding.status(token: session.token)) == true else { return }
+        await completePairing()
+    }
+
+    func createCouple(name: String) async throws -> CoupleCreationResult {
+        guard let session = auth.session else { throw BootstrapError.unauthorized }
+        return try await coupleOnboarding.create(name: name, token: session.token)
+    }
+
+    func joinCouple(code: String) async throws {
+        guard let session = auth.session else { throw BootstrapError.unauthorized }
+        try await coupleOnboarding.join(code: code, token: session.token)
+        await completePairing()
+    }
+
+    func completePairing() async {
+        guard let current = auth.session else { return }
+        let session = Session(
+            token: current.token,
+            username: current.username,
+            name: current.name,
+            deviceId: current.deviceId,
+            paired: true)
+        localCacheAvailable = await openLocalDatabase(username: session.username)
+        if localCacheAvailable {
+            await messageStore.restoreLocalCache(for: session)
+            await shared.restoreCachedSharedState()
+        }
+        auth.activate(session, accounts: [], persist: true)
+        MediaFavoriteStore.shared.activate(username: session.username)
+        auth.restoreCachedPartner()
+        realtime.connect()
+        do {
+            let snapshot = try await fetchBootstrap(session: session)
+            await messageStore.applyBootstrap(snapshot, session: session)
+            shared.applySharedInit(snapshot.sharedState)
+            auth.activate(session, accounts: snapshot.accounts, persist: false)
+            await recoverSyncV2()
+        } catch BootstrapError.unauthorized {
+            logout()
+        } catch {
+            realtime.setLastError(error.localizedDescription)
+        }
     }
 
     @discardableResult

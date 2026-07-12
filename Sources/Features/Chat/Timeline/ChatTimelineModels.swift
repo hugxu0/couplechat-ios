@@ -74,13 +74,18 @@ struct ChatMessageLayout: Hashable {
     let confirmLabels: String?
     let pending: Bool
     let failed: Bool
+    let transcriptStatus: String?
+    let transcriptText: String?
+    let transcriptExpanded: Bool
 
     static func key(
         message: ChatMessage,
         width: CGFloat,
         mine: Bool,
         groupedWithPrevious: Bool,
-        highlighted: Bool
+        highlighted: Bool,
+        transcript: VoiceTranscript? = nil,
+        transcriptExpanded: Bool = false
     ) -> ChatMessageLayout {
         ChatMessageLayout(
             messageId: message.id,
@@ -94,7 +99,10 @@ struct ChatMessageLayout: Hashable {
             confirmStatus: message.meta?.confirm?.status,
             confirmLabels: message.meta?.confirm.map(ChatTimelineMetrics.confirmationMarkdown),
             pending: message.pending,
-            failed: message.failed
+            failed: message.failed,
+            transcriptStatus: transcript?.status.rawValue,
+            transcriptText: transcript?.text,
+            transcriptExpanded: transcriptExpanded
         )
     }
 }
@@ -120,7 +128,9 @@ enum ChatTimelineMetrics {
     static func messageHeight(
         for message: ChatMessage,
         containerWidth: CGFloat,
-        groupedWithPrevious: Bool
+        groupedWithPrevious: Bool,
+        transcript: VoiceTranscript? = nil,
+        transcriptExpanded: Bool = false
     ) -> CGFloat {
         let topGap = groupedWithPrevious ? sameSenderTopGap : otherSenderTopGap
         let maxBubbleWidth = max(180, containerWidth * bubbleMaxWidthRatio)
@@ -140,7 +150,10 @@ enum ChatTimelineMetrics {
         case "sticker":
             contentHeight = stickerSize.height
         case "voice":
-            contentHeight = voiceHeight
+            contentHeight = voiceContentHeight(
+                transcript: transcript,
+                expanded: transcriptExpanded,
+                width: contentWidth)
         case "file":
             contentHeight = fileHeight
         default:
@@ -188,11 +201,15 @@ enum ChatTimelineMetrics {
         return ceil(max(minBubbleWidth, contentWidth))
     }
 
-    static func mediaBubbleWidth(for type: String, containerWidth: CGFloat) -> CGFloat {
+    static func mediaBubbleWidth(
+        for type: String,
+        containerWidth: CGFloat,
+        transcriptExpanded: Bool = false
+    ) -> CGFloat {
         switch type {
         case "sticker": return stickerSize.width
         case "file": return min(containerWidth * bubbleMaxWidthRatio, 250)
-        case "voice": return 146
+        case "voice": return min(containerWidth * bubbleMaxWidthRatio, transcriptExpanded ? 292 : 238)
         default: return mediaSize.width
         }
     }
@@ -229,6 +246,19 @@ enum ChatTimelineMetrics {
             }
             return parts.joined(separator: "\n\n")
         }.joined(separator: "\n\n")
+    }
+
+    static func voiceContentHeight(
+        transcript: VoiceTranscript?,
+        expanded: Bool,
+        width: CGFloat
+    ) -> CGFloat {
+        guard expanded,
+              transcript?.status == .ready,
+              let text = transcript?.text,
+              !text.isEmpty else { return voiceHeight }
+        let textHeight = measureText(text, font: .preferredFont(forTextStyle: .subheadline), width: width)
+        return voiceHeight + 10 + textHeight + 30
     }
 
     private static func measureText(_ text: String, font: UIFont, width: CGFloat) -> CGFloat {

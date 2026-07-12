@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// 共享状态（纪念日/头像/贴条）+ REST 调用（每日内容/提醒/Bark），从 ChatStore 拆出。
 @MainActor
@@ -161,9 +162,20 @@ final class SharedStore: ObservableObject {
     }
 
     func saveBarkKey(_ barkKey: String?, token: String) async -> Bool {
-        guard var req = authorizedRequest("api/me/push/bark", method: "POST", token: token) else { return false }
+        guard var req = authorizedRequest(
+            "api/v2/me/devices/current/push/bark", method: "PUT", token: token) else { return false }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = ["barkKey": barkKey ?? NSNull()]
+        let info = Bundle.main.infoDictionary ?? [:]
+        let body: [String: Any] = [
+            "installationId": Keychain.installationID(),
+            "platform": UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios",
+            "deviceName": UIDevice.current.name,
+            "appVersion": info["CFBundleShortVersionString"] as? String ?? "",
+            "buildNumber": info["CFBundleVersion"] as? String ?? "",
+            "locale": Locale.current.identifier,
+            "timezone": TimeZone.current.identifier,
+            "barkKey": barkKey ?? NSNull(),
+        ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         guard let (_, resp) = try? await httpClient.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else {

@@ -103,9 +103,10 @@ struct ChatSessionScreen: View {
         GeometryReader { proxy in
             let safeTop = proxy.safeAreaInsets.top
             let topOverlayInset = safeTop + 44
-            let screenSize = UIScreen.main.bounds.size
-            let stableWidth = max(proxy.size.width, screenSize.width)
-            let stableHeight = max(proxy.size.height, screenSize.height)
+            // 使用当前窗口而不是物理屏幕尺寸，才能在 iPad Split View / Stage Manager
+            // 中真正收缩布局；键盘区域由下方 ignoresSafeArea(.keyboard) 单独处理。
+            let stableWidth = max(proxy.size.width, 1)
+            let stableHeight = max(proxy.size.height, 1)
 
             ZStack(alignment: .top) {
                 chatBackground
