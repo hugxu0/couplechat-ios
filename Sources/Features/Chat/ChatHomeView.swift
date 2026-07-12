@@ -51,17 +51,10 @@ struct ChatHomeView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                RootPageHeader(
-                    "悄悄话",
-                    subtitle: store.presenceKnown
-                        ? (store.partnerOnline ? "对方在线" : "对方离线")
-                        : "正在连接"
-                ) {
-                    PairedEchoIndicator()
-                }
                 shortPullRefreshProbe
                 mainPanel
                     .padding(.horizontal, DS.Spacing.page)
+                    .padding(.top, 8)
                 // 卡片外保留一小段真实的滚动缓冲，供下拉刷新和底部标签栏呼吸，
                 // 不再把这块空间塞进「最新消息」里造成一片空白。
                 Color.clear.frame(height: 58)
@@ -111,9 +104,12 @@ struct ChatHomeView: View {
 
     private var mainPanel: some View {
         VStack(spacing: 0) {
-            coupleHeader
-                .padding(.top, 14)
+            brandHeader
+                .padding(.top, 22)
                 .padding(.bottom, 18)
+
+            coupleHeader
+                .padding(.bottom, 20)
 
             sectionDivider
 
@@ -142,9 +138,9 @@ struct ChatHomeView: View {
         .frame(maxWidth: .infinity)
         .frame(minHeight: 0, alignment: .top)
         .background(homeCardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
                 .stroke(
                     LinearGradient(
                         colors: [.white.opacity(0.62), theme.accent.color.opacity(0.16)],
@@ -154,6 +150,43 @@ struct ChatHomeView: View {
                     lineWidth: 1
                 )
         )
+        .shadow(color: theme.accent.color.opacity(0.08), radius: 16, y: 6)
+    }
+
+    private var brandHeader: some View {
+        VStack(spacing: 7) {
+            ZStack {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 18, weight: .semibold))
+                    Text("漫长悄悄话")
+                        .font(.system(size: 35, weight: .heavy, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [DS.Palette.blue, DS.Palette.purple],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .shadow(color: .white.opacity(0.95), radius: 3)
+
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(DS.Palette.pink.opacity(0.58))
+                    .offset(y: -30)
+            }
+
+            Text("慢慢说，悄悄听")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(theme.accent.color.opacity(0.62))
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     private var sectionDivider: some View {
@@ -461,9 +494,9 @@ struct ChatHomeView: View {
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 148, alignment: .top)
         .background(conversationWindowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .stroke(theme.accent.color.opacity(0.12), lineWidth: 1)
         )
     }
@@ -556,7 +589,7 @@ struct ChatHomeView: View {
             .padding(.vertical, 13)
             .background(
                 theme.accent.gradient,
-                in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
+                in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
             )
             .shadow(color: theme.accent.color.opacity(0.22), radius: 10, y: 5)
         }

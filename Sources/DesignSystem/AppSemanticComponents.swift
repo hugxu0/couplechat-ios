@@ -80,9 +80,9 @@ struct AppCard<Content: View>: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
                     .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
             }
     }
@@ -103,7 +103,7 @@ private struct AppSurfaceStyle: ViewModifier {
 }
 
 extension View {
-    func appSurface(radius: CGFloat = 8) -> some View {
+    func appSurface(radius: CGFloat = DS.Radius.card) -> some View {
         modifier(AppSurfaceStyle(radius: radius))
     }
 }

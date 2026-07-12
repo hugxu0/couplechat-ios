@@ -12,7 +12,7 @@ enum DS {
     // MARK: - 圆角
     enum Radius {
         /// 大卡片（首页情侣卡、记录页统计卡）
-        static let card: CGFloat = 28
+        static let card: CGFloat = 30
         /// 小卡片（互动按钮、状态格子）
         static let tile: CGFloat = 20
         /// 消息气泡
