@@ -13,6 +13,7 @@ enum OutboxRetryResult: Equatable {
 @MainActor
 final class MessageStore: ObservableObject {
     static let recallFailedNotification = Notification.Name("MessageStoreRecallFailed")
+    static let messageDeletedNotification = Notification.Name("MessageStoreMessageDeleted")
     struct HistorySyncResult: Equatable {
         let localCount: Int
         let remoteTotal: Int?
@@ -73,13 +74,14 @@ final class MessageStore: ObservableObject {
     private var restoringCache = false
     private var lastLoadOlderAt: [String: Date] = [:]
     private var lastLoadNewerAt: [String: Date] = [:]
-    private let storeStartedAtMs = Date().timeIntervalSince1970 * 1000
-
     private let httpClient: any HTTPClient
     private let persistence: any ChatPersistenceProtocol
     private let remoteDataSource: ChatRemoteDataSource
     private let mediaUploadService: MediaUploadService
     private let outboxProcessor: OutboxProcessor
+    private var pendingReadReceipts: [String: Double] = [:]
+    private var lastEmittedReadReceipts: [String: Double] = [:]
+    private var readReceiptFlushTask: Task<Void, Never>?
 
     private static let mediaTypes = ["image", "video"]
     private static let managedAttachmentTypes = ["image", "video", "file"]
@@ -556,18 +558,59 @@ final class MessageStore: ObservableObject {
 
     // MARK: - 已读
 
-    func markRead(_ channel: ChatChannel = .couple) {
-        guard let s = socketProvider?.socket, socketProvider?.isConnected == true,
-              let lastTs = messages(for: channel).last(where: { !$0.pending })?.ts else { return }
-        s.emit(SocketEvent.read.rawValue, SocketPayloadEncoder.encode(ReadReceiptRequest(channel: channel, ts: lastTs)))
+    func markRead(_ channel: ChatChannel, through timestamp: Double) {
+        guard timestamp > 0 else { return }
+        let key = channel.rawValue
+        pendingReadReceipts[key] = max(pendingReadReceipts[key] ?? 0, timestamp)
+        scheduleReadReceiptFlush()
+    }
+
+    /// 断线期间仍保留各频道最高已展示时间；连接成功后调用本方法重新发送。
+    func flushPendingReadReceipts() {
+        readReceiptFlushTask?.cancel()
+        readReceiptFlushTask = nil
+        lastEmittedReadReceipts.removeAll()
+        emitPendingReadReceipts()
+    }
+
+    func resetPendingReadReceipts() {
+        readReceiptFlushTask?.cancel()
+        readReceiptFlushTask = nil
+        pendingReadReceipts.removeAll()
+        lastEmittedReadReceipts.removeAll()
+    }
+
+    func pendingReadTimestamp(for channel: ChatChannel) -> Double? {
+        pendingReadReceipts[channel.rawValue]
+    }
+
+    private func scheduleReadReceiptFlush() {
+        guard socketProvider?.isConnected == true else { return }
+        readReceiptFlushTask?.cancel()
+        readReceiptFlushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.readReceiptFlushTask = nil
+            self.emitPendingReadReceipts()
+        }
+    }
+
+    private func emitPendingReadReceipts() {
+        guard let socket = socketProvider?.socket,
+              socketProvider?.isConnected == true else { return }
+        for (rawChannel, timestamp) in pendingReadReceipts {
+            guard timestamp > (lastEmittedReadReceipts[rawChannel] ?? 0),
+                  let channel = ChatChannel(rawValue: rawChannel) else { continue }
+            socket.emit(
+                SocketEvent.read.rawValue,
+                SocketPayloadEncoder.encode(ReadReceiptRequest(channel: channel, ts: timestamp)))
+            lastEmittedReadReceipts[rawChannel] = timestamp
+        }
     }
 
     func partnerHasRead(_ msg: ChatMessage, username: String?) -> Bool {
         guard msg.channel == ChatChannel.couple.rawValue, let me = username else { return false }
         let partnerTs = readState(for: .couple).first(where: { $0.key != me })?.value ?? 0
-        if partnerTs <= 0, msg.sender == me, !msg.pending, !msg.failed, msg.ts < storeStartedAtMs - 60_000 {
-            return true
-        }
         return msg.ts <= partnerTs
     }
 
@@ -579,6 +622,13 @@ final class MessageStore: ObservableObject {
         var next = readStates
         next[channel.rawValue] = state
         readStates = next
+        if let username = socketProvider?.sessionUsername,
+           let confirmed = state[username],
+           let pending = pendingReadReceipts[channel.rawValue],
+           confirmed >= pending {
+            pendingReadReceipts.removeValue(forKey: channel.rawValue)
+            lastEmittedReadReceipts.removeValue(forKey: channel.rawValue)
+        }
         for (user, ts) in state {
             Task {
                 await persistence.saveReadReceipt(
@@ -600,48 +650,54 @@ final class MessageStore: ObservableObject {
 
     func recallMessage(_ message: ChatMessage, channel: ChatChannel) {
         guard let s = socketProvider?.socket, socketProvider?.isConnected == true else { return }
-        updateMessages(channel) { list in
-            guard let i = list.firstIndex(where: { $0.id == message.id }) else { return }
-            var m = list[i]
-            m.recalledText = m.text
-            m.kind = "system"
-            m.type = "text"
-            m.url = nil
-            m.text = "你撤回了一条消息"
-            list[i] = m
-            Task { await persistence.insertMessage(m) }
-        }
         s.emitWithAck(
             SocketEvent.messageRecall.rawValue,
             SocketPayloadEncoder.encode(MessageRecallRequest(id: message.id))).timingOut(after: 9) { [weak self] response in
                 let ok = (response.first as? [String: Any])?["ok"] as? Bool == true
                 guard !ok else { return }
                 Task { @MainActor in
-                    guard let self else { return }
-                    self.updateMessages(channel) { list in
-                        guard let index = list.firstIndex(where: { $0.id == message.id }) else { return }
-                        list[index] = message
-                        Task { await self.persistence.insertMessage(message) }
-                    }
+                    guard self != nil else { return }
                     NotificationCenter.default.post(name: Self.recallFailedNotification, object: nil)
                 }
             }
     }
 
-    func applyRecall(id: String, byName: String?, channel: ChatChannel?, myUsername: String?, recalledText: String? = nil) {
+    func applyRecall(id: String, channel: ChatChannel?) {
         let channels = channel.map { [$0] } ?? ChatChannel.allCases
+        var repairedReplies: [ChatMessage] = []
+        var mediaURLs: Set<URL> = []
         for c in channels {
             updateMessages(c) { list in
-                guard let i = list.firstIndex(where: { $0.id == id }) else { return }
-                var m = list[i]
-                let mine = m.sender == myUsername
-                if m.recalledText == nil { m.recalledText = recalledText ?? m.text }
-                m.kind = "system"
-                m.type = "text"
-                m.url = nil
-                m.text = mine ? "你撤回了一条消息" : "\(byName ?? "对方")撤回了一条消息"
-                list[i] = m
-                Task { await persistence.insertMessage(m) }
+                for message in list where message.id == id {
+                    if let url = message.mediaURL { mediaURLs.insert(url) }
+                    for attachment in message.attachments ?? [] {
+                        if let url = attachment.mediaURL { mediaURLs.insert(url) }
+                    }
+                }
+                list.removeAll { $0.id == id }
+                for index in list.indices where list[index].replyTo == id {
+                    list[index].replyTo = nil
+                    list[index].replyPreview = nil
+                    repairedReplies.append(list[index])
+                }
+            }
+            if latestPersistedMessageIDs[c.rawValue] == id {
+                latestPersistedMessageIDs[c.rawValue] = messages(for: c).last(where: {
+                    !$0.pending && !$0.failed
+                })?.id
+            }
+        }
+        MediaFavoriteStore.shared.remove(messageId: id)
+        for url in mediaURLs { ImageCache.shared.removeMedia(for: url) }
+        NotificationCenter.default.post(
+            name: Self.messageDeletedNotification,
+            object: nil,
+            userInfo: ["messageId": id])
+        let repliesToPersist = repairedReplies
+        Task {
+            await persistence.deleteMessage(id: id)
+            if !repliesToPersist.isEmpty {
+                _ = await persistence.insertMessages(repliesToPersist)
             }
         }
     }

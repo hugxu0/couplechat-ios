@@ -1,189 +1,191 @@
 import SwiftUI
 
-// 大橘页：宠物状态 + 互动按钮。
-// 3D 猫（网页版用 Three.js）以后可以用 SceneKit/RealityKit 加载同一个
-// cute_cat.glb 模型；这一版先用 emoji 占位，把布局和交互立起来。
-
 struct PetView: View {
     @EnvironmentObject private var store: ChatStore
-    @EnvironmentObject private var timelineStore: ChatTimelineStore
-    @EnvironmentObject private var theme: ThemeManager
-    @State private var bubble = "喵~ 你来啦"
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var viewModel = PetViewModel()
     @State private var showAIChat = false
-    @State private var stats: [(icon: String, name: String, value: Double)] = [
-        ("🍖", "饱食", 0.91), ("🛁", "清洁", 0.75), ("😻", "心情", 0.95), ("⚡", "精力", 1.0),
-    ]
+    @State private var showRename = false
+    @State private var isVisible = false
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: DS.Spacing.gap) {
-                    petCard
-                    statsCard
-                    actionsRow
-                    chatEntry
-                }
-                .padding(.horizontal, DS.Spacing.page)
-                .padding(.bottom, 100)
+            GeometryReader { proxy in
+                content(in: proxy.size)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(AppPageBackground())
             }
-            .scrollIndicators(.hidden)
-            .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(isPresented: $showAIChat) { ChatView(channel: .ai) }
+            .navigationDestination(isPresented: $showAIChat) {
+                ChatView(channel: .ai)
+            }
+            .sheet(isPresented: $showRename) {
+                renameSheet
+            }
+            .task(id: store.session?.username) {
+                guard let session = store.session else { return }
+                await viewModel.load(token: session.token, username: session.username)
+            }
+            .task(id: "pet-poll.\(store.session?.username ?? "none")") {
+                await liveRefreshLoop()
+            }
+            .onAppear { isVisible = true }
+            .onDisappear { isVisible = false }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+                Task { await refreshIfPossible() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .persistentSyncChanged)) { note in
+                guard note.persistentSyncIncludes(["pet"]) else { return }
+                Task { await refreshIfPossible() }
+            }
         }
     }
 
-    private var petCard: some View {
-        VStack(spacing: 12) {
-            Text(bubble)
-                .font(DS.Typo.body.weight(.medium))
-                .foregroundStyle(DS.Palette.textPrimary)
-                .padding(.horizontal, 18).padding(.vertical, 10)
-                .background(DS.Palette.bubbleOther)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
-                .shadow(color: DS.Surface.shadow, radius: 6, y: 3)
-
-            Text("🐱")
-                .font(.system(size: 110))
-                .padding(.vertical, 8)
-                .background(
-                    // 猫身后的柔光，跟随主题色，深浅模式都协调
-                    Circle().fill(DS.Palette.accent.opacity(0.16)).frame(width: 150, height: 150).blur(radius: 24))
-                .onTapGesture {
-                    Haptics.medium()
-                    withAnimation(DS.Anim.spring) { bubble = "喵喵喵~ 💗" }
-                }
-
-            Text("大橘现在超开心，元气满满！")
-                .font(DS.Typo.secondary)
+    @ViewBuilder
+    private func content(in size: CGSize) -> some View {
+        if let pet = viewModel.snapshot?.pet, let session = store.session {
+            petLayout(pet: pet, session: session, size: size)
+        } else if viewModel.isLoading {
+            ProgressView("正在打开窗边小窝…")
                 .foregroundStyle(DS.Palette.textSecondary)
+        } else {
+            unavailableState
+        }
+    }
 
-            HStack {
-                // 经验条
-                HStack(spacing: 0) {
-                    Text("Lv.4 · 经验 36%")
-                        .font(DS.Typo.sectionLabel)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(DS.Palette.accent)
-                        .clipShape(Capsule())
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-                .background(DS.Palette.innerSurface)
-                .clipShape(Capsule())
+    private func petLayout(pet: CouplePetState, session: Session, size: CGSize) -> some View {
+        let inset = DS.Spacing.page
+        let availableWidth = max(0, size.width - inset * 2)
+        let metrics = PetLayoutMetrics.resolve(
+            width: availableWidth,
+            height: size.height,
+            hasRegularHorizontalSizeClass: horizontalSizeClass == .regular)
 
-                Label("亲密 239", systemImage: "heart.fill")
-                    .font(DS.Typo.button)
-                    .foregroundStyle(DS.Palette.pink)
+        return Group {
+            if metrics.mode == .split {
+                splitLayout(pet: pet, session: session, metrics: metrics)
+            } else {
+                stackedLayout(pet: pet, session: session, metrics: metrics)
             }
         }
-        .padding(DS.Spacing.card)
+        .frame(width: metrics.totalContentWidth)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .dsCard()
     }
 
-    private var statsCard: some View {
-        VStack(spacing: 14) {
-            ForEach(stats, id: \.name) { s in
-                HStack(spacing: 10) {
-                    Text(s.icon).font(DS.Typo.tabIcon)
-                    Text(s.name).font(DS.Typo.body)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                        .frame(width: 44, alignment: .leading)
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(DS.Palette.innerSurface)
-                            Capsule().fill(DS.Palette.green)
-                                .frame(width: geo.size.width * s.value)
-                        }
-                    }
-                    .frame(height: 10)
-                    Text("\(Int(s.value * 100))")
-                        .font(DS.Typo.button)
-                        .foregroundStyle(DS.Palette.textPrimary)
-                        .frame(width: 40, alignment: .trailing)
+    private func splitLayout(
+        pet: CouplePetState,
+        session: Session,
+        metrics: PetLayoutMetrics
+    ) -> some View {
+        HStack(spacing: 14) {
+            scene(pet: pet, session: session)
+                .frame(width: metrics.sceneWidth)
+            panel(pet: pet, session: session, showsDrawerHandle: false)
+                .frame(width: metrics.panelWidth)
+        }
+    }
+
+    private func stackedLayout(
+        pet: CouplePetState,
+        session: Session,
+        metrics: PetLayoutMetrics
+    ) -> some View {
+        VStack(spacing: -22) {
+            scene(pet: pet, session: session)
+                .frame(height: metrics.stackedSceneHeight)
+            panel(pet: pet, session: session, showsDrawerHandle: true)
+                .frame(maxHeight: .infinity)
+        }
+    }
+
+    private func scene(pet: CouplePetState, session: Session) -> some View {
+        PetSceneView(
+            pet: pet,
+            isBusy: viewModel.isMutating,
+            feedback: viewModel.feedback,
+            onRename: { showRename = true },
+            onChat: { showAIChat = true },
+            onInteraction: { kind in
+                Haptics.light()
+                Task {
+                    await viewModel.interact(
+                        kind: kind, token: session.token, username: session.username)
                 }
-            }
-        }
-        .padding(DS.Spacing.card)
-        .dsCard()
+            })
     }
 
-    private var actionsRow: some View {
-        HStack(spacing: 10) {
-            petAction("🍗", "喂食")
-            petAction("🛁", "洗澡")
-            petAction("🧶", "玩耍")
-            petAction("🐾", "摸摸")
-            petAction("💤", "睡觉")
-        }
-    }
-
-    private func petAction(_ emoji: String, _ title: String) -> some View {
-        Button {
-            Haptics.medium()
-        } label: {
-            VStack(spacing: 5) {
-                Text(emoji).font(DS.Typo.pageTitle)
-                Text(title).font(DS.Typo.secondary.weight(.bold))
-                    .foregroundStyle(DS.Palette.textPrimary)
-                Text("可用").font(DS.Typo.micro)
-                    .foregroundStyle(DS.Palette.accent)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(DS.Palette.innerSurface)
-            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
-        }
-        .buttonStyle(PressableStyle())
-    }
-
-    // MARK: 和大橘聊天入口（从聊天首页移来）
-    private var chatEntry: some View {
-        Button {
-            Haptics.light()
-            showAIChat = true
-        } label: {
-            HStack(spacing: 14) {
-                Text("🐱")
-                    .font(DS.Typo.pageTitle)
-                    .frame(width: 54, height: 54)
-                    .background(theme.accent.color.opacity(0.12))
-                    .clipShape(Circle())
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text("和大橘聊聊")
-                            .font(DS.Typo.button)
-                            .foregroundStyle(DS.Palette.textPrimary)
-                        if store.isAIComposing(in: .ai) {
-                            Text("正在输入")
-                                .font(DS.Typo.micro.weight(.semibold))
-                                .foregroundStyle(DS.Palette.green)
-                        }
-                    }
-                    Text(aiPreview)
-                        .font(DS.Typo.caption)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                        .lineLimit(1)
+    private func panel(
+        pet: CouplePetState,
+        session: Session,
+        showsDrawerHandle: Bool
+    ) -> some View {
+        PetContentPanel(
+            pet: pet,
+            currentUsername: session.username,
+            isBusy: viewModel.isMutating,
+            errorMessage: viewModel.errorMessage,
+            usingCachedSnapshot: viewModel.usingCachedSnapshot,
+            showsDrawerHandle: showsDrawerHandle,
+            onRespond: { text in
+                await viewModel.respond(
+                    text: text, token: session.token, username: session.username)
+            },
+            onPlaceItems: { ids in
+                Task {
+                    await viewModel.updateScene(
+                        placedItemIds: ids,
+                        token: session.token,
+                        username: session.username)
                 }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(DS.Typo.secondary.weight(.semibold))
-                    .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
-            }
-            .padding(DS.Spacing.card)
-            .frame(maxWidth: .infinity)
-            .dsCard()
-        }
-        .buttonStyle(PressableStyle())
+            },
+            onRefresh: {
+                await refreshIfPossible()
+            })
     }
 
-    private var aiPreview: String {
-        guard let last = timelineStore.messages(for: .ai).last else { return "找大橘说点悄悄话" }
-        return last.type == "text" ? last.text : "[\(last.type)]"
+    private var unavailableState: some View {
+        VStack(spacing: 16) {
+            AppEmptyState(
+                "小窝暂时没有打开",
+                systemImage: "pawprint",
+                detail: viewModel.errorMessage ?? "确认登录与网络状态后重试")
+            if let session = store.session {
+                Button("重新载入") {
+                    Task {
+                        await viewModel.load(
+                            token: session.token, username: session.username, force: true)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(DS.Spacing.page)
+    }
+
+    private func refreshIfPossible() async {
+        guard let session = store.session else { return }
+        await viewModel.load(
+            token: session.token, username: session.username, force: true)
+    }
+
+    private func liveRefreshLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            guard !Task.isCancelled else { return }
+            if isVisible, scenePhase == .active { await refreshIfPossible() }
+        }
+    }
+
+    @ViewBuilder
+    private var renameSheet: some View {
+        if let pet = viewModel.snapshot?.pet, let session = store.session {
+            PetRenameSheet(currentName: pet.name) { name in
+                await viewModel.rename(
+                    name, token: session.token, username: session.username)
+            }
+        }
     }
 }

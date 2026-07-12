@@ -18,11 +18,18 @@ Fastify + Socket.IO · 127.0.0.1:8080
 
 ## iOS 客户端
 
-`Sources/App` 负责启动、通知代理和主导航。`ChatStore` 是页面使用的协调入口，内部组合三个主要状态对象：
+`Sources/App` 负责启动、通知代理和主导航。根导航使用系统 `sidebarAdaptable` Tab：iPhone 显示底栏，iPad 按可用宽度转为侧栏。`ChatStore` 是页面使用的协调入口，内部组合主要状态对象和 Repository：
 
 - `AuthStore`：登录、token、当前用户和另一位用户；
 - `MessageStore`：消息、同步、发送、搜索、撤回、上传和 outbox；
 - `SharedStore`：共享状态、纪念日、提醒和每日内容；
+- `AIMemoryRepository`：Memory 控制中心的列表、证据、纠正、删除和立即整理；
+- `MomentsRepository`：共同相册、聊天媒体入册、注脚与那年今日；
+- `CalendarRepository`：共享/私人日历、版本冲突与完成状态；
+- `CouplePetRepository`：服务端宠物快照和幂等互动；
+- `VoiceTranscriptRepository`：转写查询、重试与人工纠正；
+- `SyncV2Repository`：持久化变更 cursor、ack 和离线删除恢复；
+- `CoupleOnboardingRepository`、`DeviceSessionRepository`：注册配对与多设备管理；
 - `ChatStore`：持有 Socket，分发事件并为 View 暴露统一接口。
 
 `Sources/Core` 还包含：
@@ -39,7 +46,7 @@ Fastify + Socket.IO · 127.0.0.1:8080
 - `RealtimeEventRouter`：消息、已读、AI、presence 和共享状态等领域事件路由；
 - `HTTPClient`：可注入 REST 边界；
 - `ServerConfig`：服务端地址；
-- `ImageCache`、`StickerStore`、`MediaFavoriteStore`：本机媒体状态。
+- `ImageCache`、`StickerStore`、`MediaFavoriteStore`：本机媒体状态；收藏按登录账号分区。
 
 ### 客户端目录与所有权
 
@@ -66,13 +73,14 @@ Sources/
       Settings/              会话详情设置
       Presentation/          互动特效与聊天呈现模型
       Fixtures/              DEBUG-only 聊天顶部视觉夹具
-    Records/                 记录页、统计卡、推荐弹层、日期/纪念日编辑器
-    Reminders/               提醒列表、事项卡、编辑器与 Markdown 预览
+    Records/                 共同相册、那年今日、统计、日期/纪念日
+    Reminders/               日历、提醒、备忘、编辑器与 Markdown 预览
     Profile/                 我的主页
+      Memory/                Memory 控制中心、详情与语义组件
       Theme/                 主题样式
       Storage/               存储与附件管理
       Favorites/             收藏媒体
-    Pet/                     当前仅展示占位的宠物页
+    Pet/                     共同宠物、小窝、今日回应、藏品和足迹
 ```
 
 `MessageStore` 与 `ChatStore` 为兼容现有页面保留 facade，但不再拥有全部底层实现。新增功能应优先进入已有的 Repository、Coordinator 或专用 Store；只有跨模块装配和向后兼容转发可以留在 facade，避免重新形成单体状态对象。
@@ -91,6 +99,8 @@ ChatHomeView
 
 消息列表与输入区保持 UIKit 管理，避免在滚动、键盘和媒体交互的高频路径混用多套状态生命周期。`ChatViewController` 直接观察 `ChatTimelineStore`，不再通过父 Store 转发普通消息更新。
 
+已读只由真实显示的 collection view message cell 驱动，同时要求聊天控制器当前可见、App 处于 active；收到 Socket、恢复缓存或仅进入页面都不会自动已读。聊天容器与媒体网格使用当前窗口尺寸，支持 iPad Split View 与 Stage Manager。
+
 ## 服务端
 
 `server/src/server.ts` 负责初始化数据库、账号、AI、Fastify 与 Socket.IO。HTTP 模块由 `app.ts` 注册：
@@ -104,6 +114,10 @@ ChatHomeView
 | `upload/` | 上传校验、签名媒体访问和清理 |
 | `personalItems/` | 提醒、备忘和到期扫描 |
 | `shared/` | 双方共享状态 |
+| `transcription/` | OpenAI-compatible 转写 provider、job lease 与 worker |
+| `albums/` | 共同相册、媒体资产、注脚和那年今日 |
+| `calendar/` | 共享/私人日历、时区、完成和版本冲突 |
+| `pet/` | 共同宠物、每日题目、藏品、场景和幂等互动 |
 | `daily/` | 日记与今日推荐接口 |
 | `push/` | Bark 推送策略 |
 | `ai/` | Agent、MCP、Memory、上下文和后台任务 |
@@ -116,11 +130,11 @@ server/src/db/
   client.ts        PostgreSQL pool、查询与连接生命周期
   transaction.ts   事务边界
   rows.ts          数据库行类型
-  migrate.ts       v1-v10 版本化 migration 与执行器
+  migrate.ts       v1-v22 版本化 migration 与受控执行器（仅 v1-v10 已发布冻结）
   index.ts         稳定 re-export，不承载实现
 ```
 
-业务模块通过接口注入 Socket、push、repository 和调度器依赖。消息撤回后的 AI Memory 证据失效使用领域事件，Socket 路由只解析契约、调用 use case 并 emit/ack。关闭顺序由 `lifecycle/shutdown.ts` 统一管理。
+业务模块通过接口注入 Socket、push、repository 和调度器依赖。消息撤回在事务内硬删除消息、附件关系、引用预览、Memory 证据和孤立 Memory，再用领域事件清理历史孤儿；Socket 路由只解析契约、调用 use case 并 emit/ack。Bark 提醒用 `reminder_bark_deliveries` 持久化投递结果。关闭顺序由 `lifecycle/shutdown.ts` 统一管理。
 
 ## 数据与同步
 
@@ -130,6 +144,7 @@ server/src/db/
 2. 请求 `/api/bootstrap` 获取账号、最近消息、已读和共享状态。
 3. 建立 Socket.IO 连接，接收后续实时增量。
 4. 通过 `/api/messages` 分页补齐历史或按时间增量同步。
+5. 通过 `/api/v2/sync` 在启动、重连、回前台和前台轮询时恢复持久化变更与删除 tombstone。
 
 发送流程：
 
@@ -141,9 +156,10 @@ server/src/db/
 ## 频道与权限
 
 - 客户端频道只有 `couple` 和 `ai`。
-- 服务端把个人 AI 私聊存为 `ai:<username>`。
-- 公聊房间为 `channel:couple`，个人事件房间为 `user:<username>`。
+- 服务端把个人 AI 私聊兼容投影为 `ai:<username>`，事实所有权由 `conversation.owner_account_id` 决定。
+- 公聊房间为 `couple:<coupleId>`，个人事件房间为 `account:<accountId>`；`user:<username>` 只保留兼容监听。
 - 任何 AI 工具都不能读取另一位用户的 AI 私聊。
+- legacy `xu/si` 使用完整 Agent + Memory 工具；新注册情侣在工具完成 conversation_id 全租户迁移前使用只看当前消息的无历史 AI 模式，避免跨情侣上下文串用。
 
 ## 不可破坏的约束
 

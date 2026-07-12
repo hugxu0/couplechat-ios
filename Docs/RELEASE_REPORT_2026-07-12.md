@@ -126,7 +126,7 @@
 - 全局卡片使用统一大圆角 token，清理提醒/记录页遗留的小圆角。
 - 首页改为“漫长悄悄话”目标布局，调整最新消息容器、高度、边框、刷新回弹和明暗模式渐变。
 - 页面底色统一到动态渐变，深色模式使用独立夜间配色。
-- 保留宠物页现状，不把展示占位扩展成另一个大任务。
+- 当时保留宠物页现状，不把展示占位扩展进 R6；后续未发布 V2 已按独立产品任务完成持久化重做，见第 15 节。
 
 ## 10. R7：服务端模块化与可观测性
 
@@ -252,10 +252,48 @@ nginx -> Fastify / Socket.IO
 ## 14. 残余限制与后续建议
 
 - iPad 真机和双设备同时在线矩阵未执行；以后有第二台设备时补测即可。
-- 宠物页仍是展示占位，若要开发应作为独立产品任务设计状态和持久化。
+- 截至原始发布点宠物页仍是展示占位；后续未发布 V2 已完成独立状态、玩法和持久化设计，见第 15 节。
 - Bark deep link 尚未实现。
 - `MessageStore`/`ChatStore` 兼容 facade 仍偏大，但不应为了追求行数立刻再次拆分；等新需求出现时沿现有 Repository/Coordinator 边界迁移。
 - Windows 不能本地编译 iOS，iOS 改动继续依赖 GitHub Actions 或 Mac。
 - 用户清空 App 数据后，本地文件已经消失的失败媒体无法原地重传，只能删除后重新选择。
 
 后续维护的原则是：先稳定复现、再做局部修改；一个大任务完成后统一跑完整验证和真机回归，不在每个小改动后反复构建 IPA。
+
+## 15. 2026-07-13 V2 候选补充（尚未发布）
+
+本节记录 7 月 12 日正式版本之后的工作树，不覆盖上文历史发布结论，也不表示已经部署生产。
+
+### 已完成代码
+
+- 注册、其他账号登录、创建两人空间、邀请码配对，以及设置内邀请码/已登录设备管理。
+- account/couple/member/device/session/conversation 所有权切流；两对测试情侣的消息、设置、提醒、相册、日历、宠物和删除事件互相隔离。
+- iPhone/iPad 同账号多设备会话与设备级 Bark；presence 改为按连接判断，一台设备后台不会覆盖另一台前台在线状态。
+- 严格已读只由 active 可见聊天页内已经展示的 cell 上报；撤回限制为 2 分钟并硬删除消息、引用、收藏、上传派生、转写、Memory 证据和离线 tombstone。
+- Sync V2 cursor/ack 与前台补拉；Memory 控制中心完成分页、版本冲突、跨设备刷新和删除 exclusion。
+- 共同相册/那年今日、共享/私人日历、服务端语音转写 worker、历史语音补建，以及服务端持久化的大橘共同养成。
+- 大橘玩法采用无惩罚设计：两人异步回答“今天一起”，完成后只结算一次内容藏品和足迹；摸摸、碰爪、逗猫棒不限制次数。
+- 根导航改为五入口“聊天 / 时光 / 大橘 / 计划 / 我的”，启用 Universal iPhone+iPad、自适应侧栏、横竖屏和宠物宽屏布局。
+- 轻量备份升级为原子归档、全量 SHA、媒体 manifest、受控停写 hook 和真实临时数据库恢复校验；可在 v10 旧结构与 v22 新结构上按实际存在表核对。
+
+### 数据库候选
+
+- v1–v10 是已发布冻结边界，哈希测试保持不变。
+- v11–v22 是同一批尚未生产发布的 additive 候选：硬删除旧撤回、Bark ledger、身份/设备、conversation ownership、Sync V2、tenant Memory、转写、相册、日历和宠物。
+- 生产 Web 默认 `RUN_MIGRATIONS=false`；发布必须先做并恢复验证备份，再单独运行 `npm run migrate`，不能依赖 Web 进程启动自动迁移。
+
+### 当前验证
+
+- Windows 本地已通过应用代码与运维脚本两套 TypeScript typecheck。
+- 服务端 29/29 单元与 PostgreSQL 集成测试已通过；覆盖认证/设备/配对、严格已读、硬撤回、Bark、Sync、Memory、转写、相册、日历、宠物、迁移升级、presence 和 AI 确认卡并发收敛。
+- 独立 PostgreSQL smoke 已通过，服务端 production build 已通过。由于工具单次执行时限，最终验证采用与 `npm test` 等价的 typecheck、`test:unit`、`smoke:postgres` 分步执行。
+- 备份脚本 `bash -n` 通过；真实生产凭据和真实生产恢复演练尚未执行。
+- Windows 没有 Xcode/Swift 工具链；V2 代码提交 `a4e1d74` 已由 GitHub Actions run `29211061229` 在 macOS/Xcode 26.3 完整通过 SwiftLint、结构护栏、iPhone 单测、聊天视觉 Fixture、iPad Simulator build、无签名 Archive 与 IPA 打包。
+- CI 产物为 `CoupleChat-unsigned-252`。它是未签名、未部署、未做 v10→v22 生产迁移和真机 V2 回归的安装候选，不是新的正式发布版本。
+
+### 仍然明确保留的边界
+
+- legacy `xu/si` 继续使用完整 Agent/MCP/Memory；新注册情侣先使用只读当前消息的无历史 AI 模式，避免旧全局工具串用上下文。
+- 相册 MVP 从聊天媒体入册，尚未支持在相册页直接拍摄/选图。
+- 日历本身不自动推送；需要 Bark 到期通知时使用“提醒”，shared 发双方、personal 只发创建者。
+- Bark deep link、Memory 来源跳转、完整 iPad 聊天主从栏、拖放和真机多设备矩阵仍未验收。

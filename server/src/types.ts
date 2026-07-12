@@ -21,6 +21,12 @@ export interface ClientMessageAttachment {
 export interface AuthUser {
   username: string;
   name: string;
+  accountId?: string;
+  deviceId?: string;
+  sessionId?: string;
+  tokenVersion?: number;
+  coupleId?: string;
+  memberId?: string;
 }
 
 export interface ClientMessage {
@@ -40,6 +46,14 @@ export interface ClientMessage {
   channel: ClientChannel;
   ts: number;
   clientId?: string;
+  transcript?: {
+    status: "pending" | "processing" | "completed" | "failed" | "unavailable";
+    text: string;
+    rawText?: string;
+    corrected: boolean;
+    language?: string;
+    version: number;
+  };
 }
 
 export function toStoredChannel(channel: ClientChannel, user: Username): StoredChannel {

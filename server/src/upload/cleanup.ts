@@ -5,6 +5,47 @@ const ABANDONED_AFTER_MS = 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BATCH_SIZE = 500;
 
+interface FileCleanupRow {
+  id: string;
+  path: string;
+  attempt_count: number;
+}
+
+/**
+ * 数据库迁移/业务事务只负责把需要物理删除的路径写入可靠队列；这里在进程
+ * 启动和定时任务中幂等落地。文件不存在也视为成功，避免崩溃重启后卡死。
+ */
+export async function drainFileCleanupQueue(): Promise<number> {
+  const rows = await all<FileCleanupRow>(
+    `SELECT id, path, attempt_count FROM file_cleanup_queue
+      WHERE completed_at IS NULL ORDER BY created_at ASC LIMIT ?`,
+    [BATCH_SIZE],
+  ).catch((error) => {
+    // 兼容尚未应用 v11 的受控迁移/测试阶段。
+    if (error instanceof Error && error.message.includes("file_cleanup_queue")) return [];
+    throw error;
+  });
+  let completed = 0;
+  for (const row of rows) {
+    try {
+      await fs.rm(row.path, { force: true });
+      completed += await run(
+        `UPDATE file_cleanup_queue SET completed_at = ?, attempt_count = attempt_count + 1,
+         last_error = NULL WHERE id = ? AND completed_at IS NULL`,
+        [Date.now(), row.id],
+      );
+    } catch (error) {
+      await run(
+        `UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ?
+         WHERE id = ? AND completed_at IS NULL`,
+        [error instanceof Error ? error.message.slice(0, 1_000) : String(error).slice(0, 1_000), row.id],
+      );
+    }
+  }
+  if (completed > 0) console.info(`[upload] 已完成 ${completed} 个持久文件清理任务`);
+  return completed;
+}
+
 export async function cleanupAbandonedMessageUploads(now = Date.now()): Promise<number> {
   const rows = await all<UploadRow>(
     `SELECT * FROM uploads
@@ -30,7 +71,7 @@ export async function cleanupAbandonedMessageUploads(now = Date.now()): Promise<
 
 export function startUploadCleanup(): () => void {
   const runCleanup = () => {
-    void cleanupAbandonedMessageUploads().catch((error) => {
+    void Promise.all([drainFileCleanupQueue(), cleanupAbandonedMessageUploads()]).catch((error) => {
       console.warn(`[upload] 定时清理失败: ${error instanceof Error ? error.message : String(error)}`);
     });
   };

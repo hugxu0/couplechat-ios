@@ -17,7 +17,10 @@ async function availablePort(): Promise<number> {
   });
 }
 
-export async function withTestDatabase<T>(work: () => Promise<T>): Promise<T> {
+export async function withTestDatabase<T>(
+  work: () => Promise<T>,
+  options: { migrateThrough?: number } = {},
+): Promise<T> {
   installSafeTestEnvironment();
   const port = await availablePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "couplechat-test-pg-"));
@@ -37,7 +40,7 @@ export async function withTestDatabase<T>(work: () => Promise<T>): Promise<T> {
 
   const db = await import("../../src/db");
   try {
-    await db.initDatabase();
+    await db.initDatabase(options.migrateThrough);
     return await work();
   } finally {
     await db.closeDatabase().catch(() => undefined);

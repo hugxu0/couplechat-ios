@@ -3,7 +3,7 @@ import SQLite3
 
 final class ChatLocalDatabase {
     static let shared = ChatLocalDatabase()
-    private static let schemaVersion: Int32 = 4
+    private static let schemaVersion: Int32 = 6
     private var db: OpaquePointer?
     private(set) var currentDatabaseURL: URL?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -195,10 +195,27 @@ final class ChatLocalDatabase {
               execute(sql: sharedStateSQL),
               execute(sql: outboxSQL),
               ensureOutboxColumns(),
+              migrateHardDeletedRecalls(from: currentVersion),
               execute(sql: "PRAGMA user_version = \(Self.schemaVersion);"),
               execute(sql: "COMMIT;") else { return false }
         committed = true
         return true
+    }
+
+    private func migrateHardDeletedRecalls(from version: Int32) -> Bool {
+        guard version < 6 else { return true }
+        return execute(sql: """
+        UPDATE messages
+           SET replyTo = NULL, replyPreview = NULL
+         WHERE replyTo IN (
+           SELECT id FROM messages
+            WHERE recalledText IS NOT NULL
+               OR (kind = 'system' AND type = 'text' AND text = '你撤回了一条消息')
+         );
+        DELETE FROM messages
+         WHERE recalledText IS NOT NULL
+            OR (kind = 'system' AND type = 'text' AND text = '你撤回了一条消息');
+        """)
     }
 
     /// CREATE TABLE IF NOT EXISTS 不会给旧表补列。逐列检查使跨多个历史版本升级也安全。

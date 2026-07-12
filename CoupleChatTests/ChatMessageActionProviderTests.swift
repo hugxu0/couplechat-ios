@@ -25,7 +25,7 @@ final class ChatMessageActionProviderTests: XCTestCase {
         let other = makeMessage(type: "image", sender: "si", ts: 1_000)
         XCTAssertEqual(
             ChatMessageActionProvider.actions(for: other, currentUsername: "xu", nowMilliseconds: 500_000),
-            [.reply])
+            [.reply, .addToAlbum])
     }
 
     private func makeMessage(type: String, sender: String, ts: Double) -> ChatMessage {

@@ -2,7 +2,7 @@ import AVFoundation
 import PhotosUI
 import UIKit
 
-final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
+final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     static let reuseId = "ChatNativeMessageCell"
 
     weak var delegate: ChatTimelineCellDelegate?
@@ -31,6 +31,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     private let albumIndicator = ChatAlbumIndicatorView()
     private let liveBadge = UIImageView(image: PHLivePhotoView.livePhotoBadgeImage(options: .overContent))
     private let voiceWaveStack = UIStackView()
+    private let transcriptButton = UIButton(type: .system)
+    private let transcriptLabel = UILabel()
+    private let transcriptCorrectionButton = UIButton(type: .system)
     private let statusLabel = UILabel()
     private let retryButton = UIButton(type: .system)
     private let highlightView = UIView()
@@ -44,6 +47,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     private var accentColor = UIColor.systemMint
     private var voicePlaying = false
     private var voiceProgress: CGFloat = 0
+    private var voiceTranscript: VoiceTranscript?
+    private var voiceTranscriptExpanded = false
     private var usesDarkIncomingBubble = false
     private var voiceWaveBars: [UIView] = []
     private var albumPhotos: [ChatAttachment] = []
@@ -155,6 +160,28 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             voiceWaveBars.append(bar)
         }
 
+        transcriptButton.titleLabel?.font = .preferredFont(forTextStyle: .caption1)
+        transcriptButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        transcriptButton.layer.cornerCurve = .continuous
+        transcriptButton.layer.cornerRadius = 11
+        transcriptButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 9, bottom: 6, right: 9)
+        transcriptButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.delegate?.chatCellDidTapTranscript(self)
+        }, for: .touchUpInside)
+        transcriptLabel.font = .preferredFont(forTextStyle: .subheadline)
+        transcriptLabel.adjustsFontForContentSizeCategory = true
+        transcriptLabel.numberOfLines = 0
+        transcriptLabel.lineBreakMode = .byWordWrapping
+        transcriptCorrectionButton.setTitle("纠正文字", for: .normal)
+        transcriptCorrectionButton.titleLabel?.font = .preferredFont(forTextStyle: .caption1)
+        transcriptCorrectionButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        transcriptCorrectionButton.contentHorizontalAlignment = .leading
+        transcriptCorrectionButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.delegate?.chatCellDidTapTranscriptCorrection(self)
+        }, for: .touchUpInside)
+
         statusLabel.font = .systemFont(ofSize: 9, weight: .bold)
         statusLabel.textAlignment = .center
         statusLabel.layer.cornerCurve = .continuous
@@ -174,6 +201,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         highlightView.isUserInteractionEnabled = false
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleBubbleTap))
+        tap.delegate = self
         bubbleView.addGestureRecognizer(tap)
         bubbleView.isUserInteractionEnabled = true
     }
@@ -187,6 +215,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         message = nil
         representedImageURL = nil
         representedVoiceURL = nil
+        voiceTranscript = nil
+        voiceTranscriptExpanded = false
         mediaImageView.image = nil
         mediaIconView.image = nil
         bodyLabel.text = nil
@@ -215,7 +245,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         accentColor: UIColor,
         usesDarkIncomingBubble: Bool = false,
         voicePlaying: Bool = false,
-        voiceProgress: CGFloat = 0
+        voiceProgress: CGFloat = 0,
+        transcript: VoiceTranscript? = nil,
+        transcriptExpanded: Bool = false
     ) {
         self.message = message
         self.mine = mine
@@ -224,6 +256,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         self.usesDarkIncomingBubble = usesDarkIncomingBubble
         self.voicePlaying = voicePlaying
         self.voiceProgress = voiceProgress
+        self.voiceTranscript = transcript
+        self.voiceTranscriptExpanded = transcriptExpanded
 
         let isAIActivity = message.id.hasPrefix("__ai_activity__")
         let avatarText = mine ? myAvatar : peerAvatar
@@ -418,7 +452,15 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             bubbleView.addSubview(mediaIconView)
             bubbleView.addSubview(voiceWaveStack)
             bubbleView.addSubview(bodyLabel)
+            bubbleView.addSubview(transcriptButton)
+            if voiceTranscriptExpanded,
+               voiceTranscript?.status == .ready,
+               voiceTranscript?.text?.isEmpty == false {
+                bubbleView.addSubview(transcriptLabel)
+                bubbleView.addSubview(transcriptCorrectionButton)
+            }
             configureAttachment(message)
+            configureTranscript(voiceTranscript)
         case "file":
             bubbleView.addSubview(mediaIconView)
             bubbleView.addSubview(bodyLabel)
@@ -592,6 +634,48 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         }
     }
 
+    private func configureTranscript(_ transcript: VoiceTranscript?) {
+        let foreground = mine ? UIColor.white : (usesDarkIncomingBubble ? .white : accentColor)
+        let title: String
+        let icon: String
+        let enabled: Bool
+        switch transcript?.status ?? .none {
+        case .none:
+            title = "转文字"
+            icon = "text.bubble"
+            enabled = true
+        case .queued, .processing:
+            title = "转写中"
+            icon = "ellipsis"
+            enabled = false
+        case .ready:
+            title = voiceTranscriptExpanded ? "收起" : "看文字"
+            icon = voiceTranscriptExpanded ? "chevron.up" : "text.quote"
+            enabled = true
+        case .failed, .unavailable:
+            title = "重试"
+            icon = "arrow.clockwise"
+            enabled = true
+        }
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = title
+        configuration.image = UIImage(systemName: icon)
+        configuration.imagePadding = 4
+        configuration.baseForegroundColor = foreground
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 7, bottom: 5, trailing: 7)
+        transcriptButton.configuration = configuration
+        transcriptButton.backgroundColor = foreground.withAlphaComponent(0.12)
+        transcriptButton.isEnabled = enabled
+        transcriptButton.alpha = enabled ? 1 : 0.72
+        transcriptButton.accessibilityLabel = transcript?.status == .failed
+            ? "语音转写失败，重试"
+            : title
+        transcriptLabel.text = transcript?.text
+        transcriptLabel.textColor = mine ? .white : (usesDarkIncomingBubble ? .white : UIColor.label)
+        transcriptCorrectionButton.setTitleColor(foreground.withAlphaComponent(0.86), for: .normal)
+        transcriptCorrectionButton.accessibilityLabel = "纠正语音转写文字"
+    }
+
     private func layoutBubbleContent(_ message: ChatMessage) {
         let paddingX = ChatTimelineMetrics.bubbleHorizontalPadding
         let paddingY = ChatTimelineMetrics.bubbleVerticalPadding
@@ -679,6 +763,20 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             mediaIconView.frame = CGRect(x: paddingX, y: y + 8, width: 20, height: 20)
             voiceWaveStack.frame = CGRect(x: paddingX + 30, y: y + 8, width: 50, height: 20)
             bodyLabel.frame = CGRect(x: paddingX + 88, y: y + 9, width: 34, height: 18)
+            transcriptButton.frame = CGRect(
+                x: paddingX + 126,
+                y: y + 3,
+                width: max(68, bubbleView.bounds.width - paddingX * 2 - 126),
+                height: 30)
+            if transcriptLabel.superview != nil {
+                let labelY = y + ChatTimelineMetrics.voiceHeight + 10
+                let labelWidth = bubbleView.bounds.width - paddingX * 2
+                let labelHeight = ceil(transcriptLabel.sizeThatFits(
+                    CGSize(width: labelWidth, height: .greatestFiniteMagnitude)).height)
+                transcriptLabel.frame = CGRect(x: paddingX, y: labelY, width: labelWidth, height: labelHeight)
+                transcriptCorrectionButton.frame = CGRect(
+                    x: paddingX, y: transcriptLabel.frame.maxY + 2, width: 100, height: 28)
+            }
         case "file":
             mediaIconView.frame = CGRect(x: paddingX, y: y + 6, width: 28, height: 28)
             bodyLabel.frame = CGRect(x: paddingX + 38, y: y, width: contentWidth - 38, height: bubbleView.bounds.height - y - paddingY)
@@ -733,7 +831,10 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         if message.id.hasPrefix("__ai_activity__") { return 58 }
         switch message.type {
         case "image", "video", "sticker", "voice", "file":
-            return ChatTimelineMetrics.mediaBubbleWidth(for: message.type, containerWidth: contentView.bounds.width)
+            return ChatTimelineMetrics.mediaBubbleWidth(
+                for: message.type,
+                containerWidth: contentView.bounds.width,
+                transcriptExpanded: message.type == "voice" && voiceTranscriptExpanded)
         default:
             return min(maxWidth, ChatTimelineMetrics.textBubbleWidth(for: message, containerWidth: contentView.bounds.width))
         }
@@ -853,6 +954,15 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         default:
             break
         }
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var candidate = touch.view
+        while let view = candidate, view !== bubbleView {
+            if view is UIControl { return false }
+            candidate = view.superview
+        }
+        return true
     }
 
     static func canOpenMediaPreview(_ message: ChatMessage) -> Bool {

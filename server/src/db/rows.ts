@@ -1,9 +1,12 @@
 export interface AccountRow {
+  id: string;
   username: string;
   display_name: string;
   password_hash: string;
   avatar: string;
   bark_key: string | null;
+  status: string;
+  version: number;
   created_at: number;
   updated_at: number;
 }
@@ -23,6 +26,16 @@ export interface MessageRow {
   recalled_text: string | null;
   ts: number;
   client_id: string | null;
+  conversation_id?: string | null;
+  sender_account_id?: string | null;
+  origin_device_id?: string | null;
+  server_seq?: number | null;
+  transcript_status?: string | null;
+  transcript_text?: string | null;
+  transcript_raw_text?: string | null;
+  transcript_corrected?: boolean | null;
+  transcript_language?: string | null;
+  transcript_version?: number | null;
 }
 
 export interface ReadReceiptRow {
@@ -50,6 +63,11 @@ export interface PersonalItemRow {
   is_done: number;
   created_at: number;
   updated_at: number;
+  owner_account_id?: string | null;
+  couple_id?: string | null;
+  created_by_account_id?: string | null;
+  version?: number;
+  deleted_at?: number | null;
 }
 
 export interface UploadRow {
@@ -85,6 +103,9 @@ export interface AiMemoryRow {
   embedding: Uint8Array | null;
   created_at: number;
   updated_at: number;
+  couple_id?: string | null;
+  owner_account_id?: string | null;
+  version?: number;
 }
 
 export interface AiMemoryEvidenceRow {

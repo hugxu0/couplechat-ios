@@ -252,7 +252,7 @@ const MEMORY_LAYERS = new Set(["fact", "event", "plan", "state", "relationship",
 
 export async function initializeMemory(): Promise<void> {
   const channels = ["couple", ...accounts().map((account) => `ai:${account.username}`)];
-  await Promise.all(channels.map(initializeMemoryCursor));
+  await Promise.all(channels.map((channel) => initializeMemoryCursor(channel)));
   channels.forEach(onMemoryMessage);
   console.log(`[memory] 已初始化 ${channels.length} 个频道游标，只处理此后的新消息`);
 }

@@ -1,5 +1,14 @@
-import { all, run, type SharedItemRow } from "../db";
+import { all, transaction } from "../db";
 import type { AuthUser } from "../types";
+import { activeIdentity, activeIdentityIn } from "../auth/identity";
+import { appendSyncEvent } from "../sync/events";
+
+interface CoupleSettingRow {
+  key: string;
+  value_json: string;
+  updated_by_username: string;
+  updated_at: number;
+}
 
 function parse(value: string): unknown {
   try {
@@ -13,14 +22,19 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export async function getSharedState() {
-  const rows = await all<SharedItemRow>("SELECT * FROM shared_items ORDER BY key ASC");
+export async function getSharedState(user: AuthUser) {
+  const identity = await activeIdentity(user);
+  if (!identity?.coupleId) return {};
+  const rows = await all<CoupleSettingRow>(
+    "SELECT * FROM couple_settings WHERE couple_id = ? ORDER BY key ASC",
+    [identity.coupleId],
+  );
   const state = Object.fromEntries(
     rows.map((row) => [
       row.key,
       {
         value: parse(row.value_json),
-        updatedBy: row.updated_by,
+        updatedBy: row.updated_by_username,
         updatedAt: row.updated_at,
       },
     ]),
@@ -96,21 +110,36 @@ export async function getSharedState() {
 }
 
 export async function setSharedItem(user: AuthUser, key: string, value: unknown) {
-  const now = Date.now();
-  await run(
-    `INSERT INTO shared_items (key, value_json, updated_by, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET
-       value_json = excluded.value_json,
-       updated_by = excluded.updated_by,
-       updated_at = excluded.updated_at`,
-    [key, JSON.stringify(value), user.username, now],
-  );
-
-  return {
-    key,
-    value,
-    updatedBy: user.username,
-    updatedAt: now,
-  };
+  return transaction(async (db) => {
+    const identity = await activeIdentityIn(db, user);
+    if (!identity?.coupleId) throw new Error("couple_required");
+    const now = Date.now();
+    await db.run(
+      `INSERT INTO couple_settings
+       (couple_id, key, value_json, updated_by_account_id, updated_by_username, updated_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, 0)
+       ON CONFLICT(couple_id, key) DO UPDATE SET
+         value_json = excluded.value_json,
+         updated_by_account_id = excluded.updated_by_account_id,
+         updated_by_username = excluded.updated_by_username,
+         updated_at = excluded.updated_at`,
+      [identity.coupleId, key, JSON.stringify(value), identity.accountId, user.username, now],
+    );
+    const update = { key, value, updatedBy: user.username, updatedAt: now };
+    const version = await appendSyncEvent(db, {
+      coupleId: identity.coupleId,
+      entityType: "coupleSetting",
+      entityId: key,
+      operation: "upsert",
+      payload: update,
+      actorAccountId: identity.accountId,
+      actorDeviceId: user.deviceId,
+      createdAt: now,
+    });
+    await db.run(
+      "UPDATE couple_settings SET version = ? WHERE couple_id = ? AND key = ?",
+      [version, identity.coupleId, key],
+    );
+    return update;
+  });
 }

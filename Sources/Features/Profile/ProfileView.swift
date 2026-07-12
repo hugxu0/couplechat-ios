@@ -246,6 +246,13 @@ struct ProfileView: View {
             }
             .buttonStyle(PressableStyle())
             divider
+            NavigationLink {
+                AIMemoryControlCenterView()
+            } label: {
+                settingRowLabel(icon: "pawprint.circle", title: "大橘与记忆", subtitle: "查看、纠正或忘掉记忆")
+            }
+            .buttonStyle(PressableStyle())
+            divider
             settingRow(icon: "calendar.badge.plus", title: "日期设置", subtitle: "在一起的纪念日") {
                 showDateEditor = true
             }
@@ -253,6 +260,13 @@ struct ProfileView: View {
             settingRow(icon: "bell.badge", title: "离线通知", subtitle: "对方消息 Bark 推送") {
                 showBarkSheet = true
             }
+            divider
+            NavigationLink {
+                AccountDevicesView()
+            } label: {
+                settingRowLabel(icon: "iphone.and.arrow.forward", title: "配对与设备", subtitle: "邀请码 · 手机与 iPad 登录")
+            }
+            .buttonStyle(PressableStyle())
             divider
             NavigationLink {
                 StorageView()

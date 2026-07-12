@@ -8,16 +8,15 @@ final class RealtimeEventRouter {
     private let auth: AuthStore
     private let messageStore: MessageStore
     private let shared: SharedStore
-    private let socketProvider: () -> SocketIOClient?
     private let setAIActivity: (String, AIActivity?) -> Void
     private let setPartnerOnline: (Bool) -> Void
     private let setPresenceKnown: (Bool) -> Void
+    private weak var activeSocket: SocketIOClient?
 
     init(
         auth: AuthStore,
         messageStore: MessageStore,
         shared: SharedStore,
-        socketProvider: @escaping () -> SocketIOClient?,
         setAIActivity: @escaping (String, AIActivity?) -> Void,
         setPartnerOnline: @escaping (Bool) -> Void,
         setPresenceKnown: @escaping (Bool) -> Void
@@ -25,14 +24,26 @@ final class RealtimeEventRouter {
         self.auth = auth
         self.messageStore = messageStore
         self.shared = shared
-        self.socketProvider = socketProvider
         self.setAIActivity = setAIActivity
         self.setPartnerOnline = setPartnerOnline
         self.setPresenceKnown = setPresenceKnown
     }
 
     func bind(_ s: SocketIOClient) {
-        // 消息事件 -> MessageStore
+        activeSocket = s
+        bindNewMessage(s)
+        bindReadUpdate(s)
+        bindMessageRecall(s)
+        bindMessageUpdate(s)
+        bindAITyping(s)
+        bindAIReplying(s)
+        bindAIActivity(s)
+        bindPresence(s)
+        bindSharedUpdate(s)
+        bindPersonalItemChanged(s)
+    }
+
+    private func bindNewMessage(_ s: SocketIOClient) {
         s.on(SocketEvent.messageNew.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let msg = MessageStore.parseMessage(dict, context: "message:new") else { return }
@@ -43,13 +54,15 @@ final class RealtimeEventRouter {
                 if msg.sender == "ai" {
                     self.setAIActivity(channel.rawValue, nil)
                 }
-                if channel == .couple { self.messageStore.markRead(.couple) }
                 if channel == .ai {
                     self.messageStore.aiTyping = false
                     self.messageStore.aiReplying = false
                 }
             }
         }
+    }
+
+    private func bindReadUpdate(_ s: SocketIOClient) {
         s.on(SocketEvent.readUpdate.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let user = dict["user"] as? String,
@@ -57,35 +70,43 @@ final class RealtimeEventRouter {
             let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "couple") ?? .couple
             Task { @MainActor in self?.messageStore.setReadState(channel, user: user, ts: ts) }
         }
+    }
+
+    private func bindMessageRecall(_ s: SocketIOClient) {
         s.on(SocketEvent.messageRecalled.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let id = dict["id"] as? String else { return }
-            let byName = dict["byName"] as? String
-            let recalledText = dict["recalledText"] as? String
             let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "")
             Task { @MainActor in
-                self?.messageStore.applyRecall(
-                    id: id,
-                    byName: byName,
-                    channel: channel,
-                    myUsername: self?.auth.session?.username,
-                    recalledText: recalledText)
+                self?.messageStore.applyRecall(id: id, channel: channel)
             }
         }
+    }
+
+    private func bindMessageUpdate(_ s: SocketIOClient) {
         s.on(SocketEvent.messageUpdate.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let id = dict["id"] as? String else { return }
             let metaDict = dict["meta"] as? [String: Any]
             Task { @MainActor in self?.messageStore.applyMessageUpdate(id: id, meta: metaDict) }
         }
+    }
+
+    private func bindAITyping(_ s: SocketIOClient) {
         s.on(SocketEvent.aiTyping.rawValue) { [weak self] data, _ in
             let typing = (data.first as? Bool) ?? true
             Task { @MainActor in self?.messageStore.aiTyping = typing }
         }
+    }
+
+    private func bindAIReplying(_ s: SocketIOClient) {
         s.on(SocketEvent.aiReplying.rawValue) { [weak self] data, _ in
             let replying = (data.first as? Bool) ?? true
             Task { @MainActor in self?.messageStore.aiReplying = replying }
         }
+    }
+
+    private func bindAIActivity(_ s: SocketIOClient) {
         s.on(SocketEvent.aiActivity.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let rawChannel = dict["channel"] as? String,
@@ -98,7 +119,7 @@ final class RealtimeEventRouter {
                 phase: phase)
             Task { @MainActor in
                 guard let self else { return }
-                guard self.socketProvider() === s else { return }
+                guard self.activeSocket === s else { return }
                 if activity.isVisible {
                     self.setAIActivity(channel.rawValue, activity)
                 } else {
@@ -106,8 +127,9 @@ final class RealtimeEventRouter {
                 }
             }
         }
+    }
 
-        // 在线状态
+    private func bindPresence(_ s: SocketIOClient) {
         s.on(SocketEvent.presence.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let online = dict["online"] as? [String] else { return }
@@ -117,12 +139,16 @@ final class RealtimeEventRouter {
                 self.setPresenceKnown(true)
             }
         }
+    }
 
-        // 共享状态事件 -> SharedStore
+    private func bindSharedUpdate(_ s: SocketIOClient) {
         s.on(SocketEvent.sharedUpdate.rawValue) { [weak self] data, _ in
             guard let update = data.first as? [String: Any] else { return }
             Task { @MainActor in self?.shared.applySharedUpdate(update) }
         }
+    }
+
+    private func bindPersonalItemChanged(_ s: SocketIOClient) {
         s.on(SocketEvent.personalItemChanged.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let itemDict = dict["item"] as? [String: Any],

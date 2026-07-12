@@ -28,6 +28,11 @@ final class ChatMediaViewerCoordinator: NSObject, UIViewControllerTransitioningD
 
     var isPresented: Bool { host != nil }
 
+    func dismissIfShowing(messageId: String, animated: Bool = true) {
+        guard session?.selectedId == messageId else { return }
+        host?.dismiss(animated: animated)
+    }
+
     func present(
         from presenter: UIViewController,
         items: [MediaBrowserItem],

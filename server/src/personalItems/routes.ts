@@ -4,6 +4,7 @@ import { requireAuth } from "../auth/httpAuth";
 import {
   createPersonalItem,
   deletePersonalItem,
+  getPersonalItem,
   listPersonalItems,
   updatePersonalItem,
 } from "./itemService";
@@ -58,6 +59,7 @@ export async function registerPersonalItemRoutes(
     const parsed = createBody.safeParse(request.body);
     if (!parsed.success || !request.user) return reply.code(400).send({ error: "invalid_request" });
     const item = await createPersonalItem(request.user, parsed.data);
+    if (!item) return reply.code(409).send({ error: "couple_required" });
     events.sharedItemChanged("created", item);
     return reply.code(201).send({ item });
   });
@@ -79,9 +81,10 @@ export async function registerPersonalItemRoutes(
     const params = paramsSchema.safeParse(request.params);
     if (!params.success || !request.user) return reply.code(400).send({ error: "invalid_request" });
 
-    const ok = await deletePersonalItem(request.user, params.data.id);
+    const item = await getPersonalItem(request.user, params.data.id);
+    const ok = item ? await deletePersonalItem(request.user, params.data.id) : false;
     if (!ok) return reply.code(404).send({ error: "not_found" });
-    events.sharedItemChanged("deleted", { id: params.data.id });
+    events.sharedItemChanged("deleted", item);
     return { ok: true };
   });
 }

@@ -100,6 +100,9 @@ export const config = {
   embeddingDim: Number(process.env.EMBEDDING_DIM ?? 1024),
   cloudDatabaseDebug: booleanEnv("CLOUD_DB_DEBUG", false),
   scheduledJobsEnabled: booleanEnv("SCHEDULED_JOBS_ENABLED", true),
+  // 生产默认只校验 schema，不在普通 Web 进程启动时执行不可逆迁移。
+  // 发布流程使用 `npm run migrate` 的单独 migrator。
+  runMigrations: booleanEnv("RUN_MIGRATIONS", nodeEnv !== "production"),
   uploadsWritable: booleanEnv("UPLOADS_WRITABLE", true),
   pushEnabled: booleanEnv("PUSH_ENABLED", true),
 };

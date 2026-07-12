@@ -18,6 +18,8 @@ process.env.NODE_ENV = "development";
 process.env.HOST = "127.0.0.1";
 process.env.PORT = "8080";
 process.env.PUBLIC_BASE_URL = "http://127.0.0.1:8080";
+// 防御性重复设置：这个脚本只允许校验现有 schema，绝不能把候选 migration 带进生产。
+process.env.RUN_MIGRATIONS = "false";
 
 async function main(): Promise<void> {
   await import("../src/server");

@@ -8,7 +8,7 @@ import { toStoredChannel, type StoredChannel } from "../types";
 import { createAiMessage } from "../chat/messageService";
 import { pushCoupleMessageToUnavailableRecipients } from "../push/pushService";
 import { config } from "../config";
-import { aiEnabled } from "./provider";
+import { aiEnabled, chat, describeImage } from "./provider";
 import { loadAccounts } from "./accounts";
 import { queueRespond, type ReplySink } from "./agent/replyQueue";
 import { agentRuntimeEnabled } from "./agent/runtime";
@@ -22,6 +22,7 @@ import { updateConversationContext } from "./conversation/context";
 import { startDailyScheduler, stopDailyScheduler } from "./background/dailyScheduler";
 import { startMemoryMaintenance, stopMemoryMaintenance } from "./memory/maintenance";
 import { subscribeMemoryDomainEvents } from "./memory/events";
+import { GEN } from "./settings";
 
 const engagementCooldowns: Record<MemoryEngagementSignal["kind"], number> = {
   conflict: 15 * 60 * 1000,
@@ -85,31 +86,36 @@ function isTriggered(text: string): boolean {
   return config.ai.triggerAliases.some((alias) => text.includes(alias));
 }
 
-function makeSink(io: Server): ReplySink {
+function makeSink(io: Server, user?: AuthUser): ReplySink {
+  const accountRoom = `account:${user?.accountId ?? user?.username ?? "unknown"}`;
+  const coupleRoom = `couple:${user?.coupleId ?? "cpl_legacy_xusi"}`;
   const activityRoom = (storedChannel: string) => storedChannel.startsWith("ai:")
-    ? `user:${storedChannel.slice(3)}`
-    : "channel:couple";
+    ? accountRoom
+    : coupleRoom;
   return {
     async emit(storedChannel, text, isFirst, meta) {
-      const message = await createAiMessage(storedChannel as StoredChannel, text, meta);
+      const message = await createAiMessage(storedChannel as StoredChannel, text, meta, user);
       if (storedChannel.startsWith("ai:")) {
-        io.to(`user:${storedChannel.slice(3)}`).emit(socketEvents.messageNew, message);
+        io.to(accountRoom).emit(socketEvents.messageNew, message);
       } else {
-        io.to("channel:couple").emit(socketEvents.messageNew, message);
+        io.to(coupleRoom).emit(socketEvents.messageNew, message);
         // couple 里大橘的发言也推给不在线的一方（只推第一条，不轰炸）。
-        if (isFirst) void pushCoupleMessageToUnavailableRecipients(message);
+        if (isFirst) void pushCoupleMessageToUnavailableRecipients(
+          message,
+          user?.coupleId ?? "cpl_legacy_xusi",
+        );
       }
     },
     typing(storedChannel, value) {
       // iOS 客户端把 ai:typing 当作 ai 私聊频道的输入指示（裸 bool），
       // couple 频道的回复不发 typing，避免错误点亮私聊气泡。
       if (storedChannel.startsWith("ai:")) {
-        io.to(`user:${storedChannel.slice(3)}`).emit(socketEvents.aiTyping, value);
+        io.to(accountRoom).emit(socketEvents.aiTyping, value);
       }
     },
     replying(storedChannel, value) {
       if (storedChannel.startsWith("ai:")) {
-        io.to(`user:${storedChannel.slice(3)}`).emit(socketEvents.aiReplying, value);
+        io.to(accountRoom).emit(socketEvents.aiReplying, value);
       }
     },
     activity(trigger, phase) {
@@ -121,6 +127,57 @@ function makeSink(io: Server): ReplySink {
       });
     },
   };
+}
+
+/**
+ * 新租户在完整 conversation_id Memory/Agent 工具迁移完成前使用无历史模式。
+ * 它仍能正常对话和识图，但 prompt 只包含当前消息，因此不会读取其他情侣的
+ * 全局 legacy 上下文，也不会伪装成“记得”过去。
+ */
+async function respondWithoutHistory(
+  sink: ReplySink,
+  storedChannel: StoredChannel,
+  user: AuthUser,
+  message: ClientMessage,
+): Promise<void> {
+  const trigger = {
+    storedChannel,
+    question: message.type === "text" ? stripTrigger(message.text) : "",
+    requesterName: user.name,
+    requesterUsername: user.username,
+    messageId: message.id,
+  };
+  sink.activity?.(trigger, "accepted");
+  sink.activity?.(trigger, "generating");
+  sink.typing(storedChannel, true);
+  try {
+    let imageDescription = "";
+    if (message.type === "image" && message.url) {
+      const imageURL = new URL(message.url, `${config.publicBaseURL.replace(/\/$/, "")}/`).toString();
+      imageDescription = await describeImage(imageURL, GEN.describeImage) ?? "";
+    }
+    const question = trigger.question || (imageDescription
+      ? `我发来了一张图片，图片内容是：${imageDescription}`
+      : "我发来了一张图片，请先自然回应；如果看不清就直接说明。");
+    const generated = aiEnabled() ? await chat({
+      profile: "chat",
+      system: [
+        "你是情侣应用里的橘猫伙伴大橘，语气温暖、自然、简洁。",
+        "只根据当前这条消息回答；不要声称读取、记住或搜索过往聊天。",
+        "不要提及租户、数据库、迁移、模型或系统实现。",
+      ].join("\n"),
+      user: `${user.name} 对你说：${question}`,
+      gen: GEN.reply,
+    }) : null;
+    await sink.emit(storedChannel, generated?.trim().slice(0, 1_500) || fallbackReply(question), true);
+    sink.activity?.(trigger, "finished");
+  } catch (error) {
+    await sink.emit(storedChannel, fallbackReply(trigger.question), true).catch(() => undefined);
+    sink.activity?.(trigger, "failed");
+    console.warn("[ai] 新租户无历史回复失败:", error instanceof Error ? error.message : error);
+  } finally {
+    sink.typing(storedChannel, false);
+  }
 }
 
 export function setAiSocketIO(io: Server): void {
@@ -159,7 +216,18 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
   const isText = message.type === "text" && message.text.trim().length > 0;
   const isImage = message.type === "image" && Boolean(message.url);
   if (!isText && !isImage) return;
-  const sink = makeSink(io);
+  const sink = makeSink(io, user);
+
+  // 多情侣消息/Memory 已完成租户隔离，但 Agent 的 prompt/context 工具仍在迁移到
+  // conversation_id。开放注册后先明确关闭非 legacy Agent，绝不能退回全局 couple
+  // 上下文造成串话。聊天、相册、日历与宠物不受影响。
+  const isLegacyAI = user.coupleId === "cpl_legacy_xusi"
+    || (!user.coupleId && (user.username === "xu" || user.username === "si"));
+  if (!isLegacyAI) {
+    if (storedChannel === "couple" && (!isText || !isTriggered(message.text))) return;
+    void respondWithoutHistory(sink, storedChannel, user, message).catch(() => undefined);
+    return;
+  }
 
   if (isText && aiEnabled()) {
     onMemoryMessage(storedChannel);

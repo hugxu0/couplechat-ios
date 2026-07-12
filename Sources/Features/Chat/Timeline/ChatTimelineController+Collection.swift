@@ -17,19 +17,11 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
                 for: indexPath) as! ChatTimeCell
             cell.configure(text: text, usesLightContent: presentation.timelineUsesLightContent)
             return cell
-        case .system(let systemID, let text):
+        case .system(_, let text):
             let cell = collectionView.dequeueReusableCell(
                 withReuseIdentifier: ChatSystemCell.reuseId,
                 for: indexPath) as! ChatSystemCell
-            let id = systemID.hasPrefix("system-") ? String(systemID.dropFirst("system-".count)) : ""
-            let message = messagesById[id]
-            let canReedit = ChatMessageActionProvider.actions(
-                for: message ?? emptyMessage,
-                currentUsername: presentation.currentUsername).contains(.reedit)
-            cell.configure(text: text, onReedit: canReedit ? { [weak self] in
-                guard let self, let message else { return }
-                self.delegate?.timelineDidSelect(.reedit, message: message)
-            } : nil)
+            cell.configure(text: text)
             return cell
         case .message(let id):
             let cell = collectionView.dequeueReusableCell(
@@ -53,7 +45,9 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
                 usesDarkIncomingBubble: presentation.usesDarkIncomingBubble,
                 voicePlaying: presentation.playingVoiceMessageID == message.id,
                 voiceProgress: presentation.playingVoiceMessageID == message.id
-                    ? presentation.playingVoiceProgress : 0)
+                    ? presentation.playingVoiceProgress : 0,
+                transcript: voiceTranscripts[message.id],
+                transcriptExpanded: expandedTranscriptIDs.contains(message.id))
             return cell
         }
     }
@@ -83,15 +77,32 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
                 width: width,
                 mine: message.sender == presentation.currentUsername,
                 groupedWithPrevious: grouped,
-                highlighted: highlightedMessageId == message.id)
+                highlighted: highlightedMessageId == message.id,
+                transcript: voiceTranscripts[message.id],
+                transcriptExpanded: expandedTranscriptIDs.contains(message.id))
             if let cached = layoutHeightCache[key] { return CGSize(width: width, height: cached) }
             let height = ChatTimelineMetrics.messageHeight(
                 for: message,
                 containerWidth: width,
-                groupedWithPrevious: grouped)
+                groupedWithPrevious: grouped,
+                transcript: voiceTranscripts[message.id],
+                transcriptExpanded: expandedTranscriptIDs.contains(message.id))
             layoutHeightCache[key] = height
             return CGSize(width: width, height: height)
         }
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        willDisplay cell: UICollectionViewCell,
+        forItemAt indexPath: IndexPath
+    ) {
+        guard indexPath.item < items.count,
+              case .message(let id) = items[indexPath.item],
+              let message = messagesById[id],
+              !message.pending,
+              !message.failed else { return }
+        delegate?.timelineDidDisplay(message)
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
@@ -178,8 +189,8 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         switch action {
         case .copy: return "复制"
         case .reply: return "引用"
+        case .addToAlbum: return "加入共同相册"
         case .recall: return "撤回"
-        case .reedit: return "重新编辑"
         case .retry: return "重新发送"
         case .discard: return "删除"
         }
@@ -189,8 +200,8 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         switch action {
         case .copy: return "doc.on.doc"
         case .reply: return "arrowshape.turn.up.left"
+        case .addToAlbum: return "photo.badge.plus"
         case .recall, .discard: return "trash"
-        case .reedit: return "pencil"
         case .retry: return "arrow.clockwise"
         }
     }
@@ -202,12 +213,6 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         return cell.bubbleTargetedPreview()
     }
 
-    private var emptyMessage: ChatMessage {
-        ChatMessage(dict: [
-            "id": "empty", "sender": "", "senderName": "", "kind": "system",
-            "type": "text", "text": "", "channel": "couple", "ts": 0,
-        ])!
-    }
 }
 
 extension ChatTimelineController: ChatTimelineCellDelegate {
@@ -230,5 +235,21 @@ extension ChatTimelineController: ChatTimelineCellDelegate {
         guard let path = collectionView.indexPath(for: cell), path.item < items.count,
               case .message(let id) = items[path.item], let message = messagesById[id] else { return }
         delegate?.timelineDidTapRetry(cell: cell, message: message)
+    }
+
+    func chatCellDidTapTranscript(_ cell: ChatNativeMessageCell) {
+        guard let message = message(for: cell) else { return }
+        delegate?.timelineDidTapTranscript(message: message)
+    }
+
+    func chatCellDidTapTranscriptCorrection(_ cell: ChatNativeMessageCell) {
+        guard let message = message(for: cell) else { return }
+        delegate?.timelineDidCorrectTranscript(message: message)
+    }
+
+    private func message(for cell: ChatNativeMessageCell) -> ChatMessage? {
+        guard let path = collectionView.indexPath(for: cell), path.item < items.count,
+              case .message(let id) = items[path.item] else { return nil }
+        return messagesById[id]
     }
 }

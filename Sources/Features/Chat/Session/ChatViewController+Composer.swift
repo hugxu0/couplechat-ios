@@ -140,20 +140,6 @@ extension ChatViewController {
         composer.setReplyPreview(nil)
     }
 
-    func beginEditingRecalledMessage(_ message: ChatMessage) {
-        guard message.sender == store.session?.username,
-              let recalledText = message.recalledText,
-              !recalledText.isEmpty else { return }
-        clearReplyTarget()
-        pendingMedia.removeAll()
-        composer.setMediaPreviews([])
-        composer.textView.text = recalledText
-        composer.textViewDidChange(composer.textView)
-        inputState = .editing
-        hidePanel(animated: true)
-        composer.focusTextInput()
-    }
-
     func sendText(_ text: String) {
         let target = replyTarget
         clearReplyTarget()

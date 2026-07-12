@@ -1,6 +1,6 @@
 import { Pool, type PoolClient, types } from "pg";
 import { config } from "../config";
-import { migrate } from "./migrate";
+import { migrate, schemaMigrations } from "./migrate";
 
 types.setTypeParser(20, (value) => Number(value));
 
@@ -42,10 +42,20 @@ export async function allOn<T extends object>(
   return result.rows as T[];
 }
 
-export async function initDatabase(): Promise<void> {
+export async function initDatabase(throughVersion?: number): Promise<void> {
   pool = new Pool({ connectionString: config.databaseUrl, max: 10 });
   await pool.query("SELECT 1");
-  await migrate(pool);
+  if (throughVersion !== undefined || config.runMigrations) {
+    await migrate(pool, throughVersion);
+    return;
+  }
+  const expected = schemaMigrations.at(-1)?.version ?? 0;
+  const result = await pool.query<{ version: number | null }>(
+    "SELECT MAX(version) AS version FROM schema_migrations",
+  ).catch(() => ({ rows: [{ version: null }] }));
+  if (Number(result.rows[0]?.version ?? 0) !== expected) {
+    throw new Error(`[db] schema 未就绪：期望 v${expected}。请先运行 npm run migrate`);
+  }
 }
 
 export async function closeDatabase(): Promise<void> {

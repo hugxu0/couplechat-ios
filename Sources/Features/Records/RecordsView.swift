@@ -1,330 +1,234 @@
 import SwiftUI
 
-// 记录页「我们」：在一起天数（主题渐变大卡）、纪念日/倒数日卡片网格（只读展示，
-// 增删改统一在「我的 → 日期设置」里做）、聊天统计（近30天/月度切换、横向滚动看更早、点柱查看）、
-// 大橘日记、今日推荐。
-// 数据：纪念日走 shared["dates"]/shared["anniversaries"]（两人共享），
-// 聊天统计聚合自本地缓存的完整聊天记录，日记/推荐走 REST。
-
 struct RecordsView: View {
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
-
+    @StateObject private var model = MomentsViewModel()
     @State private var daily: DailyContent?
-    @State private var showDateEditor = false
-    @State private var recommendBusy = false
-    @State private var recommendSent = false
-    @State private var showRecommendComposer = false
-    @State private var incomingRecommend: PartnerRecommend?
-    // 已看过的对方推荐 id，避免每次进页面重复弹
-    @AppStorage("records.seenRecommendId") private var seenRecommendId = ""
-
-    private var myUsername: String { store.session?.username ?? "" }
+    @State private var showingCreateAlbum = false
+    @State private var showingDateEditor = false
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                ScrollView {
-                    VStack(spacing: DS.Spacing.gap) {
-                        RootPageHeader("记录", subtitle: "我们的共同时间")
-                        .padding(.horizontal, -DS.Spacing.page)
-                        heroCard
-                        anniversaryGrid
-                        ChatStatsCard()
-                        recommendCard
-                        diaryCard
-                    }
-                    .padding(.horizontal, DS.Spacing.page)
-                    .padding(.bottom, 90)
-                }
-                .scrollIndicators(.hidden)
-
-                if let rec = incomingRecommend {
-                    PartnerRecommendPopup(recommend: rec) {
-                        seenRecommendId = rec.id
-                        DS.Anim.withMotion(DS.Anim.springFast) {
-                            incomingRecommend = nil
+        NavigationSplitView {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: DS.Spacing.section) {
+                    RootPageHeader("时光", subtitle: "把聊天里的日常，慢慢收成我们") {
+                        Button {
+                            Haptics.medium()
+                            showingCreateAlbum = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(DS.Typo.button)
+                                .frame(width: 44, height: 44)
                         }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.circle)
+                        .accessibilityLabel("新建共同相册")
                     }
-                    .zIndex(5)
+                    .padding(.horizontal, -DS.Spacing.page)
+
+                    onThisDaySection
+                    albumSection
+                    coupleOverview
+                    ChatStatsCard()
+                    dailyCard
+                    errorSection
                 }
+                .padding(.horizontal, DS.Spacing.page)
+                .padding(.bottom, 96)
             }
+            .scrollIndicators(.hidden)
             .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
-            .refreshable { await reload() }
+            .refreshable { await reload(force: true) }
             .task { await reload() }
-            .onAppear { checkIncomingRecommend() }
-            .onChange(of: partnerRecommendId) { checkIncomingRecommend() }
-            .sheet(isPresented: $showDateEditor) {
-                DateEditorSheet()
-                    .presentationDetents([.medium, .large])
+            .onReceive(NotificationCenter.default.publisher(for: MomentsViewModel.albumsChanged)) { _ in
+                Task { await reload(force: true) }
             }
-            .sheet(isPresented: $showRecommendComposer) {
-                RecommendComposerSheet { text in
-                    sendPartnerRecommend(text)
+            .onReceive(NotificationCenter.default.publisher(for: .persistentSyncChanged)) { note in
+                guard note.persistentSyncIncludes(["album", "album_item", "media_note", "media_asset"]) else {
+                    return
                 }
-                .presentationDetents([.medium])
+                Task { await reload(force: true) }
             }
-        }
-    }
-
-    // MARK: - 给 TA 推荐（shared 状态同步，对方打开记录页弹窗）
-
-    private var partnerRecommendId: String? {
-        store.sharedValue("partner_recommend")?["id"] as? String
-    }
-
-    private func checkIncomingRecommend() {
-        guard let value = store.sharedValue("partner_recommend"),
-              let rec = PartnerRecommend(dict: value),
-              rec.from != myUsername,
-              rec.id != seenRecommendId,
-              incomingRecommend?.id != rec.id else { return }
-        Haptics.medium()
-        DS.Anim.withMotion(DS.Anim.spring) {
-            incomingRecommend = rec
-        }
-    }
-
-    private func sendPartnerRecommend(_ text: String) {
-        store.setShared("partner_recommend", value: [
-            "id": UUID().uuidString,
-            "from": myUsername,
-            "fromName": store.session?.name ?? "TA",
-            "text": text,
-            "ts": Date().timeIntervalSince1970 * 1000,
-        ])
-        withAnimation(DS.Anim.spring) { recommendSent = true }
-        Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            await MainActor.run {
-                withAnimation(DS.Anim.ease) { recommendSent = false }
+            .onReceive(NotificationCenter.default.publisher(for: MomentsViewModel.albumsChanged)) { _ in
+                Task { await reload(force: true) }
             }
-        }
-    }
-
-    private func reload() async {
-        guard let token = store.auth.session?.token,
-              let newDaily = await store.dailyContent.fetch(token: token) else { return }
-        withAnimation(DS.Anim.ease) {
-            daily = newDaily
-        }
-    }
-
-    // MARK: - 在一起天数（主题渐变大卡）
-    private var heroCard: some View {
-        Button {
-            Haptics.light()
-            showDateEditor = true
-        } label: {
-            VStack(spacing: DS.Spacing.tight + 2) {
-                Text("我们在一起")
-                    .font(DS.Typo.secondary.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                if let days = CoupleDates.daysSince(store.coupleDates.together) {
-                    HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.tight + 2) {
-                        Text("\(days)")
-                            .font(DS.Typo.displayHero)
-                            .contentTransition(.numericText())
-                        Text("天")
-                            .font(DS.Typo.cardTitle.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
-                    .foregroundStyle(.white)
-                } else {
-                    Text("点击设置纪念日")
-                        .font(DS.Typo.pageTitle)
-                        .foregroundStyle(.white)
-                        .padding(.vertical, 16)
+            .sheet(isPresented: $showingCreateAlbum) {
+                AlbumCreateSheet { title, note in
+                    guard let token = store.session?.token else { return false }
+                    return await model.createAlbum(title: title, note: note, token: token)
                 }
-                Text("陪伴是很长情的告白")
-                    .font(DS.Typo.caption)
-                    .foregroundStyle(.white.opacity(0.7))
+                .presentationDetents([.medium, .large])
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 28)
-            .background(
-                ZStack {
-                    theme.accent.gradient
-                    // 角落里的柔光心形，低调点缀
-                    Image(systemName: "heart.fill")
-                        .font(.system(size: 120))
-                        .foregroundStyle(.white.opacity(0.10))
-                        .rotationEffect(.degrees(-14))
-                        .offset(x: 130, y: 34)
-                }
-            )
-            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-            .shadow(color: theme.accent.color.opacity(0.35), radius: 16, y: 8)
+            .sheet(isPresented: $showingDateEditor) {
+                DateEditorSheet().presentationDetents([.medium, .large])
+            }
+        } detail: {
+            ContentUnavailableView(
+                "选择一册时光",
+                systemImage: "photo.on.rectangle.angled",
+                description: Text("相册会在这里以更宽的画布展开"))
+                .background(AppPageBackground())
         }
-        .buttonStyle(PressableStyle())
     }
 
-    // MARK: - 纪念日 / 倒数日（只读展示，增删改在「我的 → 日期设置」里）
     @ViewBuilder
-    private var anniversaryGrid: some View {
-        if !store.anniversaries.isEmpty {
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.Spacing.gap) {
-                ForEach(store.anniversaries) { entry in
-                    anniversaryCard(entry)
-                }
-            }
-        }
-    }
-
-    private func anniversaryCard(_ entry: AnniversaryEntry) -> some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.compact) {
-            HStack(spacing: DS.Spacing.tight + 2) {
-                Image(systemName: entry.icon)
-                    .font(DS.Typo.secondary.weight(.semibold))
-                    .foregroundStyle(theme.accent.color)
-                Text(entry.title)
-                    .font(DS.Typo.caption.weight(.medium))
-                    .foregroundStyle(DS.Palette.textSecondary)
-                    .lineLimit(1)
-            }
-            if let days = entry.days {
-                HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.tight - 1) {
-                    Text("\(days)")
-                        .font(DS.Typo.displayMetric)
-                        .foregroundStyle(DS.Palette.textPrimary)
-                        .contentTransition(.numericText())
-                    Text(entry.direction == .up ? "天" : "天后")
-                        .font(DS.Typo.caption)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                }
-            } else {
-                Text("未设置")
-                    .font(DS.Typo.pageTitle)
-                    .foregroundStyle(DS.Palette.textSecondary.opacity(0.6))
-                    .padding(.vertical, 5)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DS.Spacing.card)
-        .dsCard()
-    }
-
-    // MARK: - 大橘日记
-    @ViewBuilder
-    private var diaryCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.gap) {
-            HStack(spacing: DS.Spacing.compact) {
-                Text("🐱")
-                    .font(DS.Typo.pageTitle)
-                Text("大橘日记")
-                    .font(DS.Typo.cardTitle)
-                    .foregroundStyle(DS.Palette.textPrimary)
-                Spacer()
-                if let diary = daily?.diary {
-                    Text(diary.date.suffix(5).replacingOccurrences(of: "-", with: "/"))
-                        .font(DS.Typo.caption.weight(.medium))
+    private var onThisDaySection: some View {
+        if model.loading && model.onThisDay.isEmpty {
+            AppCard {
+                HStack(spacing: DS.Spacing.gap) {
+                    ProgressView()
+                    Text("正在翻找过去的今天…")
+                        .font(DS.Typo.secondary)
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
             }
-            if let diary = daily?.diary {
-                Text(diary.text)
-                    .font(DS.Typo.body)
-                    .foregroundStyle(DS.Palette.textPrimary.opacity(0.9))
-                    .lineSpacing(5)
-            } else {
-                Text("大橘还没写日记喵，聊过一天之后再来看吧。")
-                    .font(DS.Typo.secondary)
-                    .foregroundStyle(DS.Palette.textSecondary)
+        } else if let moment = model.onThisDay.first {
+            VStack(alignment: .leading, spacing: DS.Spacing.gap) {
+                AppSectionHeader(title: "今天的回声", subtitle: "同一天发生过的共同片段")
+                OnThisDayCard(moment: moment)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DS.Spacing.card)
-        .dsCard()
     }
 
-    // MARK: - 今日推荐
-    @ViewBuilder
-    private var recommendCard: some View {
+    private var albumSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.gap) {
-            HStack {
-                Text("今日推荐")
-                    .font(DS.Typo.cardTitle)
-                    .foregroundStyle(DS.Palette.textPrimary)
-                Spacer()
-                Button {
-                    Haptics.light()
-                    showRecommendComposer = true
-                } label: {
-                    Label(recommendSent ? "已送达" : "给 TA 推荐", systemImage: recommendSent ? "checkmark" : "gift.fill")
-                        .font(DS.Typo.sectionLabel)
-                        .foregroundStyle(theme.accent.color)
+            AppSectionHeader(title: "共同相册", subtitle: "长按聊天媒体即可收藏进来")
+            if model.loading && model.albums.isEmpty {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+            } else if model.albums.isEmpty {
+                VStack(spacing: DS.Spacing.gap) {
+                    AppEmptyState(
+                        "还没有共同相册",
+                        systemImage: "photo.stack",
+                        detail: "先建一册，再把聊天里的照片和视频收进来。")
+                    Button("新建第一本相册", systemImage: "plus") { showingCreateAlbum = true }
+                        .buttonStyle(.borderedProminent)
+                        .frame(minHeight: 44)
                 }
-                .buttonStyle(PressableStyle())
-                .disabled(recommendSent)
-            }
-
-            if let rec = daily?.recommend {
-                HStack(spacing: DS.Spacing.compact) {
-                    Text(rec.category)
-                        .font(DS.Typo.micro.weight(.bold))
-                        .foregroundStyle(theme.accent.color)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(theme.accent.color.opacity(0.12))
-                        .clipShape(Capsule())
-                    Text(rec.title)
-                        .font(DS.Typo.button)
-                        .foregroundStyle(DS.Palette.textPrimary)
-                }
-                Text(rec.reason)
-                    .font(DS.Typo.secondary)
-                    .foregroundStyle(DS.Palette.textSecondary)
-                    .lineSpacing(4)
-
-                Button {
-                    Haptics.light()
-                    regenerate()
-                } label: {
-                    HStack(spacing: DS.Spacing.tight + 1) {
-                        if recommendBusy {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                                .font(DS.Typo.micro.weight(.semibold))
+                .padding(.vertical, DS.Spacing.gap)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 210, maximum: 340), spacing: DS.Spacing.gap)],
+                    spacing: DS.Spacing.gap
+                ) {
+                    ForEach(model.albums) { album in
+                        NavigationLink {
+                            AlbumDetailView(album: album)
+                        } label: {
+                            MomentAlbumCard(album: album)
                         }
-                        Text("换一个")
-                            .font(DS.Typo.sectionLabel)
+                        .buttonStyle(PressableStyle())
+                        .task { await loadMore(album) }
                     }
-                    .foregroundStyle(DS.Palette.textSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(DS.Palette.innerSurface)
-                    .clipShape(Capsule())
                 }
-                .buttonStyle(PressableStyle())
-                .disabled(recommendBusy)
-            } else {
-                Text("大橘正在琢磨今天推荐点什么…")
-                    .font(DS.Typo.secondary)
-                    .foregroundStyle(DS.Palette.textSecondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DS.Spacing.card)
-        .dsCard()
-    }
-
-    private func regenerate() {
-        recommendBusy = true
-        recommendSent = false
-        Task {
-            guard let token = store.auth.session?.token else { return }
-            let rec = await store.dailyContent.regenerateRecommendation(token: token)
-            await MainActor.run {
-                recommendBusy = false
-                if let rec, let current = daily {
-                    withAnimation(DS.Anim.spring) {
-                        daily = DailyContent(diary: current.diary, recommend: rec)
-                    }
+                if model.loadingMore {
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
                 }
             }
         }
     }
 
+    private var coupleOverview: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.gap) {
+            AppSectionHeader(title: "我们的时间")
+            Button {
+                Haptics.light()
+                showingDateEditor = true
+            } label: {
+                HStack(spacing: DS.Spacing.card) {
+                    Image(systemName: "heart.text.square.fill")
+                        .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("我们在一起")
+                            .font(DS.Typo.secondary.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.78))
+                        Text(togetherLabel)
+                            .font(DS.Typo.displayNumber)
+                            .foregroundStyle(.white)
+                            .contentTransition(.numericText())
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(.white.opacity(0.72))
+                }
+                .padding(DS.Spacing.card)
+                .frame(maxWidth: .infinity, minHeight: 104)
+                .background(theme.accent.gradient)
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+            }
+            .buttonStyle(PressableStyle())
+            .accessibilityLabel("我们在一起\(togetherLabel)，轻点编辑日期")
+
+            if !store.anniversaries.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: DS.Spacing.gap) {
+                        ForEach(store.anniversaries) { entry in
+                            anniversaryChip(entry)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+    }
+
+    private func anniversaryChip(_ entry: AnniversaryEntry) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: entry.icon).foregroundStyle(theme.accent.color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title).font(DS.Typo.caption.weight(.semibold)).lineLimit(1)
+                Text(entry.days.map { "\($0)\(entry.direction == .up ? " 天" : " 天后")" } ?? "未设置")
+                    .font(DS.Typo.secondary.monospacedDigit().weight(.semibold))
+            }
+        }
+        .foregroundStyle(DS.Palette.textPrimary)
+        .padding(.horizontal, 14)
+        .frame(minHeight: 56)
+        .dsCard(radius: DS.Radius.control)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var dailyCard: some View {
+        if let diary = daily?.diary {
+            AppCard {
+                VStack(alignment: .leading, spacing: DS.Spacing.compact) {
+                    Label("大橘日记", systemImage: "pawprint.fill")
+                        .font(DS.Typo.cardTitle)
+                        .foregroundStyle(DS.Palette.orange)
+                    Text(diary.text)
+                        .font(DS.Typo.body)
+                        .foregroundStyle(DS.Palette.textPrimary)
+                        .lineSpacing(4)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var errorSection: some View {
+        if let message = model.errorMessage {
+            StatusBanner(text: message, kind: .error)
+        }
+    }
+
+    private var togetherLabel: String {
+        CoupleDates.daysSince(store.coupleDates.together).map { "\($0) 天" } ?? "等待设置"
+    }
+
+    private func reload(force: Bool = false) async {
+        guard let token = store.session?.token else { return }
+        async let moments: Void = model.load(token: token, force: force)
+        async let dailyResult = store.dailyContent.fetch(token: token)
+        let (_, fetchedDaily) = await (moments, dailyResult)
+        if let fetchedDaily { daily = fetchedDaily }
+    }
+
+    private func loadMore(_ album: MomentAlbum) async {
+        guard let token = store.session?.token else { return }
+        await model.loadMoreIfNeeded(album: album, token: token)
+    }
 }

@@ -4,30 +4,73 @@ import { authenticate, listPublicAccounts, setBarkKey } from "./accounts";
 import { createToken } from "./token";
 import { requireAuth } from "./httpAuth";
 import { errorCodes } from "../errors/errorCodes";
+import { createDeviceSession } from "./devices";
+import type { AuthUser } from "../types";
+import { verifyActiveToken } from "./token";
+
+const loginDeviceBody = z.object({
+  installationId: z.string().trim().min(8).max(160),
+  platform: z.enum(["ios", "ipados"]),
+  deviceName: z.string().trim().max(160).default(""),
+  appVersion: z.string().trim().max(40).default(""),
+  buildNumber: z.string().trim().max(40).default(""),
+  locale: z.string().trim().max(40).default(""),
+  timezone: z.string().trim().max(80).default(""),
+});
 
 const loginBody = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
+  device: loginDeviceBody.optional(),
 });
+const v2LoginBody = loginBody.extend({ device: loginDeviceBody });
 
 const barkBody = z.object({
   barkKey: z.string().trim().min(1).nullable(),
 });
 
 export async function registerAuthRoutes(app: FastifyInstance) {
-  app.get("/api/accounts", async () => listPublicAccounts());
+  app.get("/api/accounts", async (request) => {
+    const header = request.headers.authorization;
+    const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+    const user = token ? await verifyActiveToken(token) : undefined;
+    return listPublicAccounts(user ?? undefined);
+  });
 
   app.post("/api/login", async (request, reply) => {
     const parsed = loginBody.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: errorCodes.invalidRequest });
 
-    const user = await authenticate(parsed.data.username, parsed.data.password);
-    if (!user) return reply.code(401).send({ error: errorCodes.invalidCredentials });
+    const authenticated = await authenticate(parsed.data.username, parsed.data.password);
+    if (!authenticated) return reply.code(401).send({ error: errorCodes.invalidCredentials });
+    let user: AuthUser | null = authenticated;
+    if (parsed.data.device) {
+      user = await createDeviceSession(user, parsed.data.device);
+      if (!user) return reply.code(401).send({ error: errorCodes.unauthorized });
+    }
 
     return {
       token: createToken(user),
       username: user.username,
       name: user.name,
+      deviceId: user.deviceId,
+      paired: Boolean(user.coupleId),
+    };
+  });
+
+  app.post("/api/v2/login", async (request, reply) => {
+    const parsed = v2LoginBody.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: errorCodes.invalidRequest });
+    const authenticated = await authenticate(parsed.data.username, parsed.data.password);
+    if (!authenticated) return reply.code(401).send({ error: errorCodes.invalidCredentials });
+    const user = await createDeviceSession(authenticated, parsed.data.device);
+    if (!user) return reply.code(401).send({ error: errorCodes.unauthorized });
+    return {
+      token: createToken(user),
+      username: user.username,
+      name: user.name,
+      deviceId: user.deviceId,
+      paired: Boolean(user.coupleId),
     };
   });
 
@@ -35,6 +78,7 @@ export async function registerAuthRoutes(app: FastifyInstance) {
   app.get("/api/me", { preHandler: requireAuth }, async (request) => ({
     username: request.user!.username,
     name: request.user!.name,
+    paired: Boolean(request.user!.coupleId),
   }));
 
   app.post("/api/me/push/bark", { preHandler: requireAuth }, async (request, reply) => {

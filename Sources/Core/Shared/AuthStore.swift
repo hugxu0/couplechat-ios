@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// 登录/登出/会话管理，从 ChatStore 拆出。
 @MainActor
@@ -35,21 +36,33 @@ final class AuthStore: ObservableObject {
         // 全新安装必须清掉残留会话，保证从账号选择与密码登录开始。
         let installMarker = "clean_install_generation_v2"
         guard UserDefaults.standard.bool(forKey: installMarker) else {
-            Keychain.clearSession()
+            let upgradedSession = Keychain.migrateLegacyDefaultsSessionIfPresent()
+            if upgradedSession == nil { Keychain.clearSession() }
             UserDefaults.standard.set(true, forKey: installMarker)
+            guard upgradedSession?.deviceId?.isEmpty == false else {
+                Keychain.clearSession()
+                return nil
+            }
+            return upgradedSession
+        }
+        guard let session = Keychain.loadSession() else { return nil }
+        // V2 token 必须绑定 installation/session；旧 90 天账号 token 无法可靠撤销。
+        guard session.deviceId?.isEmpty == false else {
+            Keychain.clearSession()
             return nil
         }
-        return Keychain.loadSession()
+        return session
     }
 
     // MARK: - 登录
 
     func authenticate(username: String, password: String) async throws -> Session {
-        var req = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/login"))
+        var req = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/v2/login"))
         req.timeoutInterval = 15
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(["username": username, "password": password])
+        req.httpBody = try JSONEncoder().encode(
+            LoginRequest(username: username, password: password, device: currentDevice()))
         let (data, resp) = try await httpClient.data(for: req)
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
             let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
@@ -57,6 +70,38 @@ final class AuthStore: ObservableObject {
             throw NSError(domain: "login", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
         }
         return try JSONDecoder().decode(Session.self, from: data)
+    }
+
+    func register(username: String, displayName: String, password: String) async throws -> Session {
+        var request = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/v2/register"))
+        request.timeoutInterval = 15
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(RegisterRequest(
+            username: username,
+            displayName: displayName,
+            password: password,
+            device: currentDevice()))
+        let (data, response) = try await httpClient.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              http.statusCode == 201 else {
+            let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            let message = ServerErrorCode.message(for: code, fallback: "注册失败，请稍后重试")
+            throw NSError(domain: "register", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        return try JSONDecoder().decode(Session.self, from: data)
+    }
+
+    private func currentDevice() -> LoginDevice {
+        let bundle = Bundle.main
+        return LoginDevice(
+            installationId: Keychain.installationID(),
+            platform: UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios",
+            deviceName: UIDevice.current.name,
+            appVersion: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+            buildNumber: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "",
+            locale: Locale.current.identifier,
+            timezone: TimeZone.current.identifier)
     }
 
     func activate(_ newSession: Session, accounts: [Account], persist: Bool) {
@@ -76,10 +121,24 @@ final class AuthStore: ObservableObject {
         Task { await persistence.close() }
     }
 
+    func revokeCurrentDevice(_ current: Session) async {
+        guard let deviceId = current.deviceId,
+              let encoded = deviceId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return }
+        var request = URLRequest(
+            url: ServerConfig.baseURL.appendingPathComponent("api/v2/me/devices/\(encoded)"))
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 8
+        request.setValue("Bearer \(current.token)", forHTTPHeaderField: "Authorization")
+        _ = try? await httpClient.data(for: request)
+    }
+
     // MARK: - 账号
 
     func fetchAccounts() async -> [Account] {
-        let req = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/accounts"))
+        var req = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/accounts"))
+        if let token = session?.token {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         guard let (data, _) = try? await httpClient.data(for: req) else {
             print("[AuthStore] ⚠️ fetchAccounts 网络请求失败")
             return []
@@ -157,4 +216,27 @@ final class AuthStore: ObservableObject {
               let p = try? JSONDecoder().decode(Account.self, from: data) else { return }
         partner = p
     }
+}
+
+private struct LoginRequest: Encodable {
+    let username: String
+    let password: String
+    let device: LoginDevice
+}
+
+private struct RegisterRequest: Encodable {
+    let username: String
+    let displayName: String
+    let password: String
+    let device: LoginDevice
+}
+
+private struct LoginDevice: Encodable {
+    let installationId: String
+    let platform: String
+    let deviceName: String
+    let appVersion: String
+    let buildNumber: String
+    let locale: String
+    let timezone: String
 }

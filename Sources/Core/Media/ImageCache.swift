@@ -123,6 +123,26 @@ final class ImageCache {
         }
     }
 
+    /// 撤回媒体时同时清理原资源与视频封面使用的合成缓存键。
+    func removeMedia(for url: URL) {
+        remove(for: url)
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        if let thumbnailURL = URL(string: "cc-video-thumbnail://cache/\(digest)") {
+            remove(for: thumbnailURL)
+        }
+    }
+
+    func remove(for url: URL) {
+        memory.removeObject(forKey: url.absoluteString as NSString)
+        let file = fileURL(for: url)
+        ioQueue.async { [fileManager] in
+            guard fileManager.fileExists(atPath: file.path) else { return }
+            try? fileManager.removeItem(at: file)
+        }
+    }
+
     // MARK: - 缓存管理（供存储空间页使用）
 
     /// 磁盘缓存总字节数

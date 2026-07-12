@@ -50,6 +50,8 @@ try {
 
   $env:DATABASE_URL = $databaseUri.Uri.AbsoluteUri
   $env:CLOUD_DB_DEBUG = "true"
+  # 这个入口连接的是生产 PostgreSQL；无论 NODE_ENV 为何都禁止 Web 进程执行 migration。
+  $env:RUN_MIGRATIONS = "false"
   $env:SCHEDULED_JOBS_ENABLED = "false"
   $env:UPLOADS_WRITABLE = "false"
   $env:PUSH_ENABLED = "false"
@@ -75,7 +77,7 @@ const { Client } = require("pg");
       if ($LASTEXITCODE -ne 0) { throw "Cloud database connection check failed" }
     } else {
       Write-Host "Cloud database debug mode: http://127.0.0.1:8080/ai-debug"
-      Write-Host "Safety switches: scheduled jobs=off, Bark push=off, uploads=read-only"
+      Write-Host "Safety switches: migrations=off, scheduled jobs=off, Bark push=off, uploads=read-only"
       & npx.cmd tsx watch scripts/cloud-ai-server.ts
       if ($LASTEXITCODE -ne 0) { throw "Local debug server exited with code $LASTEXITCODE" }
     }

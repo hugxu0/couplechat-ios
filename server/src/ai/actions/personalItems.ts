@@ -11,6 +11,8 @@ import {
   type PersonalItemScope,
 } from "../../personalItems/itemService";
 import { accounts } from "../accounts";
+import { activeIdentity } from "../../auth/identity";
+import type { AuthUser } from "../../types";
 
 export interface AiAction {
   type:
@@ -31,11 +33,13 @@ export interface AiAction {
 export interface ConfirmItem {
   action: AiAction;
   label: string;
+  result?: "succeeded" | "failed";
+  error?: "action_rejected" | "execution_failed";
 }
 
 export interface ConfirmMeta {
   confirm: {
-    status: "pending" | "confirmed" | "cancelled";
+    status: "pending" | "processing" | "confirmed" | "cancelled";
     items: ConfirmItem[];
     requesterName: string;
     requesterUsername: string;
@@ -180,24 +184,26 @@ export async function applyAction(
       const title = String(action.title ?? "").trim();
       if (!title) return { ok: false, label: "（无效提醒）" };
       const dueAt = parseReminderTime(action.time);
-      await createPersonalItem(fakeUser, {
+      const created = await createPersonalItem(fakeUser, {
         kind: "reminder",
         scope,
         title,
         dueAt,
       });
+      if (!created) return { ok: false, label: "（提醒未创建）" };
       return { ok: true, label: describeAction(action) ?? "提醒已创建" };
     }
     case "add_memo": {
       const text = String(action.text ?? action.title ?? "").trim();
       if (!text) return { ok: false, label: "（无效备忘）" };
       const title = memoTitle(action);
-      await createPersonalItem(fakeUser, {
+      const created = await createPersonalItem(fakeUser, {
         kind: "memo",
         scope,
         title,
         bodyMarkdown: memoBody(action, title),
       });
+      if (!created) return { ok: false, label: "（备忘未创建）" };
       return { ok: true, label: describeAction(action) ?? "备忘已创建" };
     }
     case "complete_reminder": {
@@ -258,11 +264,31 @@ export async function applyAction(
   }
 }
 
-async function getMessageMeta(messageId: string): Promise<{ meta: ConfirmMeta; channel: string } | null> {
-  const row = await get<MessageRow>("SELECT * FROM messages WHERE id = ?", [messageId]);
+async function getMessageMeta(user: AuthUser, messageId: string): Promise<{
+  meta: ConfirmMeta;
+  channel: string;
+  coupleId: string | null;
+  ownerAccountId: string | null;
+} | null> {
+  const identity = await activeIdentity(user);
+  if (!identity) return null;
+  const row = await get<MessageRow & { couple_id: string | null; owner_account_id: string | null }>(
+    `SELECT message.*, conversation.couple_id, conversation.owner_account_id
+       FROM messages message
+       JOIN conversations conversation ON conversation.id = message.conversation_id
+      WHERE message.id = ?
+        AND ((conversation.kind = 'couple' AND conversation.couple_id = ?)
+          OR (conversation.kind = 'ai' AND conversation.owner_account_id = ?))`,
+    [messageId, identity.coupleId, identity.accountId],
+  );
   if (!row || !row.meta_json) return null;
   try {
-    return { meta: JSON.parse(row.meta_json) as ConfirmMeta, channel: row.channel };
+    return {
+      meta: JSON.parse(row.meta_json) as ConfirmMeta,
+      channel: row.channel,
+      coupleId: row.couple_id ?? identity.coupleId,
+      ownerAccountId: row.owner_account_id,
+    };
   } catch {
     return null;
   }
@@ -272,19 +298,33 @@ async function updateMessageMeta(messageId: string, meta: ConfirmMeta): Promise<
   await run("UPDATE messages SET meta_json = ? WHERE id = ?", [JSON.stringify(meta), messageId]);
 }
 
+async function claimPendingConfirmation(messageId: string, meta: ConfirmMeta): Promise<boolean> {
+  const claimed = structuredClone(meta);
+  claimed.confirm.status = "processing";
+  return await run(
+    `UPDATE messages SET meta_json = ?
+      WHERE id = ? AND meta_json::jsonb #>> '{confirm,status}' = 'pending'`,
+    [JSON.stringify(claimed), messageId],
+  ) === 1;
+}
+
 export async function confirmAction(
   io: Server,
+  user: AuthUser,
   messageId: string,
   decision: "confirm" | "cancel",
 ): Promise<{ ok: boolean }> {
-  const stored = await getMessageMeta(messageId);
+  const stored = await getMessageMeta(user, messageId);
   if (!stored || !stored.meta.confirm || stored.meta.confirm.status !== "pending") {
     return { ok: false };
   }
   const { meta, channel } = stored;
+  if (meta.confirm.requesterUsername !== user.username) return { ok: false };
+  if (!await claimPendingConfirmation(messageId, meta)) return { ok: false };
+  meta.confirm.status = "processing";
   const messageRoom = channel === "couple"
-    ? "channel:couple"
-    : `user:${meta.confirm.requesterUsername}`;
+    ? `couple:${stored.coupleId}`
+    : `account:${stored.ownerAccountId}`;
 
   if (decision === "cancel") {
     meta.confirm.status = "cancelled";
@@ -295,21 +335,49 @@ export async function confirmAction(
 
   let failed = 0;
   for (const item of meta.confirm.items) {
-    const r = await applyAction(item.action, {
-      requesterUsername: meta.confirm.requesterUsername,
-    });
-    if (!r.ok) {
+    let applied = false;
+    try {
+      const result = await applyAction(item.action, {
+        requesterUsername: meta.confirm.requesterUsername,
+      });
+      applied = result.ok;
+      item.result = result.ok ? "succeeded" : "failed";
+      item.error = result.ok ? undefined : "action_rejected";
+    } catch (error) {
+      item.result = "failed";
+      item.error = "execution_failed";
+      console.warn(
+        `[ai-confirm] action failed for ${messageId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (!applied) {
       failed += 1;
+      // Persist each failure while the card is processing. If the process stops before
+      // finalization, operators can see exactly which item did not run.
+      try { await updateMessageMeta(messageId, meta); } catch { /* final write below is authoritative */ }
       continue;
     }
-    const scope = resolveScope(item.action.scope);
-    const owner = resolveOwnerName(item.action.ownerName, meta.confirm.requesterUsername);
-    const room = scope === "shared" ? "channel:couple" : `user:${owner}`;
-    io.to(room).emit(socketEvents.personalItemChanged, {
-      action: item.action.type,
-      source: "ai",
-      item: { scope, owner },
-    });
+    try {
+      const scope = resolveScope(item.action.scope);
+      const owner = resolveOwnerName(item.action.ownerName, meta.confirm.requesterUsername);
+      const ownerAccount = scope === "personal"
+        ? await get<{ id: string }>("SELECT id FROM accounts WHERE username = ? AND status = 'active'", [owner])
+        : null;
+      const room = scope === "shared"
+        ? `couple:${stored.coupleId}`
+        : ownerAccount ? `account:${ownerAccount.id}` : `user:${owner}`;
+      io.to(room).emit(socketEvents.personalItemChanged, {
+        action: item.action.type,
+        source: "ai",
+        item: { scope, owner },
+      });
+    } catch (error) {
+      // The mutation already succeeded. A notification failure must not strand the card.
+      console.warn(
+        `[ai-confirm] notification failed for ${messageId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    try { await updateMessageMeta(messageId, meta); } catch { /* final write below is authoritative */ }
   }
   meta.confirm.status = "confirmed";
   meta.confirm.failed = failed;

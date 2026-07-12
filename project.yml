@@ -25,19 +25,28 @@ targets:
         CFBundleShortVersionString: "0.2.0"
         CFBundleVersion: "2"
         UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         NSCameraUsageDescription: 用于拍摄并上传头像
         NSPhotoLibraryAddUsageDescription: 保存聊天图片和视频到相册
         NSPhotoLibraryUsageDescription: 用于读取并发送照片和实况照片
         NSMicrophoneUsageDescription: 用于录制语音消息
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        "UISupportedInterfaceOrientations~ipad":
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         ITSAppUsesNonExemptEncryption: false
         SERVER_BASE_URL: https://hoo66.top
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hugxu0.couplechat.native
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.9"
 
   CoupleChatTests:

@@ -6,9 +6,12 @@ protocol ChatTimelineControllerDelegate: AnyObject {
     func timelineDidScroll()
     func timelineDidRequestOlder()
     func timelineDidRequestNewer()
+    func timelineDidDisplay(_ message: ChatMessage)
     func timelineDidSelect(_ action: ChatMessageAction, message: ChatMessage)
     func timelineDidTapMedia(cell: ChatNativeMessageCell, message: ChatMessage, selectedId: String)
     func timelineDidTapRetry(cell: ChatNativeMessageCell, message: ChatMessage)
+    func timelineDidTapTranscript(message: ChatMessage)
+    func timelineDidCorrectTranscript(message: ChatMessage)
     func timelineDidDecideConfirm(message: ChatMessage, decision: String)
 }
 
@@ -38,6 +41,8 @@ final class ChatTimelineController: NSObject {
     var groupedMessageIds = Set<String>()
     var layoutHeightCache: [ChatMessageLayout: CGFloat] = [:]
     var highlightedMessageId: String?
+    var voiceTranscripts: [String: VoiceTranscript] = [:]
+    var expandedTranscriptIDs = Set<String>()
     var pendingTopAnchor: (itemId: String, offset: CGFloat)?
     var dragStartAnchor: (itemId: String, offset: CGFloat)?
     var stickToLatestAfterNextReload = false
@@ -62,6 +67,34 @@ final class ChatTimelineController: NSObject {
 
     func updatePresentation(_ presentation: Presentation) {
         self.presentation = presentation
+    }
+
+    func transcript(for messageId: String) -> VoiceTranscript? {
+        voiceTranscripts[messageId]
+    }
+
+    func loadedTranscriptMessageIDs() -> [String] {
+        Array(voiceTranscripts.keys)
+    }
+
+    func applyTranscript(_ transcript: VoiceTranscript, messageId: String, expands: Bool = false) {
+        voiceTranscripts[messageId] = transcript
+        if expands, transcript.status == .ready { expandedTranscriptIDs.insert(messageId) }
+        reloadMessage(messageId)
+    }
+
+    func toggleTranscript(messageId: String) {
+        if expandedTranscriptIDs.contains(messageId) { expandedTranscriptIDs.remove(messageId) }
+        else { expandedTranscriptIDs.insert(messageId) }
+        reloadMessage(messageId)
+    }
+
+    private func reloadMessage(_ messageId: String) {
+        layoutHeightCache = layoutHeightCache.filter { $0.key.messageId != messageId }
+        guard let path = indexPath(forMessageId: messageId) else { return }
+        collectionView.performBatchUpdates {
+            collectionView.reloadItems(at: [path])
+        }
     }
 
     func reload(messages: [ChatMessage], activity: ChatMessage?, animated: Bool) {
@@ -229,6 +262,15 @@ final class ChatTimelineController: NSObject {
     func indexPath(forMessageId id: String) -> IndexPath? {
         items.firstIndex { if case .message(let value) = $0 { return value == id }; return false }
             .map { IndexPath(item: $0, section: 0) }
+    }
+
+    func displayedMessages() -> [ChatMessage] {
+        collectionView.indexPathsForVisibleItems.compactMap { path in
+            guard path.item < items.count,
+                  collectionView.cellForItem(at: path) != nil,
+                  case .message(let id) = items[path.item] else { return nil }
+            return messagesById[id]
+        }
     }
 
     func setClampedContentOffsetY(_ targetY: CGFloat) {

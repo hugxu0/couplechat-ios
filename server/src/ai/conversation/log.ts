@@ -68,13 +68,19 @@ export async function messagesAfter(storedChannel: string, cursor: LogCursor, li
   return rows.map(mapRow);
 }
 
-export async function ownerTextMessagesAfter(storedChannel: string, cursor: LogCursor, limit: number): Promise<LogMessage[]> {
+export async function ownerTextMessagesAfter(
+  storedChannel: string,
+  cursor: LogCursor,
+  limit: number,
+  conversationId?: string,
+): Promise<LogMessage[]> {
   const rows = await all<MessageRow>(
     `SELECT * FROM messages
-     WHERE channel = ? AND (ts > ? OR (ts = ? AND id > ?))
+     WHERE ${conversationId ? "conversation_id" : "channel"} = ?
+       AND (ts > ? OR (ts = ? AND id > ?))
        AND kind = 'user' AND sender <> 'ai' AND type = 'text' AND BTRIM(text) <> ''
      ORDER BY ts ASC, id ASC LIMIT ?`,
-    [storedChannel, cursor.ts, cursor.ts, cursor.id, limit],
+    [conversationId ?? storedChannel, cursor.ts, cursor.ts, cursor.id, limit],
   );
   return rows.map(mapRow);
 }

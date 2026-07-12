@@ -80,7 +80,7 @@ struct MediaGallerySheet: View {
                     .shadow(radius: 4)
             }
             .frame(minWidth: 0, maxWidth: .infinity)
-            .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+            .aspectRatio(1, contentMode: .fit)
             .clipped()
             .onTapGesture { selectedMediaId = MediaBrowserItem.items(for: msg).first?.id ?? msg.id }
         } else if let url = msg.mediaURL {
@@ -89,7 +89,7 @@ struct MediaGallerySheet: View {
                     .overlay(ProgressView().tint(DS.Palette.accent))
             }
             .frame(minWidth: 0, maxWidth: .infinity)
-            .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+            .aspectRatio(1, contentMode: .fit)
             .clipped()
             .onTapGesture { selectedMediaId = MediaBrowserItem.items(for: msg).first?.id ?? msg.id }
         } else {
@@ -107,7 +107,7 @@ struct MediaGallerySheet: View {
                 .foregroundStyle(DS.Palette.textSecondary)
         }
         .frame(minWidth: 0, maxWidth: .infinity)
-        .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+        .aspectRatio(1, contentMode: .fit)
     }
 
     private func fileThumb(_ msg: ChatMessage) -> some View {
@@ -123,7 +123,7 @@ struct MediaGallerySheet: View {
         }
         .padding(8)
         .frame(minWidth: 0, maxWidth: .infinity)
-        .frame(height: (UIScreen.main.bounds.width - 4) / 3)
+        .aspectRatio(1, contentMode: .fit)
         .background(DS.Palette.innerSurface)
     }
 

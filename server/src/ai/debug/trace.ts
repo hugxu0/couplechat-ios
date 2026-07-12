@@ -76,6 +76,34 @@ export function listLiveTraces(since = 0): TraceEntry[] {
   return [...liveTraces.values()].filter((trace) => trace.ts >= since).sort((a, b) => b.ts - a.ts);
 }
 
+/** 删除由某条消息触发的本机调试 trace，避免撤回后日志仍保留完整问题/prompt。 */
+export async function redactTraceForMessage(messageId: string): Promise<void> {
+  liveTraces.delete(messageId);
+  const dir = path.join(config.dataDir, "ai_logs");
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(dir);
+  } catch {
+    return;
+  }
+  await Promise.all(names.filter((name) => name.endsWith(".log")).map(async (name) => {
+    const file = path.join(dir, name);
+    try {
+      const raw = await fs.promises.readFile(file, "utf8");
+      const parts = raw.split(`\n${BANNER}\n`);
+      const marker = `\"id\": \"${messageId.replace(/[\\\"]/g, "\\$&")}\"`;
+      const filtered = parts.filter((part, index) => index === 0 || !part.includes(marker));
+      if (filtered.length === parts.length) return;
+      const next = filtered[0] + filtered.slice(1).map((part) => `\n${BANNER}\n${part}`).join("");
+      const temporary = `${file}.${process.pid}.partial`;
+      await fs.promises.writeFile(temporary, next, { mode: 0o600 });
+      await fs.promises.rename(temporary, file);
+    } catch (error) {
+      console.warn(`[ai-trace] 撤回清理失败 id=${messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }));
+}
+
 export function traceReply(
   trace: TraceEntry,
     data: { stage: string; usedVision: boolean; wantsSearch: boolean; replies: string[]; actions: unknown[]; rawOutput?: string },

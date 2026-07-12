@@ -1,21 +1,21 @@
 import SwiftUI
 
-// 五个主页面 + 自绘底部标签栏（不用系统 TabView 的默认样式，
-// 为了完全控制圆角、透明度和选中动画，跟设计系统保持一致）。
+// 五个主页面使用系统自适应 Tab：iPhone 为底部标签栏，
+// iPad 根据可用宽度转为侧栏，保留系统多任务、键盘与无障碍行为。
 
 enum MainTab: String, CaseIterable {
     case chat = "聊天"
-    case records = "记录"
+    case records = "时光"
     case pet = "大橘"
-    case reminders = "提醒"
+    case reminders = "计划"
     case profile = "我的"
 
     var icon: String {
         switch self {
         case .chat: return "ellipsis.message.fill"
-        case .records: return "book.closed.fill"
-        case .pet: return "cat.fill"
-        case .reminders: return "bell.fill"
+        case .records: return "clock.arrow.circlepath"
+        case .pet: return AccountPresentation.dajuIconName
+        case .reminders: return "calendar"
         case .profile: return "person.fill"
         }
     }
@@ -23,11 +23,11 @@ enum MainTab: String, CaseIterable {
 
 /// 跨页面共享的 App 状态（哪些子页需要隐藏底部标签栏）
 final class AppState: ObservableObject {
-    /// 子页栈深度：每进入一个需要全屏的子页（聊天、聊天详情、主题、存储…）+1，逐层退出时 -1。
-    /// 用计数而不是单个布尔，避免「push 子页时源页 onDisappear 把底栏又放出来」造成的闪烁/残留。
+    /// 子页栈深度：每进入一个沉浸式子页（聊天、聊天详情、主题、存储…）+1，逐层退出时 -1。
+    /// 用计数而不是单个布尔，避免多层 push 时系统 Tab 可见性抖动。
     @Published private var subpageDepth = 0
 
-    /// 只要还在任意子页里就隐藏底部标签栏
+    /// 只要还在任意沉浸式子页里就隐藏系统 Tab chrome。
     var hidesTabBar: Bool { subpageDepth > 0 }
 
     func pushSubpage() { subpageDepth += 1 }
@@ -36,7 +36,6 @@ final class AppState: ObservableObject {
 
 struct RootTabView: View {
     @State private var tab: MainTab = .chat
-    @State private var visitedTabs: Set<MainTab> = [.chat]
     @StateObject private var app = AppState()
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var timelineStore: ChatTimelineStore
@@ -53,43 +52,27 @@ struct RootTabView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             AppPageBackground()
-
-            ZStack {
-                if visitedTabs.contains(.chat) {
-                    ChatHomeView()
-                        .opacity(tab == .chat ? 1.0 : 0.0)
-                        .disabled(tab != .chat)
-                }
-                if visitedTabs.contains(.records) {
-                    RecordsView()
-                        .opacity(tab == .records ? 1.0 : 0.0)
-                        .disabled(tab != .records)
-                }
-                if visitedTabs.contains(.pet) {
-                    PetView()
-                        .opacity(tab == .pet ? 1.0 : 0.0)
-                        .disabled(tab != .pet)
-                }
-                if visitedTabs.contains(.reminders) {
-                    RemindersView()
-                        .opacity(tab == .reminders ? 1.0 : 0.0)
-                        .disabled(tab != .reminders)
-                }
-                if visitedTabs.contains(.profile) {
-                    ProfileView()
-                        .opacity(tab == .profile ? 1.0 : 0.0)
-                        .disabled(tab != .profile)
-                }
+            TabView(selection: $tab) {
+                ChatHomeView()
+                    .tabItem { Label(MainTab.chat.rawValue, systemImage: MainTab.chat.icon) }
+                    .tag(MainTab.chat)
+                RecordsView()
+                    .tabItem { Label(MainTab.records.rawValue, systemImage: MainTab.records.icon) }
+                    .tag(MainTab.records)
+                PetView()
+                    .tabItem { Label(MainTab.pet.rawValue, systemImage: MainTab.pet.icon) }
+                    .tag(MainTab.pet)
+                RemindersView()
+                    .tabItem { Label(MainTab.reminders.rawValue, systemImage: MainTab.reminders.icon) }
+                    .tag(MainTab.reminders)
+                ProfileView()
+                    .tabItem { Label(MainTab.profile.rawValue, systemImage: MainTab.profile.icon) }
+                    .tag(MainTab.profile)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // 进入子页时隐藏底栏，退出时滑回来
-            if !app.hidesTabBar {
-                tabBar
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+            .tabViewStyle(.sidebarAdaptable)
+            .toolbar(app.hidesTabBar ? .hidden : .visible, for: .tabBar)
 
             if let presentation = activePresentation {
                 IncomingInteractionOverlay(
@@ -105,6 +88,7 @@ struct RootTabView: View {
             }
         }
         .animation(DS.Anim.spring, value: app.hidesTabBar)
+        .onChange(of: tab) { Haptics.selection() }
         .onAppear {
             lastSeenEffectMessageId = coupleMessages.last?.id
             handleIncomingNote()
@@ -187,38 +171,6 @@ struct RootTabView: View {
         }
     }
 
-    private var tabBar: some View {
-        HStack {
-            ForEach(MainTab.allCases, id: \.self) { t in
-                Button {
-                    // 状态切换必须即时生效，不包进动画事务——
-                    // 否则快速连点时切换会被动画排队拖住、感觉「点了没反应」。
-                    visitedTabs.insert(t)
-                    tab = t
-                    Haptics.selection()
-                } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: t == .pet ? AccountPresentation.dajuIconName : t.icon)
-                            .font(DS.Typo.tabIcon)
-                            .scaleEffect(tab == t && !UIAccessibility.isReduceMotionEnabled ? 1.08 : 1.0)
-                        Text(t.rawValue)
-                            .font(DS.Typo.tab)
-                    }
-                    .foregroundStyle(tab == t ? DS.Palette.accent : DS.Palette.textSecondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 2)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(t.rawValue)
-                .accessibilityAddTraits(tab == t ? .isSelected : [])
-                .animation(DS.Anim.motion(DS.Anim.springFast), value: tab)
-            }
-        }
-        .padding(.vertical, DS.Spacing.tabBarVertical)
-        .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.tabBar, style: .continuous))
-        .padding(.horizontal, DS.Spacing.page)
-    }
 }
 
 /// 触觉反馈统一入口
