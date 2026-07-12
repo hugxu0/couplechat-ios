@@ -406,7 +406,7 @@ private struct PersonalItemCard: View {
                 MarkdownPreview(markdown: displayMarkdown)
                     .font(.system(size: 15))
                     .foregroundStyle(DS.Palette.textPrimary)
-                    .lineLimit(item.kind == .memo ? 8 : 3)
+                    .lineLimit(item.kind == .memo ? nil : 3)
             }
         }
         .padding(DS.Spacing.card)
@@ -589,8 +589,18 @@ private struct MarkdownPreview: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
                 .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        case .mermaid(let source):
+            Text(MermaidFlowchartFormatter.render(source) ?? source)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(DS.Palette.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         case .table(let headers, let rows):
             tableView(headers: headers, rows: rows)
+        case .rule:
+            Divider()
+                .overlay(DS.Palette.textSecondary.opacity(0.22))
         }
     }
 
@@ -643,154 +653,6 @@ private struct MarkdownPreview: View {
                     : AnyShapeStyle(alternate ? DS.Palette.innerSurface.opacity(0.42) : DS.Palette.cardSurface.opacity(0.35))
             )
             .overlay(Rectangle().stroke(DS.Palette.textSecondary.opacity(0.16), lineWidth: 0.7))
-    }
-}
-
-private enum MarkdownBlock {
-    case paragraph(String)
-    case heading(level: Int, text: String)
-    case bullets([String])
-    case numbers([String])
-    case quote(String)
-    case code(String)
-    case table(headers: [String], rows: [[String]])
-
-    static func parse(_ markdown: String) -> [MarkdownBlock] {
-        let lines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-        var result: [MarkdownBlock] = []
-        var index = 0
-
-        while index < lines.count {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            if line.isEmpty {
-                index += 1
-                continue
-            }
-
-            if line.hasPrefix("```") {
-                index += 1
-                var codeLines: [String] = []
-                while index < lines.count, !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                    codeLines.append(lines[index])
-                    index += 1
-                }
-                if index < lines.count { index += 1 }
-                result.append(.code(codeLines.joined(separator: "\n")))
-                continue
-            }
-
-            if let heading = headingLine(line) {
-                result.append(.heading(level: heading.level, text: heading.text))
-                index += 1
-                continue
-            }
-
-            if index + 1 < lines.count,
-               let headers = tableRow(line),
-               isTableSeparator(lines[index + 1]) {
-                index += 2
-                var rows: [[String]] = []
-                while index < lines.count, let row = tableRow(lines[index]), !row.isEmpty {
-                    rows.append(row)
-                    index += 1
-                }
-                result.append(.table(headers: headers, rows: rows))
-                continue
-            }
-
-            if let item = bulletLine(line) {
-                var items = [item]
-                index += 1
-                while index < lines.count, let next = bulletLine(lines[index].trimmingCharacters(in: .whitespaces)) {
-                    items.append(next)
-                    index += 1
-                }
-                result.append(.bullets(items))
-                continue
-            }
-
-            if let item = numberLine(line) {
-                var items = [item]
-                index += 1
-                while index < lines.count, let next = numberLine(lines[index].trimmingCharacters(in: .whitespaces)) {
-                    items.append(next)
-                    index += 1
-                }
-                result.append(.numbers(items))
-                continue
-            }
-
-            if line.hasPrefix(">") {
-                var quotes: [String] = []
-                while index < lines.count {
-                    let next = lines[index].trimmingCharacters(in: .whitespaces)
-                    guard next.hasPrefix(">") else { break }
-                    quotes.append(String(next.dropFirst()).trimmingCharacters(in: .whitespaces))
-                    index += 1
-                }
-                result.append(.quote(quotes.joined(separator: "\n")))
-                continue
-            }
-
-            var paragraph = [line]
-            index += 1
-            while index < lines.count {
-                let next = lines[index].trimmingCharacters(in: .whitespaces)
-                guard !next.isEmpty,
-                      headingLine(next) == nil,
-                      bulletLine(next) == nil,
-                      numberLine(next) == nil,
-                      !next.hasPrefix(">"),
-                      !next.hasPrefix("```") else { break }
-                if index + 1 < lines.count, tableRow(next) != nil, isTableSeparator(lines[index + 1]) { break }
-                paragraph.append(next)
-                index += 1
-            }
-            result.append(.paragraph(paragraph.joined(separator: "\n")))
-        }
-        return result
-    }
-
-    private static func headingLine(_ line: String) -> (level: Int, text: String)? {
-        let hashes = line.prefix { $0 == "#" }
-        guard !hashes.isEmpty, hashes.count <= 6 else { return nil }
-        let text = String(line.dropFirst(hashes.count)).trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return nil }
-        return (hashes.count, text)
-    }
-
-    private static func bulletLine(_ line: String) -> String? {
-        for marker in ["- ", "* ", "+ "] where line.hasPrefix(marker) {
-            return String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
-        }
-        return nil
-    }
-
-    private static func numberLine(_ line: String) -> String? {
-        guard let separator = line.firstIndex(where: { $0 == "." || $0 == ")" }) else { return nil }
-        let prefix = line[..<separator]
-        guard !prefix.isEmpty, prefix.allSatisfy({ $0.isNumber }) else { return nil }
-        return String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
-    }
-
-    private static func tableRow(_ line: String) -> [String]? {
-        guard line.contains("|") else { return nil }
-        var value = line.trimmingCharacters(in: .whitespaces)
-        if value.hasPrefix("|") { value.removeFirst() }
-        if value.hasSuffix("|") { value.removeLast() }
-        let cells = value.split(separator: "|", omittingEmptySubsequences: false)
-            .map { String($0).trimmingCharacters(in: .whitespaces) }
-        return cells.isEmpty ? nil : cells
-    }
-
-    private static func isTableSeparator(_ line: String) -> Bool {
-        guard let cells = tableRow(line), cells.count >= 1 else { return false }
-        return cells.allSatisfy { cell in
-            let value = cell.trimmingCharacters(in: .whitespaces)
-            guard value.count >= 3 else { return false }
-            let hyphenCount = value.filter { $0 == "-" }.count
-            return hyphenCount >= 3 && value.allSatisfy { $0 == "-" || $0 == ":" }
-        }
     }
 }
 

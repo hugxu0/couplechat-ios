@@ -47,3 +47,13 @@ test("AI queue coalesces overload to the newest request", async () => {
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(started, ["q1", "q2", "q4"]);
 });
+
+test("personal item drafts resolve scope from the conversation unless explicitly overridden", async () => {
+  const { defaultPersonalItemScope, resolveDraftPersonalItemScope } = await import("../../src/ai/mcp/personalItemTools");
+  assert.equal(defaultPersonalItemScope("couple"), "shared");
+  assert.equal(defaultPersonalItemScope("ai:xu"), "personal");
+  assert.equal(resolveDraftPersonalItemScope("couple"), "shared");
+  assert.equal(resolveDraftPersonalItemScope("ai:xu"), "personal");
+  assert.equal(resolveDraftPersonalItemScope("couple", "personal"), "personal");
+  assert.equal(resolveDraftPersonalItemScope("ai:xu", "shared"), "shared");
+});

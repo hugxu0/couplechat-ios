@@ -6,6 +6,17 @@ import { beijingDateTime } from "../time";
 import { recordAgentTool, type AgentToolRun } from "./runContext";
 import { jsonResult, safeLimit } from "./toolSupport";
 
+export function defaultPersonalItemScope(storedChannel: string): "personal" | "shared" {
+  return storedChannel === "couple" ? "shared" : "personal";
+}
+
+export function resolveDraftPersonalItemScope(
+  storedChannel: string,
+  requested?: "personal" | "shared",
+): "personal" | "shared" {
+  return requested ?? defaultPersonalItemScope(storedChannel);
+}
+
 export function registerPersonalItemTools(server: McpServer, run: AgentToolRun): void {
   server.registerTool(
     "list_personal_items",
@@ -20,7 +31,7 @@ export function registerPersonalItemTools(server: McpServer, run: AgentToolRun):
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (args) => jsonResult(await recordAgentTool(run, "list_personal_items", args, async () => {
-      const requestedScope = args.scope ?? (run.identity.storedChannel === "couple" ? "shared" : "all");
+      const requestedScope = args.scope ?? defaultPersonalItemScope(run.identity.storedChannel);
       const clauses: string[] = [];
       const params: Array<string | number> = [];
       if (requestedScope === "personal") {
@@ -72,7 +83,7 @@ export function registerPersonalItemTools(server: McpServer, run: AgentToolRun):
     },
     async (args) => jsonResult(await recordAgentTool(run, "draft_personal_item_action", args, async () => {
       const action: AiAction = { ...args };
-      action.scope ??= run.identity.storedChannel === "couple" ? "shared" : "personal";
+      action.scope = resolveDraftPersonalItemScope(run.identity.storedChannel, action.scope);
       if (action.scope === "personal") action.ownerName = run.identity.requesterUsername;
       const label = describeAction(action);
       if (!label) throw new Error("操作草案缺少必要字段");

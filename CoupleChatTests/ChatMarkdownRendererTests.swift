@@ -65,6 +65,26 @@ final class ChatMarkdownRendererTests: XCTestCase {
         XCTAssertTrue(rendered.string.contains("▼"))
     }
 
+    func testSharedParserAcceptsLooseMermaidBlocksAndKeepsAllNodeText() {
+        let markdown = """
+        mermaid
+        flowchart TD
+          A[准备西红柿、鸡蛋、葱蒜和调料] --> B[鸡蛋打散]
+
+        做完就可以开吃。
+        """
+        let blocks = MarkdownBlock.parse(markdown)
+
+        XCTAssertEqual(blocks.count, 2)
+        guard case .mermaid(let source) = blocks[0] else {
+            return XCTFail("第一块应识别为 Mermaid")
+        }
+        let diagram = MermaidFlowchartFormatter.render(source)
+        XCTAssertTrue(diagram?.contains("准备西红柿、鸡蛋、葱蒜和调料") == true)
+        XCTAssertTrue(diagram?.contains("鸡蛋打散") == true)
+        XCTAssertEqual(blocks[1], .paragraph("做完就可以开吃。"))
+    }
+
     func testConfirmationAddsHeightAndUsesFullBubbleWidth() {
         let plain = message(meta: nil)
         let confirmed = message(meta: [
