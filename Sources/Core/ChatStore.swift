@@ -661,7 +661,10 @@ final class ChatStore: ObservableObject {
     func recoverOnForeground() {
         guard auth.session != nil else { return }
         reportAway(false)
-        if !connected { connect() }
+        // 退后台会中断 socket，但 connectionAttemptInFlight 可能仍卡在 true，
+        // 直接 connect() 会被守卫挡掉，于是只能干等 Socket.IO 慢慢重连、长时间
+        // 显示“正在重连”。回前台若未真正连上，就强制丢弃陈旧 socket 重新握手。
+        if !connected { forceReconnect() }
         Task {
             _ = await refreshBootstrap()
             _ = await verifyRealtimeHealth()
@@ -669,6 +672,17 @@ final class ChatStore: ObservableObject {
                 messageStore.flushOutbox(session: session)
             }
         }
+    }
+
+    /// 丢弃可能已失效的 socket 与在途标志，立即重新发起握手。
+    private func forceReconnect() {
+        connectionAttemptToken = UUID()
+        connectionAttemptInFlight = false
+        reconnectAttempt = 0
+        socket?.disconnect()
+        manager = nil
+        socket = nil
+        connect()
     }
 
     func refreshHomeData() async -> HomeRefreshResult {

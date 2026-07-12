@@ -605,7 +605,6 @@ struct ChatHomeView: View {
 
     private var enterChatButton: some View {
         Button {
-            Haptics.medium()
             showChat = true
         } label: {
             HStack(spacing: 8) {

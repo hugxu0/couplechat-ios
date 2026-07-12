@@ -17,7 +17,16 @@ extension ChatTimelineController {
         guard let indexPath = indexPath(forMessageId: id) else { return }
         highlightedMessageId = highlighted ? id : nil
         collectionView.reloadItems(at: [indexPath])
-        collectionView.scrollToItem(at: indexPath, at: .centeredVertically, animated: true)
+        collectionView.layoutIfNeeded()
+        // 顶栏（topInset）会盖住内容区上沿，用 scrollToItem(.centeredVertically) 在
+        // 靠顶的消息上会被 clamp 到标题栏后面。改为手动把目标顶部对齐到顶栏下方留白，
+        // 让命中的消息稳定落在可视区内。
+        if let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame {
+            let desiredTop = frame.minY - topInset - 12
+            setClampedContentOffsetY(desiredTop)
+        } else {
+            collectionView.scrollToItem(at: indexPath, at: .centeredVertically, animated: false)
+        }
         guard highlighted else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
             guard let self, highlightedMessageId == id else { return }
