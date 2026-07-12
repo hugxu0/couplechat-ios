@@ -92,7 +92,7 @@ struct ChatMessageLayout: Hashable {
             text: message.displayText,
             replyPreview: message.replyPreview,
             confirmStatus: message.meta?.confirm?.status,
-            confirmLabels: message.meta?.confirm.map(confirmationMarkdown),
+            confirmLabels: message.meta?.confirm.map(ChatTimelineMetrics.confirmationMarkdown),
             pending: message.pending,
             failed: message.failed
         )
