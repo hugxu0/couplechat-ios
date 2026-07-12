@@ -5,6 +5,7 @@ import SwiftUI
 struct ChatHomeView: View {
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var timelineStore: ChatTimelineStore
     @EnvironmentObject private var theme: ThemeManager
     @State private var showChat = false
     @State private var sentAction: String?
@@ -27,6 +28,10 @@ struct ChatHomeView: View {
     private var partnerUsername: String { store.partner?.username ?? (myUsername == "xu" ? "si" : "xu") }
     private var partnerAvatar: String {
         store.avatarText(for: partnerUsername)
+    }
+
+    private var coupleMessages: [ChatMessage] {
+        timelineStore.messages(for: .couple)
     }
 
     private var statusMap: [String: String] {
@@ -491,7 +496,7 @@ struct ChatHomeView: View {
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundStyle(DS.Palette.textPrimary)
                 Spacer()
-                if let last = store.messages.last {
+                if let last = coupleMessages.last {
                     Text(last.timeString)
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Palette.textSecondary)
@@ -501,7 +506,7 @@ struct ChatHomeView: View {
                 }
             }
 
-            if store.messages.isEmpty {
+            if coupleMessages.isEmpty {
                 Text("还没有消息，进去说第一句吧")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(DS.Palette.textSecondary)
@@ -509,7 +514,7 @@ struct ChatHomeView: View {
                     .padding(.vertical, 14)
             } else {
                 VStack(spacing: 7) {
-                    ForEach(Array(store.messages.suffix(3))) { message in
+                    ForEach(Array(coupleMessages.suffix(3))) { message in
                         latestRow(message)
                     }
                 }

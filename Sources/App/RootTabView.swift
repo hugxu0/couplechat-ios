@@ -39,6 +39,7 @@ struct RootTabView: View {
     @State private var visitedTabs: Set<MainTab> = [.chat]
     @StateObject private var app = AppState()
     @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var timelineStore: ChatTimelineStore
     // 订阅主题变化：主题色一改，标签栏和全部子页立即重绘
     @EnvironmentObject private var theme: ThemeManager
     @State private var lastSeenEffectMessageId: String?
@@ -104,10 +105,10 @@ struct RootTabView: View {
         }
         .animation(DS.Anim.spring, value: app.hidesTabBar)
         .onAppear {
-            lastSeenEffectMessageId = store.messages.last?.id
+            lastSeenEffectMessageId = coupleMessages.last?.id
             lastSeenNoteId = screenNoteId
         }
-        .onChange(of: store.messages.last?.id) {
+        .onChange(of: coupleMessages.last?.id) {
             handleIncomingInteraction()
         }
         .onChange(of: store.localInteractionPresentation?.id) {
@@ -121,7 +122,7 @@ struct RootTabView: View {
     }
 
     private func handleIncomingInteraction() {
-        guard let message = store.messages.last else { return }
+        guard let message = coupleMessages.last else { return }
         guard message.id != lastSeenEffectMessageId else { return }
         lastSeenEffectMessageId = message.id
         guard message.channel == ChatChannel.couple.rawValue,
@@ -132,6 +133,10 @@ struct RootTabView: View {
             payload: payload,
             senderName: message.senderName.isEmpty ? "TA" : message.senderName,
             duration: payload.kind == .note ? 2.8 : 2.1))
+    }
+
+    private var coupleMessages: [ChatMessage] {
+        timelineStore.messages(for: .couple)
     }
 
     private func handleIncomingNote() {

@@ -42,6 +42,7 @@ struct CoupleChatApp: App {
             }
         }
         .environmentObject(store)
+        .environmentObject(store.messageStore.timelineStore)
         .environmentObject(store.historySync)
         .environmentObject(theme)
         .environmentObject(mediaFavorites)

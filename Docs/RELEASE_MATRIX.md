@@ -50,8 +50,8 @@ Original two-device release gate (waived, not represented as tested):
 - [ ] AI private and public smoke checks pass after the full matrix.
 - [ ] No pending message needs to be preserved before R8.2 deployment.
 
-R8.1 decision: accepted with the explicit single-device waiver above. Untested iPad and
-simultaneous dual-device behavior remain residual release risks.
+R8.1 decision: not fully accepted. The 2026-07-12 production deployment used an explicit
+single-device waiver, while the unchecked iPad and simultaneous dual-device rows remain open.
 
 ## R8.2 production release
 
@@ -66,4 +66,5 @@ Released on 2026-07-12 with the following evidence:
 - [x] Production logs showed AI/Memory and reminder initialization without a restart loop.
 - [x] User completed single-device production smoke: text, public `@大橘`, private AI, image upload and preview.
 
-R8.2 decision: accepted. The rollback image, release backup and prior IPA artifacts must be retained.
+R8.2 deployment decision: accepted under the recorded R8.1 waiver. The rollback image,
+release backup and prior IPA artifacts must be retained; this does not close the unchecked matrix.

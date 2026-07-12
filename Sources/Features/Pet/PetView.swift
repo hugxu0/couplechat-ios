@@ -6,6 +6,7 @@ import SwiftUI
 
 struct PetView: View {
     @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var timelineStore: ChatTimelineStore
     @EnvironmentObject private var theme: ThemeManager
     @State private var bubble = "喵~ 你来啦"
     @State private var showAIChat = false
@@ -182,7 +183,7 @@ struct PetView: View {
     }
 
     private var aiPreview: String {
-        guard let last = store.messages(for: .ai).last else { return "找大橘说点悄悄话" }
+        guard let last = timelineStore.messages(for: .ai).last else { return "找大橘说点悄悄话" }
         return last.type == "text" ? last.text : "[\(last.type)]"
     }
 }

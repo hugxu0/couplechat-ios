@@ -2,6 +2,7 @@ import UIKit
 
 final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     private let presenting: Bool
+    private let interactiveDismissal: Bool
     private let selectedId: String?
     private let sourceProvider: ((String) -> UIView?)?
     private let completion: (() -> Void)?
@@ -10,11 +11,13 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
 
     init(
         presenting: Bool,
+        interactiveDismissal: Bool = false,
         selectedId: String?,
         sourceProvider: ((String) -> UIView?)?,
         completion: (() -> Void)? = nil
     ) {
         self.presenting = presenting
+        self.interactiveDismissal = interactiveDismissal
         self.selectedId = selectedId
         self.sourceProvider = sourceProvider
         self.completion = completion
@@ -47,6 +50,9 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
 
         let source = selectedId.flatMap { sourceProvider?($0) }
         let sourceTransform = transform(from: source, in: container, target: view.bounds)
+        let dismissalTransform = interactiveDismissal
+            ? MediaViewerTransitionMetrics.interactiveTransform(progress: 1, height: container.bounds.height)
+            : sourceTransform
         if presenting {
             view.alpha = 0
             view.transform = sourceTransform
@@ -56,8 +62,8 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
             duration: transitionDuration(using: transitionContext),
             dampingRatio: 0.9
         ) {
-            view.alpha = self.presenting ? 1 : 0
-            view.transform = self.presenting ? .identity : sourceTransform
+            view.alpha = self.presenting ? 1 : MediaViewerTransitionMetrics.backgroundAlpha(progress: 1)
+            view.transform = self.presenting ? .identity : dismissalTransform
         }
         animator.addCompletion { [weak self] position in
             guard let self else { return }

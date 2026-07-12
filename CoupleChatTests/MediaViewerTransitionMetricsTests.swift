@@ -22,6 +22,13 @@ final class MediaViewerTransitionMetricsTests: XCTestCase {
         XCTAssertEqual(MediaViewerTransitionMetrics.backgroundAlpha(progress: 1), 0)
     }
 
+    func testInteractiveTransformTracksFingerDistanceAndScale() {
+        let transform = MediaViewerTransitionMetrics.interactiveTransform(progress: 0.5, height: 800)
+        XCTAssertEqual(transform.ty, 288, accuracy: 0.001)
+        XCTAssertEqual(transform.a, 0.89, accuracy: 0.001)
+        XCTAssertEqual(transform.d, 0.89, accuracy: 0.001)
+    }
+
     func testDismissalUsesDistanceOrVelocity() {
         XCTAssertTrue(MediaViewerTransitionMetrics.shouldFinish(
             translationY: 200, velocityY: 100, height: 800))

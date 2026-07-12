@@ -64,6 +64,7 @@ final class ChatMediaViewerCoordinator: NSObject, UIViewControllerTransitioningD
     func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
         MediaViewerTransitionAnimator(
             presenting: false,
+            interactiveDismissal: interactionController?.isInteracting == true,
             selectedId: session?.selectedId,
             sourceProvider: sourceProvider,
             completion: { [weak self] in self?.finishSession() })

@@ -26,6 +26,17 @@ enum MediaViewerTransitionMetrics {
         max(0, 1 - min(1, max(0, progress)) * 1.18)
     }
 
+    static func interactiveTransform(progress: CGFloat, height: CGFloat) -> CGAffineTransform {
+        let clampedProgress = min(1, max(0, progress))
+        return CGAffineTransform(
+            translationX: 0,
+            y: max(1, height) * 0.72 * clampedProgress
+        )
+        .scaledBy(
+            x: scale(progress: clampedProgress),
+            y: scale(progress: clampedProgress))
+    }
+
     static func shouldFinish(translationY: CGFloat, velocityY: CGFloat, height: CGFloat) -> Bool {
         progress(translationY: translationY, height: height) >= 0.32 || velocityY >= 950
     }
