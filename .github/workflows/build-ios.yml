@@ -9,6 +9,9 @@ on:
         default: false
   push:
     branches: [main]
+    paths-ignore:
+      - "Docs/**"
+      - "README.md"
 
 concurrency:
   group: ios-${{ github.workflow }}-${{ github.ref }}
@@ -16,7 +19,6 @@ concurrency:
 
 jobs:
   verify-server:
-    if: github.event_name != 'workflow_dispatch' || inputs.full_validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -25,10 +27,10 @@ jobs:
         working-directory: server
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -48,7 +50,7 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -59,14 +61,10 @@ jobs:
 
       - name: Install tools
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.full_validation }}" != "true" ]]; then
-            brew install xcodegen
-          else
-            brew install swiftlint xcodegen
-          fi
+          brew install swiftlint xcodegen
 
       - name: Record build environment
-        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
+        if: github.event_name == 'workflow_dispatch' && inputs.full_validation
         run: |
           mkdir -p build-artifacts
           {
@@ -85,14 +83,14 @@ jobs:
           } | tee build-artifacts/environment.txt
 
       - name: Generate project
-        run: xcodegen generate
+        run: |
+          mkdir -p build-artifacts
+          xcodegen generate
 
       - name: SwiftLint
-        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         run: swiftlint lint --reporter github-actions-logging
 
       - name: Guard structure of new Swift files
-        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
@@ -112,7 +110,6 @@ jobs:
           done < build-artifacts/new-swift-files.txt
 
       - name: Unit tests
-        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         run: |
           set -o pipefail
           DEVICE_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPhone 17")
@@ -125,7 +122,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       - name: Chat header visual fixtures
-        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
+        if: github.event_name == 'workflow_dispatch' && inputs.full_validation
         run: |
           set -o pipefail
           DEVICE_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPhone 17")
@@ -142,7 +139,7 @@ jobs:
             --output-path build-artifacts/chat-header-screenshots
 
       - name: Build for iPad simulator
-        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
+        if: github.event_name == 'workflow_dispatch' && inputs.full_validation
         run: |
           IPAD_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPad")
           xcodebuild build \
@@ -171,15 +168,15 @@ jobs:
           zip -qry CoupleChat-unsigned.ipa Payload
 
       - name: Upload IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: CoupleChat-unsigned-${{ github.run_number }}
           path: build/CoupleChat-unsigned.ipa
           retention-days: 30
 
       - name: Upload build diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
+        if: failure() || (github.event_name == 'workflow_dispatch' && inputs.full_validation)
+        uses: actions/upload-artifact@v7
         with:
           name: CoupleChat-diagnostics-${{ github.run_number }}
           path: build-artifacts/
