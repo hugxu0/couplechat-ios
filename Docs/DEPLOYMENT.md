@@ -35,6 +35,7 @@ PORT=8080
 PUBLIC_BASE_URL=https://hoo66.top
 TOKEN_SECRET=<stable-random-secret>
 DATABASE_URL=postgres://<user>:<password>@127.0.0.1:5432/couplechat
+RUN_MIGRATIONS=false
 COUPLECHAT_ACCOUNTS=xu|小旭|<password>|🐶;si|小偲|<password>|🐰
 APP_DEEP_LINK_SCHEME=couplechat://
 ```
@@ -42,6 +43,25 @@ APP_DEEP_LINK_SCHEME=couplechat://
 AI 和 embedding 配置见 [AI 系统](AI.md)。`.env` 权限应为 `600`，不能通过日志、聊天或 Git 传递完整内容。
 
 ## 更新服务
+
+生产 Web 进程不会自动修改数据库。包含新 migration 的版本必须按“备份 → 短暂停写 → 单独 migrator → 启动候选 → 验证”的顺序发布；不要用普通容器启动来碰运气升级 schema。
+
+```bash
+cd /opt/couplechat-ios/server
+
+# 1. 先生成并实际恢复校验一份备份，见下文“备份”。
+# 2. 构建候选镜像，但先不要替换正式容器。
+docker compose -f compose.production.yml build
+
+# 3. 在与正式服务相同的环境中只运行一次 migrator。
+docker run --rm --network host --env-file .env \
+  couplechat-server:local npm run migrate
+
+# 4. migrator 成功后再启动新版 Web 进程。
+docker compose -f compose.production.yml up -d
+```
+
+高风险 migration 应通过 `BACKUP_QUIESCE_HOOK` 暂停写入；如果没有停写能力，至少先停止 Web 容器，再运行 migrator。迁移失败时不要反复重启新版服务，应保留现场并按已验证备份恢复。
 
 在服务器项目目录执行：
 
@@ -74,6 +94,33 @@ docker compose -f compose.production.yml logs --tail=100 couplechat-server
 应用模板前先运行 `nginx -t`，成功后再 reload。
 
 ## 备份
+
+仓库提供轻量脚本，默认生成每日备份、周日副本、校验值并轮换保留 7 个日周期与 35 天周备份：
+
+```bash
+cd /opt/couplechat-ios/server
+sudo BACKUP_ROOT=/root/codex-backups/couplechat \
+  BACKUP_ALLOWED_PREFIX=/root/codex-backups \
+  bash scripts/backup-production.sh
+sudo VERIFY_DATABASE_URL='postgres://<verify-user>:<password>@127.0.0.1:5432/postgres' \
+  VERIFY_ALLOWED_PREFIX=/root/codex-backups \
+  bash scripts/verify-backup.sh \
+  /root/codex-backups/couplechat/daily/<timestamp>
+```
+
+脚本从环境变量或当前 `.env` 读取 `DATABASE_URL`，但不会输出连接串。备份目录使用 `umask 077`，内容包括 PostgreSQL custom dump、uploads、非敏感部署文件、表计数、媒体清单和 SHA-256；默认不归档明文 `.env`。只有归档和全部校验成功后，随机临时目录才原子改名为正式备份。
+
+`verify-backup.sh` 会创建随机临时数据库，完整恢复 dump、核对 migration 与核心表计数，并抽样解包验证媒体哈希，完成后删除临时数据库。`VERIFY_DATABASE_URL` 应使用具备 `CREATEDB`、但不是超级用户的专用校验账号；它绝不会指向要覆盖的生产数据库。若确实需要同时备份 `.env`，显式设置 `BACKUP_INCLUDE_ENV=1`，并把备份目录视为密钥材料管理。
+
+正式定时任务建议设置 `BACKUP_REQUIRE_QUIESCE=1` 和绝对路径的 `BACKUP_QUIESCE_HOOK`。hook 接收 `begin <backup_id>` 与 `end <backup_id>`，用于短暂停写；未配置时备份会标记为 `best_effort`，适合当前小规模使用，但数据库和媒体文件之间不保证同一瞬间快照。
+
+建议 root cron：
+
+```cron
+17 3 * * * cd /opt/couplechat-ios/server && BACKUP_ALLOWED_PREFIX=/root/codex-backups BACKUP_ROOT=/root/codex-backups/couplechat bash scripts/backup-production.sh >> /var/log/couplechat-backup.log 2>&1
+```
+
+每周至少对最新备份运行一次 `verify-backup.sh`；它会自动恢复到新的随机数据库并核对内容。真正灾备恢复仍必须使用新的空数据库和空媒体目录，确认结果后才能切换正式连接。
 
 每次发布或高风险数据操作前至少保存：
 

@@ -8,11 +8,12 @@
 
 ## 1. 当前结论
 
-主体功能已经上线，R2/R3 的用户交互方案不应无复现地推倒重做。结构治理仍有明确余项：R5.3/R5.4 尚未完全达到计划边界；R8.1 的双设备/iPad 真机矩阵也尚未执行。后续应把它们当作有边界的维护工作，而不是重新发起一次全量重构。
+个人版 V1 已上线；2026-07-13 用户确认进入可扩展 V2：未来支持其他情侣注册配对、同账号 iPhone/iPad、多设备全量同步、共同相册/那年今日、共享日历、语音转写、Memory 控制中心和服务端持久化大橘。产品与迁移权威文档为 `V2_PRODUCT_PLAN.md`、`V2_ARCHITECTURE.md`，旧 R0-R8 文档保留为历史证据。
 
 发布与后续维护状态：
 
 - 完整 CI run `29175140556` 全部通过（R0-R8 发布基线）。
+- 当前 HEAD 的 run `29204335643` 曾因 `RealtimeEventRouter.bind` 结构阈值失败；本地已按事件拆分，尚需新的 macOS CI 验证 iOS 编译、测试与 Archive。
 - 发布候选 IPA：`CoupleChat-unsigned-230`（用户真机回归通过）。
 - 本地后续构建产物最新为 `CoupleChat-unsigned-247`（发布后的 Markdown / 确认卡等维护构建；不是新的正式发布标签）。
 - 生产后端镜像：`couplechat-server:candidate-6a2e833`，正式标签为 `couplechat-server:local`。
@@ -29,6 +30,11 @@
 - 2026-07-13 结构整理：Chat 去 V2 命名并按 Session/Timeline/Media/Search/Settings 分层；Reminders/Profile 子文件与子目录收敛。
 - 2026-07-13 Core 按 Models/Networking/Persistence/Chat/Shared/Media/Support 分层；互动 SwiftUI 展示移到 Chat/Presentation。
 - 2026-07-13 R5.3/R5.4 继续收敛：消息映射与远端分页移出 `MessageStore`，Socket 生命周期和健康检查移入 `RealtimeConnectionCoordinator`，领域事件路由移入 `RealtimeEventRouter`；outbox 串行 replay、文件持久化/清理与 retry 判定移入 `OutboxProcessor`，上传/ack UI 投影仍由 `MessageStore` 协调。
+- 2026-07-13 V2 第一批落地：系统自适应 Tab/侧栏、Universal iPhone+iPad 方向配置、窗口尺寸适配、Memory 正式 API 与设置控制中心。
+- 2026-07-13 语义修正：撤回改为全量硬删除；已读只在聊天可见且 cell 已展示后上报，服务端游标单调递增。
+- 2026-07-13 Bark 修正：共享提醒发双方、私人提醒只发 owner，删除广播保留 scope，投递结果持久化并在重启后补扫/去重/重试；iOS 不再重复安排本地到期通知。
+- 2026-07-13 录音首次授权竞态与离页/后台中断已修正；媒体收藏按账号分区。
+- 2026-07-13 V2 可运行基线完成：注册/邀请码配对、多设备会话与设备级 Bark、conversation ownership、Sync V2、Memory 控制中心、语音转写、共同相册/那年今日、共享/私人日历和服务端持久化大橘。当前代码及 v11–v22 migration 均为未发布候选，尚未部署生产。
 
 详细改造与证据见 `Docs/RELEASE_REPORT_2026-07-12.md`。
 
@@ -37,9 +43,11 @@
 开始任何新任务前完整阅读：
 
 1. `Docs/PROJECT_STATUS.md`
-2. `Docs/ARCHITECTURE.md`
-3. `Docs/DEVELOPMENT.md`
-4. 与任务直接相关的 `Docs/API.md`、`Docs/AI.md` 或 `Docs/DEPLOYMENT.md`
+2. `Docs/V2_PRODUCT_PLAN.md`
+3. `Docs/V2_ARCHITECTURE.md`
+4. `Docs/ARCHITECTURE.md`
+5. `Docs/DEVELOPMENT.md`
+6. 与任务直接相关的 `Docs/API.md`、`Docs/AI.md` 或 `Docs/DEPLOYMENT.md`
 
 然后运行：
 
@@ -63,6 +71,8 @@ git log --oneline -8
 - `ChatMediaViewerCoordinator` 统一聊天、图库和收藏的媒体 Viewer 转场（目录：`Features/Chat/Media/`）。
 - 聊天功能目录已收敛为 `Home/`、`Session/`、`Timeline/`、`Media/`、`Search/`、`Settings/`、`Fixtures/`；会话入口为 `ChatView` → `ChatSessionScreen`。
 - 记录页在 `Features/Records/`；提醒页在 `Features/Reminders/`（列表/卡片/编辑器/预览分文件）；我的页在 `Features/Profile/`，主题/存储/收藏分子目录。
+- `Features/Records/`、`Reminders/`、`Pet/` 分别承载时光、计划和共同宠物；注册配对与设备管理位于 `Features/Auth/`、`Features/Profile/`。
+- `SyncV2Repository` 负责持久化变更 cursor/ack；Memory、相册、日历、转写和宠物各自使用专用 Repository，不由页面直接拼请求。
 - `MessageStore`/`ChatStore` 仍是兼容 facade；新增业务应进入对应 Repository、Store 或 Coordinator，不继续扩大 facade。
 
 服务端：
@@ -70,8 +80,10 @@ git log --oneline -8
 - `server.ts` 只负责装配和生命周期启动。
 - `app.ts` 注册 HTTP 路由，Socket 入口位于 `socket/`。
 - PostgreSQL 访问拆到 `db/client.ts`、`transaction.ts`、`rows.ts`、`migrate.ts`。
-- 已发布 migration v1-v10 受哈希测试保护，只能追加新版本。
-- AI Memory 撤回失效通过领域事件解耦。
+- 已发布 migration 只有 v1–v10，内容受哈希测试保护；v11–v22 是同一批尚未生产执行的候选，可在首次迁移前修正，执行后只能追加新版本。
+- 撤回事务硬删除服务端派生数据；领域事件只做历史 Memory 孤儿清理。
+- Reminder Bark delivery 已持久化并按设备 endpoint 独立 claim/重试；shared 发双方、personal 只发创建者。通用 notification intent 仍是后续架构目标，不是当前提醒功能的阻塞项。
+- 公聊房间按 `couple:<id>`、个人事件按 `account:<id>` 隔离；legacy `user:<username>` 只保留兼容监听。
 - scheduler、上传清理、Socket.IO、数据库按确定性顺序关闭。
 - `/live` 只表示进程存活，`/ready` 验证数据库，旧 `/health` 保持兼容。
 
@@ -79,11 +91,12 @@ git log --oneline -8
 
 - 不改已经通过验收的键盘、输入栏 inset 和分页锚点链路，除非有稳定复现的新 Bug。
 - 不删除或降级 AI 私聊、公聊 `@大橘`、Memory、确认卡、记录、提醒、纪念日和互动特效。
-- 不把失败气泡的本地删除与已发送消息的服务端撤回合并。
+- 失败气泡只删除本地 outbox；已发送消息的服务端撤回必须执行完整级联删除，不能恢复占位或“重新编辑”。
+- 已读不能根据启动时间、收到 Socket 或仅进入页面推断；必须由当前可见且已展示的消息 cell 驱动。
 - 不绕过 `clientId` 幂等，不让一次重试产生两条正式消息。
 - 不让页面生命周期重新拥有历史同步或 outbox 长任务。
 - 不在 MainActor 或 View 中直接访问 SQLite。
-- 不修改已执行的 PostgreSQL migration，只能追加。
+- 不修改已经生产执行的 PostgreSQL migration（当前 v1–v10），只能追加；尚未发布的 v11–v22 可在首次生产执行前修正，但一经执行同样冻结。
 - 不记录 token、密码、API key、数据库连接串或完整私聊正文。
 
 ## 5. 验证基线
@@ -124,21 +137,23 @@ docker compose -f compose.production.yml logs --tail=100 couplechat-server
 
 ## 7. 当前已知限制
 
-- 大橘宠物页仍是展示占位，不具备完整数值和持久化系统。
+- 新注册情侣当前使用只看本条消息的无历史 AI 模式；完整 Agent/MCP 历史检索与自动 Memory 提取仍只对 legacy `xu/si` 开放。
+- Sync V2 已做前台轮询补拉，但 `sync:available` Socket 唤醒、通用 mutation 幂等和 cursor retention/410 全量重建策略尚未完整接入客户端。
 - Bark 点击后的页面 deep link 尚未接入。
-- iPad 真机和两台设备同时在线的完整矩阵尚未执行。
-- Windows 不能本地编译 iOS，需依赖 GitHub Actions 或 Mac。
+- iPad 真机和两台设备同时在线的完整矩阵尚未执行；聊天主从双栏、照片拖放和完整键盘快捷键仍待补齐。
+- 相册只能从聊天媒体入册，尚未提供相册内直接拍摄/选择上传；日历不直接发送到期 Bark，需要通知的事项继续使用提醒。
+- Windows 不能本地编译 iOS，需依赖 GitHub Actions 或 Mac；本次 V2 工作树尚未通过新的 macOS CI。
 - 清空 App 数据后，已丢失本地文件的失败媒体无法继续重传。
-- `MessageStore`（约 1200 行）与 `ChatStore`（约 770 行）仍是兼容 facade；分页/搜索/已读/发送编排和 Socket 生命周期尚未完全下沉。
-- `ChatNativeMessageCell` 本体仍较大，后续可继续按内容类型拆 extension，但不得与发送可靠性改动混提。
+- `MessageStore` 与 `ChatStore` 仍是兼容 facade；新增领域能力不得重新塞回 facade。
 
 ## 8. 当前允许的下一步
 
-只允许这些有边界的维护，不要重开全量重构：
+优先完成这些仍有明确边界的工作：
 
-1. 继续 R5.3：把分页、搜索、已读和消息合并抽到 Repository；把 outbox flush 真正下沉，而不是只留串行锁。
-2. 继续 R5.4：抽出 `RealtimeConnectionCoordinator`，削减 `ChatStore` 对全 App 的桥接 API。
-3. 有第二台设备时执行 R8.1 双设备/iPad 真机矩阵。
-4. 纯文件级拆分（如 `ChatHomeView`、`RemindersView`）可在不改行为的前提下继续做。
+1. 在 macOS CI 跑 SwiftLint、iPhone 单测、iPad build、Archive 和 IPA 打包，修完所有 Swift 编译或结构门槛问题。
+2. 把 Agent/MCP/Memory runtime 从 legacy 字符串上下文迁移到 `conversation_id/account_id/couple_id`，再向其他情侣开放完整 AI。
+3. 补 `sync:available` 唤醒、preference 云同步和 cursor 过期重建；保持 REST cursor 为事实补漏链路。
+4. 有第二台设备时执行多设备/iPad 真机矩阵，并补聊天 iPad 双栏、拖放和键盘交互。
+5. 在隔离环境做 v10 → v22 migration、备份、真实恢复和回滚演练；确认后再安排生产发布。
 
-R5.3/R5.4 和 R8.1 的剩余工作细节见 `Docs/REFACTOR_PLAN.md`。其他新问题应先确认复现细节，再做有边界的修复。
+R5.3/R5.4 的历史拆分背景见 `Docs/REFACTOR_PLAN.md`；V2 的现行边界以 `V2_ARCHITECTURE.md` 为准。

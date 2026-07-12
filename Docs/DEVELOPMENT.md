@@ -13,43 +13,40 @@ cd server
 npm install
 ```
 
-## 本地服务端调试
+## 数据库调试
 
-项目不维护本地服务端数据库。以下命令建立 SSH 隧道并运行本地代码，数据库使用 RFCHost 上的生产 PostgreSQL：
+当前生产仍以已发布 v1–v10 为边界，而本工作树要求 v22。不要用当前工作树运行 `npm run dev:cloud-db` 直连生产：Web 进程已经强制 `RUN_MIGRATIONS=false`，会因 schema 版本不匹配安全退出，不会自动迁移。
+
+生产环境只允许做只读连接检查：
 
 ```powershell
 cd server
-npm run dev:cloud-db
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-cloud-db.ps1 -CheckOnly
 ```
 
-脚本会从服务器运行环境读取连接串，只在当前进程中改写为本机隧道地址；不会打印或保存数据库密码。调试进程固定使用：
+功能调试应使用从备份恢复的隔离 PostgreSQL，再显式运行 `npm run migrate`。生产隧道脚本不会打印或保存数据库密码，并固定使用：
 
 ```env
 CLOUD_DB_DEBUG=true
+RUN_MIGRATIONS=false
 SCHEDULED_JOBS_ENABLED=false
 UPLOADS_WRITABLE=false
 PUSH_ENABLED=false
 ```
 
-因此本地调试可以真实读写聊天、共享状态和 AI Memory，但不会运行定时任务、发送 Bark 或写媒体文件。退出进程会关闭 SSH 隧道。
-
-只检查连接：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-cloud-db.ps1 -CheckOnly
-```
+`-CheckOnly` 只读取表计数并关闭 SSH 隧道。任何需要写聊天、共享状态或 AI Memory 的调试，都必须在隔离恢复库执行。
 
 AI key 和模型配置放在被 Git 忽略的 `server/.data/production-ai.env`。该文件只能保存在受信开发机，不得写入文档或提交。
 
 ## AI 调试页
 
-运行本地服务后访问：
+在 schema 已迁移到 v22 的隔离调试库运行服务后访问：
 
 ```text
 http://127.0.0.1:8080/ai-debug
 ```
 
-页面可切换两位账号和两个频道，查看 Agent/MCP Trace、当前 Memory 及证据，也能手动整理 Memory。页面写入的是生产数据库，清除消息操作不可当作普通测试清理工具使用。
+页面可切换账号和频道，查看 Agent/MCP Trace、当前 Memory 及证据，也能手动整理 Memory。页面会写入所连接的数据库，因此只能连接隔离调试库，清除消息操作不可当作普通测试清理工具使用。
 
 ## 后端日常验证
 
