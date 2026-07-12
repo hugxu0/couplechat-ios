@@ -24,7 +24,7 @@ struct AccountAccessSheet: View {
                     .onChange(of: mode) { errorText = nil }
                 }
 
-                Section(mode == .login ? "账号登录" : "创建账号") {
+                Section {
                     TextField("用户名", text: $username)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -42,6 +42,8 @@ struct AccountAccessSheet: View {
                         SecureField("再次输入密码", text: $confirmation)
                             .textContentType(.newPassword)
                     }
+                } header: {
+                    Text(mode == .login ? "账号登录" : "创建账号")
                 } footer: {
                     if mode == .register {
                         Text("用户名使用 3–24 位小写字母、数字或下划线；密码至少 8 位。注册后还需要创建两人空间或输入邀请码。")

@@ -73,11 +73,13 @@ struct AIMemoryDetailView: View {
     }
 
     private var contentSection: some View {
-        Section("大橘记住的内容") {
+        Section {
             TextEditor(text: $draft)
                 .frame(minHeight: 130)
                 .accessibilityLabel("记忆内容")
             Toggle("标为重要", isOn: $isImportant)
+        } header: {
+            Text("大橘记住的内容")
         } footer: {
             Text("纠正后，大橘会使用你保存的版本。")
         }
