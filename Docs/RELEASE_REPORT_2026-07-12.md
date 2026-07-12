@@ -288,7 +288,8 @@ nginx -> Fastify / Socket.IO
 - 服务端 29/29 单元与 PostgreSQL 集成测试已通过；覆盖认证/设备/配对、严格已读、硬撤回、Bark、Sync、Memory、转写、相册、日历、宠物、迁移升级、presence 和 AI 确认卡并发收敛。
 - 独立 PostgreSQL smoke 已通过，服务端 production build 已通过。由于工具单次执行时限，最终验证采用与 `npm test` 等价的 typecheck、`test:unit`、`smoke:postgres` 分步执行。
 - 备份脚本 `bash -n` 通过；真实生产凭据和真实生产恢复演练尚未执行。
-- Windows 没有 Xcode/Swift 工具链。iOS 新页面、Repository fixture 和结构门槛已做静态核对，但必须在 macOS CI 通过 SwiftLint、单测、iPhone/iPad build 和 Archive 后才可作为安装候选。
+- Windows 没有 Xcode/Swift 工具链；V2 代码提交 `a4e1d74` 已由 GitHub Actions run `29211061229` 在 macOS/Xcode 26.3 完整通过 SwiftLint、结构护栏、iPhone 单测、聊天视觉 Fixture、iPad Simulator build、无签名 Archive 与 IPA 打包。
+- CI 产物为 `CoupleChat-unsigned-252`。它是未签名、未部署、未做 v10→v22 生产迁移和真机 V2 回归的安装候选，不是新的正式发布版本。
 
 ### 仍然明确保留的边界
 

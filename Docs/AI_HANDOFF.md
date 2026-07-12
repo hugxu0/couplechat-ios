@@ -13,9 +13,10 @@
 发布与后续维护状态：
 
 - 完整 CI run `29175140556` 全部通过（R0-R8 发布基线）。
-- 当前 HEAD 的 run `29204335643` 曾因 `RealtimeEventRouter.bind` 结构阈值失败；本地已按事件拆分，尚需新的 macOS CI 验证 iOS 编译、测试与 Archive。
+- V2 代码提交 `a4e1d74` 的完整 run `29211061229` 已通过 macOS/Xcode 26.3 验证；其中包含服务端、SwiftLint、结构护栏、iPhone 单测、聊天视觉 Fixture、iPad build、无签名 Archive 和 IPA 上传。
 - 发布候选 IPA：`CoupleChat-unsigned-230`（用户真机回归通过）。
 - 本地后续构建产物最新为 `CoupleChat-unsigned-247`（发布后的 Markdown / 确认卡等维护构建；不是新的正式发布标签）。
+- V2 未发布安装候选为 `CoupleChat-unsigned-252`；生产仍在 v10/legacy V1，尚未执行 v11–v22 迁移或 V2 部署。
 - 生产后端镜像：`couplechat-server:candidate-6a2e833`，正式标签为 `couplechat-server:local`。
 - 回滚镜像：`couplechat-server:rollback-20260712-094038`。
 - 发布前备份：`/root/codex-backups/couplechat-release-20260712-094038`。
