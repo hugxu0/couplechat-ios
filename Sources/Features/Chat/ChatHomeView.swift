@@ -3,6 +3,7 @@ import SwiftUI
 // 聊天首页：把两个人的状态、互动和最近消息收进一张柔软的情侣卡片。
 
 struct ChatHomeView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
     @State private var showChat = false
@@ -50,19 +51,29 @@ struct ChatHomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                shortPullRefreshProbe
-                mainPanel
-                    .padding(.horizontal, DS.Spacing.page)
-                    .padding(.top, 8)
-                // 卡片外保留一小段真实的滚动缓冲，供下拉刷新和底部标签栏呼吸，
-                // 不再把这块空间塞进「最新消息」里造成一片空白。
-                Color.clear.frame(height: 58)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    shortPullRefreshProbe {
+                        Task { @MainActor in
+                            await Task.yield()
+                            withAnimation(DS.Anim.springFast) {
+                                proxy.scrollTo("chat-home-top", anchor: .top)
+                            }
+                        }
+                    }
+                    mainPanel
+                        .padding(.horizontal, DS.Spacing.page)
+                        .padding(.top, 8)
+                        .id("chat-home-top")
+                    // 卡片外保留一小段真实的滚动缓冲，供下拉刷新和底部标签栏呼吸，
+                    // 不再把这块空间塞进「最新消息」里造成一片空白。
+                    Color.clear.frame(height: 58)
+                }
+                .coordinateSpace(name: "chatHomeScroll")
+                .scrollIndicators(.hidden)
+                .background(homePageBackground)
+                .overlay(alignment: .top) { pullRefreshIndicator }
             }
-            .coordinateSpace(name: "chatHomeScroll")
-            .scrollIndicators(.hidden)
-            .background(AppPageBackground())
-            .overlay(alignment: .top) { pullRefreshIndicator }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) { ChatView() }
             .alert(editingStatusID == nil ? "添加状态" : "编辑状态", isPresented: $showCustomStatusPrompt) {
@@ -143,7 +154,7 @@ struct ChatHomeView: View {
             RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
                 .stroke(
                     LinearGradient(
-                        colors: [.white.opacity(0.62), theme.accent.color.opacity(0.16)],
+                        colors: homeCardBorderColors,
                         startPoint: .top,
                         endPoint: .bottom
                     ),
@@ -173,7 +184,12 @@ struct ChatHomeView: View {
                         endPoint: .trailing
                     )
                 )
-                .shadow(color: .white.opacity(0.95), radius: 3)
+                .shadow(
+                    color: colorScheme == .dark
+                        ? theme.accent.color.opacity(0.32)
+                        : .white.opacity(0.9),
+                    radius: 3
+                )
 
                 Image(systemName: "heart.fill")
                     .font(.system(size: 12, weight: .bold))
@@ -207,22 +223,40 @@ struct ChatHomeView: View {
 
     private var homeCardBackground: some View {
         ZStack(alignment: .top) {
-            LinearGradient(
-                colors: [
-                    DS.Palette.cardSurface,
-                    theme.accent.color.opacity(0.13),
-                    DS.Palette.pink.opacity(0.075),
-                    DS.Palette.cardSurface.opacity(0.96),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            RadialGradient(
-                colors: [.white.opacity(0.58), theme.accent.color.opacity(0.07), .clear],
-                center: .top,
-                startRadius: 4,
-                endRadius: 185
-            )
+            if colorScheme == .dark {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.17, green: 0.075, blue: 0.13),
+                        Color(red: 0.12, green: 0.045, blue: 0.09),
+                        Color(red: 0.075, green: 0.045, blue: 0.115),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                RadialGradient(
+                    colors: [theme.accent.color.opacity(0.18), DS.Palette.pink.opacity(0.08), .clear],
+                    center: .top,
+                    startRadius: 8,
+                    endRadius: 210
+                )
+            } else {
+                LinearGradient(
+                    colors: [
+                        Color(red: 1, green: 0.975, blue: 0.985),
+                        theme.accent.color.opacity(0.12),
+                        DS.Palette.pink.opacity(0.09),
+                        Color(red: 0.95, green: 0.93, blue: 0.99),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                RadialGradient(
+                    colors: [.white.opacity(0.42), theme.accent.color.opacity(0.06), .clear],
+                    center: .top,
+                    startRadius: 6,
+                    endRadius: 195
+                )
+            }
             HStack {
                 Image(systemName: "sparkles")
                 Spacer()
@@ -236,7 +270,45 @@ struct ChatHomeView: View {
         }
     }
 
-    private var shortPullRefreshProbe: some View {
+    private var homeCardBorderColors: [Color] {
+        if colorScheme == .dark {
+            return [
+                theme.accent.color.opacity(0.4),
+                DS.Palette.pink.opacity(0.22),
+                Color.black.opacity(0.12),
+            ]
+        }
+        return [.white.opacity(0.48), theme.accent.color.opacity(0.17)]
+    }
+
+    @ViewBuilder
+    private var homePageBackground: some View {
+        if colorScheme == .dark {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.055, green: 0.03, blue: 0.065),
+                    Color(red: 0.095, green: 0.03, blue: 0.07),
+                    Color(red: 0.04, green: 0.025, blue: 0.065),
+                ],
+                startPoint: .top,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+        } else {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.965, green: 0.96, blue: 0.985),
+                    Color(red: 0.985, green: 0.955, blue: 0.97),
+                    Color(red: 0.95, green: 0.955, blue: 0.985),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+        }
+    }
+
+    private func shortPullRefreshProbe(onRefreshFinished: @escaping () -> Void) -> some View {
         GeometryReader { geo in
             Color.clear
                 .onChange(of: geo.frame(in: .named("chatHomeScroll")).minY) { _, value in
@@ -256,6 +328,7 @@ struct ChatHomeView: View {
                             flashRefreshResult(result)
                             refreshingHome = false
                             pullProgress = 0
+                            onRefreshFinished()
                         }
                     }
                 }

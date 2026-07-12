@@ -156,7 +156,7 @@ struct RecordsView: View {
                         .offset(x: 130, y: 34)
                 }
             )
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
             .shadow(color: theme.accent.color.opacity(0.35), radius: 16, y: 8)
         }
         .buttonStyle(PressableStyle())

@@ -167,7 +167,7 @@ struct RemindersView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
     }
 
     @ViewBuilder
@@ -406,10 +406,10 @@ private struct PersonalItemCard: View {
         .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.Palette.cardSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
         .shadow(color: DS.Surface.shadow, radius: 12, y: 5)
         .opacity(item.isDone ? 0.68 : 1)
-        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
         .onTapGesture(perform: onEdit)
     }
 
