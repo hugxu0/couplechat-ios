@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-struct ChatV2Screen: View {
+struct ChatSessionScreen: View {
     let channel: ChatChannel
 
     @EnvironmentObject private var app: AppState
@@ -10,7 +10,7 @@ struct ChatV2Screen: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
 
-    @State private var jumpCommand: ChatV2JumpCommand?
+    @State private var jumpCommand: ChatSessionJumpCommand?
     @State private var isShowingDetail = false
 
     private var title: String {
@@ -158,12 +158,12 @@ struct ChatV2Screen: View {
             partnerOnline: store.partnerOnline,
             onJumpToMessage: { message in
                 isShowingDetail = false
-                let command = ChatV2JumpCommand(action: .message(message))
+                let command = ChatSessionJumpCommand(action: .message(message))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { jumpCommand = command }
             },
             onJumpToDate: { date in
                 isShowingDetail = false
-                let command = ChatV2JumpCommand(action: .date(date))
+                let command = ChatSessionJumpCommand(action: .date(date))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { jumpCommand = command }
             })
     }
@@ -206,7 +206,7 @@ private struct SwipeBackEnabler: UIViewControllerRepresentable {
     }
 }
 
-struct ChatV2JumpCommand: Identifiable {
+struct ChatSessionJumpCommand: Identifiable {
     enum Action {
         case message(ChatMessage)
         case date(Date)
@@ -223,7 +223,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
     let dynamicallySamplesComposerTone: Bool
     let usesDarkChatSurface: Bool
     let timelineUsesLightContent: Bool
-    @Binding var jumpCommand: ChatV2JumpCommand?
+    @Binding var jumpCommand: ChatSessionJumpCommand?
 
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager

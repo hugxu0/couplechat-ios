@@ -207,7 +207,7 @@ VPS 只有约 458 MB 可用内存，完整 Docker `npm ci` 构建失败。本次
 收尾阶段重新按全仓符号引用审计，而不是凭文件名删除。已清理：
 
 - 完全无调用的 `Sources/DesignSystem/UIKitBridge.swift`。
-- 完全无调用的 `Sources/Features/Chat/ChatV2/ChatSharedViews.swift`。
+- 完全无调用的 `Sources/Features/Chat/Session/ChatSharedViews.swift`。
 - 未使用的 `AppSectionHeader`、`AppCard`、`DynamicGradientBackground`、`ChatGlassButton`。
 - 服务端无调用的旧 helper/type：`resolveUsername`、`parseActions`、`latestTs`、`tracePrompt`、`visionEnabled`、`createSystemMessage`、`ReadReceiptPayload`、`deleteSharedItem`。
 

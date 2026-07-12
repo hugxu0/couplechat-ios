@@ -26,6 +26,7 @@
 - 2026-07-13 阶段 2 首页：`ChatHomeView` 拆入 `Sources/Features/Chat/Home/`（models / components / avatar / 装配），Profile 残留 `appSurface` 收敛为 `dsCard`。
 - 2026-07-13 阶段 3 外围页：提醒页与我的页表面/字体/分段控件收敛到 `DS` 与 `dsCard`；不改业务请求与数据结构。
 - 2026-07-13 阶段 4 外围页细化：记录/主题/存储/宠物/聊天首页常规字号与圆角收敛到 `DS.Typo`；装饰性大图标保留固定字号。
+- 2026-07-13 结构整理：Chat 去 V2 命名并按 Session/Timeline/Media/Search/Settings 分层；Reminders/Profile 子文件与子目录收敛。
 
 详细改造与证据见 `Docs/RELEASE_REPORT_2026-07-12.md`。
 
@@ -57,9 +58,9 @@ git log --oneline -8
 - `MediaUploadService` 负责媒体上传边界。
 - `HistorySyncCoordinator` 拥有跨页面历史同步任务。
 - `ChatTimelineController` 负责 collection view、diff、分页锚点与滚动决策。
-- `ChatMediaViewerCoordinator` 统一聊天、图库和收藏的媒体 Viewer 转场。
-- 聊天消息 cell 主实现仍在 `ChatTimelineCells.swift`（`ChatNativeMessageCell`）；时间/系统 cell、头像和相册指示器已拆到同目录独立文件。
-- 记录页主页面在 `RecordsView.swift`；推荐模型/弹层、统计卡、日期与纪念日编辑器已拆到 `Sources/Features/Records/` 下独立文件。
+- `ChatMediaViewerCoordinator` 统一聊天、图库和收藏的媒体 Viewer 转场（目录：`Features/Chat/Media/`）。
+- 聊天功能目录已收敛为 `Home/`、`Session/`、`Timeline/`、`Media/`、`Search/`、`Settings/`、`Fixtures/`；会话入口为 `ChatView` → `ChatSessionScreen`。
+- 记录页在 `Features/Records/`；提醒页在 `Features/Reminders/`（列表/卡片/编辑器/预览分文件）；我的页在 `Features/Profile/`，主题/存储/收藏分子目录。
 - `MessageStore`/`ChatStore` 仍是兼容 facade；新增业务应进入对应 Repository、Store 或 Coordinator，不继续扩大 facade。
 
 服务端：

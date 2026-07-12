@@ -8,6 +8,6 @@ struct ChatView: View {
     }
 
     var body: some View {
-        ChatV2Screen(channel: channel)
+        ChatSessionScreen(channel: channel)
     }
 }

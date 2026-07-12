@@ -198,7 +198,7 @@ final class ChatViewController: UIViewController {
         applyInputLayout(duration: 0, curve: .curveEaseOut)
     }
 
-    func performJump(_ command: ChatV2JumpCommand) {
+    func performJump(_ command: ChatSessionJumpCommand) {
         guard activeJumpID != command.id else { return }
         activeJumpID = command.id
         switch command.action {

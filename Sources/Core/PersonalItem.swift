@@ -26,4 +26,25 @@ struct PersonalItem: Identifiable, Codable, Equatable {
         guard let dueDate else { return false }
         return !isDone && dueDate < Date()
     }
+
+    var isToday: Bool {
+        guard let dueDate else { return false }
+        return Calendar.current.isDateInToday(dueDate)
+    }
+}
+
+extension Date {
+    /// 提醒到期时间展示：今天/明天优先，其余用月日。
+    var smartLabel: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        if Calendar.current.isDateInToday(self) {
+            formatter.dateFormat = "今天 HH:mm"
+        } else if Calendar.current.isDateInTomorrow(self) {
+            formatter.dateFormat = "明天 HH:mm"
+        } else {
+            formatter.dateFormat = "M月d日 HH:mm"
+        }
+        return formatter.string(from: self)
+    }
 }
