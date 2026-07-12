@@ -50,10 +50,12 @@ Sources/
     Auth/                    登录
     Chat/
       ChatV2/                聊天页面装配、composer 与控制器扩展
-      UIKit/                 时间线、cell、滚动状态、消息动作、贴纸面板
+      UIKit/                 时间线、消息 cell、滚动状态、消息动作、贴纸面板
+                             （ChatNativeMessageCell 主实现在 ChatTimelineCells.swift；
+                              时间/系统 cell、头像、相册指示器为同目录独立文件）
       MediaViewer/           共享媒体 Viewer 与交互式转场
       Fixtures/              DEBUG-only 聊天顶部视觉夹具
-    Records/                 记录与纪念日
+    Records/                 记录页、统计卡、推荐弹层、日期/纪念日编辑器
     Reminders/               提醒与备忘
     Profile/                 我的、存储、主题、收藏媒体
     Pet/                     当前仅展示占位的宠物页

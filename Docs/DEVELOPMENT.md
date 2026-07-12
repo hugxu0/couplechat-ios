@@ -85,6 +85,17 @@ GitHub Actions 的 `iOS 日常验证与构建` 分成两档，服务端与客户
 
 生成的 `.xcodeproj`、`build/` 和 `build-artifacts/` 不提交。
 
+### 本地 `build-artifacts/` 保留策略
+
+该目录只服务本机安装与排障，不进入 Git。建议只保留：
+
+- 当前正式发布候选 IPA（例如 `CoupleChat-unsigned-230`）
+- 最近一次可用维护构建 IPA（例如 `CoupleChat-unsigned-247`）
+- 与生产对应的 server 镜像 tar / 回滚相关包
+- 如需对照，最多保留 1 份最近 GitHub run 下载物
+
+中间编号的 IPA、重复的 github-run 目录和过期诊断包应及时删除，避免把本地缓存误当成发布真相。
+
 ## 开发约定
 
 - 新页面观察真正拥有状态的对象：聊天窗口用 `ChatTimelineStore`，共享状态用 `SharedStore`，账号用 `AuthStore`。

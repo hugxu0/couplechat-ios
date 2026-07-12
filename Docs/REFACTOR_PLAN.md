@@ -21,7 +21,15 @@
 
 ### 1.1 任务状态表
 
-状态只能使用“待执行 / 进行中 / 已验收 / 阻塞”。代码写完但没有通过本任务验收时，仍然是“进行中”。当前唯一允许直接开始的任务是 R0.1。
+状态只能使用“待执行 / 进行中 / 已验收 / 阻塞”。代码写完但没有通过本任务验收时，仍然是“进行中”。
+
+当前只允许继续这三项未完成工作，不要重开已验收阶段：
+
+- R5.3 拆分 `MessageStore`
+- R5.4 缩小 `ChatStore`
+- R8.1 发布前矩阵（双设备 / iPad 真机）
+
+纯文件级拆分、文档对齐和本地 artifact 清理属于维护整理，可与上述任务并行，但不得借机改键盘、发送幂等或 AI 边界。
 
 | 阶段 | 任务 | 状态 | 前置任务 |
 |---|---|---|---|
@@ -448,7 +456,7 @@ Sources/Features/Chat/MediaViewer/
 
 #### R5.3 拆分 `MessageStore`
 
-当前进度：`ChatTimelineStore`、`OutboxProcessor` 和 `MediaUploadService` 已抽出，但分页、搜索、已读和消息合并仍留在 compatibility facade 中，因此保持“进行中”。
+当前进度：`ChatTimelineStore`、`OutboxProcessor` 和 `MediaUploadService` 已抽出，但分页、搜索、已读、消息合并和 outbox flush 编排仍留在 compatibility facade 中，因此保持“进行中”。`OutboxProcessor` 目前主要提供串行锁与 pending 持久化读写，真正的上传/发送循环仍在 `MessageStore`。
 
 - `ChatTimelineStore`：仅 MainActor 可观察状态和窗口。
 - `ChatRepository`：分页、搜索、已读和消息合并。
@@ -458,7 +466,7 @@ Sources/Features/Chat/MediaViewer/
 
 #### R5.4 缩小 `ChatStore`
 
-当前进度：统计、存储和 personal item 的实现已移入 repository，但 `ChatStore` 仍负责装配多个 App 级依赖和 Socket 生命周期；页面已开始直接观察 `ChatTimelineStore`，连接协调器仍待独立，因此保持“进行中”。
+当前进度：统计、存储和 personal item 的实现已移入 repository，但 `ChatStore` 仍负责装配多个 App 级依赖和 Socket 生命周期；页面已开始直接观察 `ChatTimelineStore`，连接协调器仍待独立，因此保持“进行中”。记录页与聊天 cell 辅助类型已做纯文件拆分，这属于维护整理，不代替 R5.4 完成。
 
 - 移出统计、存储空间、媒体全量缓存、personal item CRUD。
 - 连接状态交给 `RealtimeConnectionCoordinator`。

@@ -1,6 +1,6 @@
 # AI 接手说明
 
-> 更新时间：2026-07-12
+> 更新时间：2026-07-13
 >
 > 当前分支：`main`
 >
@@ -10,16 +10,18 @@
 
 主体功能已经上线，R2/R3 的用户交互方案不应无复现地推倒重做。结构治理仍有明确余项：R5.3/R5.4 尚未完全达到计划边界；R8.1 的双设备/iPad 真机矩阵也尚未执行。后续应把它们当作有边界的维护工作，而不是重新发起一次全量重构。
 
-发布状态：
+发布与后续维护状态：
 
-- 完整 CI run `29175140556` 全部通过。
-- 发布候选 IPA：`CoupleChat-unsigned-230`。
+- 完整 CI run `29175140556` 全部通过（R0-R8 发布基线）。
+- 发布候选 IPA：`CoupleChat-unsigned-230`（用户真机回归通过）。
+- 本地后续构建产物最新为 `CoupleChat-unsigned-247`（发布后的 Markdown / 确认卡等维护构建；不是新的正式发布标签）。
 - 生产后端镜像：`couplechat-server:candidate-6a2e833`，正式标签为 `couplechat-server:local`。
 - 回滚镜像：`couplechat-server:rollback-20260712-094038`。
 - 发布前备份：`/root/codex-backups/couplechat-release-20260712-094038`。
 - 用户已完成单设备生产冒烟：普通消息、`@大橘`、AI 私聊、图片上传与预览全部通过。
 - 当次发布按用户要求采用单设备豁免；R8.1 的双设备/iPad 真机矩阵仍保持未验收，这是残余风险，不是假装已测试。
-- 收尾提交 `23ae071` 已推送；本地后端 test/build 通过，快速 Archive run `29176467187` 通过，artifact 为 `CoupleChat-unsigned-232`。
+- 发布后 `main` 已继续合入 Markdown 消息渲染、Mermaid 流程图、事项确认卡布局与归属等维护提交。
+- 2026-07-13 完成仓库卫生整理：本地 `build-artifacts` 只保留 230/247 与生产 server 包；聊天 cell 辅助类型与记录页子视图完成纯文件拆分，不改业务行为。
 
 详细改造与证据见 `Docs/RELEASE_REPORT_2026-07-12.md`。
 
@@ -52,6 +54,8 @@ git log --oneline -8
 - `HistorySyncCoordinator` 拥有跨页面历史同步任务。
 - `ChatTimelineController` 负责 collection view、diff、分页锚点与滚动决策。
 - `ChatMediaViewerCoordinator` 统一聊天、图库和收藏的媒体 Viewer 转场。
+- 聊天消息 cell 主实现仍在 `ChatTimelineCells.swift`（`ChatNativeMessageCell`）；时间/系统 cell、头像和相册指示器已拆到同目录独立文件。
+- 记录页主页面在 `RecordsView.swift`；推荐模型/弹层、统计卡、日期与纪念日编辑器已拆到 `Sources/Features/Records/` 下独立文件。
 - `MessageStore`/`ChatStore` 仍是兼容 facade；新增业务应进入对应 Repository、Store 或 Coordinator，不继续扩大 facade。
 
 服务端：
@@ -109,7 +113,7 @@ docker compose -f compose.production.yml ps
 docker compose -f compose.production.yml logs --tail=100 couplechat-server
 ```
 
-不得删除当前发布备份、回滚镜像或旧 IPA。恢复数据库属于高风险操作，必须先验证 dump 并再次备份当前状态。
+不得删除当前发布备份、回滚镜像或仍需保留的旧 IPA。恢复数据库属于高风险操作，必须先验证 dump 并再次备份当前状态。
 
 ## 7. 当前已知限制
 
@@ -118,5 +122,16 @@ docker compose -f compose.production.yml logs --tail=100 couplechat-server
 - iPad 真机和两台设备同时在线的完整矩阵尚未执行。
 - Windows 不能本地编译 iOS，需依赖 GitHub Actions 或 Mac。
 - 清空 App 数据后，已丢失本地文件的失败媒体无法继续重传。
+- `MessageStore`（约 1200 行）与 `ChatStore`（约 770 行）仍是兼容 facade；分页/搜索/已读/发送编排和 Socket 生命周期尚未完全下沉。
+- `ChatNativeMessageCell` 本体仍较大，后续可继续按内容类型拆 extension，但不得与发送可靠性改动混提。
 
-R5.3/R5.4 和 R8.1 的剩余工作见 `Docs/REFACTOR_PLAN.md`。其他新问题应先确认复现细节，再做有边界的修复。
+## 8. 当前允许的下一步
+
+只允许这些有边界的维护，不要重开全量重构：
+
+1. 继续 R5.3：把分页、搜索、已读和消息合并抽到 Repository；把 outbox flush 真正下沉，而不是只留串行锁。
+2. 继续 R5.4：抽出 `RealtimeConnectionCoordinator`，削减 `ChatStore` 对全 App 的桥接 API。
+3. 有第二台设备时执行 R8.1 双设备/iPad 真机矩阵。
+4. 纯文件级拆分（如 `ChatHomeView`、`RemindersView`）可在不改行为的前提下继续做。
+
+R5.3/R5.4 和 R8.1 的剩余工作细节见 `Docs/REFACTOR_PLAN.md`。其他新问题应先确认复现细节，再做有边界的修复。
