@@ -55,7 +55,7 @@
 
 - R0-R4 已完成自动验证与真机验收。
 - R5/R6 已按用户要求合并实施：SQLite actor、Repository 边界、时间线状态、outbox 串行器、媒体上传服务和聊天外语义设计组件均已落地。
-- R5/R6 在完整 GitHub Actions 与真机验收通过前保持“进行中”；不得提前开始 R7。
+- R5/R6 已通过完整 GitHub Actions run `29172957752`，包含 90 个 iOS 单测、UI Fixture、iPad build、Archive 和服务端验证；在真机验收通过前保持“进行中”，不得提前开始 R7。
 
 ## 当前风险与接手优先级
 
