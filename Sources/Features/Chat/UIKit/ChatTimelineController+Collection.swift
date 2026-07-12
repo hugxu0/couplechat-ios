@@ -211,6 +211,12 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
 }
 
 extension ChatTimelineController: ChatTimelineCellDelegate {
+    func chatCellDidDecideConfirm(_ cell: ChatNativeMessageCell, decision: String) {
+        guard let path = collectionView.indexPath(for: cell), path.item < items.count,
+              case .message(let id) = items[path.item], let message = messagesById[id] else { return }
+        delegate?.timelineDidDecideConfirm(message: message, decision: decision)
+    }
+
     func chatCellDidTapMedia(_ cell: ChatNativeMessageCell) {
         guard let path = collectionView.indexPath(for: cell), path.item < items.count,
               case .message(let id) = items[path.item], let message = messagesById[id] else { return }

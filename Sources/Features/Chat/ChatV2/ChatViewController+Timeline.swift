@@ -161,6 +161,11 @@ extension ChatViewController {
 }
 
 extension ChatViewController: ChatTimelineControllerDelegate {
+    func timelineDidDecideConfirm(message: ChatMessage, decision: String) {
+        guard message.meta?.confirm?.status == "pending" else { return }
+        store.confirmAction(messageId: message.id, decision: decision)
+    }
+
     func timelineDidBeginDragging() {
         hidePanel(animated: true)
     }

@@ -5,6 +5,7 @@ import UIKit
 protocol ChatTimelineCellDelegate: AnyObject {
     func chatCellDidTapMedia(_ cell: ChatNativeMessageCell)
     func chatCellDidTapRetry(_ cell: ChatNativeMessageCell)
+    func chatCellDidDecideConfirm(_ cell: ChatNativeMessageCell, decision: String)
 }
 
 final class ChatTimeCell: UICollectionViewCell {
@@ -108,6 +109,12 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     private let replyMarker = UIView()
     private let replyLabel = UILabel()
     private let bodyLabel = UILabel()
+    private let confirmDivider = UIView()
+    private let confirmTitleLabel = UILabel()
+    private let confirmItemsLabel = UILabel()
+    private let confirmStatusLabel = UILabel()
+    private let confirmCancelButton = UIButton(type: .system)
+    private let confirmButton = UIButton(type: .system)
     private let interactionIconBackground = UIView()
     private let interactionEmojiLabel = UILabel()
     private let interactionTitleLabel = UILabel()
@@ -166,6 +173,28 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         bodyLabel.font = .systemFont(ofSize: 17)
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byWordWrapping
+
+        confirmTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        confirmItemsLabel.font = .systemFont(ofSize: 14)
+        confirmItemsLabel.numberOfLines = 0
+        confirmStatusLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        confirmCancelButton.setTitle("取消", for: .normal)
+        confirmButton.setTitle("确认", for: .normal)
+        for button in [confirmCancelButton, confirmButton] {
+            button.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+            button.layer.cornerCurve = .continuous
+            button.layer.cornerRadius = 10
+        }
+        confirmCancelButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.setConfirmationButtonsEnabled(false)
+            self.delegate?.chatCellDidDecideConfirm(self, decision: "cancel")
+        }, for: .touchUpInside)
+        confirmButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.setConfirmationButtonsEnabled(false)
+            self.delegate?.chatCellDidDecideConfirm(self, decision: "confirm")
+        }, for: .touchUpInside)
 
         interactionIconBackground.layer.cornerCurve = .continuous
         interactionIconBackground.layer.cornerRadius = 17
@@ -257,6 +286,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         mediaImageView.image = nil
         mediaIconView.image = nil
         bodyLabel.text = nil
+        bodyLabel.attributedText = nil
         replyLabel.text = nil
         statusLabel.text = nil
         retryButton.isHidden = true
@@ -327,6 +357,15 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         bodyLabel.textColor = isInteraction
             ? (usesDarkIncomingBubble ? .white : interactionColor.withAlphaComponent(0.92))
             : (mine ? .white : incomingTextColor)
+        let contentColor = bodyLabel.textColor ?? incomingTextColor
+        confirmDivider.backgroundColor = contentColor.withAlphaComponent(0.16)
+        confirmTitleLabel.textColor = contentColor.withAlphaComponent(0.78)
+        confirmItemsLabel.textColor = contentColor
+        confirmStatusLabel.textColor = contentColor.withAlphaComponent(0.72)
+        confirmCancelButton.setTitleColor(contentColor.withAlphaComponent(0.76), for: .normal)
+        confirmCancelButton.backgroundColor = contentColor.withAlphaComponent(0.10)
+        confirmButton.setTitleColor(mine ? accentColor : .white, for: .normal)
+        confirmButton.backgroundColor = mine ? UIColor.white : accentColor
         interactionTitleLabel.textColor = usesDarkIncomingBubble ? .white : UIColor.label.resolvedColor(with: traitCollection)
         interactionSubtitleLabel.textColor = usesDarkIncomingBubble
             ? UIColor.white.withAlphaComponent(0.68)
@@ -481,8 +520,39 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             bubbleView.addSubview(bodyLabel)
             configureAttachment(message)
         default:
-            bodyLabel.text = message.displayText
+            bodyLabel.attributedText = ChatMarkdownRenderer.attributedString(
+                from: message.displayText,
+                baseFont: bodyLabel.font,
+                textColor: bodyLabel.textColor,
+                accentColor: mine ? UIColor.white.withAlphaComponent(0.92) : accentColor)
             bubbleView.addSubview(bodyLabel)
+        }
+        if let confirm = message.meta?.confirm { installConfirmation(confirm) }
+    }
+
+    private func installConfirmation(_ confirm: ActionConfirm) {
+        confirmItemsLabel.text = confirm.items.map { "• \($0.label)" }.joined(separator: "\n")
+        let pending = confirm.status == "pending"
+        confirmTitleLabel.text = pending ? "需要你的确认" : "操作结果"
+        confirmStatusLabel.text = confirm.status == "confirmed"
+            ? ((confirm.failed ?? 0) > 0 ? "部分操作未完成" : "已确认并执行")
+            : (confirm.status == "cancelled" ? "已取消" : nil)
+        confirmCancelButton.isHidden = !pending
+        confirmButton.isHidden = !pending
+        setConfirmationButtonsEnabled(pending)
+        [confirmDivider, confirmTitleLabel, confirmItemsLabel, confirmStatusLabel, confirmCancelButton, confirmButton]
+            .forEach { bubbleView.addSubview($0) }
+    }
+
+    private func setConfirmationButtonsEnabled(_ enabled: Bool) {
+        confirmCancelButton.isEnabled = enabled
+        confirmButton.isEnabled = enabled
+        confirmCancelButton.alpha = enabled ? 1 : 0.5
+        confirmButton.alpha = enabled ? 1 : 0.5
+        guard !enabled else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self, self.message?.meta?.confirm?.status == "pending" else { return }
+            self.setConfirmationButtonsEnabled(true)
         }
     }
 
@@ -705,7 +775,51 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
             mediaIconView.frame = CGRect(x: paddingX, y: y + 6, width: 28, height: 28)
             bodyLabel.frame = CGRect(x: paddingX + 38, y: y, width: contentWidth - 38, height: bubbleView.bounds.height - y - paddingY)
         default:
-            bodyLabel.frame = CGRect(x: paddingX, y: y, width: contentWidth, height: bubbleView.bounds.height - y - paddingY)
+            let confirmHeight = message.meta?.confirm.map {
+                ChatTimelineMetrics.confirmationHeight($0, width: contentWidth) + 12
+            } ?? 0
+            bodyLabel.frame = CGRect(
+                x: paddingX,
+                y: y,
+                width: contentWidth,
+                height: max(0, bubbleView.bounds.height - y - paddingY - confirmHeight))
+        }
+        if let confirm = message.meta?.confirm {
+            layoutConfirmation(confirm, contentWidth: contentWidth, paddingX: paddingX)
+        }
+    }
+
+    private func layoutConfirmation(_ confirm: ActionConfirm, contentWidth: CGFloat, paddingX: CGFloat) {
+        let height = ChatTimelineMetrics.confirmationHeight(confirm, width: contentWidth)
+        let originY = bubbleView.bounds.height - ChatTimelineMetrics.bubbleVerticalPadding - height
+        confirmDivider.frame = CGRect(x: paddingX, y: originY - 12, width: contentWidth, height: 1)
+        confirmTitleLabel.frame = CGRect(x: paddingX, y: originY, width: contentWidth, height: 22)
+        let labels = confirmItemsLabel.text ?? ""
+        let itemsHeight = ceil((labels as NSString).boundingRect(
+            with: CGSize(width: contentWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: confirmItemsLabel.font as Any],
+            context: nil).height)
+        confirmItemsLabel.frame = CGRect(x: paddingX, y: originY + 29, width: contentWidth, height: itemsHeight)
+        let actionY = confirmItemsLabel.frame.maxY + (confirm.status == "pending" ? 10 : 8)
+        if confirm.status == "pending" {
+            let gap: CGFloat = 8
+            let buttonWidth = (contentWidth - gap) / 2
+            confirmCancelButton.frame = CGRect(
+                x: paddingX,
+                y: actionY,
+                width: buttonWidth,
+                height: ChatTimelineMetrics.confirmButtonHeight)
+            confirmButton.frame = CGRect(
+                x: paddingX + buttonWidth + gap,
+                y: actionY,
+                width: buttonWidth,
+                height: ChatTimelineMetrics.confirmButtonHeight)
+            confirmStatusLabel.frame = .zero
+        } else {
+            confirmStatusLabel.frame = CGRect(x: paddingX, y: actionY, width: contentWidth, height: 20)
+            confirmCancelButton.frame = .zero
+            confirmButton.frame = .zero
         }
     }
 

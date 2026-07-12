@@ -432,6 +432,13 @@ final class ChatStore: ObservableObject {
             guard let dict = data.first as? [String: Any],
                   let itemDict = dict["item"] as? [String: Any],
                   let action = dict["action"] as? String else { return }
+            if dict["source"] as? String == "ai" {
+                NotificationCenter.default.post(
+                    name: PersonalItemsRepository.changedNotification,
+                    object: nil,
+                    userInfo: ["action": action, "item": itemDict])
+                return
+            }
             let scope = itemDict["scope"] as? String ?? "personal"
             guard scope == "shared" else { return }
             Task { @MainActor in

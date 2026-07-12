@@ -234,11 +234,11 @@ export async function applyAction(
   }
 }
 
-async function getMessageMeta(messageId: string): Promise<ConfirmMeta | null> {
+async function getMessageMeta(messageId: string): Promise<{ meta: ConfirmMeta; channel: string } | null> {
   const row = await get<MessageRow>("SELECT * FROM messages WHERE id = ?", [messageId]);
   if (!row || !row.meta_json) return null;
   try {
-    return JSON.parse(row.meta_json) as ConfirmMeta;
+    return { meta: JSON.parse(row.meta_json) as ConfirmMeta, channel: row.channel };
   } catch {
     return null;
   }
@@ -253,15 +253,19 @@ export async function confirmAction(
   messageId: string,
   decision: "confirm" | "cancel",
 ): Promise<{ ok: boolean }> {
-  const meta = await getMessageMeta(messageId);
-  if (!meta || !meta.confirm || meta.confirm.status !== "pending") {
+  const stored = await getMessageMeta(messageId);
+  if (!stored || !stored.meta.confirm || stored.meta.confirm.status !== "pending") {
     return { ok: false };
   }
+  const { meta, channel } = stored;
+  const messageRoom = channel === "couple"
+    ? "channel:couple"
+    : `user:${meta.confirm.requesterUsername}`;
 
   if (decision === "cancel") {
     meta.confirm.status = "cancelled";
     await updateMessageMeta(messageId, meta);
-    io.emit(socketEvents.messageUpdate, { id: messageId, meta });
+    io.to(messageRoom).emit(socketEvents.messageUpdate, { id: messageId, meta });
     return { ok: true };
   }
 
@@ -270,11 +274,22 @@ export async function confirmAction(
     const r = await applyAction(item.action, {
       requesterUsername: meta.confirm.requesterUsername,
     });
-    if (!r.ok) failed += 1;
+    if (!r.ok) {
+      failed += 1;
+      continue;
+    }
+    const scope = resolveScope(item.action.scope);
+    const owner = resolveOwnerName(item.action.ownerName, meta.confirm.requesterUsername);
+    const room = scope === "shared" ? "channel:couple" : `user:${owner}`;
+    io.to(room).emit(socketEvents.personalItemChanged, {
+      action: item.action.type,
+      source: "ai",
+      item: { scope, owner },
+    });
   }
   meta.confirm.status = "confirmed";
   meta.confirm.failed = failed;
   await updateMessageMeta(messageId, meta);
-  io.emit(socketEvents.messageUpdate, { id: messageId, meta });
+  io.to(messageRoom).emit(socketEvents.messageUpdate, { id: messageId, meta });
   return { ok: true };
 }

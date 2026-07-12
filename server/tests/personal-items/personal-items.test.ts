@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { Server } from "socket.io";
 import { withTestDatabase } from "../support/postgresHarness";
 
-test("personal items preserve owner isolation and shared visibility", async () => {
+test("personal items preserve visibility and complete the AI confirmation flow", async () => {
   await withTestDatabase(async () => {
     const items = await import("../../src/personalItems/itemService");
     const xu = { username: "xu", name: "小旭" };
@@ -43,6 +44,7 @@ test("personal items preserve owner isolation and shared visibility", async () =
     });
     assert.equal(login.statusCode, 401);
     assert.equal(login.json().error, "invalid_credentials");
+    await verifyAIConfirmationFlow();
     await app.close();
   });
 });
@@ -67,3 +69,51 @@ test("reminder scheduler uses injected clock, repository and push gateway", asyn
   assert.equal(pushes.length, 1);
   assert.match(pushes[0], /^喝水 · /);
 });
+
+async function verifyAIConfirmationFlow() {
+    const { run } = await import("../../src/db");
+    const { confirmAction } = await import("../../src/ai/actions/personalItems");
+    const { listPersonalItems } = await import("../../src/personalItems/itemService");
+    const confirm = {
+      status: "pending",
+      items: [{
+        label: "备忘：日常小确幸记录表",
+        action: {
+          type: "add_memo",
+          text: "| 日期 | 心情 |\n| --- | --- |\n| 7/12 | 开心 |",
+          scope: "personal",
+        },
+      }],
+      requesterName: "小旭",
+      requesterUsername: "xu",
+    };
+    await run(
+      `INSERT INTO messages
+       (id, channel, sender, sender_name, kind, type, text, meta_json, ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["ai-confirm-1", "ai:xu", "ai", "大橘", "ai", "text", "请确认", JSON.stringify({ confirm }), Date.now()],
+    );
+
+    const emissions: Array<{ room: string; event: string; payload: unknown }> = [];
+    const io = {
+      to(room: string) {
+        return {
+          emit(event: string, payload: unknown) {
+            emissions.push({ room, event, payload });
+          },
+        };
+      },
+    } as unknown as Server;
+
+    assert.deepEqual(await confirmAction(io, "ai-confirm-1", "confirm"), { ok: true });
+    const memos = await listPersonalItems({ username: "xu", name: "小旭" }, "memo", "personal");
+    assert.equal(memos.length, 1);
+    assert.match(memos[0].bodyMarkdown, /^\| 日期 \|/);
+    assert.ok(emissions.some((entry) => entry.room === "user:xu" && entry.event === "personalItem:changed"));
+    assert.ok(emissions.some((entry) => {
+      const payload = entry.payload as { meta?: { confirm?: { status?: string } } };
+      return entry.room === "user:xu"
+        && entry.event === "message:update"
+        && payload.meta?.confirm?.status === "confirmed";
+    }));
+}

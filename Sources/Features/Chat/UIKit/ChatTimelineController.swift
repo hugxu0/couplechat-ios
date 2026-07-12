@@ -9,6 +9,7 @@ protocol ChatTimelineControllerDelegate: AnyObject {
     func timelineDidSelect(_ action: ChatMessageAction, message: ChatMessage)
     func timelineDidTapMedia(cell: ChatNativeMessageCell, message: ChatMessage, selectedId: String)
     func timelineDidTapRetry(cell: ChatNativeMessageCell, message: ChatMessage)
+    func timelineDidDecideConfirm(message: ChatMessage, decision: String)
 }
 
 @MainActor

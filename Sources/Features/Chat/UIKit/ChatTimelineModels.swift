@@ -70,6 +70,8 @@ struct ChatMessageLayout: Hashable {
     let type: String
     let text: String
     let replyPreview: String?
+    let confirmStatus: String?
+    let confirmLabels: String?
     let pending: Bool
     let failed: Bool
 
@@ -89,6 +91,8 @@ struct ChatMessageLayout: Hashable {
             type: message.type,
             text: message.displayText,
             replyPreview: message.replyPreview,
+            confirmStatus: message.meta?.confirm?.status,
+            confirmLabels: message.meta?.confirm?.items.map(\.label).joined(separator: "\n"),
             pending: message.pending,
             failed: message.failed
         )
@@ -111,6 +115,7 @@ enum ChatTimelineMetrics {
     static let fileHeight: CGFloat = 58
     static let voiceHeight: CGFloat = 36
     static let stickerSize = CGSize(width: 132, height: 132)
+    static let confirmButtonHeight: CGFloat = 38
 
     static func messageHeight(
         for message: ChatMessage,
@@ -139,13 +144,16 @@ enum ChatTimelineMetrics {
         case "file":
             contentHeight = fileHeight
         default:
-            let bodyHeight = measureText(
-                message.displayText.isEmpty ? " " : message.displayText,
+            let bodyHeight = ChatMarkdownRenderer.boundingSize(
+                for: message.displayText.isEmpty ? " " : message.displayText,
                 font: .systemFont(ofSize: 17),
-                width: contentWidth
-            )
+                width: contentWidth).height
             contentHeight = bodyHeight
         } }
+
+        if let confirm = message.meta?.confirm {
+            contentHeight += confirmationHeight(confirm, width: contentWidth) + 12
+        }
 
         if let reply = message.replyPreview, !reply.isEmpty {
             contentHeight += 36 + 7
@@ -173,6 +181,7 @@ enum ChatTimelineMetrics {
         if message.interactionPayload != nil {
             return ceil(min(maxBubbleWidth, 222))
         }
+        if message.meta?.confirm != nil { return ceil(min(maxBubbleWidth, 300)) }
         let bodyWidth = measureTextWidth(text, font: .systemFont(ofSize: 17), maxWidth: available)
         let replyWidth = measureTextWidth(message.replyPreview ?? "", font: .systemFont(ofSize: 13), maxWidth: available)
         let contentWidth = min(maxBubbleWidth, max(bodyWidth, replyWidth) + bubbleHorizontalPadding * 2)
@@ -197,6 +206,15 @@ enum ChatTimelineMetrics {
                 && Int(text.dropFirst().dropLast(4)) != nil)
         guard !text.isEmpty, !isImagePlaceholder, text != "[视频]" else { return nil }
         return text
+    }
+
+    static func confirmationHeight(_ confirm: ActionConfirm, width: CGFloat) -> CGFloat {
+        let labels = confirm.items.map { "• \($0.label)" }.joined(separator: "\n")
+        let itemsHeight = measureText(
+            labels,
+            font: .systemFont(ofSize: 14),
+            width: width)
+        return 22 + 7 + itemsHeight + (confirm.status == "pending" ? 10 + confirmButtonHeight : 8 + 20)
     }
 
     private static func measureText(_ text: String, font: UIFont, width: CGFloat) -> CGFloat {
