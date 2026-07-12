@@ -212,6 +212,28 @@ final class MessageStoreMediaPlaceholderTests: XCTestCase {
 }
 
 @MainActor
+final class MessageStoreLatestWindowTests: XCTestCase {
+    func testLatestWindowDropsHistoricalSliceAndPreservesPendingOutbound() {
+        let historical = makeMessage(id: "old", ts: 10)
+        let latest = [makeMessage(id: "new-1", ts: 100), makeMessage(id: "new-2", ts: 200)]
+        var pending = makeMessage(id: "tmp-1", ts: 300)
+        pending.pending = true
+
+        let result = MessageStore.latestWindow(latest, preservingOutboundFrom: [historical, pending])
+
+        XCTAssertEqual(result.map(\.id), ["new-1", "new-2", "tmp-1"])
+    }
+
+    private func makeMessage(id: String, ts: Double) -> ChatMessage {
+        ChatMessage(dict: [
+            "id": id, "sender": "xu", "senderName": "小旭",
+            "kind": "user", "type": "text", "text": id,
+            "channel": "couple", "ts": ts,
+        ])!
+    }
+}
+
+@MainActor
 final class MessageStoreFailedOutboxTests: XCTestCase {
     private var databaseURL: URL?
     private var temporaryURLs: [URL] = []

@@ -635,6 +635,9 @@ final class ChatStore: ObservableObject {
     func ensureLocalMessages(_ channel: ChatChannel) async {
         await messageStore.ensureLocalMessages(channel)
     }
+    func restoreLatestMessages(_ channel: ChatChannel) async {
+        await messageStore.restoreLatestMessages(channel)
+    }
 
     func isLoadingOlder(_ channel: ChatChannel) -> Bool { messageStore.isLoadingOlder(channel) }
     func isLoadingNewer(_ channel: ChatChannel) -> Bool { messageStore.isLoadingNewer(channel) }

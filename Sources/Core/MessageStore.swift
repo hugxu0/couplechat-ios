@@ -328,6 +328,27 @@ final class MessageStore: ObservableObject {
         }
     }
 
+    /// 搜索跳转会把内存中的消息裁成目标附近的一小段。用户明确选择“回到最新”时，
+    /// 必须重新加载最新窗口，不能只修改滚动状态，否则下一次刷新仍会回到历史窗口。
+    func restoreLatestMessages(_ channel: ChatChannel) async {
+        var latest = await persistence.fetchLatestMessages(channel: channel.rawValue, limit: 50)
+        if latest.isEmpty {
+            latest = await fetchRemoteMessages(
+                MessagePageRequest(channel: channel, limit: 50),
+                context: "restoreLatest:\(channel.rawValue)")
+            if !latest.isEmpty { _ = await persistence.insertMessages(latest) }
+        }
+        guard !latest.isEmpty else { return }
+        updateMessages(channel) { current in
+            current = Self.latestWindow(latest, preservingOutboundFrom: current)
+        }
+        if let lastConfirmed = latest
+            .filter({ !$0.pending && !$0.failed })
+            .max(by: { $0.ts < $1.ts }) {
+            latestPersistedMessageIDs[channel.rawValue] = lastConfirmed.id
+        }
+    }
+
     func isLoadingOlder(_ channel: ChatChannel) -> Bool {
         loadingOlderChannels.contains(channel.rawValue)
     }
@@ -1150,6 +1171,20 @@ final class MessageStore: ObservableObject {
         let lower = max(0, targetIndex - 36)
         let upper = min(merged.count, targetIndex + 42)
         return Array(merged[lower..<upper])
+    }
+
+    nonisolated static func latestWindow(
+        _ latest: [ChatMessage],
+        preservingOutboundFrom current: [ChatMessage]
+    ) -> [ChatMessage] {
+        var seen = Set(latest.map(\.id))
+        let confirmedClientIds = Set(latest.compactMap(\.clientId))
+        let outbound = current.filter { message in
+            guard message.pending || message.failed,
+                  !confirmedClientIds.contains(message.clientId ?? "") else { return false }
+            return seen.insert(message.id).inserted
+        }
+        return (latest + outbound).sorted { $0.ts < $1.ts }
     }
 
     nonisolated static func dayRange(for date: Date) -> (start: Double, end: Double) {

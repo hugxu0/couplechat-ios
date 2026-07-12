@@ -2,7 +2,7 @@ import XCTest
 @testable import CoupleChat
 
 final class ChatTimelineReloadDecisionTests: XCTestCase {
-    func testExplicitSendAlwaysForcesLatest() {
+    func testExplicitSendWaitsForInsertedMessageBeforeForcingLatest() {
         let decision = decide(
             stickToLatest: true,
             pending: true,
@@ -10,6 +10,19 @@ final class ChatTimelineReloadDecisionTests: XCTestCase {
             nearBottom: false,
             lastChanged: false,
             countIncreased: false,
+            showingAI: false
+        )
+        XCTAssertEqual(decision, .preservePosition)
+    }
+
+    func testExplicitSendForcesLatestWhenMessageArrives() {
+        let decision = decide(
+            stickToLatest: true,
+            pending: true,
+            visible: true,
+            nearBottom: false,
+            lastChanged: true,
+            countIncreased: true,
             showingAI: false
         )
         XCTAssertEqual(decision, .forceLatest)

@@ -29,9 +29,7 @@ struct ProfileView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: DS.Spacing.gap) {
-                    RootPageHeader("我的", subtitle: store.auth.session?.name ?? "账号与设置") {
-                        PairedEchoIndicator()
-                    }
+                    RootPageHeader("我的", subtitle: store.auth.session?.name ?? "账号与设置")
                     .padding(.horizontal, -DS.Spacing.page)
                     header
                     settingsCard

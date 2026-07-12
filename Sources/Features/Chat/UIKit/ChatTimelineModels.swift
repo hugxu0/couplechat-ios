@@ -41,7 +41,9 @@ enum ChatTimelineReloadDecision: Equatable {
         messageCountIncreased: Bool,
         wasShowingAIActivity: Bool
     ) -> ChatTimelineReloadDecision {
-        if stickToLatest {
+        // 发送操作会先清空输入框/媒体预览，这可能触发一次没有新增消息的 reload。
+        // 保留贴底意图，直到乐观消息真正进入时间线后再消费。
+        if stickToLatest, lastMessageChanged || messageCountIncreased {
             return .forceLatest
         }
         if hasPendingAnchor, hasValidPendingAnchor {

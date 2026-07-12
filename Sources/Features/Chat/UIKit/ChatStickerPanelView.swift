@@ -105,7 +105,7 @@ final class ChatStickerPanelView: UIView {
         tabScrollView.translatesAutoresizingMaskIntoConstraints = false
         tabGlass.translatesAutoresizingMaskIntoConstraints = false
         tabGlass.clipsToBounds = true
-        tabGlass.update(cornerRadius: 21, tintAlpha: 0.04, borderAlpha: 0.10)
+        tabGlass.update(cornerRadius: 22, tintAlpha: 0.04, borderAlpha: 0.10)
         tabStack.axis = .horizontal
         tabStack.spacing = 4
         tabStack.alignment = .center
@@ -128,7 +128,7 @@ final class ChatStickerPanelView: UIView {
             tabGlass.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             tabGlass.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             tabGlass.topAnchor.constraint(equalTo: topAnchor, constant: 7),
-            tabGlass.heightAnchor.constraint(equalToConstant: 42),
+            tabGlass.heightAnchor.constraint(equalToConstant: 52),
 
             tabScrollView.leadingAnchor.constraint(equalTo: tabGlass.leadingAnchor),
             tabScrollView.trailingAnchor.constraint(equalTo: tabGlass.trailingAnchor),
@@ -170,13 +170,16 @@ final class ChatStickerPanelView: UIView {
         }
 
         let manage = UIButton(type: .system)
-        manage.setImage(UIImage(systemName: "gearshape"), for: .normal)
+        manage.setImage(
+            UIImage(systemName: "gearshape")?.applyingSymbolConfiguration(
+                UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)),
+            for: .normal)
         manage.tintColor = secondaryColor
         manage.backgroundColor = neutralFill
         manage.layer.cornerCurve = .continuous
-        manage.layer.cornerRadius = 13
-        manage.widthAnchor.constraint(equalToConstant: 28).isActive = true
-        manage.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        manage.layer.cornerRadius = 18
+        manage.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        manage.heightAnchor.constraint(equalToConstant: 44).isActive = true
         manage.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.delegate?.stickerPanelDidRequestManage(self)
@@ -186,18 +189,18 @@ final class ChatStickerPanelView: UIView {
 
     private func makeTabButton(for tab: Tab) -> UIButton {
         var config = UIButton.Configuration.plain()
-        config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 5, bottom: 5, trailing: 5)
         let button = UIButton(configuration: config)
         button.backgroundColor = tab == selectedTab ? accentColor.withAlphaComponent(0.92) : neutralFill
         button.layer.cornerCurve = .continuous
-        button.layer.cornerRadius = 17
+        button.layer.cornerRadius = 18
         button.imageView?.contentMode = .scaleAspectFit
         button.imageView?.clipsToBounds = true
-        button.titleLabel?.font = .systemFont(ofSize: 20)
+        button.titleLabel?.font = .systemFont(ofSize: 22)
         button.tintColor = tab == selectedTab ? .white : secondaryColor
         button.accessibilityLabel = title(for: tab)
-        button.widthAnchor.constraint(equalToConstant: 38).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        button.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         button.setContentCompressionResistancePriority(.required, for: .horizontal)
         configureIcon(for: tab, button: button)
         button.addAction(UIAction { [weak self] _ in
@@ -230,7 +233,7 @@ final class ChatStickerPanelView: UIView {
     }
 
     private func fittedTabIcon(_ image: UIImage) -> UIImage {
-        let canvas = CGSize(width: 24, height: 24)
+        let canvas = CGSize(width: 28, height: 28)
         let scale = min(canvas.width / max(1, image.size.width), canvas.height / max(1, image.size.height))
         let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
         let origin = CGPoint(x: (canvas.width - size.width) / 2, y: (canvas.height - size.height) / 2)
@@ -241,7 +244,7 @@ final class ChatStickerPanelView: UIView {
 
     private func systemTabIcon(for tab: Tab) -> UIImage? {
         UIImage(systemName: icon(for: tab))?.applyingSymbolConfiguration(
-            UIImage.SymbolConfiguration(pointSize: 18, weight: .medium))
+            UIImage.SymbolConfiguration(pointSize: 20, weight: .medium))
     }
 
     private func firstSticker(for tab: Tab) -> Sticker? {

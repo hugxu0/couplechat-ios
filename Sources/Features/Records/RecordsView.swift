@@ -26,9 +26,7 @@ struct RecordsView: View {
             ZStack {
                 ScrollView {
                     VStack(spacing: DS.Spacing.gap) {
-                        RootPageHeader("记录", subtitle: "我们的共同时间") {
-                            PairedEchoIndicator()
-                        }
+                        RootPageHeader("记录", subtitle: "我们的共同时间")
                         .padding(.horizontal, -DS.Spacing.page)
                         heroCard
                         anniversaryGrid
