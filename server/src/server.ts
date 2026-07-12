@@ -9,6 +9,7 @@ import { createReminderScheduler } from "./personalItems/reminderScheduler";
 import { startUploadCleanup } from "./upload/cleanup";
 import { socketEvents } from "./contracts/realtime";
 import { shutdownServer } from "./lifecycle/shutdown";
+import { createTranscriptScheduler } from "./transcription/scheduler";
 
 async function main() {
   await initDatabase();
@@ -19,9 +20,9 @@ async function main() {
   const app = await buildApp({
     personalItemEvents: {
       sharedItemChanged(action, item) {
-        const value = item as { scope?: string } | null;
-        if (value?.scope === "shared") {
-          io?.to("channel:couple").emit(socketEvents.personalItemChanged, { action, item });
+        const value = item as { scope?: string; coupleId?: string } | null;
+        if (value?.scope === "shared" && value.coupleId) {
+          io?.to(`couple:${value.coupleId}`).emit(socketEvents.personalItemChanged, { action, item });
         }
       },
     },
@@ -31,7 +32,11 @@ async function main() {
   registerRealtime(io);
 
   const reminderScheduler = createReminderScheduler();
-  if (config.scheduledJobsEnabled) reminderScheduler.start();
+  const transcriptScheduler = createTranscriptScheduler();
+  if (config.scheduledJobsEnabled) {
+    reminderScheduler.start();
+    transcriptScheduler.start();
+  }
   await app.listen({ host: config.host, port: config.port });
   const stopUploadCleanup = config.scheduledJobsEnabled ? startUploadCleanup() : () => undefined;
 
@@ -47,6 +52,7 @@ async function main() {
       await shutdownServer({
         stopSchedulers: () => {
           reminderScheduler.stop();
+          transcriptScheduler.stop();
           shutdownAi();
         },
         stopUploadCleanup,

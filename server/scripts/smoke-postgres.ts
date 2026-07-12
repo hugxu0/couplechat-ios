@@ -29,31 +29,41 @@ async function main() {
   process.env.DATA_DIR = dataDir;
   process.env.UPLOAD_DIR = dataDir;
 
+  let closeDatabase: (() => Promise<void>) | undefined;
   try {
     // 动态 import：确保 config 读到上面设置的 DATABASE_URL
     const db = await import("../src/db");
+    closeDatabase = db.closeDatabase;
     console.log("[2/5] 建表…");
     await db.initDatabase();
 
     console.log("[3/5] 写入测试夹具…");
     const now = Date.now();
     await db.run(
-      `INSERT INTO accounts (username, display_name, password_hash, avatar, created_at, updated_at)
-       VALUES (?, ?, ?, '', ?, ?), (?, ?, ?, '', ?, ?)`,
-      ["xu", "小旭", "smoke-hash", now, now, "si", "小偲", "smoke-hash", now, now],
+      `INSERT INTO accounts
+       (id, username, display_name, password_hash, avatar, status, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, '', 'active', 0, ?, ?), (?, ?, ?, ?, '', 'active', 0, ?, ?)`,
+      [
+        "acc_legacy_xu", "xu", "小旭", "smoke-hash", now, now,
+        "acc_legacy_si", "si", "小偲", "smoke-hash", now, now,
+      ],
     );
+    const { ensureLegacyCouple, ensureLegacyConversations } = await import("../src/auth/accounts");
+    await ensureLegacyCouple();
+    await ensureLegacyConversations();
     for (let index = 0; index < 120; index += 1) {
       const sender = index % 2 === 0 ? "xu" : "si";
       await db.run(
         `INSERT INTO messages
-         (id, channel, sender, sender_name, kind, type, text, ts)
-         VALUES (?, 'couple', ?, ?, 'user', 'text', ?, ?)`,
+         (id, channel, sender, sender_name, kind, type, text, ts, conversation_id, sender_account_id)
+         VALUES (?, 'couple', ?, ?, 'user', 'text', ?, ?, 'conv_legacy_couple', ?)`,
         [
           `smoke-source-${index}`,
           sender,
           sender === "xu" ? "小旭" : "小偲",
           index % 7 === 0 ? `第 ${index} 条喵消息` : `第 ${index} 条测试消息`,
           now - (120 - index) * 60_000,
+          `acc_legacy_${sender}`,
         ],
       );
     }
@@ -69,7 +79,7 @@ async function main() {
     );
     assertOk(
       "数据库结构版本完整",
-      migrations.length === 10 &&
+      migrations.length === 22 &&
         migrations[0].version === 1 && migrations[0].name === "initial_schema" &&
         migrations[1].version === 2 && migrations[1].name === "bind_uploads_to_messages" &&
         migrations[2].version === 3 && migrations[2].name === "classify_upload_purpose" &&
@@ -79,8 +89,25 @@ async function main() {
         migrations[6].version === 7 && migrations[6].name === "canonical_memory_names" &&
         migrations[7].version === 8 && migrations[7].name === "ensure_ai_runtime_state" &&
         migrations[8].version === 9 && migrations[8].name === "memory_import_staging" &&
-        migrations[9].version === 10 && migrations[9].name === "memory_cursor_tie_breaker",
+        migrations[9].version === 10 && migrations[9].name === "memory_cursor_tie_breaker" &&
+        migrations[10].version === 11 && migrations[10].name === "hard_delete_recalled_messages" &&
+        migrations[11].version === 12 && migrations[11].name === "durable_reminder_bark_delivery" &&
+        migrations[12].version === 13 && migrations[12].name === "identity_v2_expand" &&
+        migrations[13].version === 14 && migrations[13].name === "devices_sessions_push" &&
+        migrations[17].version === 18 && migrations[17].name === "tenant_memory_and_settings" &&
+        migrations[18].version === 19 && migrations[18].name === "voice_transcription" &&
+        migrations[19].version === 20 && migrations[19].name === "shared_albums" &&
+        migrations[20].version === 21 && migrations[20].name === "shared_calendar" &&
+        migrations[21].version === 22 && migrations[21].name === "shared_pet",
     );
+
+    const legacyMembers = await db.all<{ username: string }>(
+      `SELECT account.username FROM couple_members member
+       JOIN accounts account ON account.id = member.account_id
+       WHERE member.couple_id = 'cpl_legacy_xusi' AND member.state = 'active'
+       ORDER BY account.username`,
+    );
+    assertOk("legacy xu/si 已无感回填为同一情侣", legacyMembers.map((item) => item.username).join(",") === "si,xu");
 
     const { readReceiptSchema } = await import("../src/contracts/realtime");
     const fractionalRead = readReceiptSchema.safeParse({ channel: "couple", ts: 1783653931714.444 });
@@ -340,17 +367,18 @@ async function main() {
         invalidSignatureResponse.statusCode === 404 && bypassResponse.statusCode === 404,
     );
 
-    // 已读回执 upsert
+    // 已读回执只能前进到当前 conversation 中真实存在的最后一条消息。
     await upsertReadReceipt(user, "couple", created.ts);
-    await upsertReadReceipt(user, "couple", created.ts + 5);
+    await upsertReadReceipt(user, "couple", created.ts - 5);
+    await upsertReadReceipt(user, "couple", created.ts + 5_000);
     const receipts = await getReadReceipts(user, "couple");
-    assertOk("read_receipts ON CONFLICT 更新", receipts[user.username] === created.ts + 5);
+    assertOk("read_receipts 单调更新且不会越过最后消息", receipts[user.username] === created.ts);
 
     // shared kv
     const { setSharedItem, getSharedState } = await import("../src/shared/sharedService");
     await setSharedItem(user, "smoke", { hello: "pg" });
     await setSharedItem(user, "smoke", { hello: "pg2" });
-    const shared = await getSharedState();
+    const shared = await getSharedState(user);
     assertOk(
       "shared_items upsert",
       (shared.smoke?.value as { hello?: string })?.hello === "pg2",
@@ -492,12 +520,13 @@ async function main() {
       "SELECT status FROM ai_memory WHERE id = ?",
       [recallBoundMemory!.id],
     );
-    assertOk("主人撤回原消息会传播到 Memory 证据链", invalidatedMemory?.status === "retracted");
+    assertOk("主人撤回原消息会删除孤立 Memory 与证据链", !invalidatedMemory);
     stopMemoryEvents();
 
     console.log("[5/5] 清理…");
     await db.closeDatabase();
   } finally {
+    await closeDatabase?.().catch(() => undefined);
     await pg.stop();
     fs.rmSync(dataDir, { recursive: true, force: true });
   }

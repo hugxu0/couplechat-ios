@@ -30,11 +30,11 @@ export async function registerSyncRoutes(app: FastifyInstance) {
 
     try {
       const [accounts, couple, ai, coupleRead, sharedState] = await Promise.all([
-        listPublicAccounts(),
+        listPublicAccounts(user),
         fetchMessages(user, { channel: "couple", limit: 40 }),
         fetchMessages(user, { channel: "ai", limit: 40 }),
         getReadReceipts(user, "couple"),
-        getSharedState(),
+        getSharedState(user),
       ]);
       operation.success({ coupleCount: couple.length, aiCount: ai.length });
 

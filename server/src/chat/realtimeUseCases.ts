@@ -18,7 +18,7 @@ export function createRealtimeMessageUseCases(io: Server) {
       });
       try {
         const message = await createMessage(user, input);
-        if (input.channel === "couple") void pushCoupleMessageToUnavailableRecipients(message);
+        if (input.channel === "couple") void pushCoupleMessageToUnavailableRecipients(message, user.coupleId);
         handleUserMessage(io, user, message);
         operation.success({ messageId: message.id });
         return message;

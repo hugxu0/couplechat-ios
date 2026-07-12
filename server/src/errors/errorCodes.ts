@@ -5,6 +5,7 @@ export const errorCodes = {
   unauthorized: "unauthorized",
   invalidCredentials: "invalid_credentials",
   notFound: "not_found",
+  recallWindowExpired: "recall_window_expired",
   uploadDisabled: "uploads_disabled",
   fileRequired: "file_required",
   unsupportedMediaType: "unsupported_media_type",

@@ -17,10 +17,28 @@ const publishedMigrations = [
 ] as const;
 
 test("published migration SQL remains byte-for-byte append-only", () => {
-  assert.equal(schemaMigrations.length, publishedMigrations.length);
-  for (const [index, migration] of schemaMigrations.entries()) {
+  assert.ok(schemaMigrations.length >= publishedMigrations.length);
+  for (const [index, migration] of schemaMigrations.slice(0, publishedMigrations.length).entries()) {
     const [version, name, expectedHash] = publishedMigrations[index];
     const hash = crypto.createHash("sha256").update(migration.sql).digest("hex").slice(0, 16);
     assert.deepEqual([migration.version, migration.name, hash], [version, name, expectedHash]);
   }
+});
+
+test("candidate migrations remain ordered after the published boundary", () => {
+  const candidates = schemaMigrations.slice(publishedMigrations.length);
+  assert.deepEqual(candidates.map((item) => [item.version, item.name]), [
+    [11, "hard_delete_recalled_messages"],
+    [12, "durable_reminder_bark_delivery"],
+    [13, "identity_v2_expand"],
+    [14, "devices_sessions_push"],
+    [15, "reminder_delivery_per_endpoint"],
+    [16, "conversations_and_ownership"],
+    [17, "sync_v2_core"],
+    [18, "tenant_memory_and_settings"],
+    [19, "voice_transcription"],
+    [20, "shared_albums"],
+    [21, "shared_calendar"],
+    [22, "shared_pet"],
+  ]);
 });
