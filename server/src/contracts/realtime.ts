@@ -126,4 +126,3 @@ export const confirmActionSchema = z.object({
 });
 
 export type SendMessagePayload = z.infer<typeof sendMessageSchema>;
-export type ReadReceiptPayload = z.infer<typeof readReceiptSchema>;

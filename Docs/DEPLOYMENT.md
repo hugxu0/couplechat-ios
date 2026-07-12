@@ -104,3 +104,20 @@ sha256sum "$backup"/* > "$backup/SHA256SUMS"
 - 媒体上传、访问和撤回后清理正常；
 - `@大橘` 与 AI 私聊各完成一次回复；
 - 容器没有持续错误、重启循环或异常内存增长。
+
+## 2026-07-12 发布记录
+
+本轮 R0-R8 发布已完成：
+
+| 项目 | 记录 |
+|---|---|
+| 客户端候选 | `CoupleChat-unsigned-230` |
+| 完整 CI | `29175140556`，全部通过 |
+| 服务端候选 | `couplechat-server:candidate-6a2e833` |
+| 正式标签 | `couplechat-server:local` |
+| 回滚镜像 | `couplechat-server:rollback-20260712-094038` |
+| 发布备份 | `/root/codex-backups/couplechat-release-20260712-094038` |
+
+备份包含 PostgreSQL custom dump、uploads、配置归档和 `SHA256SUMS`，校验已通过。候选先在 `127.0.0.1:18080` 运行 canary，再切换正式容器。切换后本机与公网 health/readiness、固定账号、启动日志和重启次数均正常；用户随后完成普通消息、`@大橘`、AI 私聊和图片上传/预览冒烟。
+
+VPS 内存有限，完整 Docker build 的 `npm ci` 可能触发内存不足。本次候选使用已验证的旧运行时镜像，仅覆盖本地 `npm run build` 生成的 `dist`。后续若继续采用该方式，必须先通过与 CI 同版本依赖的 `npm test`/`npm run build`，并在独立端口完成 canary；不得直接覆盖正式标签。

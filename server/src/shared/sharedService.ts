@@ -114,7 +114,3 @@ export async function setSharedItem(user: AuthUser, key: string, value: unknown)
     updatedAt: now,
   };
 }
-
-export async function deleteSharedItem(key: string) {
-  await run("DELETE FROM shared_items WHERE key = ?", [key]);
-}

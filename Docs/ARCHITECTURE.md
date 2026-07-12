@@ -39,6 +39,28 @@ Fastify + Socket.IO · 127.0.0.1:8080
 - `ServerConfig`：服务端地址；
 - `ImageCache`、`StickerStore`、`MediaFavoriteStore`：本机媒体状态。
 
+### 客户端目录与所有权
+
+```text
+Sources/
+  App/                       App 入口、通知代理、根 Tab 与 AppState 装配
+  Core/                      领域模型、Store、Repository、网络、Socket、SQLite
+  DesignSystem/              视觉 token、语义页面组件、通用图片组件
+  Features/
+    Auth/                    登录
+    Chat/
+      ChatV2/                聊天页面装配、composer 与控制器扩展
+      UIKit/                 时间线、cell、滚动状态、消息动作、贴纸面板
+      MediaViewer/           共享媒体 Viewer 与交互式转场
+      Fixtures/              DEBUG-only 聊天顶部视觉夹具
+    Records/                 记录与纪念日
+    Reminders/               提醒与备忘
+    Profile/                 我的、存储、主题、收藏媒体
+    Pet/                     当前仅展示占位的宠物页
+```
+
+`MessageStore` 与 `ChatStore` 为兼容现有页面保留 facade，但不再拥有全部底层实现。新增功能应优先进入已有的 Repository、Coordinator 或专用 Store；只有跨模块装配和向后兼容转发可以留在 facade，避免重新形成单体状态对象。
+
 聊天会话由 SwiftUI 外壳和 UIKit 高频路径组成：
 
 ```text
@@ -69,6 +91,19 @@ ChatView
 | `push/` | Bark 推送策略 |
 | `ai/` | Agent、MCP、Memory、上下文和后台任务 |
 | `contracts/` | 实时协议的服务端权威定义 |
+
+数据库层按职责拆分：
+
+```text
+server/src/db/
+  client.ts        PostgreSQL pool、查询与连接生命周期
+  transaction.ts   事务边界
+  rows.ts          数据库行类型
+  migrate.ts       v1-v10 版本化 migration 与执行器
+  index.ts         稳定 re-export，不承载实现
+```
+
+业务模块通过接口注入 Socket、push、repository 和调度器依赖。消息撤回后的 AI Memory 证据失效使用领域事件，Socket 路由只解析契约、调用 use case 并 emit/ack。关闭顺序由 `lifecycle/shutdown.ts` 统一管理。
 
 ## 数据与同步
 

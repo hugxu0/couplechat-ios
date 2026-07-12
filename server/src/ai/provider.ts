@@ -10,10 +10,6 @@ export function aiEnabled(): boolean {
   return Boolean(config.ai.chat || config.ai.task);
 }
 
-export function visionEnabled(): boolean {
-  return Boolean(config.aiVision);
-}
-
 function providerFor(profile: ChatProfile): AiProvider | undefined {
   return config.ai[profile] ?? config.ai.chat ?? config.ai.task;
 }

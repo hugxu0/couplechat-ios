@@ -25,11 +25,13 @@
 - [接口契约](Docs/API.md)：REST 与 Socket.IO 协议
 - [AI 系统](Docs/AI.md)：Agent、MCP、Memory 和调试方式
 - [生产部署](Docs/DEPLOYMENT.md)：RFCHost 的运行、更新和备份
+- [R0-R8 完成报告](Docs/RELEASE_REPORT_2026-07-12.md)：本轮架构、体验、验证和上线结果
 
 ## 仓库结构
 
 ```text
 CoupleChatTests/       iOS 日常单元测试
+CoupleChatUITests/     DEBUG 视觉夹具 UI 测试
 Docs/                  项目唯一文档目录
 Sources/
   App/                 App 入口、启动与主导航

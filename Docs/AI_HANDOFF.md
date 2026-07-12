@@ -6,52 +6,77 @@
 >
 > Draft PR：<https://github.com/hugxu0/couplechat-ios/pull/1>
 
-## 1. 先读结论
+## 1. 当前结论
 
-这不是一次已经完成的全量重构。R0-R4 已完成并通过真机验收，当前按用户要求把 R5 和 R6 合并为一个交付批次；不得提前开始 R7.x。
+R0-R8 已完成并上线，不存在等待继续执行的 R2.x、R3.x 或其他重构阶段。后续接手应按普通维护任务处理，不得重复执行历史计划，也不要为了“继续重构”改动已经通过真机验收的交互。
 
-当前可靠交接点：
+发布状态：
 
-- R0.1 已验收：建立聊天行为基线和时间线刷新决策测试。
-- R0.2 已验收：GitHub Actions 同时验证服务端、iPhone 单元测试、iPad 构建、Archive，并上传 IPA 和诊断包。
-- R0.3 已验收：最低系统版本改为 iOS 26，CI 固定 Xcode 26.3，并按最新可用 iOS runtime 选择 iPhone 17/iPad Simulator。
-- R1、R2 已完成并通过自动验证与真机验收。
-- R3 已验收：聊天、媒体图库和收藏共用媒体 Viewer，下滑退出及取消退出正常。
-- R4 已验收：时间线构建、滚动决策、消息动作和 `ChatTimelineController` 已拆分；分页、搜索定位、发送及初始定位回归已修复。
-- 最新真机包为 `CoupleChat-unsigned-222`，用户已确认聊天顶部、表情面板、媒体气泡、分页和 Viewer 回归通过。
-- 当前只实施 R5/R6；全部代码和完整自动验证通过后再生成一次快速 IPA，由用户统一真机验收。
-- R5/R6 代码与完整自动验证已通过但尚待真机验收：生产 SQLite 入口已收敛到 `ChatPersistence` actor，新增 Timeline/Outbox/Upload/Repository 边界，并迁移聊天外页面语义组件。
-- 完整 Actions run `29172957752` 全绿：服务端 test/build、SwiftLint、结构护栏、90 个 iOS 单测、聊天顶部 UI Fixture、iPad build、Archive 和 IPA 均通过；artifact 为 `CoupleChat-unsigned-225`。
-- R5/R6 在用户真机确认前保持“进行中”，不得提前开始 R7.x。
+- 完整 CI run `29175140556` 全部通过。
+- 发布候选 IPA：`CoupleChat-unsigned-230`。
+- 生产后端镜像：`couplechat-server:candidate-6a2e833`，正式标签为 `couplechat-server:local`。
+- 回滚镜像：`couplechat-server:rollback-20260712-094038`。
+- 发布前备份：`/root/codex-backups/couplechat-release-20260712-094038`。
+- 用户已完成单设备生产冒烟：普通消息、`@大橘`、AI 私聊、图片上传与预览全部通过。
+- 用户只有一台设备，R8.1 的双设备/iPad 真机矩阵已按明确要求豁免；这是残余风险，不是假装已测试。
 
-## 2. 已提交改动
+详细改造与证据见 `Docs/RELEASE_REPORT_2026-07-12.md`。
 
-按时间顺序检查以下提交：
+## 2. 接手顺序
 
-| commit | 内容 |
-|---|---|
-| `a6edfb9` | 新增完整重构计划、项目基线文档、时间线 reload 决策及测试；iOS 测试由 49 增至 60 |
-| `dd30a5d` | 强化 CI；新增 `HistorySyncCoordinator`；存储页改为观察 App 级同步任务；新增 4 个协调器测试 |
-| `d84c37e` | 修复 CI 选择到旧 iOS runtime 的问题，改为脚本选择最新兼容的 iPhone 17/iPad Simulator |
+开始任何新任务前完整阅读：
 
-关键实现文件：
+1. `Docs/PROJECT_STATUS.md`
+2. `Docs/ARCHITECTURE.md`
+3. `Docs/DEVELOPMENT.md`
+4. 与任务直接相关的 `Docs/API.md`、`Docs/AI.md` 或 `Docs/DEPLOYMENT.md`
 
-- `Sources/Core/HistorySyncCoordinator.swift`
-- `Sources/Core/ChatStore.swift`
-- `Sources/App/CoupleChatApp.swift`
-- `Sources/Features/Profile/StorageView.swift`
-- `Sources/Features/Chat/UIKit/ChatTimelineModels.swift`
-- `Sources/Features/Chat/UIKit/ChatViewController.swift`
-- `CoupleChatTests/HistorySyncCoordinatorTests.swift`
-- `CoupleChatTests/ChatTimelineReloadDecisionTests.swift`
-- `.github/workflows/build-ios.yml`
-- `.github/scripts/select-ios-simulator.py`
-- `.swiftlint-structure.yml`
-- `project.yml`
+然后运行：
 
-## 3. 自动验证记录
+```powershell
+git status --short --branch
+git log --oneline -8
+```
 
-本地 Windows 已通过：
+工作树可能包含用户自己的改动；不得覆盖、回滚或顺手格式化无关文件。
+
+## 3. 已建立的架构边界
+
+客户端：
+
+- `ChatPersistence` actor 是生产 SQLite 的唯一入口。
+- `ChatTimelineStore` 持有可观察的消息窗口和分页状态。
+- `OutboxProcessor` 串行处理可靠发送，`clientId` 是幂等与 pending 替换依据。
+- `MediaUploadService` 负责媒体上传边界。
+- `HistorySyncCoordinator` 拥有跨页面历史同步任务。
+- `ChatTimelineController` 负责 collection view、diff、分页锚点与滚动决策。
+- `ChatMediaViewerCoordinator` 统一聊天、图库和收藏的媒体 Viewer 转场。
+- `MessageStore`/`ChatStore` 仍是兼容 facade；新增业务应进入对应 Repository、Store 或 Coordinator，不继续扩大 facade。
+
+服务端：
+
+- `server.ts` 只负责装配和生命周期启动。
+- `app.ts` 注册 HTTP 路由，Socket 入口位于 `socket/`。
+- PostgreSQL 访问拆到 `db/client.ts`、`transaction.ts`、`rows.ts`、`migrate.ts`。
+- 已发布 migration v1-v10 受哈希测试保护，只能追加新版本。
+- AI Memory 撤回失效通过领域事件解耦。
+- scheduler、上传清理、Socket.IO、数据库按确定性顺序关闭。
+- `/live` 只表示进程存活，`/ready` 验证数据库，旧 `/health` 保持兼容。
+
+## 4. 不可破坏的产品行为
+
+- 不改已经通过验收的键盘、输入栏 inset 和分页锚点链路，除非有稳定复现的新 Bug。
+- 不删除或降级 AI 私聊、公聊 `@大橘`、Memory、确认卡、记录、提醒、纪念日和互动特效。
+- 不把失败气泡的本地删除与已发送消息的服务端撤回合并。
+- 不绕过 `clientId` 幂等，不让一次重试产生两条正式消息。
+- 不让页面生命周期重新拥有历史同步或 outbox 长任务。
+- 不在 MainActor 或 View 中直接访问 SQLite。
+- 不修改已执行的 PostgreSQL migration，只能追加。
+- 不记录 token、密码、API key、数据库连接串或完整私聊正文。
+
+## 5. 验证基线
+
+后端改动至少执行：
 
 ```powershell
 cd server
@@ -59,83 +84,38 @@ npm test
 npm run build
 ```
 
-还通过了 `actionlint`、`git diff --check` 和 Simulator 选择脚本样例测试。Windows 没有 Xcode，不能把本地检查写成 iOS 编译已通过。
+iOS 改动必须通过 GitHub Actions。完整验证包括：
 
-已完成的上一条 GitHub Actions 基线：
+- SwiftLint 与新增 Swift 文件结构护栏；
+- iPhone 单元测试；
+- DEBUG-only 聊天顶部 UI Fixture；
+- iPad Simulator build；
+- unsigned Archive 和 IPA 打包；
+- 服务端 test/build。
 
-- run：<https://github.com/hugxu0/couplechat-ios/actions/runs/29162003072>
-- 结果：服务端检查、60 个 iOS 单元测试、Archive、IPA 打包全部成功
-- IPA artifact：`CoupleChat-unsigned-203`
+视觉或手势问题仍由用户在真机验证，不要求截图。大任务按阶段完成后统一构建一次，不要每个小改动都生成 IPA。
 
-当前交接批次流水线：
+## 6. 生产操作
 
-- run：<https://github.com/hugxu0/couplechat-ios/actions/runs/29162418346>
-- 结果：全部成功
-- 已通过：服务端 test/build、SwiftLint、新 Swift 文件结构护栏、64 个 iOS 单元测试、iPad Simulator 构建、unsigned Archive 和 IPA 打包
-- IPA artifact：`CoupleChat-unsigned-205`（2,610,061 bytes）
-- 诊断 artifact：`CoupleChat-diagnostics-205`
+生产目录是 `/opt/couplechat-ios/server`，公网地址是 `https://hoo66.top`。任何部署前必须备份 PostgreSQL、uploads 和配置，并保留上一版镜像。上线后至少检查：
 
-检查命令：
-
-```powershell
-gh run view 29162418346 --json status,conclusion,url,jobs
-gh api repos/hugxu0/couplechat-ios/actions/runs/29162418346/artifacts
+```bash
+curl -fsS http://127.0.0.1:8080/live
+curl -fsS http://127.0.0.1:8080/ready
+curl -fsS https://hoo66.top/health
+curl -fsS https://hoo66.top/ready
+docker compose -f compose.production.yml ps
+docker compose -f compose.production.yml logs --tail=100 couplechat-server
 ```
 
-如果失败，先读失败 job 日志，只修复观测到的根因：
+不得删除当前发布备份、回滚镜像或旧 IPA。恢复数据库属于高风险操作，必须先验证 dump 并再次备份当前状态。
 
-```powershell
-gh run view 29162418346 --log-failed
-```
+## 7. 当前已知限制
 
-## 4. R1.1 真机验收步骤
+- 大橘宠物页仍是展示占位，不具备完整数值和持久化系统。
+- Bark 点击后的页面 deep link 尚未接入。
+- iPad 真机和两台设备同时在线的完整矩阵尚未执行。
+- Windows 不能本地编译 iOS，需依赖 GitHub Actions 或 Mac。
+- 清空 App 数据后，已丢失本地文件的失败媒体无法继续重传。
 
-安装本次成功构建产生的 IPA 后，用一个有较多历史消息和图片的账号验证：
-
-1. 打开“我的 → 存储空间”，开始同步全部聊天记录。
-2. 记录当前已同步数量，立即返回其他页面并等待 20～30 秒。
-3. 重新进入存储页，确认仍是同一个任务且数量继续增长，没有从零开始。
-4. 点击暂停，确认进度停止；离开再进入，暂停结果仍可见。
-5. 分别执行“同步全部聊天记录”和“缓存全部图片”，确认 couple/AI 两个频道的合计进度正确。
-6. 同步进行时退出登录，确认任务被取消且状态清空，不会把旧账号进度带给新账号。
-7. 将 App 切到后台再返回。iOS 可能挂起进程，所以这里只要求返回后状态一致、可继续；不要求系统在被挂起期间持续执行网络任务。
-
-全部通过后才把 R1.1 改为“已验收”。若只通过 CI，仍保持“进行中”。
-
-## 5. 下一位 AI 的第一项工作
-
-先完成 R1.2 的 CI 和真机验收。R1.1 已验收，不要重复回退其状态。
-
-R1.2 的范围已经写在 `REFACTOR_PLAN.md` 的“失败消息重试与删除”章节。实现前必须先读取现有 outbox、消息菜单、本地媒体清理和 `clientId` 幂等代码，并先补测试。
-
-## 6. 不可破坏的边界
-
-- 不改已经顺手的键盘弹起/收起和输入栏 inset 链路。
-- 不删除或降级 AI 私聊、公聊 `@大橘`、Memory、确认卡、记录、提醒、纪念日和互动特效。
-- 宠物页本轮跳过。
-- 不修改已执行的 PostgreSQL migration；只能追加。
-- 不把失败气泡的“本地删除”和服务端已发送消息的“撤回”混成一个 API。
-- 消息可靠性操作优先用 `clientId`；必须保持服务端幂等，不能让一次重试产生两条正式消息。
-- 不把页面生命周期重新变成长同步任务所有者。
-- 不提交 `.env`、数据库、uploads、构建目录、IPA 或诊断 artifact。
-- 不因工作树中存在其他改动而覆盖或回滚用户内容。
-
-## 7. 可直接发给下一位 AI 的提示词
-
-```text
-请接手这个仓库当前的重构工作。先完整阅读：
-1. Docs/AI_HANDOFF.md
-2. Docs/REFACTOR_PLAN.md
-3. Docs/ARCHITECTURE.md
-4. Docs/DEVELOPMENT.md
-
-先运行 git status --short --branch 和 git log --oneline -6，确认位于
-agent/project-handoff-cleanup，保留已有改动。GitHub Actions run 29162418346
-已经全绿，IPA artifact 是 CoupleChat-unsigned-205；先确认我是否完成了 R1.1
-真机验收。
-
-不要宣称全量重构完成。R1.1 在真机验收前保持“进行中”；如果我已提供真机
-验收通过结果，再将它标记“已验收”并只执行 R1.2。严格遵守 R1.2 的范围、
-测试和验收标准，不顺手开始 R2.x，不改键盘/输入栏链路，不删除任何 AI、
-记录、提醒或纪念日功能。完成后报告测试、CI run、artifact 和仍需人工验证项。
-```
+除此之外，没有遗留的重构阶段需要自动继续。新问题应先向用户确认复现细节，再做有边界的修复。

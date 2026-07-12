@@ -49,45 +49,6 @@ extension RootPageHeader where Trailing == EmptyView {
     }
 }
 
-struct AppSectionHeader: View {
-    let title: String
-    let detail: String?
-
-    init(_ title: String, detail: String? = nil) {
-        self.title = title
-        self.detail = detail
-    }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.headline)
-            Spacer()
-            if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
-        }
-        .foregroundStyle(.primary)
-    }
-}
-
-struct AppCard<Content: View>: View {
-    private let content: Content
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
-            }
-    }
-}
-
 private struct AppSurfaceStyle: ViewModifier {
     let radius: CGFloat
 
