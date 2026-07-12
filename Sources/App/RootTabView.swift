@@ -168,7 +168,7 @@ struct RootTabView: View {
         guard activePresentation?.id != presentation.id,
               !effectQueue.contains(where: { $0.id == presentation.id }) else { return }
         guard activePresentation != nil else {
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            DS.Anim.withMotion(DS.Anim.spring) {
                 activePresentation = presentation
             }
             return
@@ -177,11 +177,11 @@ struct RootTabView: View {
     }
 
     private func finishActiveEffect() {
-        withAnimation(.easeOut(duration: 0.2)) { activePresentation = nil }
+        DS.Anim.withMotion(DS.Anim.ease) { activePresentation = nil }
         guard !effectQueue.isEmpty else { return }
         let next = effectQueue.removeFirst()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            DS.Anim.withMotion(DS.Anim.spring) {
                 activePresentation = next
             }
         }
@@ -199,21 +199,23 @@ struct RootTabView: View {
                 } label: {
                     VStack(spacing: 3) {
                         Image(systemName: t == .pet ? AccountPresentation.dajuIconName : t.icon)
-                            .font(.system(size: 20))
-                            .scaleEffect(tab == t ? 1.08 : 1.0)
+                            .font(DS.Typo.tabIcon)
+                            .scaleEffect(tab == t && !UIAccessibility.isReduceMotionEnabled ? 1.08 : 1.0)
                         Text(t.rawValue)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DS.Typo.tab)
                     }
                     .foregroundStyle(tab == t ? DS.Palette.accent : DS.Palette.textSecondary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 2)
-                    .contentShape(Rectangle()) // 整块区域可点，不只是图标文字
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .animation(DS.Anim.springFast, value: tab)
+                .accessibilityLabel(t.rawValue)
+                .accessibilityAddTraits(tab == t ? .isSelected : [])
+                .animation(DS.Anim.motion(DS.Anim.springFast), value: tab)
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, DS.Spacing.tabBarVertical)
         .dsGlass(in: RoundedRectangle(cornerRadius: DS.Radius.tabBar, style: .continuous))
         .padding(.horizontal, DS.Spacing.page)
     }

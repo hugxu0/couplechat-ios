@@ -22,24 +22,25 @@ struct RootPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: DS.Spacing.gap) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.title2.bold())
-                    .foregroundStyle(.primary)
+                    .font(DS.Typo.pageTitle)
+                    .foregroundStyle(DS.Palette.textPrimary)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(DS.Typo.secondary)
+                        .foregroundStyle(DS.Palette.textSecondary)
                         .lineLimit(1)
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: DS.Spacing.compact)
             trailing
         }
         .padding(.horizontal, DS.Spacing.page)
         .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.bottom, DS.Spacing.compact)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -49,23 +50,38 @@ extension RootPageHeader where Trailing == EmptyView {
     }
 }
 
-private struct AppSurfaceStyle: ViewModifier {
-    let radius: CGFloat
+/// 分区小标题（卡片列表上方）
+struct AppSectionHeader: View {
+    let title: String
+    var subtitle: String? = nil
 
-    func body(content: Content) -> some View {
-        content
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(DS.Typo.cardTitle)
+                .foregroundStyle(DS.Palette.textPrimary)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(DS.Typo.caption)
+                    .foregroundStyle(DS.Palette.textSecondary)
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
-extension View {
-    func appSurface(radius: CGFloat = DS.Radius.card) -> some View {
-        modifier(AppSurfaceStyle(radius: radius))
+/// 标准内容卡容器：统一内边距 + soft surface
+struct AppCard<Content: View>: View {
+    var radius: CGFloat = DS.Radius.card
+    var padding: CGFloat = DS.Spacing.card
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .dsCard(radius: radius)
     }
 }
 
@@ -78,13 +94,15 @@ struct StatusBanner: View {
     var body: some View {
         HStack(spacing: 9) {
             Image(systemName: icon)
-            Text(text).font(.subheadline).frame(maxWidth: .infinity, alignment: .leading)
+            Text(text)
+                .font(DS.Typo.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .foregroundStyle(color)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, DS.Spacing.gap)
         .padding(.vertical, 10)
         .background(color.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
@@ -99,10 +117,10 @@ struct StatusBanner: View {
 
     private var color: Color {
         switch kind {
-        case .info: return .accentColor
-        case .success: return .green
-        case .warning: return .orange
-        case .error: return .red
+        case .info: return DS.Palette.accent
+        case .success: return DS.Palette.green
+        case .warning: return DS.Palette.orange
+        case .error: return DS.Palette.red
         }
     }
 }
@@ -123,6 +141,35 @@ struct AppEmptyState: View {
             title,
             systemImage: systemImage,
             description: detail.map { Text($0) })
+            .foregroundStyle(DS.Palette.textSecondary)
+    }
+}
+
+/// 主操作按钮（登录「进入」、表单提交等）
+struct AppPrimaryButton: View {
+    let title: String
+    var busy: Bool = false
+    var enabled: Bool = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if busy {
+                    ProgressView().tint(.white)
+                } else {
+                    Text(title).font(DS.Typo.button)
+                }
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, DS.Spacing.controlVertical)
+            .background(DS.Palette.accent)
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
+            .opacity(enabled && !busy ? 1 : 0.5)
+        }
+        .buttonStyle(PressableStyle())
+        .disabled(!enabled || busy)
     }
 }
 

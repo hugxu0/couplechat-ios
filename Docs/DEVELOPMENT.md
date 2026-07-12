@@ -107,6 +107,16 @@ GitHub Actions 的 `iOS 日常验证与构建` 分成两档，服务端与客户
 - Bug 修复优先补最小复现测试；无法自动化的真机问题写入 `PROJECT_STATUS.md`。
 - 日志不得包含 token、密码、API key、完整私聊内容或数据库连接串。
 
+### 设计系统约定
+
+- 颜色、圆角、间距、字体、动画、阴影只从 `Sources/DesignSystem/DS.swift` 取值；页面内不要再写散落魔法数。
+- 内容卡片用 `dsCard()` / `AppCard`；浮动层（Tab 栏、输入栏、浮钮）用 `dsGlass` / `dsGlassInteractive`。
+- `appSurface()` 已收敛为 `dsCard` 的兼容别名，新代码请直接写 `dsCard`。
+- 动画优先 `DS.Anim.*`，需要尊重「减少动态效果」时用 `DS.Anim.withMotion` 或 `DS.Anim.motion`。
+- 语义组件放在 `AppSemanticComponents.swift`：`RootPageHeader`、`AppSectionHeader`、`AppPrimaryButton`、`StatusBanner`、`AppEmptyState` 等；重复样式先抽组件再改页面。
+- 聊天 UIKit 路径需要同一数值时读 `DS.UIKitToken`，避免 SwiftUI / UIKit 各写一套。
+- Apple 设计上下文见 `.claude/apple-design-context.md`（气质：温柔玻璃感；聊天可深度统一样式，但发送/键盘/贴底可靠性优先）。
+
 ## 提交前检查
 
 ```powershell

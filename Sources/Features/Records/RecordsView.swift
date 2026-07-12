@@ -42,7 +42,7 @@ struct RecordsView: View {
                 if let rec = incomingRecommend {
                     PartnerRecommendPopup(recommend: rec) {
                         seenRecommendId = rec.id
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        DS.Anim.withMotion(DS.Anim.springFast) {
                             incomingRecommend = nil
                         }
                     }
@@ -81,7 +81,7 @@ struct RecordsView: View {
               rec.id != seenRecommendId,
               incomingRecommend?.id != rec.id else { return }
         Haptics.medium()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.78)) {
+        DS.Anim.withMotion(DS.Anim.spring) {
             incomingRecommend = rec
         }
     }
@@ -202,7 +202,7 @@ struct RecordsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.Spacing.card)
-        .appSurface()
+        .dsCard()
     }
 
     // MARK: - 大橘日记
@@ -235,7 +235,7 @@ struct RecordsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.Spacing.card)
-        .appSurface()
+        .dsCard()
     }
 
     // MARK: - 今日推荐
@@ -307,7 +307,7 @@ struct RecordsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.Spacing.card)
-        .appSurface()
+        .dsCard()
     }
 
     private func regenerate() {

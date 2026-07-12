@@ -27,7 +27,7 @@ struct ChatStatsCard: View {
             legendRow
         }
         .padding(DS.Spacing.card)
-        .appSurface()
+        .dsCard()
         .onChange(of: mode) { selectedIndex = nil }
         .task { await refreshBuckets() }
         .onReceive(store.messageStore.timelineStore.$messagesByChannel) { _ in
@@ -42,7 +42,7 @@ struct ChatStatsCard: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("聊天时光")
-                .font(.system(size: 18, weight: .bold))
+                .font(DS.Typo.cardTitle)
                 .foregroundStyle(DS.Palette.textPrimary)
             Spacer()
             let (label, total, delta) = headline()

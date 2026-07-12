@@ -3,7 +3,7 @@ import UIKit
 
 // =============================================================
 // 设计系统（Design Tokens）
-// 全 App 的圆角、颜色、透明度、间距、动画曲线都只从这里取值。
+// 全 App 的圆角、颜色、间距、字体、动画、材质都只从这里取值。
 // 主题色跟随 ThemeManager；明暗色用 UIColor 动态提供者自动适配深色模式。
 // =============================================================
 
@@ -13,10 +13,16 @@ enum DS {
     enum Radius {
         /// 大卡片（首页情侣卡、记录页统计卡）
         static let card: CGFloat = 30
+        /// 中卡片 / sheet 内块
+        static let panel: CGFloat = 24
         /// 小卡片（互动按钮、状态格子）
         static let tile: CGFloat = 20
         /// 消息气泡
         static let bubble: CGFloat = 18
+        /// 表单控件、次级按钮
+        static let control: CGFloat = 14
+        /// 状态条、小标签
+        static let chip: CGFloat = 10
         /// 输入框、胶囊按钮
         static let pill: CGFloat = 999
         /// 底部标签栏
@@ -66,6 +72,10 @@ enum DS {
         static let textSecondary = adaptive(
             light: UIColor(red: 0.55, green: 0.50, blue: 0.48, alpha: 1),
             dark: UIColor(white: 0.62, alpha: 1))
+        /// 三级文字（占位、弱提示）
+        static let textTertiary = adaptive(
+            light: UIColor(red: 0.66, green: 0.62, blue: 0.60, alpha: 1),
+            dark: UIColor(white: 0.48, alpha: 1))
         /// 卡片表面（白/深灰 半透明）
         static let cardSurface = adaptive(
             light: UIColor(white: 1, alpha: 0.72),
@@ -78,6 +88,12 @@ enum DS {
         static let floatSurface = adaptive(
             light: UIColor(white: 1, alpha: 0.80),
             dark: UIColor(white: 0.14, alpha: 0.86))
+        /// 表单字段底（登录密码框等，比卡片略实一点）
+        static let fieldSurface = adaptive(
+            light: UIColor(white: 1, alpha: 0.88),
+            dark: UIColor(white: 0.18, alpha: 0.92))
+        /// 细描边
+        static let hairline = Color.primary.opacity(0.06)
         /// 粉色点缀（心形、女生侧标签）
         static let pink = Color(red: 0.98, green: 0.35, blue: 0.55)
         /// 蓝色点缀（男生侧统计）
@@ -86,6 +102,10 @@ enum DS {
         static let purple = Color(red: 0.58, green: 0.40, blue: 0.92)
         /// 成功 / 上升趋势
         static let green = Color(red: 0.15, green: 0.68, blue: 0.38)
+        /// 警告
+        static let orange = Color(red: 0.95, green: 0.55, blue: 0.18)
+        /// 危险 / 错误
+        static let red = Color(red: 0.92, green: 0.28, blue: 0.30)
 
         /// 成员专属色：小旭蓝、小偲粉（统计图/图例用）
         static func member(_ username: String) -> Color {
@@ -93,12 +113,17 @@ enum DS {
         }
     }
 
-    // MARK: - 表面材质
+    // MARK: - 表面材质 / 阴影
     enum Surface {
-        /// 卡片阴影
         static let shadow = Color.black.opacity(0.06)
         static let shadowRadius: CGFloat = 14
         static let shadowY: CGFloat = 6
+        /// 更轻的抬升（小 tile）
+        static let softShadow = Color.black.opacity(0.04)
+        static let softShadowRadius: CGFloat = 10
+        static let softShadowY: CGFloat = 4
+        /// 遮罩（弹层背景）
+        static let scrim = Color.black.opacity(0.35)
     }
 
     // MARK: - 间距
@@ -106,8 +131,37 @@ enum DS {
         static let page: CGFloat = 16      // 页面左右留白
         static let card: CGFloat = 18      // 卡片内边距
         static let gap: CGFloat = 12       // 卡片之间
+        static let section: CGFloat = 20   // 区块之间
+        static let compact: CGFloat = 8    // 紧凑组内
+        static let tight: CGFloat = 4
         static let bubbleGapSame: CGFloat = 3   // 同一人连续消息
         static let bubbleGapOther: CGFloat = 10 // 不同人之间
+        static let tabBarVertical: CGFloat = 8
+        static let controlVertical: CGFloat = 14
+        static let fieldHorizontal: CGFloat = 16
+        static let fieldVertical: CGFloat = 12
+    }
+
+    // MARK: - 字体（优先系统 Text Style，利于 Dynamic Type）
+    enum Typo {
+        /// 登录大标题等展示用
+        static let display = Font.system(.largeTitle, design: .rounded).weight(.bold)
+        /// 根页标题
+        static let pageTitle = Font.title2.weight(.bold)
+        /// 卡片主标题
+        static let cardTitle = Font.headline.weight(.bold)
+        /// 正文
+        static let body = Font.body
+        /// 次要说明
+        static let secondary = Font.subheadline
+        /// 更弱说明 / 时间
+        static let caption = Font.caption
+        /// 按钮主文案
+        static let button = Font.system(.body, design: .default).weight(.semibold)
+        /// Tab 标签（底栏空间有限，固定档）
+        static let tab = Font.system(size: 11, weight: .medium)
+        /// Tab 图标
+        static let tabIcon = Font.system(size: 20)
     }
 
     // MARK: - 动画（手感统一从这里取）
@@ -120,40 +174,97 @@ enum DS {
         static let message = Animation.spring(response: 0.42, dampingFraction: 0.80)
         /// 普通淡入淡出
         static let ease = Animation.easeOut(duration: 0.22)
+
+        /// 尊重系统「减少动态效果」
+        static func motion(_ animation: Animation) -> Animation? {
+            UIAccessibility.isReduceMotionEnabled ? nil : animation
+        }
+
+        static func withMotion(_ animation: Animation, _ body: () -> Void) {
+            if UIAccessibility.isReduceMotionEnabled {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction, body)
+            } else {
+                withAnimation(animation, body)
+            }
+        }
+    }
+
+    // MARK: - UIKit 桥接（聊天 cell / 控制器读同一套数值）
+    enum UIKitToken {
+        static let bubbleRadius: CGFloat = Radius.bubble
+        static let bubbleGapSame: CGFloat = Spacing.bubbleGapSame
+        static let bubbleGapOther: CGFloat = Spacing.bubbleGapOther
+        static let pageInset: CGFloat = Spacing.page
+        static let cardRadius: CGFloat = Radius.card
+
+        static var textPrimary: UIColor {
+            UIColor { $0.userInterfaceStyle == .dark
+                ? UIColor(white: 0.93, alpha: 1)
+                : UIColor(red: 0.20, green: 0.16, blue: 0.15, alpha: 1) }
+        }
+
+        static var textSecondary: UIColor {
+            UIColor { $0.userInterfaceStyle == .dark
+                ? UIColor(white: 0.62, alpha: 1)
+                : UIColor(red: 0.55, green: 0.50, blue: 0.48, alpha: 1) }
+        }
+
+        static var bubbleOther: UIColor {
+            UIColor { $0.userInterfaceStyle == .dark
+                ? UIColor(white: 0.16, alpha: 1)
+                : .white }
+        }
     }
 }
 
 // =============================================================
-// 通用修饰符：卡片 / 按压回弹
+// 通用修饰符：卡片 / 按压回弹 / 玻璃
 // =============================================================
 
-/// 统一卡片样式：半透明底 + 大圆角 + 轻阴影（深色模式自动换深底）
+/// 统一内容卡片：半透明 soft surface + 大圆角 + 轻阴影
 struct CardStyle: ViewModifier {
     var radius: CGFloat = DS.Radius.card
+    var elevated: Bool = true
+
     func body(content: Content) -> some View {
         content
             .background(DS.Palette.cardSurface)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
+            .overlay {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .stroke(DS.Palette.hairline, lineWidth: 0.5)
+            }
+            .shadow(
+                color: elevated ? DS.Surface.shadow : .clear,
+                radius: elevated ? DS.Surface.shadowRadius : 0,
+                y: elevated ? DS.Surface.shadowY : 0)
     }
 }
 
-/// 按压时轻微缩小回弹（Telegram 手感的基础）
+/// 按压时轻微缩小回弹
 struct PressableStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
-            .animation(DS.Anim.springFast, value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !UIAccessibility.isReduceMotionEnabled ? 0.96 : 1.0)
+            .animation(DS.Anim.motion(DS.Anim.springFast), value: configuration.isPressed)
     }
 }
 
 extension View {
-    func dsCard(radius: CGFloat = DS.Radius.card) -> some View {
-        modifier(CardStyle(radius: radius))
+    /// 主内容卡片（渐变背景上的 soft glass card）
+    func dsCard(radius: CGFloat = DS.Radius.card, elevated: Bool = true) -> some View {
+        modifier(CardStyle(radius: radius, elevated: elevated))
     }
 
-    /// 悬浮控制层的统一材质：iOS 26 用系统液态玻璃（真折射、感知背后内容），
-    /// 老系统退回半透明底。标签栏、输入栏等「浮在内容上的控件」都用这个。
+    /// 与 `dsCard` 同族的表面样式；保留旧名避免大面积改调用点。
+    /// 新代码请优先写 `dsCard`。
+    func appSurface(radius: CGFloat = DS.Radius.card) -> some View {
+        dsCard(radius: radius, elevated: true)
+    }
+
+    /// 悬浮控制层的统一材质：iOS 26 液态玻璃；旧系统退回 material。
     @ViewBuilder
     func dsGlass<S: Shape>(in shape: S) -> some View {
         if #available(iOS 26.0, *) {
@@ -166,7 +277,7 @@ extension View {
         }
     }
 
-    /// 可交互的液态玻璃（按压时有高光反馈）：圆形小按钮用
+    /// 可交互液态玻璃：圆形小按钮用
     @ViewBuilder
     func dsGlassInteractive<S: Shape>(in shape: S) -> some View {
         if #available(iOS 26.0, *) {

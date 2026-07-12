@@ -15,22 +15,21 @@ struct LoginView: View {
         VStack(spacing: 26) {
             Spacer()
 
-            VStack(spacing: 8) {
+            VStack(spacing: DS.Spacing.compact) {
                 PairedEchoIndicator()
                 Text("悄悄话")
-                    .font(.system(size: 30, weight: .bold))
+                    .font(DS.Typo.display)
                     .foregroundStyle(DS.Palette.textPrimary)
                 Text("只属于我们俩的小空间")
-                    .font(.system(size: 14))
+                    .font(DS.Typo.secondary)
                     .foregroundStyle(DS.Palette.textSecondary)
             }
 
-            // 选账号
             HStack(spacing: 14) {
                 ForEach(accounts, id: \.username) { acc in
                     Button {
                         Haptics.selection()
-                        withAnimation(DS.Anim.springFast) { selected = acc }
+                        DS.Anim.withMotion(DS.Anim.springFast) { selected = acc }
                         pwFocused = true
                     } label: {
                         VStack(spacing: 6) {
@@ -44,49 +43,41 @@ struct LoginView: View {
                                         selected == acc ? DS.Palette.accent : .clear, lineWidth: 3)
                                 }
                             Text(acc.name)
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(DS.Typo.button)
                                 .foregroundStyle(selected == acc ? DS.Palette.accent : DS.Palette.textPrimary)
                         }
                     }
                     .buttonStyle(PressableStyle())
+                    .accessibilityLabel("选择 \(acc.name)")
+                    .accessibilityAddTraits(selected == acc ? .isSelected : [])
                 }
             }
 
-            // 密码 + 登录
             VStack(spacing: 14) {
                 SecureField("密码", text: $password)
                     .focused($pwFocused)
                     .textContentType(.password)
-                    .font(.system(size: 16))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .font(DS.Typo.body)
+                    .padding(.horizontal, DS.Spacing.fieldHorizontal)
+                    .padding(.vertical, DS.Spacing.fieldVertical)
+                    .background(DS.Palette.fieldSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                            .stroke(DS.Palette.hairline, lineWidth: 0.5)
+                    }
                     .onSubmit(submit)
 
                 if let error {
-                    Text(error)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.red)
+                    StatusBanner(text: error, kind: .error)
                 }
 
-                Button(action: submit) {
-                    Group {
-                        if busy {
-                            ProgressView().tint(.white)
-                        } else {
-                            Text("进入").font(.system(size: 17, weight: .semibold))
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(DS.Palette.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .opacity(selected == nil || password.isEmpty ? 0.5 : 1)
-                }
-                .buttonStyle(PressableStyle())
-                .disabled(selected == nil || password.isEmpty || busy)
+                AppPrimaryButton(
+                    title: "进入",
+                    busy: busy,
+                    enabled: selected != nil && !password.isEmpty,
+                    action: submit
+                )
             }
             .padding(.horizontal, 34)
 

@@ -12,7 +12,7 @@ struct PartnerRecommendPopup: View {
     var body: some View {
         ZStack {
             // 半透明暗背景，点击也可关闭
-            Color.black.opacity(0.35)
+            DS.Surface.scrim
                 .ignoresSafeArea()
                 .onTapGesture { onDismiss() }
 
