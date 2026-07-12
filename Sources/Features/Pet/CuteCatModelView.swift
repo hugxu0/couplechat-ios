@@ -91,12 +91,6 @@ struct CuteCatModelView: UIViewRepresentable {
             container.sceneView.scene = presentationScene
             container.setLoaded(true)
             modelRoot = root
-
-            source.animations.forEach { animation in
-                animation.animationPlayer.animation.repeatCount = .greatestFiniteMagnitude
-                root.addAnimationPlayer(animation.animationPlayer, forKey: animation.name)
-                animation.animationPlayer.play()
-            }
         }
 
         private func normalize(_ node: SCNNode) {
