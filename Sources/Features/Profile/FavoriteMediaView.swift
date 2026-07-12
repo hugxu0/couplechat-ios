@@ -51,11 +51,11 @@ struct FavoriteMediaView: View {
 
                 if item.isVideo {
                     Image(systemName: "play.fill")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(DS.Typo.micro.weight(.bold))
                         .foregroundStyle(.white)
                         .frame(width: 28, height: 28)
                         .background(.black.opacity(0.48), in: Circle())
-                        .padding(7)
+                        .padding(DS.Spacing.compact - 1)
                 }
             }
             .aspectRatio(1, contentMode: .fit)

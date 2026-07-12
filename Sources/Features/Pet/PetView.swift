@@ -36,7 +36,7 @@ struct PetView: View {
     private var petCard: some View {
         VStack(spacing: 12) {
             Text(bubble)
-                .font(.system(size: 16, weight: .medium))
+                .font(DS.Typo.body.weight(.medium))
                 .foregroundStyle(DS.Palette.textPrimary)
                 .padding(.horizontal, 18).padding(.vertical, 10)
                 .background(DS.Palette.bubbleOther)
@@ -55,14 +55,14 @@ struct PetView: View {
                 }
 
             Text("大橘现在超开心，元气满满！")
-                .font(.system(size: 14))
+                .font(DS.Typo.secondary)
                 .foregroundStyle(DS.Palette.textSecondary)
 
             HStack {
                 // 经验条
                 HStack(spacing: 0) {
                     Text("Lv.4 · 经验 36%")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DS.Typo.sectionLabel)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12).padding(.vertical, 6)
                         .background(DS.Palette.accent)
@@ -74,7 +74,7 @@ struct PetView: View {
                 .clipShape(Capsule())
 
                 Label("亲密 239", systemImage: "heart.fill")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(DS.Typo.button)
                     .foregroundStyle(DS.Palette.pink)
             }
         }
@@ -87,8 +87,8 @@ struct PetView: View {
         VStack(spacing: 14) {
             ForEach(stats, id: \.name) { s in
                 HStack(spacing: 10) {
-                    Text(s.icon).font(.system(size: 20))
-                    Text(s.name).font(.system(size: 15))
+                    Text(s.icon).font(DS.Typo.tabIcon)
+                    Text(s.name).font(DS.Typo.body)
                         .foregroundStyle(DS.Palette.textSecondary)
                         .frame(width: 44, alignment: .leading)
                     GeometryReader { geo in
@@ -100,7 +100,7 @@ struct PetView: View {
                     }
                     .frame(height: 10)
                     Text("\(Int(s.value * 100))")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(DS.Typo.button)
                         .foregroundStyle(DS.Palette.textPrimary)
                         .frame(width: 40, alignment: .trailing)
                 }
@@ -125,10 +125,10 @@ struct PetView: View {
             Haptics.medium()
         } label: {
             VStack(spacing: 5) {
-                Text(emoji).font(.system(size: 26))
-                Text(title).font(.system(size: 14, weight: .bold))
+                Text(emoji).font(DS.Typo.pageTitle)
+                Text(title).font(DS.Typo.secondary.weight(.bold))
                     .foregroundStyle(DS.Palette.textPrimary)
-                Text("可用").font(.system(size: 11))
+                Text("可用").font(DS.Typo.micro)
                     .foregroundStyle(DS.Palette.accent)
             }
             .frame(maxWidth: .infinity)
@@ -147,7 +147,7 @@ struct PetView: View {
         } label: {
             HStack(spacing: 14) {
                 Text("🐱")
-                    .font(.system(size: 30))
+                    .font(DS.Typo.pageTitle)
                     .frame(width: 54, height: 54)
                     .background(theme.accent.color.opacity(0.12))
                     .clipShape(Circle())
@@ -155,16 +155,16 @@ struct PetView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text("和大橘聊聊")
-                            .font(.system(size: 16, weight: .bold))
+                            .font(DS.Typo.button)
                             .foregroundStyle(DS.Palette.textPrimary)
                         if store.isAIComposing(in: .ai) {
                             Text("正在输入")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(DS.Typo.micro.weight(.semibold))
                                 .foregroundStyle(DS.Palette.green)
                         }
                     }
                     Text(aiPreview)
-                        .font(.system(size: 13))
+                        .font(DS.Typo.caption)
                         .foregroundStyle(DS.Palette.textSecondary)
                         .lineLimit(1)
                 }
@@ -172,7 +172,7 @@ struct PetView: View {
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DS.Typo.secondary.weight(.semibold))
                     .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
             }
             .padding(DS.Spacing.card)

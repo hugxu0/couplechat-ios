@@ -26,7 +26,7 @@ struct PartnerRecommendPopup: View {
                             .scaleEffect(appeared ? 1.0 : 0.4)
                             .rotationEffect(.degrees(appeared ? 0 : -18))
                         Text("\(recommend.fromName) 给你推荐了")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DS.Typo.secondary.weight(.semibold))
                             .foregroundStyle(.white.opacity(0.92))
                     }
                     .padding(.vertical, 22)
@@ -46,7 +46,7 @@ struct PartnerRecommendPopup: View {
                 // 推荐内容
                 VStack(spacing: 18) {
                     Text(recommend.text)
-                        .font(.system(size: 17, weight: .medium))
+                        .font(DS.Typo.body.weight(.medium))
                         .foregroundStyle(DS.Palette.textPrimary)
                         .multilineTextAlignment(.center)
                         .lineSpacing(5)
@@ -58,7 +58,7 @@ struct PartnerRecommendPopup: View {
                         onDismiss()
                     } label: {
                         Text("收到啦 💗")
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .font(DS.Typo.button)
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 13)
@@ -71,7 +71,7 @@ struct PartnerRecommendPopup: View {
                 .background(DS.Palette.cardSurface)
             }
             .frame(maxWidth: 320)
-            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.panel + 2, style: .continuous))
             .shadow(color: .black.opacity(0.18), radius: 30, y: 12)
             .scaleEffect(appeared ? 1.0 : 0.82)
             .opacity(appeared ? 1.0 : 0)

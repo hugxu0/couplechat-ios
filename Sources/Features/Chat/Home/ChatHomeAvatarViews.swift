@@ -45,7 +45,7 @@ struct ChatHomeCoupleAvatarColumn: View {
             }
 
             Text(name)
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .font(DS.Typo.cardTitle)
                 .foregroundStyle(DS.Palette.textPrimary)
         }
     }
@@ -58,7 +58,7 @@ struct ChatHomeCoupleAvatarColumn: View {
                 showStatusPicker = true
             } label: {
                 Text(status ?? "加状态")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .font(DS.Typo.secondary.weight(.bold))
                     .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.pink)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -80,7 +80,7 @@ struct ChatHomeCoupleAvatarColumn: View {
             .accessibilityLabel(status == nil ? "添加状态" : "当前状态 \(status ?? "")")
         } else {
             Text(status ?? "想贴贴")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .font(DS.Typo.secondary.weight(.bold))
                 .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.textPrimary.opacity(0.62))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)

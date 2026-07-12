@@ -50,7 +50,7 @@ struct AnniversaryEditorSheet: View {
                                 icon = name
                             } label: {
                                 Image(systemName: name)
-                                    .font(.system(size: 18, weight: .semibold))
+                                    .font(DS.Typo.cardTitle.weight(.semibold))
                                     .foregroundStyle(icon == name ? .white : theme.accent.color)
                                     .frame(width: 44, height: 44)
                                     .background(icon == name ? AnyShapeStyle(theme.accent.color) : AnyShapeStyle(theme.accent.color.opacity(0.12)))

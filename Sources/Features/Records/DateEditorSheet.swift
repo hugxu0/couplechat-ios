@@ -29,25 +29,25 @@ struct DateEditorSheet: View {
                         } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: entry.icon)
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .font(DS.Typo.button)
                                     .foregroundStyle(theme.accent.color)
                                     .frame(width: 26)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(entry.title)
-                                        .font(.system(size: 15))
+                                        .font(DS.Typo.body)
                                         .foregroundStyle(DS.Palette.textPrimary)
                                     Text(entry.direction == .up ? "累计天数" : "倒数纪念日")
-                                        .font(.system(size: 12))
+                                        .font(DS.Typo.caption)
                                         .foregroundStyle(DS.Palette.textSecondary)
                                 }
                                 Spacer()
                                 if let days = entry.days {
                                     Text("\(days)\(entry.direction == .up ? "天" : "天后")")
-                                        .font(.system(size: 14, weight: .medium))
+                                        .font(DS.Typo.secondary.weight(.medium))
                                         .foregroundStyle(DS.Palette.textSecondary)
                                 }
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(DS.Typo.micro.weight(.semibold))
                                     .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
                             }
                         }

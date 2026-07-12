@@ -25,6 +25,7 @@
 - 2026-07-13 启动全量重设计阶段 0+1：硬化 `DS` token（字体/间距/状态色/Reduce Motion/UIKit 桥接），统一 `dsCard` 与语义组件，登录页与根 Tab 接入同一套样式。
 - 2026-07-13 阶段 2 首页：`ChatHomeView` 拆入 `Sources/Features/Chat/Home/`（models / components / avatar / 装配），Profile 残留 `appSurface` 收敛为 `dsCard`。
 - 2026-07-13 阶段 3 外围页：提醒页与我的页表面/字体/分段控件收敛到 `DS` 与 `dsCard`；不改业务请求与数据结构。
+- 2026-07-13 阶段 4 外围页细化：记录/主题/存储/宠物/聊天首页常规字号与圆角收敛到 `DS.Typo`；装饰性大图标保留固定字号。
 
 详细改造与证据见 `Docs/RELEASE_REPORT_2026-07-12.md`。
 

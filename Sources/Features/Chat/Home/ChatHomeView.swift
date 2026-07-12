@@ -102,7 +102,7 @@ struct ChatHomeView: View {
             .overlay(alignment: .top) {
                 if let refreshMessage {
                     Text(refreshMessage)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(DS.Typo.sectionLabel)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
@@ -164,13 +164,13 @@ struct ChatHomeView: View {
             ZStack {
                 HStack(spacing: 10) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(DS.Typo.cardTitle.weight(.semibold))
                     Text("漫长悄悄话")
                         .font(.system(size: 35, weight: .heavy, design: .rounded))
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
                     Image(systemName: "sparkles")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(DS.Typo.button)
                 }
                 .foregroundStyle(
                     LinearGradient(
@@ -187,13 +187,13 @@ struct ChatHomeView: View {
                 )
 
                 Image(systemName: "heart.fill")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(DS.Typo.micro.weight(.bold))
                     .foregroundStyle(DS.Palette.pink.opacity(0.58))
                     .offset(y: -30)
             }
 
             Text("慢慢说，悄悄听")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(DS.Typo.sectionLabel)
                 .foregroundStyle(theme.accent.color.opacity(0.62))
         }
         .frame(maxWidth: .infinity)
@@ -240,9 +240,9 @@ struct ChatHomeView: View {
                 Image(systemName: "sparkles")
                 Spacer()
                 Image(systemName: "heart.fill")
-                    .font(.system(size: 11))
+                    .font(DS.Typo.micro)
             }
-            .font(.system(size: 15, weight: .semibold))
+            .font(DS.Typo.button)
             .foregroundStyle(theme.accent.color.opacity(0.11))
             .padding(.horizontal, 22)
             .padding(.top, 13)
@@ -286,7 +286,7 @@ struct ChatHomeView: View {
                     .tint(DS.Palette.accent)
             } else {
                 Image(systemName: "arrow.down")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(DS.Typo.sectionLabel)
                     .foregroundStyle(DS.Palette.accent)
                     .rotationEffect(.degrees(pullProgress >= 1 ? 180 : 0))
             }
@@ -337,7 +337,7 @@ struct ChatHomeView: View {
                         )
                 }
                 Text(connectionSummary)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.Typo.micro.weight(.semibold))
                     .foregroundStyle(DS.Palette.textSecondary)
             }
             .frame(width: 70)
@@ -377,7 +377,7 @@ struct ChatHomeView: View {
                     showCustomStatusPrompt = true
                 } label: {
                     Label("添加", systemImage: "plus")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(DS.Typo.sectionLabel)
                         .foregroundStyle(DS.Palette.textSecondary)
                         .padding(.horizontal, 13)
                         .frame(height: 36)
@@ -406,12 +406,12 @@ struct ChatHomeView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("最新消息", systemImage: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(DS.Typo.button)
                     .foregroundStyle(DS.Palette.textPrimary)
                 Spacer()
                 if let last = coupleMessages.last {
                     Text(last.timeString)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .font(DS.Typo.micro.weight(.bold))
                         .foregroundStyle(DS.Palette.textSecondary)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
@@ -459,9 +459,9 @@ struct ChatHomeView: View {
         } label: {
             HStack(spacing: 8) {
                 Text("进入聊天")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(DS.Typo.button)
                 Image(systemName: "arrow.right")
-                    .font(.system(size: 15, weight: .heavy))
+                    .font(DS.Typo.button)
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)

@@ -65,10 +65,10 @@ struct StorageView: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(sizeString(breakdown?.totalBytes ?? 0))
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                            .font(DS.Typo.displayNumber)
                             .foregroundStyle(DS.Palette.textPrimary)
                         Text("当前设备上的聊天数据")
-                            .font(.system(size: 13))
+                            .font(DS.Typo.caption)
                             .foregroundStyle(DS.Palette.textSecondary)
                     }
                     Spacer()
@@ -89,15 +89,15 @@ struct StorageView: View {
     private var connectionBadge: some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(store.connected ? DS.Palette.green : Color.orange)
+                .fill(store.connected ? DS.Palette.green : DS.Palette.orange)
                 .frame(width: 7, height: 7)
             Text(store.connected ? "云端已连接" : "等待连接")
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.Typo.micro.weight(.semibold))
         }
-        .foregroundStyle(store.connected ? DS.Palette.green : Color.orange)
+        .foregroundStyle(store.connected ? DS.Palette.green : DS.Palette.orange)
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .background((store.connected ? DS.Palette.green : Color.orange).opacity(0.10), in: Capsule())
+        .background((store.connected ? DS.Palette.green : DS.Palette.orange).opacity(0.10), in: Capsule())
     }
 
     // MARK: - 明细
@@ -119,16 +119,16 @@ struct StorageView: View {
     private func breakdownRow(icon: String, tint: Color, title: String, detail: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
+                .font(DS.Typo.button)
                 .foregroundStyle(.white)
                 .frame(width: 30, height: 30)
-                .background(tint.opacity(0.85), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(tint.opacity(0.85), in: RoundedRectangle(cornerRadius: DS.Radius.chip - 2, style: .continuous))
             Text(title)
-                .font(.system(size: 15))
+                .font(DS.Typo.body)
                 .foregroundStyle(DS.Palette.textPrimary)
             Spacer()
             Text(detail)
-                .font(.system(size: 14))
+                .font(DS.Typo.secondary)
                 .foregroundStyle(DS.Palette.textSecondary)
         }
         .padding(.vertical, 2)
@@ -159,7 +159,7 @@ struct StorageView: View {
             Text("本地同步")
         } footer: {
             if let statusText {
-                Text(statusText).foregroundStyle(statusIsError ? Color.orange : DS.Palette.green)
+                Text(statusText).foregroundStyle(statusIsError ? DS.Palette.orange : DS.Palette.green)
             } else if !store.connected {
                 Text("需要先连接服务器才能同步聊天记录。")
             } else {
@@ -192,10 +192,10 @@ struct StorageView: View {
 
     private func channelProgressRow(_ title: String, local: Int, remote: Int?) -> some View {
         HStack {
-            Text(title).font(.system(size: 14, weight: .medium))
+            Text(title).font(DS.Typo.secondary.weight(.medium))
             Spacer()
             Text(remote.map { "\(local) / \($0) 条" } ?? "本地 \(local) 条")
-                .font(.system(size: 13, design: .rounded).monospacedDigit())
+                .font(DS.Typo.caption.monospacedDigit())
                 .foregroundStyle(DS.Palette.textSecondary)
         }
     }
@@ -204,7 +204,7 @@ struct StorageView: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 ProgressView().controlSize(.small)
-                Text(title).font(.system(size: 15, weight: .semibold))
+                Text(title).font(DS.Typo.button)
                 Spacer()
             }
             if let value, let total {
@@ -213,7 +213,7 @@ struct StorageView: View {
                 ProgressView().tint(DS.Palette.accent)
             }
             Text(detail)
-                .font(.system(size: 12, design: .rounded).monospacedDigit())
+                .font(DS.Typo.micro.monospacedDigit())
                 .foregroundStyle(DS.Palette.textSecondary)
         }
         .padding(.vertical, 3)
@@ -318,22 +318,22 @@ private struct AttachmentManagerView: View {
                         } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: icon(for: item.type))
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(DS.Typo.button)
                                     .foregroundStyle(.white)
                                     .frame(width: 34, height: 34)
-                                    .background(tint(for: item.type), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                    .background(tint(for: item.type), in: RoundedRectangle(cornerRadius: DS.Radius.chip - 1, style: .continuous))
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(title(for: item))
-                                        .font(.system(size: 15, weight: .medium))
+                                        .font(DS.Typo.body.weight(.medium))
                                         .foregroundStyle(DS.Palette.textPrimary)
                                         .lineLimit(1)
                                     Text(dateTime(item.ts))
-                                        .font(.system(size: 12))
+                                        .font(DS.Typo.caption)
                                         .foregroundStyle(DS.Palette.textSecondary)
                                 }
                                 Spacer()
                                 Image(systemName: "arrow.up.right")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(DS.Typo.micro.weight(.semibold))
                                     .foregroundStyle(DS.Palette.textSecondary.opacity(0.6))
                             }
                         }

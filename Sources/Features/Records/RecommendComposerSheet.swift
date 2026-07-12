@@ -14,18 +14,18 @@ struct RecommendComposerSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 14) {
                 Text("推荐点什么给 TA？")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(DS.Typo.pageTitle)
                     .foregroundStyle(DS.Palette.textPrimary)
                 Text("一首歌、一部电影、一家店…TA 打开记录页就会看到")
-                    .font(.system(size: 13))
+                    .font(DS.Typo.caption)
                     .foregroundStyle(DS.Palette.textSecondary)
 
                 TextField("比如：新出的那部电影超好看，周末一起？", text: $text, axis: .vertical)
                     .focused($focused)
                     .lineLimit(3...6)
-                    .font(.system(size: 16))
-                    .padding(14)
-                    .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .font(DS.Typo.body)
+                    .padding(DS.Spacing.card - 4)
+                    .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous))
 
                 Button {
                     let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -36,21 +36,21 @@ struct RecommendComposerSheet: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "gift.fill")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(DS.Typo.button)
                         Text("送出推荐")
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .font(DS.Typo.button)
                     }
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(theme.accent.gradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(theme.accent.gradient, in: RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous))
                 }
                 .buttonStyle(PressableStyle())
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 Spacer(minLength: 0)
             }
-            .padding(20)
+            .padding(DS.Spacing.section)
             .background(AppPageBackground())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

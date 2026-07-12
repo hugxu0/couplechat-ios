@@ -142,10 +142,16 @@ enum DS {
         static let fieldVertical: CGFloat = 12
     }
 
-    // MARK: - 字体（优先系统 Text Style，利于 Dynamic Type）
+    // MARK: - 字体（优先系统 Text Style；大数字/底栏保留固定档）
     enum Typo {
         /// 登录大标题等展示用
         static let display = Font.system(.largeTitle, design: .rounded).weight(.bold)
+        /// 记录页「在一起」天数等主数字
+        static let displayHero = Font.system(size: 68, weight: .heavy, design: .rounded)
+        /// 纪念日格子、统计大数字
+        static let displayMetric = Font.system(size: 38, weight: .heavy, design: .rounded)
+        /// 次级大数字（存储总量、统计卡标题数）
+        static let displayNumber = Font.system(size: 26, weight: .heavy, design: .rounded)
         /// 根页标题
         static let pageTitle = Font.title2.weight(.bold)
         /// 卡片主标题
@@ -156,6 +162,10 @@ enum DS {
         static let secondary = Font.subheadline
         /// 更弱说明 / 时间
         static let caption = Font.caption
+        /// 分区小标签（卡片内「主题色」「预览」等）
+        static let sectionLabel = Font.system(size: 13, weight: .semibold)
+        /// 最小标签（色名、底栏旁注）
+        static let micro = Font.system(size: 11, weight: .medium)
         /// 按钮主文案
         static let button = Font.system(.body, design: .default).weight(.semibold)
         /// Tab 标签（底栏空间有限，固定档）

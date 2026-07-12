@@ -117,28 +117,28 @@ struct RecordsView: View {
             Haptics.light()
             showDateEditor = true
         } label: {
-            VStack(spacing: 6) {
+            VStack(spacing: DS.Spacing.tight + 2) {
                 Text("我们在一起")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(DS.Typo.secondary.weight(.medium))
                     .foregroundStyle(.white.opacity(0.85))
                 if let days = CoupleDates.daysSince(store.coupleDates.together) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.tight + 2) {
                         Text("\(days)")
-                            .font(.system(size: 68, weight: .heavy, design: .rounded))
+                            .font(DS.Typo.displayHero)
                             .contentTransition(.numericText())
                         Text("天")
-                            .font(.system(size: 18, weight: .semibold))
+                            .font(DS.Typo.cardTitle.weight(.semibold))
                             .foregroundStyle(.white.opacity(0.85))
                     }
                     .foregroundStyle(.white)
                 } else {
                     Text("点击设置纪念日")
-                        .font(.system(size: 24, weight: .bold))
+                        .font(DS.Typo.pageTitle)
                         .foregroundStyle(.white)
                         .padding(.vertical, 16)
                 }
                 Text("陪伴是很长情的告白")
-                    .font(.system(size: 13))
+                    .font(DS.Typo.caption)
                     .foregroundStyle(.white.opacity(0.7))
             }
             .frame(maxWidth: .infinity)
@@ -173,29 +173,29 @@ struct RecordsView: View {
     }
 
     private func anniversaryCard(_ entry: AnniversaryEntry) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DS.Spacing.compact) {
+            HStack(spacing: DS.Spacing.tight + 2) {
                 Image(systemName: entry.icon)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DS.Typo.secondary.weight(.semibold))
                     .foregroundStyle(theme.accent.color)
                 Text(entry.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.Typo.caption.weight(.medium))
                     .foregroundStyle(DS.Palette.textSecondary)
                     .lineLimit(1)
             }
             if let days = entry.days {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.tight - 1) {
                     Text("\(days)")
-                        .font(.system(size: 38, weight: .heavy, design: .rounded))
+                        .font(DS.Typo.displayMetric)
                         .foregroundStyle(DS.Palette.textPrimary)
                         .contentTransition(.numericText())
                     Text(entry.direction == .up ? "天" : "天后")
-                        .font(.system(size: 13))
+                        .font(DS.Typo.caption)
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
             } else {
                 Text("未设置")
-                    .font(.system(size: 24, weight: .bold))
+                    .font(DS.Typo.pageTitle)
                     .foregroundStyle(DS.Palette.textSecondary.opacity(0.6))
                     .padding(.vertical, 5)
             }
@@ -208,28 +208,28 @@ struct RecordsView: View {
     // MARK: - 大橘日记
     @ViewBuilder
     private var diaryCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Spacing.gap) {
+            HStack(spacing: DS.Spacing.compact) {
                 Text("🐱")
-                    .font(.system(size: 22))
+                    .font(DS.Typo.pageTitle)
                 Text("大橘日记")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(DS.Typo.cardTitle)
                     .foregroundStyle(DS.Palette.textPrimary)
                 Spacer()
                 if let diary = daily?.diary {
                     Text(diary.date.suffix(5).replacingOccurrences(of: "-", with: "/"))
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.Typo.caption.weight(.medium))
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
             }
             if let diary = daily?.diary {
                 Text(diary.text)
-                    .font(.system(size: 15))
+                    .font(DS.Typo.body)
                     .foregroundStyle(DS.Palette.textPrimary.opacity(0.9))
                     .lineSpacing(5)
             } else {
                 Text("大橘还没写日记喵，聊过一天之后再来看吧。")
-                    .font(.system(size: 14))
+                    .font(DS.Typo.secondary)
                     .foregroundStyle(DS.Palette.textSecondary)
             }
         }
@@ -241,10 +241,10 @@ struct RecordsView: View {
     // MARK: - 今日推荐
     @ViewBuilder
     private var recommendCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Spacing.gap) {
             HStack {
                 Text("今日推荐")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(DS.Typo.cardTitle)
                     .foregroundStyle(DS.Palette.textPrimary)
                 Spacer()
                 Button {
@@ -252,7 +252,7 @@ struct RecordsView: View {
                     showRecommendComposer = true
                 } label: {
                     Label(recommendSent ? "已送达" : "给 TA 推荐", systemImage: recommendSent ? "checkmark" : "gift.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DS.Typo.sectionLabel)
                         .foregroundStyle(theme.accent.color)
                 }
                 .buttonStyle(PressableStyle())
@@ -260,20 +260,20 @@ struct RecordsView: View {
             }
 
             if let rec = daily?.recommend {
-                HStack(spacing: 8) {
+                HStack(spacing: DS.Spacing.compact) {
                     Text(rec.category)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(DS.Typo.micro.weight(.bold))
                         .foregroundStyle(theme.accent.color)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)
                         .background(theme.accent.color.opacity(0.12))
                         .clipShape(Capsule())
                     Text(rec.title)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(DS.Typo.button)
                         .foregroundStyle(DS.Palette.textPrimary)
                 }
                 Text(rec.reason)
-                    .font(.system(size: 14))
+                    .font(DS.Typo.secondary)
                     .foregroundStyle(DS.Palette.textSecondary)
                     .lineSpacing(4)
 
@@ -281,15 +281,15 @@ struct RecordsView: View {
                     Haptics.light()
                     regenerate()
                 } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: DS.Spacing.tight + 1) {
                         if recommendBusy {
                             ProgressView().controlSize(.mini)
                         } else {
                             Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(DS.Typo.micro.weight(.semibold))
                         }
                         Text("换一个")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(DS.Typo.sectionLabel)
                     }
                     .foregroundStyle(DS.Palette.textSecondary)
                     .padding(.horizontal, 12)
@@ -301,7 +301,7 @@ struct RecordsView: View {
                 .disabled(recommendBusy)
             } else {
                 Text("大橘正在琢磨今天推荐点什么…")
-                    .font(.system(size: 14))
+                    .font(DS.Typo.secondary)
                     .foregroundStyle(DS.Palette.textSecondary)
             }
         }

@@ -40,7 +40,7 @@ struct ThemeStyleView: View {
     private var previewCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("预览")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.Typo.sectionLabel)
                 .foregroundStyle(DS.Palette.textSecondary)
 
             ZStack {
@@ -56,24 +56,24 @@ struct ThemeStyleView: View {
                 VStack(spacing: 8) {
                     HStack {
                         Text("今天也想你呀")
-                            .font(.system(size: 13))
+                            .font(DS.Typo.caption)
                             .foregroundStyle(DS.Palette.textPrimary)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
-                            .background(DS.Palette.bubbleOther, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .background(DS.Palette.bubbleOther, in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
                         Spacer()
                     }
                     HStack {
                         Spacer()
                         Text("我也是 💗")
-                            .font(.system(size: 13))
+                            .font(DS.Typo.caption)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
-                            .background(theme.accent.color, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .background(theme.accent.color, in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
                     }
                 }
-                .padding(14)
+                .padding(DS.Spacing.card - 4)
             }
             .frame(height: 110)
             .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
@@ -91,7 +91,7 @@ struct ThemeStyleView: View {
     private var accentCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("主题色")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.Typo.sectionLabel)
                 .foregroundStyle(DS.Palette.textSecondary)
 
             HStack(spacing: 14) {
@@ -113,7 +113,7 @@ struct ThemeStyleView: View {
                             }
                             .frame(width: 48, height: 48)
                             Text(choice.name)
-                                .font(.system(size: 11, weight: theme.accent == choice ? .semibold : .regular))
+                                .font(theme.accent == choice ? DS.Typo.micro.weight(.semibold) : DS.Typo.micro)
                                 .foregroundStyle(theme.accent == choice ? DS.Palette.textPrimary : DS.Palette.textSecondary)
                         }
                     }
@@ -131,7 +131,7 @@ struct ThemeStyleView: View {
     private var appearanceCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("深色模式")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.Typo.sectionLabel)
                 .foregroundStyle(DS.Palette.textSecondary)
 
             HStack(spacing: 8) {
@@ -141,14 +141,14 @@ struct ThemeStyleView: View {
                         withAnimation(DS.Anim.ease) { theme.appearance = choice }
                     } label: {
                         Text(choice.name)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DS.Typo.secondary.weight(.semibold))
                             .foregroundStyle(theme.appearance == choice ? .white : DS.Palette.textSecondary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 9)
                             .background(theme.appearance == choice
                                 ? AnyShapeStyle(theme.accent.color)
                                 : AnyShapeStyle(DS.Palette.innerSurface))
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.chip + 2, style: .continuous))
                     }
                     .buttonStyle(PressableStyle())
                 }
@@ -163,7 +163,7 @@ struct ThemeStyleView: View {
     private var wallpaperCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("聊天壁纸")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.Typo.sectionLabel)
                 .foregroundStyle(DS.Palette.textSecondary)
 
             // 频道切换：给谁的聊天换壁纸
@@ -174,14 +174,14 @@ struct ThemeStyleView: View {
                         withAnimation(DS.Anim.ease) { wallpaperChannel = channel }
                     } label: {
                         Text(channel == .couple ? "两人聊天" : "大橘私聊")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DS.Typo.secondary.weight(.semibold))
                             .foregroundStyle(wallpaperChannel == channel ? .white : DS.Palette.textSecondary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 9)
                             .background(wallpaperChannel == channel
                                 ? AnyShapeStyle(theme.accent.color)
                                 : AnyShapeStyle(DS.Palette.innerSurface))
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.chip + 2, style: .continuous))
                     }
                     .buttonStyle(PressableStyle())
                 }
@@ -212,17 +212,17 @@ struct ThemeStyleView: View {
             VStack(spacing: 8) {
                 WallpaperPreviewSurface(choice: choice)
                 .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous)
                             .stroke(selected ? DS.Palette.accent : .clear, lineWidth: 3)
                     )
                 HStack(spacing: 4) {
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(DS.Typo.caption)
                             .foregroundStyle(DS.Palette.accent)
                     }
                     Text(choice.name)
-                        .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                        .font(selected ? DS.Typo.sectionLabel : DS.Typo.caption)
                         .foregroundStyle(selected ? DS.Palette.accent : DS.Palette.textSecondary)
                 }
             }
@@ -234,7 +234,7 @@ struct ThemeStyleView: View {
         let isCustom = theme.hasCustomWallpaper(for: wallpaperChannel)
         return PhotosPicker(selection: $customPickerItem, matching: .images) {
             VStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous)
                     .fill(isCustom ? AnyShapeStyle(DS.Palette.accent.opacity(0.12)) : AnyShapeStyle(Color.gray.opacity(0.1)))
                     .frame(height: 110)
                     .overlay {
@@ -247,26 +247,26 @@ struct ThemeStyleView: View {
                         } else {
                             VStack(spacing: 6) {
                                 Image(systemName: "photo.badge.plus")
-                                    .font(.system(size: 24))
+                                    .font(DS.Typo.pageTitle)
                                 Text("从相册选")
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(DS.Typo.micro)
                             }
                             .foregroundStyle(DS.Palette.textSecondary)
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous)
                             .stroke(isCustom ? DS.Palette.accent : .clear, lineWidth: 3)
                     )
                 HStack(spacing: 4) {
                     if isCustom {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(DS.Typo.caption)
                             .foregroundStyle(DS.Palette.accent)
                     }
                     Text(isCustom ? "已自定义" : "自定义")
-                        .font(.system(size: 13, weight: isCustom ? .semibold : .regular))
+                        .font(isCustom ? DS.Typo.sectionLabel : DS.Typo.caption)
                         .foregroundStyle(isCustom ? DS.Palette.accent : DS.Palette.textSecondary)
                 }
                 if isCustom {
@@ -274,7 +274,7 @@ struct ThemeStyleView: View {
                         theme.removeCustomWallpaper(for: wallpaperChannel)
                     } label: {
                         Text("移除")
-                            .font(.system(size: 11))
+                            .font(DS.Typo.micro)
                     }
                 }
             }

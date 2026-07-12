@@ -47,15 +47,15 @@ struct ChatStatsCard: View {
             Spacer()
             let (label, total, delta) = headline()
             Text(label)
-                .font(.system(size: 12))
+                .font(DS.Typo.caption)
                 .foregroundStyle(DS.Palette.textSecondary)
             Text("\(total)")
-                .font(.system(size: 26, weight: .heavy, design: .rounded))
+                .font(DS.Typo.displayNumber)
                 .foregroundStyle(DS.Palette.textPrimary)
                 .contentTransition(.numericText())
             if let delta, delta != 0 {
                 Text(delta > 0 ? "↑\(delta)" : "↓\(-delta)")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DS.Typo.sectionLabel)
                     .foregroundStyle(delta > 0 ? DS.Palette.green : DS.Palette.pink)
             }
         }
@@ -89,7 +89,7 @@ struct ChatStatsCard: View {
                     withAnimation(DS.Anim.springFast) { mode = m }
                 } label: {
                     Text(m.rawValue)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DS.Typo.sectionLabel)
                         .foregroundStyle(mode == m ? .white : DS.Palette.textSecondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
@@ -157,7 +157,7 @@ struct ChatStatsCard: View {
                         Capsule().stroke(selected ? theme.accent.color : .clear, lineWidth: 2)
                     )
                     Text(bar.label)
-                        .font(.system(size: 11))
+                        .font(DS.Typo.micro)
                         .foregroundStyle(selected ? theme.accent.color : DS.Palette.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -206,10 +206,10 @@ struct ChatStatsCard: View {
         HStack(spacing: 6) {
             Circle().fill(color).frame(width: 9, height: 9)
             Text(name)
-                .font(.system(size: 14, weight: .medium))
+                .font(DS.Typo.secondary.weight(.medium))
                 .foregroundStyle(DS.Palette.textSecondary)
             Text("\(count)")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(DS.Typo.button)
                 .foregroundStyle(DS.Palette.textPrimary)
                 .contentTransition(.numericText())
         }

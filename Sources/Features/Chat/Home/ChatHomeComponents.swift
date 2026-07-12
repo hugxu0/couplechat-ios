@@ -38,7 +38,7 @@ struct ChatHomeStatusChip: View {
                 Text(status.title)
                     .lineLimit(1)
             }
-            .font(.system(size: 13, weight: .bold, design: .rounded))
+            .font(DS.Typo.sectionLabel)
             .foregroundStyle(selected ? status.color : DS.Palette.textPrimary.opacity(0.72))
             .padding(.horizontal, 14)
             .frame(height: 36)
@@ -89,11 +89,11 @@ struct ChatHomeActionButton: View {
                         }
                         .frame(height: 40)
                     Text(sent ? "✓" : action.emoji)
-                        .font(.system(size: 22, weight: .bold))
+                        .font(DS.Typo.pageTitle)
                         .contentTransition(.numericText())
                 }
                 Text(action.title)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(DS.Typo.micro.weight(.bold))
                     .foregroundStyle(DS.Palette.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
@@ -123,7 +123,7 @@ struct ChatHomeLatestRow: View {
             }
 
             Text(preview)
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .font(DS.Typo.secondary.weight(.bold))
                 .foregroundStyle(DS.Palette.textPrimary)
                 .lineLimit(2)
                 .padding(.horizontal, 16)
