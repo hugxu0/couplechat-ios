@@ -81,7 +81,9 @@ struct ChatHomeView: View {
                 .overlay(alignment: .top) { pullRefreshIndicator }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(isPresented: $showChat) { ChatView() }
+            .navigationDestination(isPresented: $showChat) {
+                ChatView().appSubpageChrome()
+            }
             .alert(editingStatusID == nil ? "添加状态" : "编辑状态", isPresented: $showCustomStatusPrompt) {
                 TextField("比如：想被抱抱", text: $customStatusText)
                 Button(editingStatusID == nil ? "添加并使用" : "保存") { saveStatusEditor() }

@@ -325,6 +325,18 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       });
       assert.equal(interactionRetry.statusCode, 200, interactionRetry.body);
       assert.equal((await get<{ count: number }>("SELECT COUNT(*) AS count FROM pet_actions"))?.count, 1);
+      const interactionCooldown = await app.inject({
+        method: "POST", url: "/api/v2/pet/interactions", headers: auth(bobToken),
+        payload: {
+          kind: "high_five",
+          idempotencyKey: "interaction-2",
+          baseVersion: interaction.json().pet.version,
+        },
+      });
+      assert.equal(interactionCooldown.statusCode, 429, interactionCooldown.body);
+      assert.equal(interactionCooldown.json().error, "pet_interaction_cooldown");
+      assert.ok(interactionCooldown.json().availableAt > Date.now());
+      assert.equal((await get<{ count: number }>("SELECT COUNT(*) AS count FROM pet_actions"))?.count, 1);
       const interactionPet = interaction.json().pet as any;
       const rewardItemId = interactionPet.inventory.find((item: any) => item.kind === "keepsake").id as string;
       assert.equal((await get<{ coins: number }>("SELECT coins FROM pets WHERE id = ?", [interactionPet.id]))?.coins, 0);

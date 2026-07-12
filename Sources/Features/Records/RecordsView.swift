@@ -12,26 +12,11 @@ struct RecordsView: View {
         NavigationSplitView {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DS.Spacing.section) {
-                    RootPageHeader("时光", subtitle: "把聊天里的日常，慢慢收成我们") {
-                        Button {
-                            Haptics.medium()
-                            showingCreateAlbum = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(DS.Typo.button)
-                                .frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .buttonBorderShape(.circle)
-                        .accessibilityLabel("新建共同相册")
-                    }
-                    .padding(.horizontal, -DS.Spacing.page)
-
-                    onThisDaySection
-                    albumSection
                     coupleOverview
+                    onThisDaySection
                     ChatStatsCard()
                     dailyCard
+                    albumSection
                     errorSection
                 }
                 .padding(.horizontal, DS.Spacing.page)
@@ -115,7 +100,7 @@ struct RecordsView: View {
                 ) {
                     ForEach(model.albums) { album in
                         NavigationLink {
-                            AlbumDetailView(album: album)
+                            AlbumDetailView(album: album).appSubpageChrome()
                         } label: {
                             MomentAlbumCard(album: album)
                         }
@@ -132,61 +117,66 @@ struct RecordsView: View {
 
     private var coupleOverview: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.gap) {
-            AppSectionHeader(title: "我们的时间")
             Button {
                 Haptics.light()
                 showingDateEditor = true
             } label: {
-                HStack(spacing: DS.Spacing.card) {
-                    Image(systemName: "heart.text.square.fill")
-                        .font(.system(.largeTitle, design: .rounded).weight(.bold))
-                        .foregroundStyle(.white)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("我们在一起")
-                            .font(DS.Typo.secondary.weight(.medium))
-                            .foregroundStyle(.white.opacity(0.78))
-                        Text(togetherLabel)
-                            .font(DS.Typo.displayNumber)
-                            .foregroundStyle(.white)
-                            .contentTransition(.numericText())
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundStyle(.white.opacity(0.72))
+                VStack(spacing: 7) {
+                    Text("我们在一起的第")
+                        .font(DS.Typo.secondary.weight(.medium))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                    Text(togetherNumber)
+                        .font(.system(size: 64, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(theme.accent.gradient)
+                        .contentTransition(.numericText())
+                    Text(togetherNumber == "等待设置" ? "" : "天")
+                        .font(DS.Typo.secondary.weight(.semibold))
+                        .foregroundStyle(DS.Palette.textSecondary)
+                    Text("有你在侧，平凡也晴朗。")
+                        .font(DS.Typo.secondary)
+                        .foregroundStyle(DS.Palette.textSecondary)
                 }
                 .padding(DS.Spacing.card)
-                .frame(maxWidth: .infinity, minHeight: 104)
-                .background(theme.accent.gradient)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+                .frame(maxWidth: .infinity, minHeight: 220)
+                .dsCard()
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: "pencil")
+                        .font(DS.Typo.caption.weight(.semibold))
+                        .foregroundStyle(theme.accent.color)
+                        .padding(14)
+                }
             }
             .buttonStyle(PressableStyle())
             .accessibilityLabel("我们在一起\(togetherLabel)，轻点编辑日期")
 
             if !store.anniversaries.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: DS.Spacing.gap) {
-                        ForEach(store.anniversaries) { entry in
-                            anniversaryChip(entry)
-                        }
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.gap), count: 2),
+                    spacing: DS.Spacing.gap
+                ) {
+                    ForEach(store.anniversaries) { entry in
+                        anniversaryChip(entry)
                     }
                 }
-                .scrollIndicators(.hidden)
             }
         }
     }
 
     private func anniversaryChip(_ entry: AnniversaryEntry) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: entry.icon).foregroundStyle(theme.accent.color)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.title).font(DS.Typo.caption.weight(.semibold)).lineLimit(1)
-                Text(entry.days.map { "\($0)\(entry.direction == .up ? " 天" : " 天后")" } ?? "未设置")
-                    .font(DS.Typo.secondary.monospacedDigit().weight(.semibold))
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: entry.icon)
+                .font(.title3.weight(.medium))
+                .foregroundStyle(theme.accent.color)
+            Text(entry.title)
+                .font(DS.Typo.caption.weight(.semibold))
+                .foregroundStyle(DS.Palette.textSecondary)
+                .lineLimit(2)
+            Text(entry.days.map { "\($0)\(entry.direction == .up ? " 天" : " 天后")" } ?? "未设置")
+                .font(DS.Typo.cardTitle.monospacedDigit())
+                .foregroundStyle(DS.Palette.textPrimary)
         }
-        .foregroundStyle(DS.Palette.textPrimary)
-        .padding(.horizontal, 14)
-        .frame(minHeight: 56)
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 126, alignment: .leading)
         .dsCard(radius: DS.Radius.control)
         .accessibilityElement(children: .combine)
     }
@@ -217,6 +207,10 @@ struct RecordsView: View {
 
     private var togetherLabel: String {
         CoupleDates.daysSince(store.coupleDates.together).map { "\($0) 天" } ?? "等待设置"
+    }
+
+    private var togetherNumber: String {
+        CoupleDates.daysSince(store.coupleDates.together).map(String.init) ?? "等待设置"
     }
 
     private func reload(force: Bool = false) async {

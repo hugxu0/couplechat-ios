@@ -2,7 +2,6 @@ import SwiftUI
 
 struct PetView: View {
     @EnvironmentObject private var store: ChatStore
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = PetViewModel()
     @State private var showAIChat = false
@@ -11,25 +10,28 @@ struct PetView: View {
 
     var body: some View {
         NavigationStack {
-            GeometryReader { proxy in
-                content(in: proxy.size)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(AppPageBackground())
+            Group {
+                if let pet = viewModel.snapshot?.pet, let session = store.session {
+                    petHome(pet: pet, session: session)
+                } else if viewModel.isLoading {
+                    ProgressView("正在叫醒大橘…")
+                        .foregroundStyle(DS.Palette.textSecondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    unavailableState
+                }
             }
+            .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showAIChat) {
-                ChatView(channel: .ai)
+                ChatView(channel: .ai).appSubpageChrome()
             }
-            .sheet(isPresented: $showRename) {
-                renameSheet
-            }
+            .sheet(isPresented: $showRename) { renameSheet }
             .task(id: store.session?.username) {
                 guard let session = store.session else { return }
                 await viewModel.load(token: session.token, username: session.username)
             }
-            .task(id: "pet-poll.\(store.session?.username ?? "none")") {
-                await liveRefreshLoop()
-            }
+            .task(id: "pet-poll.\(store.session?.username ?? "none")") { await liveRefreshLoop() }
             .onAppear { isVisible = true }
             .onDisappear { isVisible = false }
             .onChange(of: scenePhase) { _, phase in
@@ -43,121 +45,60 @@ struct PetView: View {
         }
     }
 
-    @ViewBuilder
-    private func content(in size: CGSize) -> some View {
-        if let pet = viewModel.snapshot?.pet, let session = store.session {
-            petLayout(pet: pet, session: session, size: size)
-        } else if viewModel.isLoading {
-            ProgressView("正在打开窗边小窝…")
-                .foregroundStyle(DS.Palette.textSecondary)
-        } else {
-            unavailableState
-        }
-    }
+    private func petHome(pet: CouplePetState, session: Session) -> some View {
+        ScrollView {
+            LazyVStack(spacing: DS.Spacing.section) {
+                PetSceneView(
+                    pet: pet,
+                    isBusy: viewModel.isMutating,
+                    feedback: viewModel.feedback,
+                    onRename: { showRename = true },
+                    onChat: { showAIChat = true },
+                    onInteraction: { kind in
+                        Haptics.light()
+                        Task {
+                            await viewModel.interact(
+                                kind: kind, token: session.token, username: session.username)
+                        }
+                    })
 
-    private func petLayout(pet: CouplePetState, session: Session, size: CGSize) -> some View {
-        let inset = DS.Spacing.page
-        let availableWidth = max(0, size.width - inset * 2)
-        let metrics = PetLayoutMetrics.resolve(
-            width: availableWidth,
-            height: size.height,
-            hasRegularHorizontalSizeClass: horizontalSizeClass == .regular)
-
-        return Group {
-            if metrics.mode == .split {
-                splitLayout(pet: pet, session: session, metrics: metrics)
-            } else {
-                stackedLayout(pet: pet, session: session, metrics: metrics)
+                PetContentPanel(
+                    pet: pet,
+                    currentUsername: session.username,
+                    isBusy: viewModel.isMutating,
+                    errorMessage: viewModel.errorMessage,
+                    usingCachedSnapshot: viewModel.usingCachedSnapshot,
+                    showsDrawerHandle: false,
+                    onRespond: { text in
+                        await viewModel.respond(text: text, token: session.token, username: session.username)
+                    },
+                    onPlaceItems: { ids in
+                        Task {
+                            await viewModel.updateScene(
+                                placedItemIds: ids, token: session.token, username: session.username)
+                        }
+                    },
+                    onRefresh: { await refreshIfPossible() })
             }
+            .frame(maxWidth: 820)
+            .padding(.horizontal, DS.Spacing.page)
+            .padding(.top, 8)
+            .padding(.bottom, 96)
+            .frame(maxWidth: .infinity)
         }
-        .frame(width: metrics.totalContentWidth)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
-    }
-
-    private func splitLayout(
-        pet: CouplePetState,
-        session: Session,
-        metrics: PetLayoutMetrics
-    ) -> some View {
-        HStack(spacing: 14) {
-            scene(pet: pet, session: session)
-                .frame(width: metrics.sceneWidth)
-            panel(pet: pet, session: session, showsDrawerHandle: false)
-                .frame(width: metrics.panelWidth)
-        }
-    }
-
-    private func stackedLayout(
-        pet: CouplePetState,
-        session: Session,
-        metrics: PetLayoutMetrics
-    ) -> some View {
-        VStack(spacing: -22) {
-            scene(pet: pet, session: session)
-                .frame(height: metrics.stackedSceneHeight)
-            panel(pet: pet, session: session, showsDrawerHandle: true)
-                .frame(maxHeight: .infinity)
-        }
-    }
-
-    private func scene(pet: CouplePetState, session: Session) -> some View {
-        PetSceneView(
-            pet: pet,
-            isBusy: viewModel.isMutating,
-            feedback: viewModel.feedback,
-            onRename: { showRename = true },
-            onChat: { showAIChat = true },
-            onInteraction: { kind in
-                Haptics.light()
-                Task {
-                    await viewModel.interact(
-                        kind: kind, token: session.token, username: session.username)
-                }
-            })
-    }
-
-    private func panel(
-        pet: CouplePetState,
-        session: Session,
-        showsDrawerHandle: Bool
-    ) -> some View {
-        PetContentPanel(
-            pet: pet,
-            currentUsername: session.username,
-            isBusy: viewModel.isMutating,
-            errorMessage: viewModel.errorMessage,
-            usingCachedSnapshot: viewModel.usingCachedSnapshot,
-            showsDrawerHandle: showsDrawerHandle,
-            onRespond: { text in
-                await viewModel.respond(
-                    text: text, token: session.token, username: session.username)
-            },
-            onPlaceItems: { ids in
-                Task {
-                    await viewModel.updateScene(
-                        placedItemIds: ids,
-                        token: session.token,
-                        username: session.username)
-                }
-            },
-            onRefresh: {
-                await refreshIfPossible()
-            })
+        .scrollIndicators(.hidden)
+        .refreshable { await refreshIfPossible() }
     }
 
     private var unavailableState: some View {
         VStack(spacing: 16) {
             AppEmptyState(
-                "小窝暂时没有打开",
+                "大橘还没醒",
                 systemImage: "pawprint",
                 detail: viewModel.errorMessage ?? "确认登录与网络状态后重试")
             if let session = store.session {
                 Button("重新载入") {
-                    Task {
-                        await viewModel.load(
-                            token: session.token, username: session.username, force: true)
-                    }
+                    Task { await viewModel.load(token: session.token, username: session.username, force: true) }
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -167,8 +108,7 @@ struct PetView: View {
 
     private func refreshIfPossible() async {
         guard let session = store.session else { return }
-        await viewModel.load(
-            token: session.token, username: session.username, force: true)
+        await viewModel.load(token: session.token, username: session.username, force: true)
     }
 
     private func liveRefreshLoop() async {
@@ -183,8 +123,7 @@ struct PetView: View {
     private var renameSheet: some View {
         if let pet = viewModel.snapshot?.pet, let session = store.session {
             PetRenameSheet(currentName: pet.name) { name in
-                await viewModel.rename(
-                    name, token: session.token, username: session.username)
+                await viewModel.rename(name, token: session.token, username: session.username)
             }
         }
     }

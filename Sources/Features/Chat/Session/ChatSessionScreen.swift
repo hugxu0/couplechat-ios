@@ -4,7 +4,6 @@ import UIKit
 struct ChatSessionScreen: View {
     let channel: ChatChannel
 
-    @EnvironmentObject private var app: AppState
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
     @Environment(\.colorScheme) private var colorScheme
@@ -144,10 +143,7 @@ struct ChatSessionScreen: View {
                 isShowingDetail = true
             },
             destination: { chatDetailSettings })
-        .onAppear {
-            app.pushSubpage()
-        }
-        .onDisappear { app.popSubpage() }
+        .appSubpageChrome()
         .background(SwipeBackEnabler())
     }
 
@@ -167,6 +163,7 @@ struct ChatSessionScreen: View {
                 let command = ChatSessionJumpCommand(action: .date(date))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { jumpCommand = command }
             })
+            .appSubpageChrome()
     }
 
     @ViewBuilder

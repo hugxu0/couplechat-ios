@@ -52,12 +52,7 @@ struct PetContentPanel: View {
                 StatusBanner(text: errorMessage, kind: .warning)
             }
 
-            ScrollView {
-                selectedContent
-                    .padding(.bottom, 90)
-            }
-            .scrollIndicators(.hidden)
-            .refreshable { await onRefresh() }
+            selectedContent
         }
         .padding(DS.Spacing.card)
         .background(DS.Palette.cardSurface)

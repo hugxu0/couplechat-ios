@@ -6,7 +6,7 @@ struct RemindersView: View {
     @State private var section: PlanSection = .calendar
     @State private var scope = "shared"
     @State private var selectedDate = Date()
-    @State private var monthMode = false
+    @State private var monthMode = true
     @State private var itemEditor: ReminderEditorMode?
     @State private var eventEditor: CalendarEditorMode?
 
@@ -14,7 +14,6 @@ struct RemindersView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: DS.Spacing.section) {
-                    header
                     sectionPicker
                     scopePicker
                     content
@@ -23,6 +22,7 @@ struct RemindersView: View {
                     }
                 }
                 .padding(.horizontal, DS.Spacing.page)
+                .padding(.top, 8)
                 .padding(.bottom, 96)
             }
             .scrollIndicators(.hidden)
@@ -50,20 +50,6 @@ struct RemindersView: View {
         }
     }
 
-    private var header: some View {
-        RootPageHeader("计划", subtitle: subtitle) {
-            Button(action: createCurrent) {
-                Image(systemName: "plus")
-                    .font(DS.Typo.button)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.circle)
-            .accessibilityLabel("新增\(section.title)")
-        }
-        .padding(.horizontal, -DS.Spacing.page)
-    }
-
     private var sectionPicker: some View {
         Picker("计划类型", selection: $section) {
             ForEach(PlanSection.allCases) { section in
@@ -76,31 +62,17 @@ struct RemindersView: View {
     }
 
     private var scopePicker: some View {
-        HStack(spacing: 4) {
-            scopeButton("shared", title: "共享", icon: "person.2.fill")
-            scopeButton("personal", title: "私人", icon: "person.fill")
+        Picker("可见范围", selection: $scope) {
+            Label("共享", systemImage: "person.2.fill").tag("shared")
+            Label("私人", systemImage: "person.fill").tag("personal")
         }
-        .padding(4)
-        .background(DS.Palette.innerSurface)
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
-    }
-
-    private func scopeButton(_ value: String, title: String, icon: String) -> some View {
-        Button {
-            guard scope != value else { return }
-            scope = value
+        .pickerStyle(.segmented)
+        .controlSize(.small)
+        .frame(maxWidth: 220)
+        .onChange(of: scope) {
             Haptics.selection()
             Task { await reload() }
-        } label: {
-            Label(title, systemImage: icon)
-                .font(DS.Typo.button)
-                .foregroundStyle(scope == value ? .white : DS.Palette.textSecondary)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(scope == value ? (value == "shared" ? DS.Palette.purple : DS.Palette.accent) : .clear)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control - 3, style: .continuous))
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(scope == value ? .isSelected : [])
     }
 
     @ViewBuilder

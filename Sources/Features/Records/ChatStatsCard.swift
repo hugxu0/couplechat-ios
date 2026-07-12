@@ -113,22 +113,22 @@ struct ChatStatsCard: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     let bars: [(label: String, counts: [String: Int])] = buckets.days.map { (label: $0.weekday, counts: $0.counts) }
-                    barsView(bars, me: me, partner: partner, barWidth: 38, lastId: "day-latest")
+                    barsView(bars, me: me, partner: partner, barWidth: 28, lastId: "day-latest")
                 }
                 .onAppear { proxy.scrollTo("day-latest", anchor: .trailing) }
                 .onChange(of: buckets.days.count) { _, _ in proxy.scrollTo("day-latest", anchor: .trailing) }
             }
-            .frame(height: 140)
+            .frame(height: 105)
         case .months:
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     let bars: [(label: String, counts: [String: Int])] = buckets.months.map { (label: String(Int($0.month.suffix(2)) ?? 0) + "月", counts: $0.counts) }
-                    barsView(bars, me: me, partner: partner, barWidth: 34, lastId: "month-latest")
+                    barsView(bars, me: me, partner: partner, barWidth: 26, lastId: "month-latest")
                 }
                 .onAppear { proxy.scrollTo("month-latest", anchor: .trailing) }
                 .onChange(of: buckets.months.count) { _, _ in proxy.scrollTo("month-latest", anchor: .trailing) }
             }
-            .frame(height: 140)
+            .frame(height: 105)
         }
     }
 
@@ -149,13 +149,23 @@ struct ChatStatsCard: View {
                                 .frame(height: geo.size.height * mine / Double(maxTotal))
                         }
                     }
-                    .frame(height: 110)
+                    .frame(height: 76)
                     .frame(width: barWidth)
-                    .background(DS.Palette.innerSurface.opacity(0.7))
+                    .background(
+                        LinearGradient(
+                            colors: [DS.Palette.innerSurface.opacity(0.95), DS.Palette.innerSurface.opacity(0.52)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing))
                     .clipShape(Capsule())
-                    .overlay(
-                        Capsule().stroke(selected ? theme.accent.color : .clear, lineWidth: 2)
-                    )
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(.white.opacity(0.18))
+                            .frame(width: max(2, barWidth * 0.18))
+                            .padding(.vertical, 4)
+                            .padding(.leading, 4)
+                    }
+                    .overlay(Capsule().stroke(selected ? theme.accent.color : .white.opacity(0.16), lineWidth: selected ? 1.5 : 0.7))
+                    .shadow(color: selected ? theme.accent.color.opacity(0.16) : .black.opacity(0.06), radius: 5, y: 3)
                     Text(bar.label)
                         .font(DS.Typo.micro)
                         .foregroundStyle(selected ? theme.accent.color : DS.Palette.textSecondary)

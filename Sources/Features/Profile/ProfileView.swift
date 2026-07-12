@@ -240,14 +240,14 @@ struct ProfileView: View {
             }
             divider
             NavigationLink {
-                ThemeStyleView()
+                ThemeStyleView().appSubpageChrome()
             } label: {
                 settingRowLabel(icon: "paintpalette", title: "主题样式", subtitle: "主题色 · 深色模式 · 聊天壁纸")
             }
             .buttonStyle(PressableStyle())
             divider
             NavigationLink {
-                AIMemoryControlCenterView()
+                AIMemoryControlCenterView().appSubpageChrome()
             } label: {
                 settingRowLabel(icon: "pawprint.circle", title: "大橘与记忆", subtitle: "查看、纠正或忘掉记忆")
             }
@@ -262,21 +262,21 @@ struct ProfileView: View {
             }
             divider
             NavigationLink {
-                AccountDevicesView()
+                AccountDevicesView().appSubpageChrome()
             } label: {
                 settingRowLabel(icon: "iphone.and.arrow.forward", title: "配对与设备", subtitle: "邀请码 · 手机与 iPad 登录")
             }
             .buttonStyle(PressableStyle())
             divider
             NavigationLink {
-                StorageView()
+                StorageView().appSubpageChrome()
             } label: {
                 settingRowLabel(icon: "internaldrive", title: "存储空间", subtitle: "同步聊天记录 · 缓存管理")
             }
             .buttonStyle(PressableStyle())
             divider
             NavigationLink {
-                FavoriteMediaView()
+                FavoriteMediaView().appSubpageChrome()
             } label: {
                 settingRowLabel(icon: "heart", title: "收藏", subtitle: "聊天图片与视频")
             }

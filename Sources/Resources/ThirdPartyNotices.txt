@@ -1,0 +1,10 @@
+Cute Cartoon Cat Low Poly Game Ready
+Author: 3Dima (https://sketchfab.com/Hdjusj)
+Source: https://sketchfab.com/3d-models/cute-cartoon-cat-low-poly-game-ready-3946a29606ca4f2aa207a5b1c1cbdfff
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+GLTFKit2
+Copyright (c) 2021-2024 Warren Moore
+License: MIT
+https://github.com/warrenm/GLTFKit2

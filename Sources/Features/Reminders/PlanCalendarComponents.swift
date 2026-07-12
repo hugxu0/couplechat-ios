@@ -80,7 +80,7 @@ struct PlanCalendarView: View {
     }
 
     private var monthGrid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 5) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 4) {
             ForEach(selectedDate.monthGridDates, id: \.self) { date in
                 dateButton(date, dimsOtherMonth: !Calendar.current.isDate(date, equalTo: selectedDate, toGranularity: .month))
             }
