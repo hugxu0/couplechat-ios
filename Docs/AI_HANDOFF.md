@@ -16,9 +16,10 @@
 - V2 代码提交 `a4e1d74` 的完整 run `29211061229` 已通过 macOS/Xcode 26.3 验证；其中包含服务端、SwiftLint、结构护栏、iPhone 单测、聊天视觉 Fixture、iPad build、无签名 Archive 和 IPA 上传。
 - 发布候选 IPA：`CoupleChat-unsigned-230`（用户真机回归通过）。
 - 本地后续构建产物最新为 `CoupleChat-unsigned-247`（发布后的 Markdown / 确认卡等维护构建；不是新的正式发布标签）。
-- V2 未发布安装候选为 `CoupleChat-unsigned-252`；生产仍在 v10/legacy V1，尚未执行 v11–v22 迁移或 V2 部署。
-- 生产后端镜像：`couplechat-server:candidate-6a2e833`，正式标签为 `couplechat-server:local`。
-- 回滚镜像：`couplechat-server:rollback-20260712-094038`。
+- V2 安装候选为 `CoupleChat-unsigned-252`；服务端已部署，iOS 仍待真机 V2 回归。
+- 生产后端镜像：`couplechat-server:candidate-32ec642`（image `35ce3ca0…`），正式标签为 `couplechat-server:local`。
+- 当前应用回滚镜像：`couplechat-server:rollback-20260713-064437-v10`；数据库回滚必须同时恢复下述 v10 备份。
+- V2 发布备份：`/root/codex-backups/couplechat-v2-release/daily/20260712T223100Z-d9e287e294f5`，已完成临时库恢复和媒体抽样校验。
 - 发布前备份：`/root/codex-backups/couplechat-release-20260712-094038`。
 - 用户已完成单设备生产冒烟：普通消息、`@大橘`、AI 私聊、图片上传与预览全部通过。
 - 当次发布按用户要求采用单设备豁免；R8.1 的双设备/iPad 真机矩阵仍保持未验收，这是残余风险，不是假装已测试。
@@ -35,7 +36,7 @@
 - 2026-07-13 语义修正：撤回改为全量硬删除；已读只在聊天可见且 cell 已展示后上报，服务端游标单调递增。
 - 2026-07-13 Bark 修正：共享提醒发双方、私人提醒只发 owner，删除广播保留 scope，投递结果持久化并在重启后补扫/去重/重试；iOS 不再重复安排本地到期通知。
 - 2026-07-13 录音首次授权竞态与离页/后台中断已修正；媒体收藏按账号分区。
-- 2026-07-13 V2 可运行基线完成：注册/邀请码配对、多设备会话与设备级 Bark、conversation ownership、Sync V2、Memory 控制中心、语音转写、共同相册/那年今日、共享/私人日历和服务端持久化大橘。当前代码及 v11–v22 migration 均为未发布候选，尚未部署生产。
+- 2026-07-13 V2 服务端与 v11–v22 已部署生产：注册/邀请码配对、多设备会话与设备级 Bark、conversation ownership、Sync V2、Memory、转写、相册、日历和持久化大橘均已上线；iOS 候选仍待真机验收。
 
 详细改造与证据见 `Docs/RELEASE_REPORT_2026-07-12.md`。
 
@@ -81,7 +82,7 @@ git log --oneline -8
 - `server.ts` 只负责装配和生命周期启动。
 - `app.ts` 注册 HTTP 路由，Socket 入口位于 `socket/`。
 - PostgreSQL 访问拆到 `db/client.ts`、`transaction.ts`、`rows.ts`、`migrate.ts`。
-- 已发布 migration 只有 v1–v10，内容受哈希测试保护；v11–v22 是同一批尚未生产执行的候选，可在首次迁移前修正，执行后只能追加新版本。
+- 生产已执行 migration v1–v22，内容全部冻结并受哈希/升级测试保护；后续只能追加新版本。
 - 撤回事务硬删除服务端派生数据；领域事件只做历史 Memory 孤儿清理。
 - Reminder Bark delivery 已持久化并按设备 endpoint 独立 claim/重试；shared 发双方、personal 只发创建者。通用 notification intent 仍是后续架构目标，不是当前提醒功能的阻塞项。
 - 公聊房间按 `couple:<id>`、个人事件按 `account:<id>` 隔离；legacy `user:<username>` 只保留兼容监听。
