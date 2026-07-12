@@ -26,7 +26,7 @@ struct FavoriteMediaView: View {
                 .scrollIndicators(.hidden)
             }
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(AppPageBackground())
         .navigationTitle("收藏")
         .navigationBarTitleDisplayMode(.inline)
         .background(MediaViewerPresenter(items: favorites.items, selectedId: $selectedId))

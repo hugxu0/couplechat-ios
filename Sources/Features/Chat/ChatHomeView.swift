@@ -71,7 +71,7 @@ struct ChatHomeView: View {
                 }
                 .coordinateSpace(name: "chatHomeScroll")
                 .scrollIndicators(.hidden)
-                .background(homePageBackground)
+                .background(AppPageBackground())
                 .overlay(alignment: .top) { pullRefreshIndicator }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -116,51 +116,40 @@ struct ChatHomeView: View {
     private var mainPanel: some View {
         VStack(spacing: 0) {
             brandHeader
-                .padding(.top, 22)
-                .padding(.bottom, 18)
+                .padding(.top, 16)
+                .padding(.bottom, 14)
 
             coupleHeader
-                .padding(.bottom, 20)
+                .padding(.bottom, 14)
 
             sectionDivider
 
             statusStrip
-                .padding(.top, 12)
-                .padding(.bottom, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
 
             sectionDivider
 
             actionStrip
                 .padding(.top, 8)
-                .padding(.bottom, 12)
+                .padding(.bottom, 8)
 
             sectionDivider
 
             latestMessages
-                .padding(.top, 16)
-                .padding(.bottom, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
 
             enterChatButton
-                .padding(.bottom, 16)
+                .padding(.bottom, 10)
         }
         .padding(.horizontal, DS.Spacing.card)
-        .padding(.top, 4)
-        .padding(.bottom, 4)
+        .padding(.top, 2)
+        .padding(.bottom, 2)
         .frame(maxWidth: .infinity)
         .frame(minHeight: 0, alignment: .top)
         .background(homeCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: homeCardBorderColors,
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 1
-                )
-        )
         .shadow(color: theme.accent.color.opacity(0.08), radius: 16, y: 6)
     }
 
@@ -267,44 +256,6 @@ struct ChatHomeView: View {
             .foregroundStyle(theme.accent.color.opacity(0.11))
             .padding(.horizontal, 22)
             .padding(.top, 13)
-        }
-    }
-
-    private var homeCardBorderColors: [Color] {
-        if colorScheme == .dark {
-            return [
-                theme.accent.color.opacity(0.4),
-                DS.Palette.pink.opacity(0.22),
-                Color.black.opacity(0.12),
-            ]
-        }
-        return [.white.opacity(0.48), theme.accent.color.opacity(0.17)]
-    }
-
-    @ViewBuilder
-    private var homePageBackground: some View {
-        if colorScheme == .dark {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.055, green: 0.03, blue: 0.065),
-                    Color(red: 0.095, green: 0.03, blue: 0.07),
-                    Color(red: 0.04, green: 0.025, blue: 0.065),
-                ],
-                startPoint: .top,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-        } else {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.965, green: 0.96, blue: 0.985),
-                    Color(red: 0.985, green: 0.955, blue: 0.97),
-                    Color(red: 0.95, green: 0.955, blue: 0.985),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
         }
     }
 
@@ -534,7 +485,7 @@ struct ChatHomeView: View {
     }
 
     private var latestMessages: some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("最新消息", systemImage: "bubble.left.and.bubble.right.fill")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
@@ -557,15 +508,16 @@ struct ChatHomeView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 14)
             } else {
-                VStack(spacing: 10) {
+                VStack(spacing: 7) {
                     ForEach(Array(store.messages.suffix(3))) { message in
                         latestRow(message)
                     }
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 148, alignment: .top)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, minHeight: 136, alignment: .top)
         .background(conversationWindowBackground)
         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
@@ -618,7 +570,7 @@ struct ChatHomeView: View {
                 .foregroundStyle(mine ? DS.Palette.textPrimary : DS.Palette.textPrimary)
                 .lineLimit(2)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
                 .background(
                     mine ? theme.accent.color.opacity(0.16) : Color.white.opacity(0.62),
                     in: RoundedRectangle(cornerRadius: 17, style: .continuous)

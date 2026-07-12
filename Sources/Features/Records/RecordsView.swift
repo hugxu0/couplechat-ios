@@ -403,7 +403,7 @@ private struct RecommendComposerSheet: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(AppPageBackground())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }

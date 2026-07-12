@@ -52,7 +52,7 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Color(.systemGroupedBackground).ignoresSafeArea()
+            AppPageBackground()
 
             ZStack {
                 if visitedTabs.contains(.chat) {

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct AppPageBackground: View {
     var body: some View {
-        Color(.systemGroupedBackground).ignoresSafeArea()
+        DS.Palette.bgGradient.ignoresSafeArea()
     }
 }
 

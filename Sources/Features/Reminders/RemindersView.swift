@@ -89,7 +89,7 @@ struct RemindersView: View {
         }
         .padding(5)
         .background(DS.Palette.innerSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
     }
 
     private var scopePicker: some View {
@@ -138,7 +138,7 @@ struct RemindersView: View {
                 .padding(.vertical, 12)
                 .background {
                     if tab == kind {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
                             .fill(DS.Palette.accent)
                     }
                 }
@@ -501,7 +501,7 @@ private struct PersonalItemEditor: View {
                 }
                 .padding(DS.Spacing.page)
             }
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(AppPageBackground())
             .navigationTitle(mode.item == nil ? "新建" : "编辑")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
