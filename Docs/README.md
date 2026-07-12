@@ -34,6 +34,6 @@
 - 服务端命令：`server/package.json`
 - 环境配置：`server/src/config.ts`
 - REST 注册：`server/src/app.ts` 及各模块 `routes.ts`
-- Socket 契约：`server/src/contracts/realtime.ts` 与 `Sources/Core/SocketContract.swift`
+- Socket 契约：`server/src/contracts/realtime.ts` 与 `Sources/Core/Networking/SocketContract.swift`
 - 数据库结构：`server/src/db/index.ts`
 - 生产编排：`server/compose.production.yml`

@@ -44,7 +44,14 @@ Fastify + Socket.IO · 127.0.0.1:8080
 ```text
 Sources/
   App/                       App 入口、通知代理、根 Tab 与 AppState 装配
-  Core/                      领域模型、Store、Repository、网络、Socket、SQLite
+  Core/
+    Models/                  跨功能领域模型
+    Networking/              HTTP、Socket 契约与远端数据源
+    Persistence/             SQLite actor、Keychain 与本地数据
+    Chat/                    消息 facade、时间线、outbox 与同步协调
+    Shared/                  账号、共享状态、每日内容与个人事项
+    Media/                   图片、贴纸与收藏缓存
+    Support/                 Markdown、格式化与启动快照
   DesignSystem/              视觉 token、语义页面组件、通用图片组件
   Features/
     Auth/                    登录
@@ -55,6 +62,7 @@ Sources/
       Media/                 图库、预览、Viewer 转场、壁纸与缩略图
       Search/                会话内搜索
       Settings/              会话详情设置
+      Presentation/          互动特效与聊天呈现模型
       Fixtures/              DEBUG-only 聊天顶部视觉夹具
     Records/                 记录页、统计卡、推荐弹层、日期/纪念日编辑器
     Reminders/               提醒列表、事项卡、编辑器与 Markdown 预览

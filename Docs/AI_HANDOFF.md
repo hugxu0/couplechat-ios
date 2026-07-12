@@ -27,6 +27,7 @@
 - 2026-07-13 阶段 3 外围页：提醒页与我的页表面/字体/分段控件收敛到 `DS` 与 `dsCard`；不改业务请求与数据结构。
 - 2026-07-13 阶段 4 外围页细化：记录/主题/存储/宠物/聊天首页常规字号与圆角收敛到 `DS.Typo`；装饰性大图标保留固定字号。
 - 2026-07-13 结构整理：Chat 去 V2 命名并按 Session/Timeline/Media/Search/Settings 分层；Reminders/Profile 子文件与子目录收敛。
+- 2026-07-13 Core 按 Models/Networking/Persistence/Chat/Shared/Media/Support 分层；互动 SwiftUI 展示移到 Chat/Presentation。
 
 详细改造与证据见 `Docs/RELEASE_REPORT_2026-07-12.md`。
 

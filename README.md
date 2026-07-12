@@ -72,5 +72,5 @@ iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLin
 - `xu` 与 `si` 是固定账号标识，业务数据依赖它们，不要随意更名。
 - 生产数据库是唯一服务端数据源；本地调试会真实读写生产聊天与 AI Memory。
 - `.env`、`server/.data/`、`server/uploads/` 和任何数据库备份不得提交。
-- Socket 字段变化必须同时更新 `server/src/contracts/realtime.ts` 与 `Sources/Core/SocketContract.swift`。
+- Socket 字段变化必须同时更新 `server/src/contracts/realtime.ts` 与 `Sources/Core/Networking/SocketContract.swift`。
 - 数据库结构只追加新的版本化变更，不修改已经执行过的版本。
