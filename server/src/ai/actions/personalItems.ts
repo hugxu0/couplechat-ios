@@ -85,6 +85,30 @@ function resolveScope(scope: "personal" | "shared" | undefined): PersonalItemSco
   return scope === "personal" ? "personal" : "shared";
 }
 
+function memoTitle(action: AiAction): string {
+  const explicit = String(action.title ?? "").trim().replace(/^#{1,6}\s+/, "");
+  if (explicit) return explicit.slice(0, 160);
+  const firstLine = String(action.text ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !/^\|?\s*:?-{3,}/.test(line));
+  if (!firstLine || firstLine.startsWith("|")) return "大橘备忘";
+  return firstLine.replace(/^#{1,6}\s+/, "").replace(/^[-*+]\s+/, "").slice(0, 160);
+}
+
+function memoBody(action: AiAction, title: string): string {
+  const lines = String(action.text ?? "").trim().split(/\r?\n/);
+  const normalize = (value: string) => value
+    .trim()
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^\*\*(.+)\*\*$/, "$1")
+    .trim()
+    .toLocaleLowerCase();
+  if (lines.length && normalize(lines[0]) === normalize(title)) lines.shift();
+  while (lines[0]?.trim() === "") lines.shift();
+  return lines.join("\n").trim();
+}
+
 // ID 缺失时只在当前可见事项中做精确范围的文字定位。
 async function findReminderByText(ownerName: string, textKeyword: string): Promise<PersonalItem | undefined> {
   const rows = await all<AccountRow & { title: string }>(
@@ -124,8 +148,7 @@ export function describeAction(action: AiAction): string | null {
     case "add_memo": {
       const text = String(action.text ?? action.title ?? "").trim();
       if (!text) return null;
-      const preview = text.slice(0, 60);
-      return `备忘：${preview}${text.length > 60 ? "…" : ""}`;
+      return `备忘：${memoTitle(action)}`;
     }
     case "complete_reminder": {
       const target = action.id ? `#${action.id}` : String(action.text ?? "").slice(0, 60);
@@ -168,11 +191,12 @@ export async function applyAction(
     case "add_memo": {
       const text = String(action.text ?? action.title ?? "").trim();
       if (!text) return { ok: false, label: "（无效备忘）" };
+      const title = memoTitle(action);
       await createPersonalItem(fakeUser, {
         kind: "memo",
         scope,
-        title: text.slice(0, 120),
-        bodyMarkdown: text,
+        title,
+        bodyMarkdown: memoBody(action, title),
       });
       return { ok: true, label: describeAction(action) ?? "备忘已创建" };
     }

@@ -87,6 +87,7 @@ struct RemindersView: View {
             switchButton(.reminder, icon: "bell.badge.fill", title: "提醒")
             switchButton(.memo, icon: "doc.text.fill", title: "备忘")
         }
+        .frame(maxWidth: .infinity)
         .padding(5)
         .background(DS.Palette.innerSurface)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
@@ -97,6 +98,7 @@ struct RemindersView: View {
             scopeButton("personal", icon: "person.fill", title: "我的")
             scopeButton("shared", icon: "person.2.fill", title: "共享")
         }
+        .frame(maxWidth: .infinity)
         .padding(5)
         .background(DS.Palette.innerSurface)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -113,7 +115,8 @@ struct RemindersView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(scope == value ? .white : DS.Palette.textSecondary)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+                .frame(minHeight: 48)
+                .contentShape(Rectangle())
                 .background {
                     if scope == value {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -122,6 +125,7 @@ struct RemindersView: View {
                 }
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, minHeight: 48)
         .contentShape(Rectangle())
     }
 
@@ -135,7 +139,8 @@ struct RemindersView: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(tab == kind ? .white : DS.Palette.textSecondary)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                .frame(minHeight: 52)
+                .contentShape(Rectangle())
                 .background {
                     if tab == kind {
                         RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
@@ -144,6 +149,7 @@ struct RemindersView: View {
                 }
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, minHeight: 52)
         .contentShape(Rectangle())
     }
 

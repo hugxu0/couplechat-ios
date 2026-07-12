@@ -531,7 +531,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
     }
 
     private func installConfirmation(_ confirm: ActionConfirm) {
-        confirmItemsLabel.text = confirm.items.map { "• \($0.label)" }.joined(separator: "\n")
+        confirmItemsLabel.attributedText = ChatMarkdownRenderer.attributedString(
+            from: ChatTimelineMetrics.confirmationMarkdown(confirm),
+            baseFont: confirmItemsLabel.font,
+            textColor: confirmItemsLabel.textColor,
+            accentColor: mine ? UIColor.white.withAlphaComponent(0.92) : accentColor)
         let pending = confirm.status == "pending"
         confirmTitleLabel.text = pending ? "需要你的确认" : "操作结果"
         confirmStatusLabel.text = confirm.status == "confirmed"
@@ -794,11 +798,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate {
         let originY = bubbleView.bounds.height - ChatTimelineMetrics.bubbleVerticalPadding - height
         confirmDivider.frame = CGRect(x: paddingX, y: originY - 12, width: contentWidth, height: 1)
         confirmTitleLabel.frame = CGRect(x: paddingX, y: originY, width: contentWidth, height: 22)
-        let labels = confirmItemsLabel.text ?? ""
-        let itemsHeight = ceil((labels as NSString).boundingRect(
+        let itemsHeight = ceil((confirmItemsLabel.attributedText ?? NSAttributedString(string: "")).boundingRect(
             with: CGSize(width: contentWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: confirmItemsLabel.font as Any],
             context: nil).height)
         confirmItemsLabel.frame = CGRect(x: paddingX, y: originY + 29, width: contentWidth, height: itemsHeight)
         let actionY = confirmItemsLabel.frame.maxY + (confirm.status == "pending" ? 10 : 8)

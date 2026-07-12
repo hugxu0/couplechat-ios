@@ -92,7 +92,7 @@ struct ChatMessageLayout: Hashable {
             text: message.displayText,
             replyPreview: message.replyPreview,
             confirmStatus: message.meta?.confirm?.status,
-            confirmLabels: message.meta?.confirm?.items.map(\.label).joined(separator: "\n"),
+            confirmLabels: message.meta?.confirm.map(confirmationMarkdown),
             pending: message.pending,
             failed: message.failed
         )
@@ -209,12 +209,26 @@ enum ChatTimelineMetrics {
     }
 
     static func confirmationHeight(_ confirm: ActionConfirm, width: CGFloat) -> CGFloat {
-        let labels = confirm.items.map { "• \($0.label)" }.joined(separator: "\n")
-        let itemsHeight = measureText(
-            labels,
+        let itemsHeight = ChatMarkdownRenderer.boundingSize(
+            for: confirmationMarkdown(confirm),
             font: .systemFont(ofSize: 14),
-            width: width)
+            width: width).height
         return 22 + 7 + itemsHeight + (confirm.status == "pending" ? 10 + confirmButtonHeight : 8 + 20)
+    }
+
+    static func confirmationMarkdown(_ confirm: ActionConfirm) -> String {
+        confirm.items.map { item in
+            let scope = item.action.scope == "shared"
+                ? "共享"
+                : (item.action.scope == "personal" ? "私人" : "未标明")
+            var parts = ["**\(item.label)**", "范围：\(scope)"]
+            if item.action.type == "add_memo", let text = item.action.text, !text.isEmpty {
+                parts.append(text)
+            } else if item.action.type == "edit_memo", let text = item.action.newText, !text.isEmpty {
+                parts.append(text)
+            }
+            return parts.joined(separator: "\n\n")
+        }.joined(separator: "\n\n")
     }
 
     private static func measureText(_ text: String, font: UIFont, width: CGFloat) -> CGFloat {

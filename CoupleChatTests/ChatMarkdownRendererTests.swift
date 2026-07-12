@@ -19,8 +19,32 @@ final class ChatMarkdownRendererTests: XCTestCase {
             from: "| 日期 | 心情 |\n| --- | --- |\n| 7/12 | 开心 |")
 
         XCTAssertFalse(rendered.string.contains("---"))
-        XCTAssertTrue(rendered.string.contains("日期  │  心情"))
-        XCTAssertTrue(rendered.string.contains("7/12  │  开心"))
+        XCTAssertFalse(rendered.string.contains("|"))
+        XCTAssertTrue(rendered.string.contains("日期：7/12"))
+        XCTAssertTrue(rendered.string.contains("心情：开心"))
+    }
+
+    func testConfirmationContainsFullMemoAndScope() {
+        let confirm = message(meta: [
+            "confirm": [
+                "status": "pending",
+                "items": [[
+                    "label": "备忘：黄金走势",
+                    "action": [
+                        "type": "add_memo",
+                        "title": "黄金走势",
+                        "text": "| 日期 | 收盘价 |\n| --- | --- |\n| 7/11 | 4121 |",
+                        "scope": "personal",
+                    ],
+                ]],
+                "requesterName": "小旭",
+                "requesterUsername": "xu",
+            ],
+        ]).meta!.confirm!
+
+        let markdown = ChatTimelineMetrics.confirmationMarkdown(confirm)
+        XCTAssertTrue(markdown.contains("范围：私人"))
+        XCTAssertTrue(markdown.contains("7/11 | 4121"))
     }
 
     func testConfirmationAddsHeightAndUsesFullBubbleWidth() {

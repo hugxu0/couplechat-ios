@@ -13,10 +13,14 @@ enum ChatMarkdownRenderer {
         let output = NSMutableAttributedString(string: "")
         let lines = normalized.components(separatedBy: "\n")
         var inCodeBlock = false
+        var index = 0
 
-        for rawLine in lines {
+        while index < lines.count {
+            let rawLine = lines[index]
+            var advancedPastBlock = false
             if rawLine.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
                 inCodeBlock.toggle()
+                index += 1
                 continue
             }
             let line: NSAttributedString
@@ -28,13 +32,34 @@ enum ChatMarkdownRenderer {
                         .foregroundColor: textColor,
                         .backgroundColor: textColor.withAlphaComponent(0.08),
                     ])
+            } else if index + 1 < lines.count,
+                      tableCells(rawLine).count > 1,
+                      isTableSeparator(lines[index + 1]) {
+                let headers = tableCells(rawLine)
+                index += 2
+                var rows: [[String]] = []
+                while index < lines.count {
+                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                    guard candidate.hasPrefix("|"), candidate.hasSuffix("|") else { break }
+                    rows.append(tableCells(candidate))
+                    index += 1
+                }
+                advancedPastBlock = true
+                line = renderedTable(
+                    headers: headers,
+                    rows: rows,
+                    baseFont: baseFont,
+                    textColor: textColor,
+                    accentColor: accentColor)
             } else if isTableSeparator(rawLine) {
+                index += 1
                 continue
             } else {
                 line = renderedLine(rawLine, baseFont: baseFont, textColor: textColor, accentColor: accentColor)
             }
             if output.length > 0 { output.append(NSAttributedString(string: "\n")) }
             output.append(line)
+            if !advancedPastBlock { index += 1 }
         }
         while output.string.hasSuffix("\n") {
             output.deleteCharacters(in: NSRange(location: output.length - 1, length: 1))
@@ -58,7 +83,6 @@ enum ChatMarkdownRenderer {
         var line = rawLine
         var font = baseFont
         var prefix = ""
-        var isTable = false
 
         if let heading = line.range(of: #"^\s{0,3}(#{1,6})\s+"#, options: .regularExpression) {
             let level = line[heading].filter { $0 == "#" }.count
@@ -81,14 +105,6 @@ enum ChatMarkdownRenderer {
             let marker = String(line[ordered]).trimmingCharacters(in: .whitespaces)
             prefix = marker.replacingOccurrences(of: ")", with: ".") + " "
             line.removeSubrange(ordered)
-        } else if line.trimmingCharacters(in: .whitespaces).hasPrefix("|"),
-                  line.trimmingCharacters(in: .whitespaces).hasSuffix("|") {
-            let cells = tableCells(line)
-            if cells.count > 1 {
-                line = cells.joined(separator: "  │  ")
-                font = .monospacedSystemFont(ofSize: max(13, baseFont.pointSize - 2), weight: .regular)
-                isTable = true
-            }
         }
 
         let result = NSMutableAttributedString(
@@ -101,11 +117,51 @@ enum ChatMarkdownRenderer {
                 value: accentColor,
                 range: NSRange(location: 0, length: (prefix as NSString).length))
         }
-        if isTable {
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = 3
-            result.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: result.length))
+        return result
+    }
+
+    private static func renderedTable(
+        headers: [String],
+        rows: [[String]],
+        baseFont: UIFont,
+        textColor: UIColor,
+        accentColor: UIColor
+    ) -> NSAttributedString {
+        guard !rows.isEmpty else {
+            return NSAttributedString(
+                string: headers.joined(separator: " · "),
+                attributes: [
+                    .font: UIFont.systemFont(ofSize: baseFont.pointSize, weight: .semibold),
+                    .foregroundColor: textColor,
+                ])
         }
+        let result = NSMutableAttributedString(string: "")
+        for (rowIndex, row) in rows.enumerated() {
+            if rowIndex > 0 { result.append(NSAttributedString(string: "\n\n")) }
+            for column in 0..<max(headers.count, row.count) {
+                if column > 0 { result.append(NSAttributedString(string: "\n")) }
+                let header = column < headers.count ? headers[column] : "第\(column + 1)列"
+                let value = column < row.count ? row[column] : ""
+                result.append(NSAttributedString(
+                    string: "\(header)：",
+                    attributes: [
+                        .font: UIFont.systemFont(ofSize: max(13, baseFont.pointSize - 1), weight: .semibold),
+                        .foregroundColor: accentColor,
+                    ]))
+                let renderedValue = NSMutableAttributedString(
+                    string: value.isEmpty ? "—" : value,
+                    attributes: [.font: baseFont, .foregroundColor: textColor])
+                applyInlineMarkdown(
+                    to: renderedValue,
+                    baseFont: baseFont,
+                    textColor: textColor,
+                    accentColor: accentColor)
+                result.append(renderedValue)
+            }
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 2
+        result.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: result.length))
         return result
     }
 

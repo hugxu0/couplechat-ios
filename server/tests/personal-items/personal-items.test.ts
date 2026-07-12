@@ -80,7 +80,8 @@ async function verifyAIConfirmationFlow() {
         label: "备忘：日常小确幸记录表",
         action: {
           type: "add_memo",
-          text: "| 日期 | 心情 |\n| --- | --- |\n| 7/12 | 开心 |",
+          title: "日常小确幸记录表",
+          text: "# 日常小确幸记录表\n\n| 日期 | 心情 |\n| --- | --- |\n| 7/12 | 开心 |",
           scope: "personal",
         },
       }],
@@ -108,7 +109,9 @@ async function verifyAIConfirmationFlow() {
     assert.deepEqual(await confirmAction(io, "ai-confirm-1", "confirm"), { ok: true });
     const memos = await listPersonalItems({ username: "xu", name: "小旭" }, "memo", "personal");
     assert.equal(memos.length, 1);
+    assert.equal(memos[0].title, "日常小确幸记录表");
     assert.match(memos[0].bodyMarkdown, /^\| 日期 \|/);
+    assert.doesNotMatch(memos[0].bodyMarkdown, /日常小确幸记录表/);
     assert.ok(emissions.some((entry) => entry.room === "user:xu" && entry.event === "personalItem:changed"));
     assert.ok(emissions.some((entry) => {
       const payload = entry.payload as { meta?: { confirm?: { status?: string } } };

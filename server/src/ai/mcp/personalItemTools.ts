@@ -10,18 +10,28 @@ export function registerPersonalItemTools(server: McpServer, run: AgentToolRun):
   server.registerTool(
     "list_personal_items",
     {
-      description: "查询当前可见的未完成提醒和备忘。公聊只返回 shared；AI 私聊返回 shared 和当前主人的 personal。",
+      description: "查询当前主人可见的未完成提醒和备忘。可明确选择当前主人的私人事项、两人的共享事项或全部。",
       inputSchema: z.object({
         kind: z.enum(["reminder", "memo", "all"]).optional(),
+        scope: z.enum(["personal", "shared", "all"]).optional(),
         includeDone: z.boolean().optional(),
         limit: z.number().int().min(1).max(30).optional(),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (args) => jsonResult(await recordAgentTool(run, "list_personal_items", args, async () => {
-      const clauses = [run.identity.storedChannel === "couple" ? "scope = 'shared'" : "(scope = 'shared' OR owner = ?)"];
+      const requestedScope = args.scope ?? (run.identity.storedChannel === "couple" ? "shared" : "all");
+      const clauses: string[] = [];
       const params: Array<string | number> = [];
-      if (run.identity.storedChannel !== "couple") params.push(run.identity.requesterUsername);
+      if (requestedScope === "personal") {
+        clauses.push("scope = 'personal' AND owner = ?");
+        params.push(run.identity.requesterUsername);
+      } else if (requestedScope === "shared") {
+        clauses.push("scope = 'shared'");
+      } else {
+        clauses.push("(scope = 'shared' OR (scope = 'personal' AND owner = ?))");
+        params.push(run.identity.requesterUsername);
+      }
       if (args.kind && args.kind !== "all") { clauses.push("kind = ?"); params.push(args.kind); }
       if (!args.includeDone) clauses.push("is_done = 0");
       params.push(safeLimit(args.limit, 20, 30));
@@ -47,7 +57,7 @@ export function registerPersonalItemTools(server: McpServer, run: AgentToolRun):
   server.registerTool(
     "draft_personal_item_action",
     {
-      description: "生成需要主人确认的提醒/备忘操作草案，不会直接写数据库。新增、完成、删除提醒或新增、修改备忘时调用。",
+      description: "生成需要主人确认的提醒/备忘操作草案，不会直接写数据库。scope 必须区分 personal（当前主人私人）与 shared（两人共享）；add_memo 的 title 是列表标题，text 是不重复标题的 Markdown 正文。",
       inputSchema: z.object({
         type: z.enum(["add_reminder", "add_memo", "complete_reminder", "delete_reminder", "edit_memo"]),
         title: z.string().max(300).optional(),
@@ -62,6 +72,7 @@ export function registerPersonalItemTools(server: McpServer, run: AgentToolRun):
     },
     async (args) => jsonResult(await recordAgentTool(run, "draft_personal_item_action", args, async () => {
       const action: AiAction = { ...args };
+      action.scope ??= run.identity.storedChannel === "couple" ? "shared" : "personal";
       if (action.scope === "personal") action.ownerName = run.identity.requesterUsername;
       const label = describeAction(action);
       if (!label) throw new Error("操作草案缺少必要字段");
