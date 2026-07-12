@@ -10,8 +10,9 @@
     "build": "npm run clean && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "node --import tsx --test --test-concurrency=1 tests/auth/auth.test.ts tests/message/message.test.ts tests/upload/upload.test.ts tests/sync/sync.test.ts tests/personal-items/personal-items.test.ts tests/ai-memory/ai-memory.test.ts tests/ai-queue/ai-queue.test.ts",
     "smoke:postgres": "tsx scripts/smoke-postgres.ts",
-    "test": "npm run typecheck && npm run smoke:postgres",
+    "test": "npm run typecheck && npm run test:unit && npm run smoke:postgres",
     "healthcheck": "node scripts/healthcheck.mjs"
   },
   "dependencies": {
