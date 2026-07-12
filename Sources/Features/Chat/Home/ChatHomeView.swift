@@ -358,6 +358,35 @@ struct ChatHomeView: View {
         }
     }
 
+    private var connectionSummary: String {
+        if store.connectionState.isTransient { return "正在连接" }
+        if !store.connected { return "实时连接不可用" }
+        if !store.presenceKnown { return "正在获取在线状态" }
+        return store.partnerOnline ? "都在线" : "等 TA 出现"
+    }
+
+    private var conversationWindowBackground: some View {
+        ZStack(alignment: .bottomTrailing) {
+            LinearGradient(
+                colors: [
+                    theme.accent.color.opacity(0.12),
+                    DS.Palette.innerSurface.opacity(0.92),
+                    DS.Palette.pink.opacity(0.06),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing)
+            Image(systemName: "sparkles")
+                .font(.system(size: 56, weight: .thin))
+                .foregroundStyle(theme.accent.color.opacity(0.09))
+                .rotationEffect(.degrees(-14))
+                .offset(x: 13, y: 15)
+            Image(systemName: "heart.fill")
+                .font(.system(size: 17))
+                .foregroundStyle(DS.Palette.pink.opacity(0.14))
+                .offset(x: -40, y: -16)
+        }
+    }
+
     private var statusStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: DS.Spacing.compact) {

@@ -453,12 +453,14 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             bubbleView.addSubview(voiceWaveStack)
             bubbleView.addSubview(bodyLabel)
             bubbleView.addSubview(transcriptButton)
-            if transcriptExpanded, transcript?.status == .ready, transcript?.text?.isEmpty == false {
+            if voiceTranscriptExpanded,
+               voiceTranscript?.status == .ready,
+               voiceTranscript?.text?.isEmpty == false {
                 bubbleView.addSubview(transcriptLabel)
                 bubbleView.addSubview(transcriptCorrectionButton)
             }
             configureAttachment(message)
-            configureTranscript(transcript)
+            configureTranscript(voiceTranscript)
         case "file":
             bubbleView.addSubview(mediaIconView)
             bubbleView.addSubview(bodyLabel)
