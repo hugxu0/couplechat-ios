@@ -3,23 +3,6 @@ import Foundation
 import SocketIO
 import SwiftUI
 
-/// 实时连接的显示状态。`connecting` / `reconnecting` 是正常过渡，不能被当作断联错误展示。
-enum RealtimeConnectionState: Equatable {
-    case disconnected
-    case connecting
-    case connected
-    case reconnecting
-    case failed
-
-    var isTransient: Bool {
-        self == .connecting || self == .reconnecting
-    }
-
-    var isUnavailable: Bool {
-        self == .disconnected || self == .failed
-    }
-}
-
 struct AIActivity: Equatable {
     let channel: ChatChannel
     let requestMessageId: String?
@@ -74,13 +57,13 @@ final class ChatStore: ObservableObject {
 
     // MARK: - 对外聚合状态
 
-    @Published private(set) var connected = false
-    @Published private(set) var connectionState: RealtimeConnectionState = .disconnected
+    var connected: Bool { realtime.isConnected }
+    var connectionState: RealtimeConnectionState { realtime.state }
+    var lastConnectionError: String? { realtime.lastError }
     @Published var partnerOnline = false
     @Published private(set) var presenceKnown = false
     @Published private(set) var aiActivityByChannel: [String: AIActivity] = [:]
     @Published private(set) var localInteractionPresentation: InteractionPresentation?
-    @Published var lastConnectionError: String?
     @Published private(set) var localCacheAvailable = true
 
     // 便捷访问（保持向后兼容）
@@ -96,21 +79,18 @@ final class ChatStore: ObservableObject {
     /// 向后兼容：store.messages 返回 couple 频道消息数组
     var messages: [ChatMessage] { messageStore.messages(for: .couple) }
 
-    private var manager: SocketManager?
-    private(set) var socket: SocketIOClient?
-    /// Socket.IO 自己会在意外断开后重连；这个标志只负责避免前台恢复等调用重复发起握手。
-    private var connectionAttemptInFlight = false
-    private var connectionAttemptToken = UUID()
-    private var reconnectAttempt = 0
-    /// 健康检查失败时的受控重连。手动 disconnect 不会触发 Socket.IO 自动重连，
-    /// 因而必须在 disconnect 回调中明确重新握手。
+    lazy var realtime = RealtimeConnectionCoordinator(
+        sessionProvider: { [weak self] in self?.auth.session },
+        onSocketCreated: { [weak self] socket in self?.bindDomainEvents(socket) },
+        onConnected: { [weak self] in
+            guard let self, let session = self.auth.session else { return }
+            self.messageStore.flushOutbox(session: session)
+        },
+        onUnauthorized: { [weak self] in self?.auth.verifySessionOrLogout() })
     private let httpClient: any HTTPClient
     private let persistence: any ChatPersistenceProtocol
     private var childStateCancellables = Set<AnyCancellable>()
     private var localAIActivityTokens: [String: UUID] = [:]
-    var isConnected: Bool { connected }
-    var sessionUsername: String? { auth.session?.username }
-    var currentSession: Session? { auth.session }
 
     // MARK: - 统计/存储
 
@@ -128,9 +108,13 @@ final class ChatStore: ObservableObject {
         localData = LocalDataRepository(persistence: persistence)
         dailyContent = DailyContentRepository(httpClient: httpClient)
         personalItems = PersonalItemsRepository(httpClient: httpClient)
-        auth.socketProvider = self
-        messageStore.socketProvider = self
-        shared.socketProvider = self
+        auth.socketProvider = realtime
+        messageStore.socketProvider = realtime
+        shared.socketProvider = realtime
+
+        realtime.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &childStateCancellables)
 
         // ChatStore 暴露的是 MessageStore 的计算属性；子 ObservableObject 不会自动把
         // objectWillChange 传给父对象。只转发 AI 状态，避免 SwiftUI 顶栏/大橘入口永远
@@ -160,7 +144,7 @@ final class ChatStore: ObservableObject {
         }
         auth.activate(session, accounts: [], persist: false)
         auth.restoreCachedPartner()
-        connect()
+        realtime.connect()
         do {
             let snapshot = try await snapshotTask.value
             await messageStore.applyBootstrap(snapshot, session: session)
@@ -170,7 +154,7 @@ final class ChatStore: ObservableObject {
             auth.logout()
         } catch {
             // 已登录用户离线启动时仍可查看有界本地缓存；连接恢复后前台刷新会补最新快照。
-            lastConnectionError = error.localizedDescription
+            realtime.setLastError(error.localizedDescription)
         }
     }
 
@@ -186,7 +170,7 @@ final class ChatStore: ObservableObject {
         }
         auth.activate(session, accounts: [], persist: true)
         auth.restoreCachedPartner()
-        connect()
+        realtime.connect()
         do {
             let snapshot = try await snapshotTask.value
             await messageStore.applyBootstrap(snapshot, session: session)
@@ -196,7 +180,7 @@ final class ChatStore: ObservableObject {
             logout()
             throw BootstrapError.unauthorized
         } catch {
-            lastConnectionError = error.localizedDescription
+            realtime.setLastError(error.localizedDescription)
         }
     }
 
@@ -227,123 +211,32 @@ final class ChatStore: ObservableObject {
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
             auth.activate(session, accounts: snapshot.accounts, persist: false)
-            lastConnectionError = nil
+            realtime.setLastError(nil)
             return true
         } catch BootstrapError.unauthorized {
             logout()
             return false
         } catch {
-            lastConnectionError = error.localizedDescription
+            realtime.setLastError(error.localizedDescription)
             return false
         }
     }
 
     func logout() {
         historySync.cancelForLogout()
-        socket?.disconnect()
-        manager = nil
-        socket = nil
-        connected = false
-        connectionAttemptInFlight = false
-        connectionState = .disconnected
+        realtime.disconnect()
         partnerOnline = false
         presenceKnown = false
         aiActivityByChannel.removeAll()
         messageStore.aiTyping = false
         messageStore.aiReplying = false
-        connectionAttemptToken = UUID()
-        reconnectAttempt = 0
-        lastConnectionError = nil
+        realtime.setLastError(nil)
         auth.logout()
     }
 
-    // MARK: - Socket 连接
+    // MARK: - Socket 领域事件
 
-    private func connect() {
-        guard let session = auth.session else { return }
-        let createdSocket = socket == nil
-        if createdSocket {
-            auth.resolvePartner()
-            let m = SocketManager(socketURL: Self.baseURL, config: [
-                .compress,
-                .reconnects(true),
-                .reconnectWaitMax(5),
-            ])
-            manager = m
-            let s = m.defaultSocket
-            socket = s
-            bindEvents(s)
-        }
-
-        guard !connected, !connectionAttemptInFlight, let s = socket else { return }
-        connectionAttemptInFlight = true
-        connectionState = createdSocket ? .connecting : .reconnecting
-        let attemptToken = UUID()
-        connectionAttemptToken = attemptToken
-        // 认证只随 Socket.IO auth payload 发送，不放入 URL 查询参数，避免 token 落入代理访问日志。
-        s.connect(withPayload: ["token": session.token])
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            guard let self, self.connectionAttemptToken == attemptToken, !self.connected,
-                  self.auth.session != nil else { return }
-            self.connectionAttemptInFlight = false
-            self.socket?.disconnect()
-            self.manager = nil
-            self.socket = nil
-            self.connectionState = .reconnecting
-            self.reconnectAttempt += 1
-            let delay = min(5.0, pow(1.7, Double(self.reconnectAttempt)) * 0.35)
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            self.connectionAttemptInFlight = false
-            self.connect()
-        }
-    }
-
-    private func bindEvents(_ s: SocketIOClient) {
-        s.on(clientEvent: .connect) { [weak self] _, _ in
-            Task { @MainActor in
-                guard let self else { return }
-                guard self.socket === s else { return }
-                self.connected = true
-                self.connectionAttemptInFlight = false
-                self.connectionState = .connected
-                self.reconnectAttempt = 0
-                self.connectionAttemptToken = UUID()
-                self.lastConnectionError = nil
-                self.reportAway(false)
-                if let session = self.auth.session {
-                    self.messageStore.flushOutbox(session: session)
-                }
-            }
-        }
-        s.on(clientEvent: .disconnect) { [weak self] _, _ in
-            Task { @MainActor in
-                guard let self else { return }
-                guard self.socket === s else { return }
-                self.connected = false
-                guard self.auth.loggedIn else {
-                    self.connectionAttemptInFlight = false
-                    self.connectionState = .disconnected
-                    return
-                }
-                // 意外断开交由 Socket.IO 的重连策略处理；不在这里再手动 connect。
-                self.connectionAttemptInFlight = true
-                self.connectionState = .reconnecting
-            }
-        }
-        s.on(clientEvent: .error) { [weak self] data, _ in
-            Task { @MainActor in
-                guard let self, self.socket === s else { return }
-                self.handleSocketError(data)
-            }
-        }
-        s.on(SocketEvent.connectError.rawValue) { [weak self] data, _ in
-            Task { @MainActor in
-                guard let self, self.socket === s else { return }
-                self.handleSocketError(data)
-            }
-        }
-
+    private func bindDomainEvents(_ s: SocketIOClient) {
         // 消息事件 -> MessageStore
         s.on(SocketEvent.messageNew.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
@@ -403,7 +296,7 @@ final class ChatStore: ObservableObject {
                 phase: phase)
             Task { @MainActor in
                 guard let self else { return }
-                guard self.socket === s else { return }
+                guard self.realtime.socket === s else { return }
                 if activity.isVisible {
                     self.aiActivityByChannel[channel.rawValue] = activity
                 } else {
@@ -451,27 +344,6 @@ final class ChatStore: ObservableObject {
                         userInfo: ["action": action, "item": itemDict])
                 }
             }
-        }
-    }
-
-    private func handleSocketError(_ data: [Any]) {
-        let message = data.compactMap { item -> String? in
-            if let text = item as? String { return text }
-            if let error = item as? Error { return error.localizedDescription }
-            if let dict = item as? [String: Any] { return dict.values.map { "\($0)" }.joined(separator: " ") }
-            return "\(item)"
-        }.joined(separator: " ")
-        connected = false
-        if message.lowercased().contains("unauthorized") {
-            connectionAttemptInFlight = false
-            connectionState = .failed
-            lastConnectionError = "登录已过期，请重新登录"
-            auth.verifySessionOrLogout()
-        } else {
-            // 网络瞬断期间保持“重连中”，不要把正常恢复过程渲染为红色断联。
-            connectionAttemptInFlight = true
-            connectionState = .reconnecting
-            lastConnectionError = nil
         }
     }
 
@@ -688,15 +560,13 @@ final class ChatStore: ObservableObject {
         await messageStore.mediaItemCount(for: channel, includeFiles: includeFiles)
     }
 
-    func reportAway(_ away: Bool) { socket?.emit(SocketEvent.away.rawValue, away) }
+    func reportAway(_ away: Bool) { realtime.reportAway(away) }
 
     func recoverOnForeground() {
         guard auth.session != nil else { return }
         reportAway(false)
-        // 退后台会中断 socket，但 connectionAttemptInFlight 可能仍卡在 true，
-        // 直接 connect() 会被守卫挡掉，于是只能干等 Socket.IO 慢慢重连、长时间
-        // 显示“正在重连”。回前台若未真正连上，就强制丢弃陈旧 socket 重新握手。
-        if !connected { forceReconnect() }
+        // 退后台可能留下陈旧的在途握手；前台恢复时由连接协调器重建。
+        if !connected { realtime.forceReconnect() }
         Task {
             _ = await refreshBootstrap()
             _ = await verifyRealtimeHealth()
@@ -706,20 +576,9 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    /// 丢弃可能已失效的 socket 与在途标志，立即重新发起握手。
-    private func forceReconnect() {
-        connectionAttemptToken = UUID()
-        connectionAttemptInFlight = false
-        reconnectAttempt = 0
-        socket?.disconnect()
-        manager = nil
-        socket = nil
-        connect()
-    }
-
     func refreshHomeData() async -> HomeRefreshResult {
         reportAway(false)
-        if !connected { connect() }
+        if !connected { realtime.connect() }
         async let refreshed = refreshBootstrap()
         async let realtime = verifyRealtimeHealth()
         let result = await (refreshed, realtime)
@@ -727,27 +586,7 @@ final class ChatStore: ObservableObject {
     }
 
     private func verifyRealtimeHealth() async -> Bool {
-        if !connected { connect() }
-        let deadline = Date().addingTimeInterval(2.2)
-        while !connected, Date() < deadline {
-            try? await Task.sleep(nanoseconds: 80_000_000)
-        }
-        guard connected, let socket else { return false }
-        let result: [Any] = await withCheckedContinuation { continuation in
-            socket.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 1.5) {
-                continuation.resume(returning: $0)
-            }
-        }
-        let healthy = (result.first as? [String: Any])?["ok"] as? Bool == true
-        if !healthy {
-            connected = false
-            connectionAttemptInFlight = false
-            connectionState = .reconnecting
-            manager = nil
-            self.socket = nil
-            connect()
-        }
-        return healthy
+        await realtime.verifyHealth()
     }
 
     @discardableResult
@@ -763,6 +602,3 @@ final class ChatStore: ObservableObject {
         Task { _ = await refreshBootstrap() }
     }
 }
-
-// SocketProvider conformance
-extension ChatStore: SocketProvider {}

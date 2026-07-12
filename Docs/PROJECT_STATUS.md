@@ -52,7 +52,7 @@
 - Windows 开发机不能本地编译 iOS，必须依赖 GitHub Actions 或 Mac。
 - 本地云数据库调试禁止媒体写入，因此上传链路要在生产服务或隔离环境验证。
 - 媒体失败重传依赖 outbox 文件；用户主动清理 App 数据后无法继续重传。
-- `MessageStore` / `ChatStore` 仍是兼容 facade；新增功能不得继续扩大它们。
+- `MessageStore` / `ChatStore` 仍是兼容 facade；新增功能不得继续扩大它们。消息映射/远端分页与 Socket 生命周期已下沉，outbox 完整工作流和领域事件路由仍待收敛。
 
 ## 重构与发布状态
 

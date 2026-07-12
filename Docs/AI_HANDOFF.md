@@ -28,6 +28,7 @@
 - 2026-07-13 阶段 4 外围页细化：记录/主题/存储/宠物/聊天首页常规字号与圆角收敛到 `DS.Typo`；装饰性大图标保留固定字号。
 - 2026-07-13 结构整理：Chat 去 V2 命名并按 Session/Timeline/Media/Search/Settings 分层；Reminders/Profile 子文件与子目录收敛。
 - 2026-07-13 Core 按 Models/Networking/Persistence/Chat/Shared/Media/Support 分层；互动 SwiftUI 展示移到 Chat/Presentation。
+- 2026-07-13 R5.3/R5.4 继续收敛：消息映射与远端分页移出 `MessageStore`，Socket 生命周期和健康检查移入 `RealtimeConnectionCoordinator`；领域事件路由与 outbox 工作流仍待下沉。
 
 详细改造与证据见 `Docs/RELEASE_REPORT_2026-07-12.md`。
 
