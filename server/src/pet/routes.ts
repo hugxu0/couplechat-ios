@@ -26,6 +26,13 @@ function mutationReply(reply: any, result: any) {
   if (result.alreadyResponded) return reply.code(409).send({ error: "already_responded" });
   if (result.invalidItems) return reply.code(400).send({ error: "invalid_scene_items" });
   if (result.conflict) return reply.code(409).send({ error: "version_conflict", pet: result.pet });
+  if (result.cooldown) {
+    return reply.code(429).send({
+      error: "pet_interaction_cooldown",
+      availableAt: result.availableAt,
+      pet: result.pet,
+    });
+  }
   return { pet: result.pet };
 }
 

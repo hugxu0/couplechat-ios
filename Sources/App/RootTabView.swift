@@ -72,7 +72,6 @@ struct RootTabView: View {
                     .tag(MainTab.profile)
             }
             .tabViewStyle(.sidebarAdaptable)
-            .toolbar(app.hidesTabBar ? .hidden : .visible, for: .tabBar)
 
             if let presentation = activePresentation {
                 IncomingInteractionOverlay(
@@ -171,6 +170,14 @@ struct RootTabView: View {
         }
     }
 
+}
+
+/// 一级 Tab 只出现在五个根页面。由每个 push 目的页直接声明隐藏，避免等到
+/// `onAppear` 后再切换造成安全区仍按旧 Tab Bar 高度布局。
+extension View {
+    func appSubpageChrome() -> some View {
+        toolbar(.hidden, for: .tabBar)
+    }
 }
 
 /// 触觉反馈统一入口

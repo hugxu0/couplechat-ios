@@ -8,24 +8,42 @@ struct CouplePetState: Codable, Equatable, Identifiable {
     let id: String
     var name: String
     let version: Int
+    let level: Int
+    let experience: Int
+    let mood: Int
+    let coins: Int
     let scene: PetSceneState
     let today: PetDailyPrompt?
     let inventory: [PetCollectible]
     let moments: [PetMoment]
     let latestInteraction: PetInteractionRecord?
+    let interactionCooldowns: [PetInteractionCooldown]
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(String.self, forKey: .id)
         name = try values.decodeIfPresent(String.self, forKey: .name) ?? "大橘"
         version = try values.decodeIfPresent(Int.self, forKey: .version) ?? 0
+        level = try values.decodeIfPresent(Int.self, forKey: .level) ?? 1
+        experience = try values.decodeIfPresent(Int.self, forKey: .experience) ?? 0
+        mood = try values.decodeIfPresent(Int.self, forKey: .mood) ?? 80
+        coins = try values.decodeIfPresent(Int.self, forKey: .coins) ?? 0
         scene = try values.decodeIfPresent(PetSceneState.self, forKey: .scene) ?? .fallback
         today = try values.decodeIfPresent(PetDailyPrompt.self, forKey: .today)
         inventory = try values.decodeIfPresent([PetCollectible].self, forKey: .inventory) ?? []
         moments = try values.decodeIfPresent([PetMoment].self, forKey: .moments) ?? []
         latestInteraction = try values.decodeIfPresent(
             PetInteractionRecord.self, forKey: .latestInteraction)
+        interactionCooldowns = try values.decodeIfPresent(
+            [PetInteractionCooldown].self, forKey: .interactionCooldowns) ?? []
     }
+}
+
+struct PetInteractionCooldown: Codable, Equatable, Identifiable {
+    let kind: PetInteractionKind
+    let availableAt: Int64
+
+    var id: PetInteractionKind { kind }
 }
 
 struct PetSceneState: Codable, Equatable, Identifiable {
@@ -191,6 +209,20 @@ enum PetInteractionKind: String, Codable, CaseIterable, Identifiable {
         case .highFive: return "大橘认真和你碰了碰爪"
         case .teaser: return "小窝里响起轻快的脚步声"
         }
+    }
+
+    var cooldown: TimeInterval {
+        switch self {
+        case .stroke: return 30
+        case .highFive: return 2 * 60
+        case .teaser: return 5 * 60
+        }
+    }
+
+    func cooldownLabel(remaining: TimeInterval) -> String {
+        guard remaining > 0 else { return "可互动" }
+        let seconds = Int(ceil(remaining))
+        return seconds >= 60 ? "\(seconds / 60)分\(seconds % 60)秒" : "\(seconds)秒"
     }
 
     var activityPhrase: String {

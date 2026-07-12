@@ -92,7 +92,7 @@ struct AIMemoryControlCenterView: View {
                     NavigationLink {
                         AIMemoryDetailView(item: item) {
                             Task { await load() }
-                        }
+                        }.appSubpageChrome()
                     } label: {
                         AIMemoryRow(item: item)
                     }

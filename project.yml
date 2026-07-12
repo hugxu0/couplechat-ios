@@ -8,6 +8,9 @@ packages:
   SocketIO:
     url: https://github.com/socketio/socket.io-client-swift
     from: 16.1.0
+  GLTFKit2:
+    url: https://github.com/warrenm/GLTFKit2
+    exactVersion: 0.5.15
 
 targets:
   CoupleChat:
@@ -18,6 +21,8 @@ targets:
     dependencies:
       - package: SocketIO
         product: SocketIO
+      - package: GLTFKit2
+        product: GLTFKit2
     info:
       path: Sources/App/Info.plist
       properties:

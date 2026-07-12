@@ -9,172 +9,162 @@ struct PetSceneView: View {
     let onInteraction: (PetInteractionKind) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isReacting = false
+    @State private var reactionID = UUID()
+    @State private var reactionKind = PetInteractionKind.stroke
 
     var body: some View {
-        ZStack {
-            CachedImage(url: artworkURL) {
-                PetRoomBackdrop()
-            }
-            .clipped()
-
-            LinearGradient(
-                colors: [.black.opacity(0.10), .clear, .white.opacity(0.08)],
-                startPoint: .top,
-                endPoint: .bottom)
-                .allowsHitTesting(false)
-
-            VStack(spacing: 0) {
-                sceneHeader
-                Spacer(minLength: 4)
-                feedbackBubble
-                catButton
-                placedCollectibles
-                interactionBar
-            }
-            .padding(DS.Spacing.card)
+        VStack(spacing: 14) {
+            modelStage
+            statusStrip
+            interactionBar
         }
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .padding(DS.Spacing.card)
+        .background(stageBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                .stroke(.white.opacity(0.45), lineWidth: 0.7)
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .stroke(.white.opacity(0.42), lineWidth: 0.8)
         }
-        .onChange(of: pet.latestInteraction?.id) { _, _ in pulse() }
+        .shadow(color: DS.Palette.orange.opacity(0.08), radius: 22, y: 9)
     }
 
-    private var artworkURL: URL? {
-        pet.scene.artworkURL.flatMap { ServerConfig.resolveMediaURL($0) }
-    }
+    private var modelStage: some View {
+        ZStack(alignment: .top) {
+            Ellipse()
+                .fill(DS.Palette.orange.opacity(0.14))
+                .frame(width: 210, height: 38)
+                .blur(radius: 9)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, 14)
 
-    private var sceneHeader: some View {
-        HStack(spacing: 8) {
-            Label(pet.scene.title, systemImage: "window.vertical.open")
-                .font(DS.Typo.sectionLabel)
-                .foregroundStyle(DS.Palette.textPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(.ultraThinMaterial, in: Capsule())
+            CuteCatModelView(reactionID: reactionID, reaction: reactionKind)
+                .frame(maxWidth: .infinity, minHeight: 285, maxHeight: 360)
+                .contentShape(Rectangle())
+                .onTapGesture { perform(.stroke) }
 
-            Spacer()
-
-            Button(action: onChat) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .frame(width: 38, height: 38)
-                    .background(.ultraThinMaterial, in: Circle())
+            HStack {
+                feedbackBubble
+                Spacer(minLength: 8)
+                Button(action: onChat) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .frame(width: 40, height: 40)
+                        .background(.thinMaterial, in: Circle())
+                }
+                .accessibilityLabel("和大橘聊聊")
+                Button(action: onRename) {
+                    Image(systemName: "pencil")
+                        .frame(width: 40, height: 40)
+                        .background(.thinMaterial, in: Circle())
+                }
+                .accessibilityLabel("给大橘改名")
             }
-            .accessibilityLabel("和大橘聊聊")
-
-            Button(action: onRename) {
-                Label(pet.name, systemImage: "pencil")
-                    .font(DS.Typo.button)
-                    .lineLimit(1)
-                    .padding(.horizontal, 12)
-                    .frame(height: 38)
-                    .background(.ultraThinMaterial, in: Capsule())
-            }
-            .accessibilityLabel("大橘的名字，当前是 \(pet.name)，轻点改名")
+            .foregroundStyle(DS.Palette.textPrimary)
         }
-        .foregroundStyle(DS.Palette.textPrimary)
     }
 
     @ViewBuilder
     private var feedbackBubble: some View {
-        if let feedback, !feedback.isEmpty {
-            Text(feedback)
-                .font(DS.Typo.secondary.weight(.medium))
-                .foregroundStyle(DS.Palette.textPrimary)
-                .padding(.horizontal, 15)
-                .padding(.vertical, 9)
-                .background(DS.Palette.bubbleOther, in: Capsule())
-                .shadow(color: DS.Surface.shadow, radius: 5, y: 2)
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                .accessibilityAddTraits(.updatesFrequently)
-        } else {
-            Text(latestActivityText)
-                .font(DS.Typo.caption)
-                .foregroundStyle(DS.Palette.textSecondary)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 7)
-                .background(.ultraThinMaterial, in: Capsule())
-        }
+        Text(feedbackText)
+            .font(DS.Typo.secondary.weight(.medium))
+            .foregroundStyle(DS.Palette.textPrimary)
+            .lineLimit(2)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 9)
+            .background(.thinMaterial, in: Capsule())
+            .accessibilityAddTraits(.updatesFrequently)
     }
 
-    private var latestActivityText: String {
-        guard let activity = pet.latestInteraction else { return "今天也在窗边等你们" }
-        return "\(activity.actorName)刚刚\(activity.kind.activityPhrase)"
+    private var feedbackText: String {
+        if let feedback, !feedback.isEmpty { return feedback }
+        guard let activity = pet.latestInteraction else { return "在等你们陪它玩" }
+        return "\(activity.actorName)\(activity.kind.activityPhrase)"
     }
 
-    private var catButton: some View {
-        Button {
-            pulse()
-            onInteraction(.stroke)
-        } label: {
-            DajuIllustration(isResponding: isReacting)
-                .frame(maxWidth: 230, maxHeight: 245)
-                .shadow(color: DS.Palette.orange.opacity(0.18), radius: 18, y: 8)
+    private var statusStrip: some View {
+        HStack(spacing: 12) {
+            Label("Lv.\(pet.level)", systemImage: "sparkles")
+            ProgressView(value: Double(pet.experience % 100), total: 100)
+                .tint(DS.Palette.orange)
+                .accessibilityLabel("成长进度")
+                .accessibilityValue("百分之\(pet.experience % 100)")
+            Label("心情 \(pet.mood)", systemImage: "heart.fill")
+                .foregroundStyle(DS.Palette.pink)
         }
-        .buttonStyle(.plain)
-        .disabled(isBusy)
-        .accessibilityLabel("摸摸\(pet.name)")
-        .accessibilityHint("互动会同步到你们两个人的设备，不会消耗次数")
-    }
-
-    @ViewBuilder
-    private var placedCollectibles: some View {
-        let placed = pet.inventory.filter { pet.scene.placedItemIds.contains($0.id) }
-        if !placed.isEmpty {
-            HStack(spacing: 14) {
-                ForEach(placed.prefix(4)) { item in
-                    Image(systemName: item.symbolName ?? fallbackSymbol(for: item.kind))
-                        .font(.system(size: 21, weight: .medium))
-                        .foregroundStyle(DS.Palette.orange)
-                        .frame(width: 38, height: 34)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(
-                            cornerRadius: DS.Radius.chip, style: .continuous))
-                        .accessibilityLabel("已布置：\(item.name)")
-                }
-            }
-            .padding(.bottom, 6)
-        }
+        .font(DS.Typo.caption.weight(.semibold))
+        .foregroundStyle(DS.Palette.textSecondary)
+        .padding(.horizontal, 12)
     }
 
     private var interactionBar: some View {
-        HStack(spacing: 8) {
-            ForEach(PetInteractionKind.allCases) { kind in
-                Button {
-                    pulse()
-                    onInteraction(kind)
-                } label: {
-                    Label(kind.title, systemImage: kind.systemImage)
-                        .font(DS.Typo.sectionLabel)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(
-                            cornerRadius: DS.Radius.control, style: .continuous))
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: 9) {
+                ForEach(PetInteractionKind.allCases) { kind in
+                    interactionButton(kind, now: context.date)
                 }
-                .buttonStyle(PressableStyle())
-                .disabled(isBusy)
-                .accessibilityHint("随时可用，没有次数限制")
             }
         }
-        .foregroundStyle(DS.Palette.textPrimary)
     }
 
-    private func pulse() {
-        guard !reduceMotion else { return }
-        withAnimation(DS.Anim.springFast) { isReacting = true }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 280_000_000)
-            withAnimation(DS.Anim.ease) { isReacting = false }
+    private func interactionButton(_ kind: PetInteractionKind, now: Date) -> some View {
+        let remaining = cooldownRemaining(kind, now: now)
+        return Button { perform(kind) } label: {
+            VStack(spacing: 7) {
+                Image(systemName: kind.systemImage)
+                    .font(.title3.weight(.semibold))
+                    .frame(height: 24)
+                Text(kind.title)
+                    .font(DS.Typo.sectionLabel)
+                Text(kind.cooldownLabel(remaining: remaining))
+                    .font(DS.Typo.micro.monospacedDigit())
+                    .foregroundStyle(remaining > 0 ? DS.Palette.textTertiary : DS.Palette.orange)
+            }
+            .foregroundStyle(DS.Palette.textPrimary)
+            .frame(maxWidth: .infinity, minHeight: 84)
+            .background(DS.Palette.cardSurface.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(.white.opacity(0.28), lineWidth: 0.7)
+            }
         }
+        .buttonStyle(PressableStyle())
+        .disabled(isBusy || remaining > 0)
+        .opacity(remaining > 0 ? 0.58 : 1)
+        .accessibilityHint(remaining > 0 ? "冷却中" : "互动会同步到你们的设备")
     }
 
-    private func fallbackSymbol(for kind: String) -> String {
-        switch kind {
-        case "plant": return "leaf.fill"
-        case "photo": return "photo.fill"
-        case "music": return "music.note"
-        default: return "sparkles"
+    private func cooldownRemaining(_ kind: PetInteractionKind, now: Date) -> TimeInterval {
+        if let cooldown = pet.interactionCooldowns.first(where: { $0.kind == kind }) {
+            return max(0, Double(cooldown.availableAt) / 1_000 - now.timeIntervalSince1970)
+        }
+        // 兼容尚未升级的服务端快照。
+        guard let latest = pet.latestInteraction, latest.kind == kind else { return 0 }
+        let elapsed = now.timeIntervalSince1970 - Double(latest.createdAt) / 1_000
+        return max(0, kind.cooldown - elapsed)
+    }
+
+    private func perform(_ kind: PetInteractionKind) {
+        guard !isBusy, cooldownRemaining(kind, now: Date()) <= 0 else { return }
+        reactionKind = kind
+        reactionID = UUID()
+        if !reduceMotion { Haptics.light() }
+        onInteraction(kind)
+    }
+
+    private var stageBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    DS.Palette.orange.opacity(0.16),
+                    DS.Palette.pink.opacity(0.08),
+                    DS.Palette.blue.opacity(0.09),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing)
+            RadialGradient(
+                colors: [.white.opacity(0.38), .clear],
+                center: .top,
+                startRadius: 10,
+                endRadius: 260)
         }
     }
 }

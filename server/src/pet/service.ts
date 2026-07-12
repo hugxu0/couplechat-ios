@@ -38,6 +38,14 @@ const prompts = [
   "最近共同完成的哪件小事最值得庆祝？",
 ];
 
+const interactionCooldownMs = {
+  stroke: 30_000,
+  high_five: 2 * 60_000,
+  teaser: 5 * 60_000,
+} as const;
+
+type PetInteractionKind = keyof typeof interactionCooldownMs;
+
 function localDate(now: number, timezone: string): string {
   try {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -172,6 +180,12 @@ async function petState(db: DatabaseTransaction, pet: PetRow, prompt: PromptRow 
      WHERE action.pet_id = ? ORDER BY action.created_at DESC, action.id DESC LIMIT 1`,
     [pet.id],
   );
+  const latestByKind = await db.all<{ kind: PetInteractionKind; created_at: number }>(
+    `SELECT DISTINCT ON (kind) kind, created_at
+     FROM pet_actions WHERE pet_id = ?
+     ORDER BY kind, created_at DESC, id DESC`,
+    [pet.id],
+  );
   return {
     id: pet.id,
     name: pet.name,
@@ -219,6 +233,10 @@ async function petState(db: DatabaseTransaction, pet: PetRow, prompt: PromptRow 
       actorName: latest.display_name,
       createdAt: latest.created_at,
     } : undefined,
+    interactionCooldowns: latestByKind.map((action) => ({
+      kind: action.kind,
+      availableAt: action.created_at + interactionCooldownMs[action.kind],
+    })),
   };
 }
 
@@ -343,7 +361,7 @@ export async function respondToday(
 
 export async function interactPet(
   user: AuthUser,
-  input: { kind: "stroke" | "high_five" | "teaser"; idempotencyKey: string; baseVersion: number },
+  input: { kind: PetInteractionKind; idempotencyKey: string; baseVersion: number },
 ) {
   return transaction(async (db) => {
     const now = Date.now();
@@ -361,6 +379,21 @@ export async function interactPet(
     if (context.pet.version !== input.baseVersion) {
       return { idempotencyConflict: false as const, conflict: true as const,
         pet: await petState(db, context.pet, context.prompt) };
+    }
+    const latestSameKind = await db.get<{ created_at: number }>(
+      `SELECT created_at FROM pet_actions
+       WHERE pet_id = ? AND kind = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [context.pet.id, input.kind],
+    );
+    const availableAt = (latestSameKind?.created_at ?? 0) + interactionCooldownMs[input.kind];
+    if (availableAt > now) {
+      return {
+        idempotencyConflict: false as const,
+        conflict: false as const,
+        cooldown: true as const,
+        availableAt,
+        pet: await petState(db, context.pet, context.prompt),
+      };
     }
     const reward = input.kind === "high_five" ? { experience: 3, mood: 2 }
       : input.kind === "teaser" ? { experience: 2, mood: 3 }

@@ -224,7 +224,7 @@ struct StorageView: View {
     private var fileSection: some View {
         Section {
             NavigationLink {
-                AttachmentManagerView()
+                AttachmentManagerView().appSubpageChrome()
             } label: {
                 Label("文件管理", systemImage: "folder")
                     .foregroundStyle(DS.Palette.textPrimary)
