@@ -25,8 +25,6 @@ struct ChatNativeHeaderTitle: View {
 }
 
 struct ChatNativeHeaderModifier<Destination: View>: ViewModifier {
-    @Environment(\.dismiss) private var dismiss
-
     let model: ChatHeaderModel
     @Binding var isShowingDetails: Bool
     let onOpenDetails: () -> Void
@@ -34,67 +32,29 @@ struct ChatNativeHeaderModifier<Destination: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .toolbar(.hidden, for: .navigationBar)
-            .navigationBarBackButtonHidden(true)
-            .overlay(alignment: .top) {
-                GeometryReader { proxy in
-                    ChatNativeHeaderBar(
-                        model: model,
-                        isShowingDetails: $isShowingDetails,
-                        onBack: { dismiss() },
-                        onOpenDetails: onOpenDetails,
-                        destination: destination)
-                        .padding(.top, proxy.safeAreaInsets.top)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Button(action: onOpenDetails) {
+                        ChatNativeHeaderTitle(model: model)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .frame(minWidth: 120)
+                            .dsGlassInteractive(in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("打开聊天设置")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink(isActive: $isShowingDetails) {
+                        destination()
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .accessibilityLabel("打开聊天设置")
+                    }
                 }
             }
-    }
-}
-
-private struct ChatNativeHeaderBar<Destination: View>: View {
-    let model: ChatHeaderModel
-    @Binding var isShowingDetails: Bool
-    let onBack: () -> Void
-    let onOpenDetails: () -> Void
-    let destination: () -> Destination
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .dsGlassInteractive(in: Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("返回")
-
-            Spacer(minLength: 0)
-
-            Button(action: onOpenDetails) {
-                ChatNativeHeaderTitle(model: model)
-                    .padding(.horizontal, 12)
-                    .frame(width: 152, height: 44)
-                    .dsGlassInteractive(in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("打开聊天设置")
-
-            Spacer(minLength: 0)
-
-            NavigationLink(isActive: $isShowingDetails) {
-                destination()
-                    .toolbar(.visible, for: .navigationBar)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .dsGlassInteractive(in: Circle())
-                    .accessibilityLabel("打开聊天设置")
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(height: 44)
-        .padding(.horizontal, 8)
+            .toolbarBackground(.automatic, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline)
     }
 }
 
