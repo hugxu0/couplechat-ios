@@ -47,6 +47,24 @@ final class ChatMarkdownRendererTests: XCTestCase {
         XCTAssertTrue(markdown.contains("7/11 | 4121"))
     }
 
+    func testMermaidFlowchartRendersAsDiagramInsteadOfSourceCode() {
+        let rendered = ChatMarkdownRenderer.attributedString(from: """
+        ```mermaid
+        flowchart TD
+          A[开始] --> B{是否确认}
+          B -->|是| C[执行]
+          B -->|否| D[取消]
+        ```
+        """)
+
+        XCTAssertFalse(rendered.string.contains("flowchart TD"))
+        XCTAssertTrue(rendered.string.contains("开始"))
+        XCTAssertTrue(rendered.string.contains("是否确认"))
+        XCTAssertTrue(rendered.string.contains("执行"))
+        XCTAssertTrue(rendered.string.contains("取消"))
+        XCTAssertTrue(rendered.string.contains("▼"))
+    }
+
     func testConfirmationAddsHeightAndUsesFullBubbleWidth() {
         let plain = message(meta: nil)
         let confirmed = message(meta: [
