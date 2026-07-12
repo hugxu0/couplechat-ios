@@ -213,6 +213,14 @@ VPS 只有约 458 MB 可用内存，完整 Docker `npm ci` 构建失败。本次
 
 删除后重新执行服务端 typecheck、17 个领域测试、完整 PostgreSQL smoke 和生产 build，全部通过。构建产物、发布备份、回滚镜像和旧 IPA 没有删除，因为它们承担诊断或回滚职责，不属于无用源码。
 
+收尾提交为 `23ae071`。最终验证记录如下：
+
+- 完整 run `29176219584` 的服务端 test/build、SwiftLint、结构护栏和 iPhone 单测均通过。
+- 同一 run 的 UI Fixture 已完成编译，但 GitHub runner 在通过 Xcode 启动 App 时超过 60 秒，报 `Timed out while launching application via Xcode`；这不是测试断言或源码编译失败。
+- 按用户要求取消完整重跑，改用快速 Archive run `29176467187`。
+- 快速 run 的工程生成、unsigned Archive、IPA 打包和 artifact 上传全部通过；artifact 为 `CoupleChat-unsigned-232`，大小 2,668,514 bytes。
+- 本次收尾不改变产品行为，因此没有要求用户重新安装；已上线并完成人工冒烟的候选仍是 `CoupleChat-unsigned-230` 与服务端 `6a2e833`。
+
 ## 13. 当前架构总览
 
 ```text
