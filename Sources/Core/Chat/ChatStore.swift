@@ -98,7 +98,6 @@ final class ChatStore: ObservableObject {
         auth: auth,
         messageStore: messageStore,
         shared: shared,
-        socketProvider: { [weak self] in self?.realtime.socket },
         setAIActivity: { [weak self] channel, activity in
             guard let self else { return }
             if let activity {

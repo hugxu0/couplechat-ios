@@ -8,16 +8,15 @@ final class RealtimeEventRouter {
     private let auth: AuthStore
     private let messageStore: MessageStore
     private let shared: SharedStore
-    private let socketProvider: () -> SocketIOClient?
     private let setAIActivity: (String, AIActivity?) -> Void
     private let setPartnerOnline: (Bool) -> Void
     private let setPresenceKnown: (Bool) -> Void
+    private weak var activeSocket: SocketIOClient?
 
     init(
         auth: AuthStore,
         messageStore: MessageStore,
         shared: SharedStore,
-        socketProvider: @escaping () -> SocketIOClient?,
         setAIActivity: @escaping (String, AIActivity?) -> Void,
         setPartnerOnline: @escaping (Bool) -> Void,
         setPresenceKnown: @escaping (Bool) -> Void
@@ -25,13 +24,13 @@ final class RealtimeEventRouter {
         self.auth = auth
         self.messageStore = messageStore
         self.shared = shared
-        self.socketProvider = socketProvider
         self.setAIActivity = setAIActivity
         self.setPartnerOnline = setPartnerOnline
         self.setPresenceKnown = setPresenceKnown
     }
 
     func bind(_ s: SocketIOClient) {
+        activeSocket = s
         bindNewMessage(s)
         bindReadUpdate(s)
         bindMessageRecall(s)
@@ -120,7 +119,7 @@ final class RealtimeEventRouter {
                 phase: phase)
             Task { @MainActor in
                 guard let self else { return }
-                guard self.socketProvider() === s else { return }
+                guard self.activeSocket === s else { return }
                 if activity.isVisible {
                     self.setAIActivity(channel.rawValue, activity)
                 } else {
