@@ -47,6 +47,37 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertFalse(msg.failed)
     }
 
+    func testMessageContentKindAndConversationPreview() {
+        let image = makeMessage(type: "image", text: "")
+        XCTAssertEqual(image.contentKind, .image)
+        XCTAssertEqual(image.conversationalPreviewText, "[图片]")
+        XCTAssertEqual(image.replyPreviewText, "小旭: [图片]")
+
+        let sticker = makeMessage(type: "sticker", text: "")
+        XCTAssertEqual(sticker.conversationalPreviewText, "[表情]")
+
+        let text = makeMessage(type: "text", text: "晚安")
+        XCTAssertEqual(text.conversationalPreviewText, "晚安")
+        XCTAssertEqual(text.replyPreviewText, "小旭: 晚安")
+
+        let unknown = makeMessage(type: "future-type", text: "兼容正文")
+        XCTAssertEqual(unknown.contentKind, .unknown)
+        XCTAssertEqual(unknown.conversationalPreviewText, "兼容正文")
+    }
+
+    private func makeMessage(type: String, text: String) -> ChatMessage {
+        ChatMessage(dict: [
+            "id": UUID().uuidString,
+            "sender": "xu",
+            "senderName": "小旭",
+            "kind": "user",
+            "type": type,
+            "text": text,
+            "channel": "couple",
+            "ts": 1_710_000_000_000,
+        ])!
+    }
+
     func testOptimisticMedia() {
         let session = Session(token: "tok", username: "si", name: "小偲")
         let msg = ChatMessage(

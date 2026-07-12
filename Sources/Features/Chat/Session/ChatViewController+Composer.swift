@@ -131,7 +131,7 @@ extension ChatViewController {
 
     func setReplyTarget(_ message: ChatMessage) {
         replyTarget = message
-        composer.setReplyPreview(replyPreview(for: message))
+        composer.setReplyPreview(message.replyPreviewText)
         composer.focusTextInput()
     }
 
@@ -154,19 +154,6 @@ extension ChatViewController {
         composer.focusTextInput()
     }
 
-    func replyPreview(for message: ChatMessage) -> String {
-        let body: String
-        switch message.type {
-        case "sticker": body = "[表情]"
-        case "image": body = "[图片]"
-        case "video": body = "[视频]"
-        case "voice": body = "[语音]"
-        case "file": body = "[文件]"
-        default: body = message.displayText
-        }
-        return "\(message.senderName): \(body)"
-    }
-
     func sendText(_ text: String) {
         let target = replyTarget
         clearReplyTarget()
@@ -176,7 +163,7 @@ extension ChatViewController {
             text,
             channel: channel,
             replyTo: target?.id,
-            replyPreview: target.map { replyPreview(for: $0) })
+            replyPreview: target?.replyPreviewText)
         reloadTimeline(animated: false)
         hidePanel(animated: true)
     }

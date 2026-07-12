@@ -254,7 +254,7 @@ final class MessageStore: ObservableObject {
             channel: channel.rawValue, centerTimestamp: target.ts, beforeLimit: 36, afterLimit: 28)
         if !window.isEmpty {
             updateMessages(channel) { list in
-                list = Self.mergedWindow(window, with: list, around: target.id)
+                list = ChatMessageWindowing.mergedWindow(window, with: list, around: target.id)
             }
         }
         if !messages(for: channel).contains(where: { $0.id == target.id }) {
@@ -265,7 +265,7 @@ final class MessageStore: ObservableObject {
 
     @discardableResult
     func ensureDateLoaded(_ date: Date, channel: ChatChannel) async -> ChatMessage? {
-        let range = Self.dayRange(for: date)
+        let range = ChatMessageWindowing.dayRange(for: date)
         var dayMessages = await persistence.fetchMessages(
             channel: channel.rawValue, fromInclusive: range.start, toExclusive: range.end, limit: 80)
         if dayMessages.isEmpty {
@@ -281,7 +281,7 @@ final class MessageStore: ObservableObject {
             channel: channel.rawValue, centerTimestamp: target.ts, beforeLimit: 20, afterLimit: 44)
         if !context.isEmpty { dayMessages = context }
         updateMessages(channel) { list in
-            list = Self.mergedWindow(dayMessages, with: list, around: target.id)
+            list = ChatMessageWindowing.mergedWindow(dayMessages, with: list, around: target.id)
         }
         return target
     }
@@ -340,7 +340,7 @@ final class MessageStore: ObservableObject {
         }
         guard !latest.isEmpty else { return }
         updateMessages(channel) { current in
-            current = Self.latestWindow(latest, preservingOutboundFrom: current)
+            current = ChatMessageWindowing.latestWindow(latest, preservingOutboundFrom: current)
         }
         if let lastConfirmed = latest
             .filter({ !$0.pending && !$0.failed })
@@ -732,7 +732,7 @@ final class MessageStore: ObservableObject {
                         return
                     }
                     let remote = Self.parseMessages(list, context: "search:\(channel.rawValue)")
-                    continuation.resume(returning: Self.mergeSearchResults(remote, local))
+                    continuation.resume(returning: ChatMessageWindowing.mergeSearchResults(remote, local))
                 }
         }
     }
@@ -1152,47 +1152,30 @@ final class MessageStore: ObservableObject {
         MediaUploadService.fileExtension(for: mimeType)
     }
 
-    nonisolated static func mergeSearchResults(_ first: [ChatMessage], _ second: [ChatMessage]) -> [ChatMessage] {
-        var seen = Set<String>()
-        return (first + second)
-            .filter { seen.insert($0.id).inserted }
-            .sorted { $0.ts > $1.ts }
+    nonisolated static func mergeSearchResults(
+        _ first: [ChatMessage],
+        _ second: [ChatMessage]
+    ) -> [ChatMessage] {
+        ChatMessageWindowing.mergeSearchResults(first, second)
     }
 
-    nonisolated static func mergedWindow(_ window: [ChatMessage], with current: [ChatMessage], around targetId: String) -> [ChatMessage] {
-        guard !window.isEmpty else { return current }
-        var seen = Set<String>()
-        let merged = (window + current)
-            .filter { seen.insert($0.id).inserted }
-            .sorted { $0.ts < $1.ts }
-        guard let targetIndex = merged.firstIndex(where: { $0.id == targetId }) else {
-            return Array(merged.suffix(90))
-        }
-        let lower = max(0, targetIndex - 36)
-        let upper = min(merged.count, targetIndex + 42)
-        return Array(merged[lower..<upper])
+    nonisolated static func mergedWindow(
+        _ window: [ChatMessage],
+        with current: [ChatMessage],
+        around targetId: String
+    ) -> [ChatMessage] {
+        ChatMessageWindowing.mergedWindow(window, with: current, around: targetId)
     }
 
     nonisolated static func latestWindow(
         _ latest: [ChatMessage],
         preservingOutboundFrom current: [ChatMessage]
     ) -> [ChatMessage] {
-        var seen = Set(latest.map(\.id))
-        let confirmedClientIds = Set(latest.compactMap(\.clientId))
-        let outbound = current.filter { message in
-            guard message.pending || message.failed,
-                  !confirmedClientIds.contains(message.clientId ?? "") else { return false }
-            return seen.insert(message.id).inserted
-        }
-        return (latest + outbound).sorted { $0.ts < $1.ts }
+        ChatMessageWindowing.latestWindow(latest, preservingOutboundFrom: current)
     }
 
     nonisolated static func dayRange(for date: Date) -> (start: Double, end: Double) {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
-        let start = cal.startOfDay(for: date)
-        let end = cal.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
-        return (start.timeIntervalSince1970 * 1000, end.timeIntervalSince1970 * 1000)
+        ChatMessageWindowing.dayRange(for: date)
     }
 }
 

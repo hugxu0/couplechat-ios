@@ -436,7 +436,7 @@ struct ChatHomeView: View {
                             avatarURL: store.avatarURL(for: username),
                             avatarText: store.avatarText(for: username),
                             accent: theme.accent.color,
-                            preview: preview(message)
+                            preview: message.conversationalPreviewText
                         )
                     }
                 }
@@ -485,17 +485,6 @@ struct ChatHomeView: View {
             await MainActor.run {
                 DS.Anim.withMotion(DS.Anim.ease) { refreshMessage = nil }
             }
-        }
-    }
-
-    private func preview(_ message: ChatMessage) -> String {
-        switch message.type {
-        case "sticker": return "[表情]"
-        case "image": return "[图片]"
-        case "video": return "[视频]"
-        case "voice": return "[语音]"
-        case "file": return "[文件]"
-        default: return message.displayText
         }
     }
 
