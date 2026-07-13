@@ -77,28 +77,36 @@ async function main() {
     const migrations = await db.all<{ version: number; name: string }>(
       "SELECT version, name FROM schema_migrations ORDER BY version ASC",
     );
+    const expectedMigrations = [
+      [1, "initial_schema"],
+      [2, "bind_uploads_to_messages"],
+      [3, "classify_upload_purpose"],
+      [4, "preserve_recalled_text"],
+      [5, "message_attachments"],
+      [6, "memory_v2"],
+      [7, "canonical_memory_names"],
+      [8, "ensure_ai_runtime_state"],
+      [9, "memory_import_staging"],
+      [10, "memory_cursor_tie_breaker"],
+      [11, "hard_delete_recalled_messages"],
+      [12, "durable_reminder_bark_delivery"],
+      [13, "identity_v2_expand"],
+      [14, "devices_sessions_push"],
+      [15, "reminder_delivery_per_endpoint"],
+      [16, "conversations_and_ownership"],
+      [17, "sync_v2_core"],
+      [18, "tenant_memory_and_settings"],
+      [19, "voice_transcription"],
+      [20, "shared_albums"],
+      [21, "shared_calendar"],
+      [22, "shared_pet"],
+      [23, "pet_care_state"],
+    ] as const;
     assertOk(
       "数据库结构版本完整",
-      migrations.length === 22 &&
-        migrations[0].version === 1 && migrations[0].name === "initial_schema" &&
-        migrations[1].version === 2 && migrations[1].name === "bind_uploads_to_messages" &&
-        migrations[2].version === 3 && migrations[2].name === "classify_upload_purpose" &&
-        migrations[3].version === 4 && migrations[3].name === "preserve_recalled_text" &&
-        migrations[4].version === 5 && migrations[4].name === "message_attachments" &&
-        migrations[5].version === 6 && migrations[5].name === "memory_v2" &&
-        migrations[6].version === 7 && migrations[6].name === "canonical_memory_names" &&
-        migrations[7].version === 8 && migrations[7].name === "ensure_ai_runtime_state" &&
-        migrations[8].version === 9 && migrations[8].name === "memory_import_staging" &&
-        migrations[9].version === 10 && migrations[9].name === "memory_cursor_tie_breaker" &&
-        migrations[10].version === 11 && migrations[10].name === "hard_delete_recalled_messages" &&
-        migrations[11].version === 12 && migrations[11].name === "durable_reminder_bark_delivery" &&
-        migrations[12].version === 13 && migrations[12].name === "identity_v2_expand" &&
-        migrations[13].version === 14 && migrations[13].name === "devices_sessions_push" &&
-        migrations[17].version === 18 && migrations[17].name === "tenant_memory_and_settings" &&
-        migrations[18].version === 19 && migrations[18].name === "voice_transcription" &&
-        migrations[19].version === 20 && migrations[19].name === "shared_albums" &&
-        migrations[20].version === 21 && migrations[20].name === "shared_calendar" &&
-        migrations[21].version === 22 && migrations[21].name === "shared_pet",
+      migrations.length === expectedMigrations.length &&
+        migrations.every((migration, index) =>
+          migration.version === expectedMigrations[index][0] && migration.name === expectedMigrations[index][1]),
     );
 
     const legacyMembers = await db.all<{ username: string }>(
@@ -368,11 +376,18 @@ async function main() {
     );
 
     // 已读回执只能前进到当前 conversation 中真实存在的最后一条消息。
+    const latestCoupleMessage = await db.get<{ ts: number }>(
+      "SELECT MAX(ts) AS ts FROM messages WHERE conversation_id = ?",
+      ["conv_legacy_couple"],
+    );
     await upsertReadReceipt(user, "couple", created.ts);
     await upsertReadReceipt(user, "couple", created.ts - 5);
     await upsertReadReceipt(user, "couple", created.ts + 5_000);
     const receipts = await getReadReceipts(user, "couple");
-    assertOk("read_receipts 单调更新且不会越过最后消息", receipts[user.username] === created.ts);
+    assertOk(
+      "read_receipts 单调更新且不会越过最后消息",
+      receipts[user.username] === latestCoupleMessage?.ts,
+    );
 
     // shared kv
     const { setSharedItem, getSharedState } = await import("../src/shared/sharedService");
