@@ -43,14 +43,20 @@ export async function allOn<T extends object>(
 }
 
 export async function initDatabase(throughVersion?: number): Promise<void> {
-  pool = new Pool({ connectionString: config.databaseUrl, max: 10 });
-  await pool.query("SELECT 1");
+  const nextPool = new Pool({ connectionString: config.databaseUrl, max: 10 });
+  // pg.Pool emits idle-client failures as EventEmitter errors. Without a
+  // listener, a PostgreSQL restart can terminate the entire Node process.
+  nextPool.on("error", (error) => {
+    if (pool === nextPool) console.error("[db] idle connection error", error);
+  });
+  pool = nextPool;
+  await nextPool.query("SELECT 1");
   if (throughVersion !== undefined || config.runMigrations) {
-    await migrate(pool, throughVersion);
+    await migrate(nextPool, throughVersion);
     return;
   }
   const expected = schemaMigrations.at(-1)?.version ?? 0;
-  const result = await pool.query<{ version: number | null }>(
+  const result = await nextPool.query<{ version: number | null }>(
     "SELECT MAX(version) AS version FROM schema_migrations",
   ).catch(() => ({ rows: [{ version: null }] }));
   if (Number(result.rows[0]?.version ?? 0) !== expected) {
@@ -59,8 +65,9 @@ export async function initDatabase(throughVersion?: number): Promise<void> {
 }
 
 export async function closeDatabase(): Promise<void> {
-  await pool?.end();
+  const closingPool = pool;
   pool = null;
+  await closingPool?.end();
 }
 
 export async function pingDatabase(): Promise<void> {

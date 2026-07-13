@@ -46,35 +46,122 @@ AI 和 embedding 配置见 [AI 系统](../architecture/AI.md)。`.env` 权限应
 
 生产 Web 进程不会自动修改数据库。包含新 migration 的版本必须按“备份 → 短暂停写 → 单独 migrator → 启动候选 → 验证”的顺序发布；不要用普通容器启动来碰运气升级 schema。
 
+### 发布约束
+
+- 发布源只能是已经推送到 `main` 的确定 commit，生产目录用 `RELEASE` 文件记录实际运行的完整 SHA。
+- RFCHost 内存较小，不在生产机执行完整 `docker build`。生产镜像在资源更充足的 Linux 构建机生成，通过 `docker save` 导出、SHA-256 校验后传入生产机。
+- `.env`、`uploads/` 和 `.data/` 是生产持久化状态，代码同步必须显式排除；不得从本机或构建机覆盖。
+- 旧镜像在切换前标记为 `couplechat-server:rollback-<UTC timestamp>`，数据库和媒体备份验证通过后才能迁移。
+- Web 容器必须设置 `RUN_MIGRATIONS=false`；migration 只能由一次性 migrator 容器执行。
+
+### 1. 本地验证与发布包
+
+```powershell
+git switch main
+git pull --ff-only origin main
+
+cd server
+npm test
+npm run build
+cd ..
+
+$Release = (git rev-parse HEAD).Trim()
+$Short = $Release.Substring(0, 7)
+New-Item -ItemType Directory -Force build-artifacts | Out-Null
+git archive --format=tar.gz `
+  --output="build-artifacts/server-$Short.tar.gz" HEAD:server
+Get-FileHash "build-artifacts/server-$Short.tar.gz" -Algorithm SHA256
+```
+
+生产 SSH 地址、构建机地址和密钥位置只保存在开发机 VPS 运维资料中，不写入仓库。下文用 `<build-host>` 与 `<production-host>` 表示。
+
+### 2. 生产备份
+
+旧容器继续运行时先生成备份，并验证 dump 目录和 SHA-256：
+
+```bash
+cd /opt/couplechat-ios/server
+BACKUP_ALLOWED_PREFIX=/root/codex-backups \
+BACKUP_ROOT=/root/codex-backups/couplechat \
+  bash scripts/backup-production.sh
+
+latest=$(find /root/codex-backups/couplechat/daily \
+  -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
+  | sort -nr | head -n1 | cut -d' ' -f2-)
+pg_restore -l "$latest/couplechat.dump" >/dev/null
+(cd "$latest" && sha256sum -c SHA256SUMS)
+```
+
+同时备份当前 `.env`、Compose 文件和代码，并给旧镜像创建 rollback tag。备份目录必须位于 `/root/codex-backups` 且权限为 `0700`。
+
+### 3. 在 Linux 构建机生成镜像
+
+```bash
+mkdir -p /root/codex-staging/release
+tar -xzf /root/codex-staging/server-<short>.tar.gz \
+  -C /root/codex-staging/release
+
+docker build -t couplechat-server:<short> /root/codex-staging/release
+docker run --rm couplechat-server:<short> test -f dist/migrate.js
+docker save couplechat-server:<short> \
+  | gzip -1 > /root/codex-staging/couplechat-server-<short>.tar.gz
+sha256sum /root/codex-staging/couplechat-server-<short>.tar.gz
+```
+
+将镜像归档传到生产机 `/root/codex-staging/`，在生产机重新核对 SHA-256，然后导入：
+
+```bash
+gzip -dc /root/codex-staging/couplechat-server-<short>.tar.gz | docker load
+docker image inspect couplechat-server:<short>
+```
+
+可在 `127.0.0.1:8081` 启动短生命周期 canary。若候选因“期望更新 schema”退出，应检查日志确认唯一原因是 migration 版本保护；不要让 canary 自动执行迁移。
+
+### 4. 短暂停机、迁移与切换
+
 ```bash
 cd /opt/couplechat-ios/server
 
-# 1. 先生成并实际恢复校验一份备份，见下文“备份”。
-# 2. 构建候选镜像，但先不要替换正式容器。
-docker compose -f compose.production.yml build
+# 候选镜像和 rollback tag 均已存在。
+docker tag couplechat-server:<short> couplechat-server:local
+docker compose -f compose.production.yml stop couplechat-server
 
-# 3. 在与正式服务相同的环境中只运行一次 migrator。
+# 在与正式服务相同的网络和环境中只运行一次 migrator。
 docker run --rm --network host --env-file .env \
-  couplechat-server:local npm run migrate
+  couplechat-server:<short> npm run migrate
 
-# 4. migrator 成功后再启动新版 Web 进程。
-docker compose -f compose.production.yml up -d
+# migrator 成功后启动，不允许现场重新 build。
+docker compose -f compose.production.yml up -d --no-build
+printf '%s\n' '<full-main-commit-sha>' > RELEASE
 ```
 
 `npm run migrate` 必须运行编译进生产镜像的 `dist/migrate.js`；不得依赖 runtime 中不存在的 `tsx` 或 TypeScript 源文件。构建候选后可先执行 `docker run --rm couplechat-server:local test -f dist/migrate.js` 验证入口存在。
 
 高风险 migration 应通过 `BACKUP_QUIESCE_HOOK` 暂停写入；如果没有停写能力，至少先停止 Web 容器，再运行 migrator。迁移失败时不要反复重启新版服务，应保留现场并按已验证备份恢复。
 
-在服务器项目目录执行：
+### 5. 发布后验证
 
 ```bash
 cd /opt/couplechat-ios/server
-docker compose -f compose.production.yml build
-docker compose -f compose.production.yml up -d
 docker compose -f compose.production.yml ps
 curl -fsS http://127.0.0.1:8080/health
 curl -fsS https://hoo66.top/health
+curl -fsS https://hoo66.top/api/accounts
+sudo -u postgres psql -d couplechat -Atc \
+  'select max(version) from schema_migrations'
+docker inspect couplechat-server \
+  --format 'image={{.Image}} restarts={{.RestartCount}} status={{.State.Status}}'
+docker compose -f compose.production.yml logs --tail=100 couplechat-server
 ```
+
+开发机还应执行：
+
+```powershell
+cd server
+npm run healthcheck -- https://hoo66.top
+```
+
+验证成功后删除两台 VPS 的 `/root/codex-staging` 临时归档，但保留生产备份与 rollback 镜像。若 migrator 失败，不得启动候选；重新标记 rollback 镜像并执行 `docker compose up -d --no-build`。若 migration 已成功但新版启动失败，旧应用是否兼容新 schema 必须按该 migration 单独判断，不能盲目回滚。
 
 发布前先备份，发布后检查容器日志：
 
@@ -155,3 +242,22 @@ sha256sum "$backup"/* > "$backup/SHA256SUMS"
 - 容器没有持续错误、重启循环或异常内存增长。
 
 VPS 内存有限，完整 Docker build 的 `npm ci` 可能触发内存不足。服务端候选必须先通过与 CI 同版本依赖的 `npm test` 和 `npm run build`，再在独立端口完成 canary；不得直接覆盖正式标签。
+
+## 构建与下载 IPA
+
+IPA 与后端发布相互独立。`项目质量验证`不生成 IPA；只有手动工作流`构建 IPA`会归档 Release App。
+
+```powershell
+git switch main
+git pull --ff-only origin main
+
+gh workflow run build-ipa.yml --ref main
+gh run list --workflow build-ipa.yml --branch main --limit 1
+
+# 等工作流成功后，自动下载最近一次成功构建并覆盖固定文件：
+.\.github\scripts\download-latest-ipa.ps1
+
+Get-FileHash build-artifacts\CoupleChat-latest.ipa -Algorithm SHA256
+```
+
+固定输出为 `build-artifacts/CoupleChat-latest.ipa`。工作流 artifact 名同样固定为 `CoupleChat-latest`，并附带 `.sha256` 文件。不要把 IPA 提交到 Git。
