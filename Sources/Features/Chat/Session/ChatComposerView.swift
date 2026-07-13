@@ -176,6 +176,12 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         textView.resignFirstResponder()
     }
 
+    func setStickerPanelVisible(_ visible: Bool) {
+        let symbol = visible ? "keyboard" : "face.smiling"
+        emojiButton.setImage(UIImage(systemName: symbol), for: .normal)
+        emojiButton.accessibilityLabel = visible ? "切换到键盘" : "打开表情面板"
+    }
+
     /// 当前输入胶囊在控制器坐标系内的精确位置，用于从壁纸同一位置采样明暗。
     func inputCapsuleFrame(in container: UIView) -> CGRect {
         inputCapsule.convert(inputCapsule.bounds, to: container)
@@ -355,6 +361,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         configureCatButton()
         configureIconButton(attachmentButton, image: "paperclip")
         configureIconButton(emojiButton, image: "face.smiling")
+        emojiButton.accessibilityLabel = "打开表情面板"
         configureActionButton()
 
         catButton.addAction(UIAction { [weak self] _ in self?.delegate?.composerDidTapCat() }, for: .touchUpInside)

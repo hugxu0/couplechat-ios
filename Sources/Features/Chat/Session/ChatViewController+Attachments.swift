@@ -64,7 +64,7 @@ extension ChatViewController {
             sendSingleMedia(item, caption: captionConsumed ? nil : caption)
             captionConsumed = captionConsumed || !caption.isEmpty
         }
-        reloadTimeline(animated: true)
+        reloadTimeline(animated: false)
     }
 
     func sendSingleMedia(_ item: ChatPendingMedia, caption: String?) {
@@ -90,7 +90,7 @@ extension ChatViewController {
             localPreviewURL: nil,
             channel: channel,
             displayText: url.lastPathComponent)
-        reloadTimeline(animated: true)
+        reloadTimeline(animated: false)
     }
 
     func addStickerImage(_ image: UIImage, to groupId: String) {

@@ -80,9 +80,24 @@ extension ChatViewController {
         let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue ?? .zero
         let frameInView = view.convert(endFrame, from: view.window)
         let overlap = max(0, view.bounds.maxY - frameInView.minY)
-        if case .emojiPanel = inputState, overlap > 0 { hidePanel(animated: false) }
+        if overlap > 0 { lastVisibleKeyboardOverlap = overlap }
+        let isReplacingInputSurface = panelHeightConstraint.constant > 0
+        if overlap > 0, isReplacingInputSurface,
+           case .emojiPanel = inputState {
+            // 表情面板正在接管键盘空间，忽略键盘尚未完全落下时的中间帧。
+            return
+        }
         keyboardOverlap = overlap
-        applyInputLayout(duration: duration, curve: curve, forceBottom: true)
+        if overlap > 0, isReplacingInputSurface {
+            panelHeightConstraint.constant = 0
+            panelContainer.isHidden = true
+            updateBottomDockAnchor(usesScreenBottom: false)
+            composer.setStickerPanelVisible(false)
+        }
+        applyInputLayout(
+            duration: duration,
+            curve: curve,
+            forceBottom: !isReplacingInputSurface)
     }
 
     func applyInputLayout(
@@ -150,7 +165,7 @@ extension ChatViewController {
             channel: channel,
             replyTo: target?.id,
             replyPreview: target?.replyPreviewText)
-        reloadTimeline(animated: true)
+        reloadTimeline(animated: false)
         hidePanel(animated: true)
     }
 
@@ -158,7 +173,7 @@ extension ChatViewController {
         Haptics.light()
         stickToLatestAfterNextReload = true
         store.sendSticker(url: sticker.url, channel: channel)
-        reloadTimeline(animated: true)
+        reloadTimeline(animated: false)
     }
 
     func summonDaju() {
@@ -172,7 +187,10 @@ extension ChatViewController {
 
     func toggleStickerPanel() {
         if panelHeightConstraint.constant > 0 {
-            hidePanel(animated: true)
+            inputState = .editing
+            composer.setStickerPanelVisible(false)
+            // 先让系统键盘升起并占住同一块空间；键盘通知到达后再撤掉面板，
+            // 输入栏不会经历一次落到底部再弹回来的过程。
             composer.focusTextInput()
         } else {
             showPanel(height: 300)
@@ -180,13 +198,20 @@ extension ChatViewController {
     }
 
     func showPanel(height: CGFloat) {
+        let replacingKeyboard = keyboardOverlap > view.safeAreaInsets.bottom + 1
+            || composer.textView.isFirstResponder
+        let replacementHeight = max(height, max(keyboardOverlap, lastVisibleKeyboardOverlap)) + 8
         inputState = .emojiPanel
+        panelContainer.isHidden = false
+        panelHeightConstraint.constant = replacementHeight
+        updateBottomDockAnchor(usesScreenBottom: true)
+        composer.setStickerPanelVisible(true)
+        applyInputLayout(
+            duration: replacingKeyboard ? 0 : 0.24,
+            curve: .curveEaseOut,
+            forceBottom: !replacingKeyboard)
         composer.resignTextInput()
         keyboardOverlap = 0
-        updateBottomDockAnchor(usesScreenBottom: true)
-        panelContainer.isHidden = false
-        panelHeightConstraint.constant = max(300, height) + view.safeAreaInsets.bottom + 8
-        applyInputLayout(duration: 0.24, curve: .curveEaseOut, forceBottom: true)
     }
 
     func hidePanel(animated: Bool) {
@@ -194,6 +219,7 @@ extension ChatViewController {
         panelHeightConstraint.constant = 0
         panelContainer.isHidden = true
         updateBottomDockAnchor(usesScreenBottom: false)
+        composer.setStickerPanelVisible(false)
         if case .emojiPanel = inputState { inputState = .idle }
         applyInputLayout(
             duration: animated ? 0.2 : 0,
@@ -261,9 +287,12 @@ extension ChatViewController: ChatComposerViewDelegate {
     func composerDidCancelReply() { clearReplyTarget() }
 
     func composerTextDidBeginEditing() {
+        let replacingPanel = panelHeightConstraint.constant > 0
         inputState = .editing
-        hidePanel(animated: true)
-        timelineController.scrollToBottom(animated: true)
+        composer.setStickerPanelVisible(false)
+        if !replacingPanel {
+            timelineController.scrollToBottom(animated: true)
+        }
     }
 
     func composerRecordingBegan() {

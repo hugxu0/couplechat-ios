@@ -32,6 +32,7 @@ final class ChatViewController: UIViewController {
     var panelHeightConstraint: NSLayoutConstraint!
     var bottomConstraint: NSLayoutConstraint!
     var keyboardOverlap: CGFloat = 0
+    var lastVisibleKeyboardOverlap: CGFloat = 300
     var currentListBottomInset: CGFloat = 0
     var topOverlayInset: CGFloat = 96
     var composerUsesLightContent = false
@@ -379,8 +380,8 @@ final class ChatViewController: UIViewController {
                 await self.store.restoreLatestMessages(self.channel)
                 self.timelineController.browsingHistoricalWindow = false
                 self.stickToLatestAfterNextReload = true
-                self.reloadTimeline(animated: true)
-                self.timelineController.scrollToBottom(animated: true)
+                self.reloadTimeline(animated: false)
+                self.timelineController.scrollToBottom(animated: false)
                 self.updateJumpToBottomVisibility(animated: true)
             }
         }, for: .touchUpInside)

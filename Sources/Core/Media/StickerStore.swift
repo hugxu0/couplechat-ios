@@ -81,6 +81,16 @@ final class StickerStore: ObservableObject {
         saveStickers()
     }
 
+    func moveToFront(_ sticker: Sticker) {
+        guard let index = stickers.firstIndex(where: { $0.id == sticker.id }) else { return }
+        let newest = stickers
+            .filter { $0.groupId == sticker.groupId }
+            .map(\.addedAt)
+            .max() ?? Date().timeIntervalSince1970
+        stickers[index].addedAt = max(Date().timeIntervalSince1970, newest + 0.001)
+        saveStickers()
+    }
+
     @discardableResult
     func createGroup(name: String) -> StickerGroup {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)

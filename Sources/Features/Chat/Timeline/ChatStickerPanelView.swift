@@ -37,6 +37,7 @@ final class ChatStickerPanelView: UIView {
     private let tabStack = UIStackView()
     private var cancellables: Set<AnyCancellable> = []
     private var tabs: [Tab] = []
+    private var tabButtons: [Tab: UIButton] = [:]
     private var selectedTab: Tab = .emoji
     private var items: [PanelItem] = []
 
@@ -165,8 +166,11 @@ final class ChatStickerPanelView: UIView {
         }
 
         tabStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        tabButtons.removeAll()
         for tab in tabs {
-            tabStack.addArrangedSubview(makeTabButton(for: tab))
+            let button = makeTabButton(for: tab)
+            tabButtons[tab] = button
+            tabStack.addArrangedSubview(button)
         }
 
         let manage = UIButton(type: .system)
@@ -207,10 +211,19 @@ final class ChatStickerPanelView: UIView {
             guard let self else { return }
             self.selectedTab = tab
             Haptics.selection()
-            self.reloadTabs()
+            self.updateTabSelection()
             self.reloadItems()
         }, for: .touchUpInside)
         return button
+    }
+
+    private func updateTabSelection() {
+        for (tab, button) in tabButtons {
+            let selected = tab == selectedTab
+            button.backgroundColor = selected ? accentColor.withAlphaComponent(0.92) : neutralFill
+            button.tintColor = selected ? .white : secondaryColor
+            button.accessibilityTraits = selected ? [.button, .selected] : .button
+        }
     }
 
     private func configureIcon(for tab: Tab, button: UIButton) {
@@ -346,7 +359,13 @@ extension ChatStickerPanelView: UICollectionViewDataSource, UICollectionViewDele
                     image: UIImage(systemName: sticker.favorite ? "star.slash" : "star")
                 ) { _ in
                     self.store.toggleFavorite(sticker)
-                }
+                },
+                UIAction(
+                    title: "移到最前",
+                    image: UIImage(systemName: "arrow.up.to.line")
+                ) { _ in
+                    self.store.moveToFront(sticker)
+                },
             ]
 
             let moveActions = self.store.sortedGroups.map { group in
