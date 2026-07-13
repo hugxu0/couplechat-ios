@@ -53,30 +53,6 @@ extension ChatViewController {
         }
     }
 
-    func presentTranscriptCorrection(_ message: ChatMessage) {
-        guard let transcript = timelineController.transcript(for: message.id),
-              transcript.status == .ready,
-              let text = transcript.text,
-              let token = store.session?.token else { return }
-        let alert = UIAlertController(
-            title: "纠正转写",
-            message: "修改后会同步到你们的其他设备。",
-            preferredStyle: .alert)
-        alert.addTextField { field in
-            field.text = text
-            field.clearButtonMode = .whileEditing
-            field.accessibilityLabel = "转写文字"
-        }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "保存", style: .default) { [weak self, weak alert] _ in
-            guard let self,
-                  let corrected = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !corrected.isEmpty else { return }
-            Task { await self.correctTranscript(messageId: message.id, text: corrected, token: token) }
-        })
-        present(alert, animated: true)
-    }
-
     private func initialTranscript(
         messageId: String,
         retries: Bool,
@@ -108,26 +84,4 @@ extension ChatViewController {
         }
     }
 
-    private func correctTranscript(messageId: String, text: String, token: String) async {
-        do {
-            let transcript = try await voiceTranscriptRepository.correct(
-                messageId: messageId,
-                text: text,
-                baseVersion: timelineController.transcript(for: messageId)?.version ?? 0,
-                token: token)
-            timelineController.applyTranscript(transcript, messageId: messageId, expands: true)
-        } catch V2RepositoryError.transcriptConflict(let current) {
-            timelineController.applyTranscript(current, messageId: messageId, expands: true)
-            let alert = UIAlertController(
-                title: "已载入最新转写",
-                message: V2RepositoryError.transcriptConflict(current).localizedDescription,
-                preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "好", style: .default))
-            present(alert, animated: true)
-        } catch {
-            let alert = UIAlertController(title: "保存失败", message: error.localizedDescription, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "好", style: .default))
-            present(alert, animated: true)
-        }
-    }
 }

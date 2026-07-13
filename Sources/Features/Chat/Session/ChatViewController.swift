@@ -53,9 +53,8 @@ final class ChatViewController: UIViewController {
     var photoPickerPurpose: PhotoPickerPurpose = .messageMedia
     var isChatVisible = false
 
-    var voicePlayer: AVPlayer?
-    var voicePlaybackEndObserver: NSObjectProtocol?
-    var voicePlaybackTimeObserver: Any?
+    var voicePlayer: AVAudioPlayer?
+    var voicePlaybackTimer: Timer?
     var voicePlaybackLoadTask: Task<Void, Never>?
     var loadingVoiceMessageID: String?
     var playingVoiceMessageID: String?
@@ -107,12 +106,7 @@ final class ChatViewController: UIViewController {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         voicePlayer?.pause()
         voicePlaybackLoadTask?.cancel()
-        if let observer = voicePlaybackEndObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = voicePlaybackTimeObserver {
-            voicePlayer?.removeTimeObserver(observer)
-        }
+        voicePlaybackTimer?.invalidate()
     }
 
     override func viewDidLoad() {

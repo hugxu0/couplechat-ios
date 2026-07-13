@@ -256,11 +256,6 @@ extension ChatTimelineController: ChatTimelineCellDelegate {
         delegate?.timelineDidTapTranscript(message: message)
     }
 
-    func chatCellDidTapTranscriptCorrection(_ cell: ChatNativeMessageCell) {
-        guard let message = message(for: cell) else { return }
-        delegate?.timelineDidCorrectTranscript(message: message)
-    }
-
     private func message(for cell: ChatNativeMessageCell) -> ChatMessage? {
         guard let path = collectionView.indexPath(for: cell), path.item < items.count,
               case .message(let id) = items[path.item] else { return nil }

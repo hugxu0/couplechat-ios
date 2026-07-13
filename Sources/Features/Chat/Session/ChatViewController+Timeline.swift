@@ -227,9 +227,6 @@ extension ChatViewController: ChatTimelineControllerDelegate {
         handleTranscriptTap(message)
     }
 
-    func timelineDidCorrectTranscript(message: ChatMessage) {
-        presentTranscriptCorrection(message)
-    }
 }
 
 extension ChatViewController {
@@ -263,33 +260,41 @@ extension ChatViewController {
             return
         }
 
-        let player = AVPlayer(url: localURL)
+        guard let player = try? AVAudioPlayer(contentsOf: localURL) else {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            return
+        }
+        player.volume = 1
+        guard player.prepareToPlay(), player.play() else {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            return
+        }
         voicePlayer = player
         playingVoiceMessageID = message.id
         playingVoiceProgress = 0
-        voicePlaybackEndObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.stopVoicePlayback() }
-        }
-        voicePlaybackTimeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.12, preferredTimescale: 600),
-            queue: .main
-        ) { [weak self] time in
-            Task { @MainActor [weak self] in
-                guard let self,
-                      playingVoiceMessageID == message.id,
-                      let duration = voicePlayer?.currentItem?.duration.seconds,
-                      duration.isFinite,
-                      duration > 0 else { return }
-                playingVoiceProgress = min(1, max(0, CGFloat(time.seconds / duration)))
-                updateVoiceMessageCell(message.id, isPlaying: true)
-            }
-        }
-        player.play()
+        let timer = Timer(
+            timeInterval: 0.1,
+            target: self,
+            selector: #selector(voicePlaybackTimerDidFire(_:)),
+            userInfo: nil,
+            repeats: true)
+        voicePlaybackTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
         updateVoiceMessageCell(message.id, isPlaying: true)
+    }
+
+    @objc private func voicePlaybackTimerDidFire(_ timer: Timer) {
+        guard timer === voicePlaybackTimer,
+              let player = voicePlayer,
+              let messageID = playingVoiceMessageID else { return }
+        if player.duration > 0 {
+            playingVoiceProgress = min(1, max(0, CGFloat(player.currentTime / player.duration)))
+        }
+        guard player.isPlaying else {
+            stopVoicePlayback()
+            return
+        }
+        updateVoiceMessageCell(messageID, isPlaying: true)
     }
 
     func stopVoicePlayback(deactivateSession: Bool = true) {
@@ -298,17 +303,11 @@ extension ChatViewController {
         voicePlaybackLoadTask = nil
         loadingVoiceMessageID = nil
         voicePlayer?.pause()
-        if let observer = voicePlaybackTimeObserver {
-            voicePlayer?.removeTimeObserver(observer)
-            voicePlaybackTimeObserver = nil
-        }
+        voicePlaybackTimer?.invalidate()
+        voicePlaybackTimer = nil
         voicePlayer = nil
         playingVoiceMessageID = nil
         playingVoiceProgress = 0
-        if let observer = voicePlaybackEndObserver {
-            NotificationCenter.default.removeObserver(observer)
-            voicePlaybackEndObserver = nil
-        }
         if deactivateSession {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }

@@ -33,7 +33,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     private let voiceWaveStack = UIStackView()
     private let transcriptButton = UIButton(type: .system)
     private let transcriptLabel = UILabel()
-    private let transcriptCorrectionButton = UIButton(type: .system)
     private let statusLabel = UILabel()
     private let retryButton = UIButton(type: .system)
     private let highlightView = UIView()
@@ -175,14 +174,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         transcriptLabel.adjustsFontForContentSizeCategory = true
         transcriptLabel.numberOfLines = 0
         transcriptLabel.lineBreakMode = .byWordWrapping
-        transcriptCorrectionButton.setTitle("纠正文字", for: .normal)
-        transcriptCorrectionButton.titleLabel?.font = .preferredFont(forTextStyle: .caption1)
-        transcriptCorrectionButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        transcriptCorrectionButton.contentHorizontalAlignment = .leading
-        transcriptCorrectionButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            self.delegate?.chatCellDidTapTranscriptCorrection(self)
-        }, for: .touchUpInside)
 
         statusLabel.font = .systemFont(ofSize: 9, weight: .bold)
         statusLabel.textAlignment = .center
@@ -462,7 +453,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                voiceTranscript?.status == .ready,
                voiceTranscript?.text?.isEmpty == false {
                 bubbleView.addSubview(transcriptLabel)
-                bubbleView.addSubview(transcriptCorrectionButton)
             }
             configureAttachment(message)
             configureTranscript(voiceTranscript)
@@ -691,8 +681,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             : title
         transcriptLabel.text = transcript?.text
         transcriptLabel.textColor = mine ? .white : (usesDarkIncomingBubble ? .white : UIColor.label)
-        transcriptCorrectionButton.setTitleColor(foreground.withAlphaComponent(0.86), for: .normal)
-        transcriptCorrectionButton.accessibilityLabel = "纠正语音转写文字"
     }
 
     private func layoutBubbleContent(_ message: ChatMessage) {
@@ -793,8 +781,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 let labelHeight = ceil(transcriptLabel.sizeThatFits(
                     CGSize(width: labelWidth, height: .greatestFiniteMagnitude)).height)
                 transcriptLabel.frame = CGRect(x: paddingX, y: labelY, width: labelWidth, height: labelHeight)
-                transcriptCorrectionButton.frame = CGRect(
-                    x: paddingX, y: transcriptLabel.frame.maxY + 2, width: 100, height: 28)
             }
         case "file":
             mediaIconView.frame = CGRect(x: paddingX, y: y + 6, width: 28, height: 28)

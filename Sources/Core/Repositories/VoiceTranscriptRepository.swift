@@ -22,12 +22,6 @@ struct VoiceTranscriptRepository {
         return try decode(data, messageId: messageId)
     }
 
-    func correct(messageId: String, text: String, baseVersion: Int, token: String) async throws -> VoiceTranscript {
-        let body = try JSONEncoder().encode(CorrectionMutation(text: text, baseVersion: baseVersion))
-        let data = try await request(path: path(messageId), method: "PATCH", body: body, token: token)
-        return try decode(data, messageId: messageId)
-    }
-
     private func decode(_ data: Data, messageId: String) throws -> VoiceTranscript {
         let decoder = JSONDecoder()
         if let envelope = try? decoder.decode(TranscriptEnvelope.self, from: data),
@@ -79,7 +73,6 @@ struct VoiceTranscriptRepository {
 
 private extension VoiceTranscriptRepository {
     struct TranscriptEnvelope: Decodable { let transcript: VoiceTranscript? }
-    struct CorrectionMutation: Encodable { let text: String; let baseVersion: Int }
 }
 
 private extension VoiceTranscript {

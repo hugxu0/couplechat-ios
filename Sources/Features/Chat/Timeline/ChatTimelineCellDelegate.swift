@@ -4,6 +4,5 @@ protocol ChatTimelineCellDelegate: AnyObject {
     func chatCellDidTapMedia(_ cell: ChatNativeMessageCell)
     func chatCellDidTapRetry(_ cell: ChatNativeMessageCell)
     func chatCellDidTapTranscript(_ cell: ChatNativeMessageCell)
-    func chatCellDidTapTranscriptCorrection(_ cell: ChatNativeMessageCell)
     func chatCellDidDecideConfirm(_ cell: ChatNativeMessageCell, decision: String)
 }

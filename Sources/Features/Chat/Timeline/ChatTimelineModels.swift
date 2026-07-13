@@ -283,7 +283,7 @@ enum ChatTimelineMetrics {
               let text = transcript?.text,
               !text.isEmpty else { return voiceHeight }
         let textHeight = measureText(text, font: .preferredFont(forTextStyle: .subheadline), width: width)
-        return voiceHeight + 10 + textHeight + 30
+        return voiceHeight + 10 + textHeight
     }
 
     private static func measureText(_ text: String, font: UIFont, width: CGFloat) -> CGFloat {
