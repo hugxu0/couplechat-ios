@@ -29,7 +29,6 @@
 
 ```text
 CoupleChatTests/       iOS 单元测试
-CoupleChatUITests/     DEBUG 视觉夹具测试
 Docs/                  仅包含现行文档
 Sources/
   App/                 App 入口与主导航
@@ -41,7 +40,7 @@ server/
   deploy/              生产 nginx 配置
   scripts/             开发、部署与健康检查脚本
   src/                 服务端业务代码
-.github/workflows/     iOS 构建、测试与 IPA 打包
+.github/workflows/     独立的质量验证与快速 IPA 打包
 project.yml            XcodeGen 工程定义
 ```
 

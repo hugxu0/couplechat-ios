@@ -4,9 +4,6 @@ import UserNotifications
 
 @main
 struct CoupleChatApp: App {
-#if DEBUG
-    private let headerFixture = ChatHeaderVisualFixtureConfiguration.fromProcessArguments()
-#endif
     @StateObject private var store = ChatStore()
     @StateObject private var theme = ThemeManager.shared
     @StateObject private var mediaFavorites = MediaFavoriteStore.shared
@@ -19,15 +16,7 @@ struct CoupleChatApp: App {
 
     var body: some Scene {
         WindowGroup {
-#if DEBUG
-            if let headerFixture {
-                ChatHeaderVisualFixtureScreen(configuration: headerFixture)
-            } else {
-                appContent
-            }
-#else
             appContent
-#endif
         }
     }
 

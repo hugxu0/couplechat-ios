@@ -66,15 +66,3 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         PRODUCT_BUNDLE_IDENTIFIER: com.hugxu0.couplechat.native.tests
         SWIFT_VERSION: "5.9"
-
-  CoupleChatUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - CoupleChatUITests
-    dependencies:
-      - target: CoupleChat
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.hugxu0.couplechat.native.uitests
-        SWIFT_VERSION: "5.9"

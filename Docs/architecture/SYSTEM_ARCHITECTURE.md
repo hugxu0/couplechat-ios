@@ -74,7 +74,6 @@ Sources/
       Search/                会话内搜索
       Settings/              会话详情设置
       Presentation/          互动特效与聊天呈现模型
-      Fixtures/              DEBUG-only 聊天顶部视觉夹具
     Moments/
       Data/                  共同相册、那年今日、统计数据源
     Plans/

@@ -73,12 +73,20 @@ xcodebuild test -project CoupleChat.xcodeproj -scheme CoupleChat \
   -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
-GitHub Actions 的 `iOS 日常验证与构建` 分成两档，服务端与客户端始终并行：
+GitHub Actions 按职责拆成两条互不依赖的流程：
 
-- 日常 push / 普通手动构建：服务端 test/build、SwiftLint、新 Swift 文件结构护栏、iPhone 单元测试、unsigned Archive 和 IPA。纯 `Docs/**`/根 `README.md` 提交不触发构建。
-- 手动勾选 `full_validation`：在日常检查之外增加聊天顶部 UI Fixture、截图导出、iPad Simulator build 和完整环境记录。
+- `项目质量验证`：在 `main` 的 push / pull request 或手动触发时运行。服务端执行 test/build；客户端执行 SwiftLint、新 Swift 文件结构护栏、iPhone 单元测试和 iPad 编译。它不归档、不生成 IPA。
+- `构建 IPA`：仅手动触发。它只安装 XcodeGen、生成工程、执行 Release unsigned Archive、打包并上传 `CoupleChat-latest.ipa` 和 SHA-256 文件，不运行服务端测试、SwiftLint、模拟器测试或视觉截图。
 
-客户端固定使用 Xcode 26.3。诊断 `.xcresult` 只在失败或手动完整验证时上传；日常成功构建只保留未签名 IPA，减少构建时间和 artifact 空间。
+两条流程固定使用 Xcode 26.3。质量验证只在失败时上传诊断；IPA 流程的 artifact 固定名为 `CoupleChat-latest`，本机可继续使用 `.github/scripts/download-latest-ipa.ps1` 覆盖到固定路径。
+
+```powershell
+# 自动下载最近一次成功构建，并覆盖固定文件
+.\.github\scripts\download-latest-ipa.ps1
+
+# 如需回取指定历史构建
+.\.github\scripts\download-latest-ipa.ps1 -RunId 123456789
+```
 
 生成的 `.xcodeproj`、`build/` 和 `build-artifacts/` 不提交。
 

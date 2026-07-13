@@ -1,0 +1,73 @@
+name: 构建 IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ipa:
+    name: Release 归档与打包
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Select Xcode 26.3
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.3"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Archive unsigned app
+        run: |
+          xcodebuild archive \
+            -project CoupleChat.xcodeproj \
+            -scheme CoupleChat \
+            -configuration Release \
+            -archivePath "$PWD/build/CoupleChat.xcarchive" \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        run: |
+          APP_PATH="$PWD/build/CoupleChat.xcarchive/Products/Applications/CoupleChat.app"
+          test -d "$APP_PATH"
+          mkdir -p build/Payload
+          ditto "$APP_PATH" build/Payload/CoupleChat.app
+          cd build
+          zip -qry CoupleChat-latest.ipa Payload
+          shasum -a 256 CoupleChat-latest.ipa > CoupleChat-latest.ipa.sha256
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: CoupleChat-latest
+          path: |
+            build/CoupleChat-latest.ipa
+            build/CoupleChat-latest.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload archive diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: CoupleChat-build-failure-${{ github.run_number }}
+          path: build/
+          if-no-files-found: ignore
+          retention-days: 7
