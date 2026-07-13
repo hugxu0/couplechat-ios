@@ -7,14 +7,18 @@ iOS App
   ├─ REST：登录、启动快照、历史分页、上传、提醒和每日内容
   └─ Socket.IO：实时消息、已读、在线状态、共享状态和 AI 状态
         ↓
-nginx · https://hoo66.top
+日本 RFCHost nginx · https://hoo66.top（TLS 入口与反向代理）
         ↓
-Fastify + Socket.IO · 127.0.0.1:8080
+美国 RackNerd nginx · https://chat.huhuhu.top（私有 origin）
+        ↓
+Fastify + Socket.IO · 127.0.0.1:3000
   ├─ PostgreSQL：账号、消息、状态、提醒、AI Memory
   ├─ uploads/：媒体文件
   ├─ AI Agent + MCP
   └─ Bark：离线推送
 ```
+
+美国服务器是唯一可写主机；日本服务器不运行第二套后端或数据库。日本到美国 origin 使用 TLS 与独立代理密钥，直接访问 origin 会返回 `403`。
 
 ## iOS 客户端
 
