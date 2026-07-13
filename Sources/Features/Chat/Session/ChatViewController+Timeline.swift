@@ -235,20 +235,35 @@ extension ChatViewController: ChatTimelineControllerDelegate {
 extension ChatViewController {
     func toggleVoicePlayback(_ message: ChatMessage) {
         guard let url = message.mediaURL else { return }
-        if playingVoiceMessageID == message.id {
+        if playingVoiceMessageID == message.id || loadingVoiceMessageID == message.id {
             stopVoicePlayback()
             return
         }
         stopVoicePlayback(deactivateSession: false)
+        loadingVoiceMessageID = message.id
+        voicePlaybackLoadTask = Task { [weak self] in
+            guard let self else { return }
+            guard let localURL = try? await VoiceMediaCache.shared.localURL(for: url),
+                  !Task.isCancelled,
+                  loadingVoiceMessageID == message.id else {
+                if loadingVoiceMessageID == message.id { loadingVoiceMessageID = nil }
+                return
+            }
+            loadingVoiceMessageID = nil
+            startVoicePlayback(message, localURL: localURL)
+        }
+    }
+
+    private func startVoicePlayback(_ message: ChatMessage, localURL: URL) {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .default, options: [.duckOthers])
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
             try session.setActive(true)
         } catch {
             return
         }
 
-        let player = AVPlayer(url: url)
+        let player = AVPlayer(url: localURL)
         voicePlayer = player
         playingVoiceMessageID = message.id
         playingVoiceProgress = 0
@@ -279,6 +294,9 @@ extension ChatViewController {
 
     func stopVoicePlayback(deactivateSession: Bool = true) {
         let previousID = playingVoiceMessageID
+        voicePlaybackLoadTask?.cancel()
+        voicePlaybackLoadTask = nil
+        loadingVoiceMessageID = nil
         voicePlayer?.pause()
         if let observer = voicePlaybackTimeObserver {
             voicePlayer?.removeTimeObserver(observer)

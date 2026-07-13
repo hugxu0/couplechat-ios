@@ -56,6 +56,8 @@ final class ChatViewController: UIViewController {
     var voicePlayer: AVPlayer?
     var voicePlaybackEndObserver: NSObjectProtocol?
     var voicePlaybackTimeObserver: Any?
+    var voicePlaybackLoadTask: Task<Void, Never>?
+    var loadingVoiceMessageID: String?
     var playingVoiceMessageID: String?
     var playingVoiceProgress: CGFloat = 0
 
@@ -104,6 +106,7 @@ final class ChatViewController: UIViewController {
         if let recordingURL { try? FileManager.default.removeItem(at: recordingURL) }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         voicePlayer?.pause()
+        voicePlaybackLoadTask?.cancel()
         if let observer = voicePlaybackEndObserver {
             NotificationCenter.default.removeObserver(observer)
         }

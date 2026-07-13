@@ -629,7 +629,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         case "voice":
             bodyLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
             bodyLabel.textColor = foreground
-            bodyLabel.text = message.pending ? "···" : "0:01"
+            bodyLabel.text = "···"
             updateVoiceWaveform(color: foreground)
             loadVoiceDuration(message)
         case "file":
@@ -779,13 +779,13 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 )
             }
         case "voice":
-            mediaIconView.frame = CGRect(x: paddingX, y: y + 8, width: 20, height: 20)
-            voiceWaveStack.frame = CGRect(x: paddingX + 30, y: y + 8, width: 50, height: 20)
-            bodyLabel.frame = CGRect(x: paddingX + 88, y: y + 9, width: 34, height: 18)
+            mediaIconView.frame = CGRect(x: paddingX, y: y + 7, width: 18, height: 18)
+            voiceWaveStack.frame = CGRect(x: paddingX + 27, y: y + 6, width: 44, height: 20)
+            bodyLabel.frame = CGRect(x: paddingX + 77, y: y + 7, width: 32, height: 18)
             transcriptButton.frame = CGRect(
-                x: paddingX + 126,
-                y: y + 3,
-                width: max(68, bubbleView.bounds.width - paddingX * 2 - 126),
+                x: paddingX + 112,
+                y: y + 1,
+                width: max(64, bubbleView.bounds.width - paddingX * 2 - 112),
                 height: 30)
             if transcriptLabel.superview != nil {
                 let labelY = y + ChatTimelineMetrics.voiceHeight + 10
@@ -929,7 +929,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         guard !message.pending, let url = message.mediaURL else { return }
         representedVoiceURL = url
         Task { [weak self, url] in
-            let asset = AVURLAsset(url: url)
+            guard let localURL = try? await VoiceMediaCache.shared.localURL(for: url) else { return }
+            let asset = AVURLAsset(url: localURL)
             let duration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
             guard duration.isFinite, duration > 0 else { return }
             await MainActor.run {

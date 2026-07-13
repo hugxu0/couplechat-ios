@@ -122,7 +122,7 @@ enum ChatTimelineMetrics {
     static let statusOutsideGap: CGFloat = 2
     static let mediaSize = CGSize(width: 200, height: 230)
     static let fileHeight: CGFloat = 58
-    static let voiceHeight: CGFloat = 36
+    static let voiceHeight: CGFloat = 32
     static let stickerSize = CGSize(width: 132, height: 132)
     static let confirmButtonHeight: CGFloat = 38
 
@@ -210,7 +210,7 @@ enum ChatTimelineMetrics {
         switch type {
         case "sticker": return stickerSize.width
         case "file": return min(containerWidth * bubbleMaxWidthRatio, 250)
-        case "voice": return min(containerWidth * bubbleMaxWidthRatio, transcriptExpanded ? 292 : 238)
+        case "voice": return min(containerWidth * bubbleMaxWidthRatio, transcriptExpanded ? 276 : 218)
         default: return mediaSize.width
         }
     }
