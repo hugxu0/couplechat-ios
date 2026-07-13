@@ -21,7 +21,7 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        0.34
+        0.38
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -66,7 +66,8 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
             dampingRatio: 0.9
         ) {
             backdropView?.alpha = self.presenting ? 1 : 0
-            contentView.alpha = self.presenting ? 1 : 0
+            // 退出时媒体始终保持不透明，只通过缩放回到聊天中的原位置。
+            contentView.alpha = 1
             contentView.transform = self.presenting ? .identity : dismissalTransform
         }
         animator.addCompletion { [weak self] position in

@@ -139,7 +139,6 @@ final class MediaViewerHostController: UIViewController {
         transitionContentView.transform = MediaViewerTransitionMetrics.interactiveTransform(
             translationY: translationY,
             height: view.bounds.height)
-        transitionContentView.alpha = max(0.42, 1 - progress * 0.58)
         backdropView.alpha = MediaViewerTransitionMetrics.backgroundAlpha(progress: progress)
     }
 
