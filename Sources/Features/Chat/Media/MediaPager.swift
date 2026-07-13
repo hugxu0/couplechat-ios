@@ -8,6 +8,7 @@ import Photos
 struct MediaPagerView: View {
     let items: [MediaBrowserItem]
     @Binding var selectedId: String?
+    var showsBackdrop = true
     var onZoomScaleChange: (CGFloat) -> Void = { _ in }
 
     @EnvironmentObject private var favorites: MediaFavoriteStore
@@ -49,8 +50,10 @@ struct MediaPagerView: View {
 
     var body: some View {
         ZStack {
-            Color.black
-                .ignoresSafeArea()
+            if showsBackdrop {
+                Color.black
+                    .ignoresSafeArea()
+            }
 
             if items.isEmpty {
                 Text("暂无媒体")
@@ -112,6 +115,7 @@ struct MediaPagerView: View {
             .padding(.top, 10)
             .padding(.trailing, 14)
         }
+        .background(Color.clear)
         .preferredColorScheme(.dark)
     }
 

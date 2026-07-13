@@ -95,7 +95,11 @@ final class ChatMediaViewerCoordinator: NSObject, UIViewControllerTransitioningD
     }
 }
 
-final class MediaViewerHostController: UIHostingController<AnyView> {
+final class MediaViewerHostController: UIViewController {
+    let backdropView = UIView()
+    private let hostingController: UIHostingController<AnyView>
+    var transitionContentView: UIView { hostingController.view }
+
     init(items: [MediaBrowserItem], session: MediaViewerSession) {
         let selection = Binding<String?>(
             get: { session.selectedId },
@@ -109,14 +113,40 @@ final class MediaViewerHostController: UIHostingController<AnyView> {
         let content = MediaPagerView(
             items: items,
             selectedId: selection,
+            showsBackdrop: false,
             onZoomScaleChange: { session.zoomScale = $0 })
             .environmentObject(MediaFavoriteStore.shared)
-        super.init(rootView: AnyView(content))
-        view.backgroundColor = .black
+        hostingController = UIHostingController(rootView: AnyView(content))
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        backdropView.backgroundColor = .black
+        backdropView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backdropView)
+
+        addChild(hostingController)
+        hostingController.view.backgroundColor = .clear
+        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hostingController.view)
+        hostingController.didMove(toParent: self)
+
+        NSLayoutConstraint.activate([
+            backdropView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdropView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backdropView.topAnchor.constraint(equalTo: view.topAnchor),
+            backdropView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            hostingController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hostingController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            hostingController.view.topAnchor.constraint(equalTo: view.topAnchor),
+            hostingController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
     }
 }

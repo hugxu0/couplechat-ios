@@ -47,30 +47,40 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
             view.frame = transitionContext.finalFrame(for: controller)
             container.addSubview(view)
         }
+        view.layoutIfNeeded()
+
+        // 遮罩保持铺满屏幕并单独淡出；只让媒体内容跟随退出手势移动和缩放。
+        // 这样 aspect-fit 留出的区域不会变成一起滑动的黑色矩形。
+        let mediaHost = controller as? MediaViewerHostController
+        let contentView = mediaHost?.transitionContentView ?? view
+        let backdropView = mediaHost?.backdropView
 
         let source = selectedId.flatMap { sourceProvider?($0) }
-        let sourceTransform = transform(from: source, in: container, target: view.bounds)
+        let sourceTransform = transform(from: source, in: container, target: contentView.bounds)
         let dismissalTransform = interactiveDismissal
             ? MediaViewerTransitionMetrics.interactiveTransform(progress: 1, height: container.bounds.height)
             : sourceTransform
         if presenting {
-            view.alpha = 0
-            view.transform = sourceTransform
+            backdropView?.alpha = 0
+            contentView.alpha = 0
+            contentView.transform = sourceTransform
         }
 
         let animator = UIViewPropertyAnimator(
             duration: transitionDuration(using: transitionContext),
             dampingRatio: 0.9
         ) {
-            view.alpha = self.presenting ? 1 : MediaViewerTransitionMetrics.backgroundAlpha(progress: 1)
-            view.transform = self.presenting ? .identity : dismissalTransform
+            backdropView?.alpha = self.presenting ? 1 : 0
+            contentView.alpha = self.presenting ? 1 : 0
+            contentView.transform = self.presenting ? .identity : dismissalTransform
         }
         animator.addCompletion { [weak self] position in
             guard let self else { return }
             let completed = position == .end && !transitionContext.transitionWasCancelled
             if !completed {
-                view.alpha = 1
-                view.transform = .identity
+                backdropView?.alpha = 1
+                contentView.alpha = 1
+                contentView.transform = .identity
             }
             transitionContext.completeTransition(completed)
             self.animator = nil

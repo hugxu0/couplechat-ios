@@ -268,9 +268,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         let mediaOnly = Self.isStandaloneMedia(message)
         // Context-menu 预览可能在不同 trait 环境中重绘动态系统色，造成气泡翻色。
         // 这里在配置时固化当前外观下的颜色，让长按仅表现为系统的轻微抬起效果。
+        // 接收气泡保留稳定的阅读底色，但避免在柔和壁纸上出现生硬的纯白/纯黑块。
+        // 浅色使用轻微薰衣草灰，深色使用偏蓝紫的石墨色。
         let incomingBubbleColor = usesDarkIncomingBubble
-            ? UIColor.black.withAlphaComponent(0.92)
-            : UIColor.systemBackground.resolvedColor(with: traitCollection).withAlphaComponent(0.94)
+            ? UIColor(red: 39.0 / 255.0, green: 38.0 / 255.0, blue: 52.0 / 255.0, alpha: 0.94)
+            : UIColor(red: 244.0 / 255.0, green: 242.0 / 255.0, blue: 248.0 / 255.0, alpha: 0.94)
         let incomingTextColor = usesDarkIncomingBubble ? UIColor.white : UIColor.label.resolvedColor(with: traitCollection)
         let incomingSecondaryColor = usesDarkIncomingBubble ? UIColor.white.withAlphaComponent(0.72) : UIColor.secondaryLabel.resolvedColor(with: traitCollection)
         let isInteraction = message.interactionPayload != nil
@@ -1001,7 +1003,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
 
     func bubbleTargetedPreview() -> UITargetedPreview {
         let parameters = UIPreviewParameters()
-        parameters.backgroundColor = .clear
+        // 系统会在长按时用 targeted preview 临时替换原视图。明确提供当前气泡填充色，
+        // 避免透明 preview 参数让文字浮在模糊背景上，看起来像气泡底色消失。
+        parameters.backgroundColor = bubbleView.backgroundColor ?? .clear
         // 系统上下文菜单的默认投影偶发会在收起快照后残留，气泡本身已有描边，
         // 因此预览不再额外绘制阴影。
         parameters.shadowPath = UIBezierPath()
