@@ -95,13 +95,29 @@ extension ChatViewController {
     }
 
     func addStickerData(_ data: Data, mimeType: String, to groupId: String) {
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             guard let url = await store.uploadSticker(data: data, mimeType: mimeType) else {
                 Haptics.medium()
+                showStickerImportFailure("表情上传失败，请检查网络后重试。")
                 return
             }
             StickerStore.shared.add(url: url, groupId: groupId)
             Haptics.light()
+        }
+    }
+
+    func showStickerImportFailure(_ message: String) {
+        let presentAlert = { [weak self] in
+            guard let self, presentedViewController == nil else { return }
+            let alert = UIAlertController(title: "添加表情失败", message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            present(alert, animated: true)
+        }
+        if presentedViewController == nil {
+            presentAlert()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: presentAlert)
         }
     }
 

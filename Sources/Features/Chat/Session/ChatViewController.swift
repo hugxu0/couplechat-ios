@@ -31,6 +31,7 @@ final class ChatViewController: UIViewController {
     var composerHeightConstraint: NSLayoutConstraint!
     var panelHeightConstraint: NSLayoutConstraint!
     var bottomConstraint: NSLayoutConstraint!
+    let inputDockSpacing: CGFloat = 8
     var keyboardOverlap: CGFloat = 0
     var lastVisibleKeyboardOverlap: CGFloat = 300
     var currentListBottomInset: CGFloat = 0
@@ -347,7 +348,7 @@ final class ChatViewController: UIViewController {
         panelHeightConstraint.isActive = true
         bottomConstraint = bottomStack.bottomAnchor.constraint(
             equalTo: view.keyboardLayoutGuide.topAnchor,
-            constant: -8)
+            constant: -inputDockSpacing)
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),

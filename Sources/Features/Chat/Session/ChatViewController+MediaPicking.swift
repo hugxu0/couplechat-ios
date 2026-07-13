@@ -8,14 +8,19 @@ import ImageIO
 extension ChatViewController: PHPickerViewControllerDelegate {
     nonisolated func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         Task { @MainActor in
-            picker.dismiss(animated: true)
-            switch photoPickerPurpose {
-            case .messageMedia:
-                await loadPickerResults(results)
-            case .sticker(let groupId):
-                await loadStickerResult(results.first, groupId: groupId)
+            let purpose = photoPickerPurpose
+            picker.dismiss(animated: true) { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    switch purpose {
+                    case .messageMedia:
+                        await self.loadPickerResults(results)
+                    case .sticker(let groupId):
+                        await self.loadStickerResult(results.first, groupId: groupId)
+                    }
+                    self.photoPickerPurpose = .messageMedia
+                }
             }
-            photoPickerPurpose = .messageMedia
         }
     }
 
@@ -32,22 +37,46 @@ extension ChatViewController: PHPickerViewControllerDelegate {
 
     private func loadStickerResult(_ result: PHPickerResult?, groupId: String) async {
         guard let provider = result?.itemProvider else { return }
-        // 优先请求原生动图表示；如果先询问 PNG/JPEG，Photos 可能把 GIF
-        // 转成静态首帧后返回，后续即使保留原始 Data 也无法恢复动画。
-        let identifiers = [
+        guard let payload = await loadStickerPayload(from: provider) else {
+            showStickerImportFailure("无法读取这张图片，请换一张后重试。")
+            return
+        }
+        addStickerData(payload.data, mimeType: payload.mimeType, to: groupId)
+    }
+
+    private func loadStickerPayload(from provider: NSItemProvider) async -> (data: Data, mimeType: String)? {
+        // 优先原生动图，再尝试 Photos 提供的全部图片表示。部分 iCloud 照片只支持
+        // file representation，因此 data 与 file 两条路径都必须尝试。
+        let preferredIdentifiers = [
             UTType.gif.identifier, UTType.webP.identifier,
             UTType.heic.identifier, UTType.heif.identifier,
             UTType.png.identifier, UTType.jpeg.identifier, UTType.image.identifier,
         ]
+        var seen: Set<String> = []
+        let identifiers = (preferredIdentifiers + provider.registeredTypeIdentifiers).filter { identifier in
+            guard !seen.contains(identifier),
+                  UTType(identifier)?.conforms(to: .image) == true else { return false }
+            seen.insert(identifier)
+            return true
+        }
         for identifier in identifiers where provider.hasItemConformingToTypeIdentifier(identifier) {
-            guard let data = await provider.loadData(typeIdentifier: identifier),
-                  UIImage(data: data) != nil else { continue }
+            var data = await provider.loadData(typeIdentifier: identifier)
+            if data == nil {
+                data = await provider.loadFileData(typeIdentifier: identifier)
+            }
+            guard let data, UIImage(data: data) != nil else { continue }
             let mimeType = detectedImageMIMEType(data)
                 ?? UTType(identifier)?.preferredMIMEType
                 ?? "image/jpeg"
-            addStickerData(data, mimeType: mimeType, to: groupId)
-            return
+            return (data, mimeType)
         }
+
+        // 最后兼容只能按 UIImage 输出的照片；静态回退用 PNG，避免再次压缩。
+        if let image = await provider.loadImageObject(),
+           let data = image.pngData() {
+            return (data, "image/png")
+        }
+        return nil
     }
 
     private func loadPendingMedia(from result: PHPickerResult) async -> ChatPendingMedia? {
@@ -167,6 +196,22 @@ private extension NSItemProvider {
                     .appendingPathExtension(url.pathExtension.isEmpty ? "mov" : url.pathExtension)
                 try? FileManager.default.copyItem(at: url, to: destination)
                 continuation.resume(returning: destination)
+            }
+        }
+    }
+
+    func loadFileData(typeIdentifier: String) async -> Data? {
+        await withCheckedContinuation { continuation in
+            loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, _ in
+                continuation.resume(returning: url.flatMap { try? Data(contentsOf: $0) })
+            }
+        }
+    }
+
+    func loadImageObject() async -> UIImage? {
+        await withCheckedContinuation { continuation in
+            loadObject(ofClass: UIImage.self) { object, _ in
+                continuation.resume(returning: object as? UIImage)
             }
         }
     }

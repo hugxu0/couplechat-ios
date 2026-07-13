@@ -336,13 +336,15 @@ final class ChatStickerPanelView: UIView {
                 section.emojis.map(PanelItem.emoji)
             }
         case .library:
-            items = store.stickers
+            items = [.addSticker(groupId: StickerStore.defaultGroupId)]
+            items += store.stickers
                 .sorted { $0.addedAt > $1.addedAt }
                 .map(PanelItem.sticker)
-            items.append(.addSticker(groupId: StickerStore.defaultGroupId))
         case .group(let id):
-            items = store.stickers(in: id).map(PanelItem.sticker)
+            items = [.addSticker(groupId: id)]
+            items += store.stickers(in: id).map(PanelItem.sticker)
         }
+        collectionView.collectionViewLayout.invalidateLayout()
         collectionView.reloadData()
     }
 
@@ -435,6 +437,32 @@ final class ChatStickerPanelView: UIView {
 }
 
 extension ChatStickerPanelView: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        insetForSectionAt section: Int
+    ) -> UIEdgeInsets {
+        selectedTab == .emoji
+            ? UIEdgeInsets(top: 8, left: 10, bottom: 4, right: 10)
+            : UIEdgeInsets(top: 8, left: 12, bottom: 12, right: 12)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        minimumLineSpacingForSectionAt section: Int
+    ) -> CGFloat {
+        selectedTab == .emoji ? 6 : 10
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        minimumInteritemSpacingForSectionAt section: Int
+    ) -> CGFloat {
+        selectedTab == .emoji ? 6 : 8
+    }
+
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         items.count
     }
@@ -497,7 +525,11 @@ extension ChatStickerPanelView: UICollectionViewDataSource, UICollectionViewDele
         guard let layout = collectionViewLayout as? UICollectionViewFlowLayout else {
             return CGSize(width: 72, height: 72)
         }
-        // 始终四列；iPad 上单元格会变宽，但内容本身限制为 96pt，避免被放得粗糙。
+        if case .emoji = items[indexPath.item] {
+            // 系统小表情恢复紧凑网格，不与图片表情共用四列大单元格。
+            return CGSize(width: 42, height: 42)
+        }
+        // 图片表情保持四列；iPad 上单元格会变宽，但内容限制为 96pt。
         let usableWidth = collectionView.bounds.width
             - layout.sectionInset.left
             - layout.sectionInset.right
@@ -515,10 +547,8 @@ private final class EmojiCell: UICollectionViewCell {
         super.init(frame: frame)
         backgroundColor = .clear
         contentView.backgroundColor = .clear
-        label.font = .systemFont(ofSize: 38)
+        label.font = .systemFont(ofSize: 30)
         label.textAlignment = .center
-        label.adjustsFontSizeToFitWidth = true
-        label.minimumScaleFactor = 0.75
         contentView.addSubview(label)
     }
 
@@ -528,7 +558,7 @@ private final class EmojiCell: UICollectionViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        label.frame = contentView.bounds.insetBy(dx: 8, dy: 8)
+        label.frame = contentView.bounds
     }
 
     func configure(_ emoji: String) {

@@ -116,7 +116,10 @@ extension ChatViewController {
         let coveredBottom = panelContainer.isHidden
             ? max(keyboardOverlap, view.safeAreaInsets.bottom)
             : 0
-        let bottomInset = dockHeight + coveredBottom + 8
+        // 键盘模式的 bottomStack 本身位于 keyboardLayoutGuide 上方 8pt；
+        // 面板模式直接贴屏幕底部，列表 inset 只能加入实际存在的锚点间距。
+        let anchorSpacing = panelContainer.isHidden ? inputDockSpacing : 0
+        let bottomInset = dockHeight + coveredBottom + anchorSpacing
         let bottomInsetDelta = bottomInset - currentListBottomInset
         currentListBottomInset = bottomInset
 
@@ -237,7 +240,9 @@ extension ChatViewController {
         bottomConstraint.isActive = false
         bottomConstraint = usesScreenBottom
             ? bottomStack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-            : bottomStack.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8)
+            : bottomStack.bottomAnchor.constraint(
+                equalTo: view.keyboardLayoutGuide.topAnchor,
+                constant: -inputDockSpacing)
         bottomConstraint.isActive = true
     }
 

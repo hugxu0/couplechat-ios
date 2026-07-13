@@ -424,13 +424,18 @@ final class MessageStore: ObservableObject {
     }
 
     func uploadSticker(data: Data, mimeType: String, session: Session) async -> String? {
-        guard mimeType.hasPrefix("image/"),
-              let uploaded = try? await uploadMedia(
-                data: data, mimeType: mimeType, purpose: .sticker, session: session) else { return nil }
-        if let url = ServerConfig.resolveMediaURL(uploaded.url) {
-            ImageCache.shared.store(data: data, for: url)
+        guard mimeType.hasPrefix("image/") else { return nil }
+        do {
+            let uploaded = try await uploadMedia(
+                data: data, mimeType: mimeType, purpose: .sticker, session: session)
+            if let url = ServerConfig.resolveMediaURL(uploaded.url) {
+                ImageCache.shared.store(data: data, for: url)
+            }
+            return uploaded.url
+        } catch {
+            print("[MessageStore] 表情上传失败: \(error.localizedDescription)")
+            return nil
         }
-        return uploaded.url
     }
 
     func retryFailedMessage(clientId: String, session: Session) async -> OutboxRetryResult {
