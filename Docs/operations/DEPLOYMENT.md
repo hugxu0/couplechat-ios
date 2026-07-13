@@ -4,9 +4,12 @@
 
 ```text
 Internet
-  → nginx :443 · hoo66.top
+  → nginx :443 · hoo66.top（唯一正式 API）
   → couplechat-server :8080 · Docker host network
   → PostgreSQL :5432 · 仅服务器本机
+
+兼容域名 chat.huhuhu.top 只反向代理到 hoo66.top，
+不得运行第二套可写 CoupleChat 后端。
 
 持久化目录：
   /opt/couplechat-ios/server/uploads
@@ -181,6 +184,25 @@ docker compose -f compose.production.yml logs --tail=100 couplechat-server
 - 使用 HTTPS，并把 HTTP 重定向到 HTTPS。
 
 应用模板前先运行 `nginx -t`，成功后再 reload。
+
+## 旧 Chat 数据窗口迁移与域名切换
+
+旧站替换属于一次性高风险数据操作，不并入日常发布脚本。目标是把指定时间窗口内的聊天、媒体、表情库和大橘日记导入正式库，同时避免双写和客户端残留垃圾数据。
+
+执行顺序固定为：
+
+1. 明确北京时间窗口、账号映射和频道映射，并生成只读盘点报告；
+2. 停止旧站写入，完整备份旧数据库、媒体和配置，验证所有 SHA-256；
+3. 停止正式后端，备份 PostgreSQL、`uploads/` 和部署配置，并验证 dump 可读；
+4. 从停止后的旧库重新导出窗口数据，禁止使用盘点阶段的活动库副本；
+5. 在一个数据库事务中替换目标窗口，保留源消息 ID、时间、回复关系和消息类型；
+6. 媒体先按哈希验证再落盘。旧贴纸消息必须写为 `sticker`，不能退化成普通 `image`；自定义表情库写入共享 `couple_settings.stickers`，由客户端同步到双方设备；
+7. 只为“目标库独有且被清除”的垃圾消息生成删除同步事件，不能给重新导入的同 ID 消息生成删除事件；
+8. 大橘日记按日期写入 `ai_runtime_state`；Memory 按频道重置到窗口起点后重新扫描，`couple` 属于共同记忆，`ai:<username>` 属于对应用户的私人记忆；
+9. 独立校验消息字段、分类型数量、媒体哈希、表情数量、日记和 Memory 游标，成功后再启动正式后端；
+10. 旧站保持停止。旧域名如需兼容，只代理到 `hoo66.top`，绝不再启动第二套可写服务。
+
+迁移器必须具备 dry-run、事务回滚、幂等键和独立验证器。任何一步数量或哈希不一致，都应恢复目标操作前备份，而不是在正式库上手工补数据。连接串、账号口令和源服务器地址只记录在开发机 VPS 运维资料中。
 
 ## 备份
 
