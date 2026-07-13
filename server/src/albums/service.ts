@@ -3,6 +3,7 @@ import { all, get, transaction, type DatabaseTransaction } from "../db";
 import { activeIdentity, activeIdentityIn } from "../auth/identity";
 import type { AuthUser } from "../types";
 import { appendSyncEvent } from "../sync/events";
+import { decodeCursor, encodeCursor, isNumberStringCursor } from "../utils/cursor";
 
 interface AlbumRow {
   id: string;
@@ -70,21 +71,6 @@ function mapAsset(row: AssetRow) {
   };
 }
 
-function encodeCursor(value: unknown): string {
-  return Buffer.from(JSON.stringify(value)).toString("base64url");
-}
-
-function decodeCursor(cursor?: string): [number, string] | null {
-  if (!cursor) return null;
-  try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-    return Array.isArray(value) && typeof value[0] === "number" && typeof value[1] === "string"
-      ? [value[0], value[1]] : null;
-  } catch {
-    return null;
-  }
-}
-
 async function ownedAlbum(db: Pick<DatabaseTransaction, "get">, coupleId: string, albumId: string, lock = false) {
   return db.get<AlbumRow>(
     `SELECT album.*, cover.url AS cover_url,
@@ -98,7 +84,7 @@ async function ownedAlbum(db: Pick<DatabaseTransaction, "get">, coupleId: string
 export async function listAlbums(user: AuthUser, cursor?: string, limit = 30) {
   const identity = await activeIdentity(user);
   if (!identity?.coupleId) return null;
-  const decoded = decodeCursor(cursor);
+  const decoded = decodeCursor(cursor, isNumberStringCursor);
   const rows = await all<AlbumRow>(
     `SELECT album.*, cover.url AS cover_url,
             (SELECT COUNT(*) FROM album_items item WHERE item.album_id = album.id) AS item_count
@@ -230,7 +216,7 @@ export async function listAlbumItems(user: AuthUser, albumId: string, cursor: st
     [albumId, identity.coupleId],
   );
   if (!album) return null;
-  const decoded = decodeCursor(cursor);
+  const decoded = decodeCursor(cursor, isNumberStringCursor);
   const rows = await all<ItemRow>(
     `SELECT item.id AS item_id, item.added_at, item.sort_order, asset.*,
             note.id AS note_id, note.text AS note_text, note.version AS note_version
@@ -537,7 +523,7 @@ export async function onThisDay(
   if (!identity?.coupleId) return null;
   const [year, month, day] = input.date.split("-").map(Number);
   const includeLeapDay = month === 2 && day === 28 && !isLeapYear(year);
-  const decoded = decodeCursor(input.cursor);
+  const decoded = decodeCursor(input.cursor, isNumberStringCursor);
   const rows = await all<AssetRow>(
     `SELECT asset.*, note.id AS note_id, note.text AS note_text, note.version AS note_version
        FROM media_assets asset

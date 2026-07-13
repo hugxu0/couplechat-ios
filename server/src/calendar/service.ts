@@ -4,6 +4,7 @@ import { activeIdentity, activeIdentityIn } from "../auth/identity";
 import type { AuthUser } from "../types";
 import { appendSyncEvent } from "../sync/events";
 import { monthRange, validEventRange } from "./time";
+import { decodeCursor, encodeCursor, isNumberStringCursor } from "../utils/cursor";
 
 interface CalendarEventRow {
   id: string;
@@ -50,19 +51,6 @@ function mapEvent(row: CalendarEventRow) {
   };
 }
 
-function encodeCursor(startAt: number, id: string): string {
-  return Buffer.from(JSON.stringify([startAt, id])).toString("base64url");
-}
-
-function decodeCursor(cursor?: string): [number, string] | null {
-  if (!cursor) return null;
-  try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-    return Array.isArray(value) && typeof value[0] === "number" && typeof value[1] === "string"
-      ? [value[0], value[1]] : null;
-  } catch { return null; }
-}
-
 function visibleWhere() {
   return `((event.scope = 'shared' AND event.couple_id = ?)
     OR (event.scope = 'private' AND event.owner_account_id = ?))`;
@@ -91,7 +79,7 @@ export async function listCalendarEvents(
   if (input.view === "month") {
     const range = monthRange(input.month, input.timezone);
     if (!range) return { invalidRange: true as const };
-    const cursor = decodeCursor(input.cursor);
+    const cursor = decodeCursor(input.cursor, isNumberStringCursor);
     const rows = await all<CalendarEventRow>(
       `SELECT ${eventProjection} FROM calendar_events event
        WHERE ${visibleWhere()} AND event.start_at < ? AND event.end_at > ?
@@ -105,11 +93,11 @@ export async function listCalendarEvents(
       invalidRange: false as const,
       events: page.map(mapEvent),
       nextCursor: rows.length > input.limit && page.length
-        ? encodeCursor(page.at(-1)!.start_at, page.at(-1)!.id) : undefined,
+        ? encodeCursor([page.at(-1)!.start_at, page.at(-1)!.id]) : undefined,
       hasMore: rows.length > input.limit,
     };
   }
-  const cursor = decodeCursor(input.cursor);
+  const cursor = decodeCursor(input.cursor, isNumberStringCursor);
   const rows = await all<CalendarEventRow>(
     `SELECT ${eventProjection} FROM calendar_events event
      WHERE ${visibleWhere()}
@@ -123,7 +111,7 @@ export async function listCalendarEvents(
     invalidRange: false as const,
     events: page.map(mapEvent),
     nextCursor: rows.length > input.limit && page.length
-      ? encodeCursor(page.at(-1)!.start_at, page.at(-1)!.id) : undefined,
+      ? encodeCursor([page.at(-1)!.start_at, page.at(-1)!.id]) : undefined,
     hasMore: rows.length > input.limit,
   };
 }

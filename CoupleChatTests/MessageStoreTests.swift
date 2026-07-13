@@ -88,7 +88,7 @@ final class MessageStoreSearchMergeTests: XCTestCase {
         let b = makeMessage(id: "m1", ts: 200)  // same id, different ts
         let c = makeMessage(id: "m2", ts: 150)
 
-        let result = MessageStore.mergeSearchResults([a], [b, c])
+        let result = ChatMessageWindowing.mergeSearchResults([a], [b, c])
         XCTAssertEqual(result.count, 2)
         // Should keep the first occurrence (ts=100 for m1)
         XCTAssertTrue(result.contains(where: { $0.id == "m1" && $0.ts == 100 }))
@@ -100,15 +100,15 @@ final class MessageStoreSearchMergeTests: XCTestCase {
         let b = makeMessage(id: "b", ts: 300)
         let c = makeMessage(id: "c", ts: 200)
 
-        let result = MessageStore.mergeSearchResults([c, a], [b])
+        let result = ChatMessageWindowing.mergeSearchResults([c, a], [b])
         XCTAssertEqual(result.map(\.id), ["b", "c", "a"])
     }
 
     func testMergeSearchEmptyInputs() {
-        XCTAssertTrue(MessageStore.mergeSearchResults([], []).isEmpty)
+        XCTAssertTrue(ChatMessageWindowing.mergeSearchResults([], []).isEmpty)
         let one = [makeMessage(id: "x", ts: 1)]
-        XCTAssertEqual(MessageStore.mergeSearchResults(one, []).count, 1)
-        XCTAssertEqual(MessageStore.mergeSearchResults([], one).count, 1)
+        XCTAssertEqual(ChatMessageWindowing.mergeSearchResults(one, []).count, 1)
+        XCTAssertEqual(ChatMessageWindowing.mergeSearchResults([], one).count, 1)
     }
 
     // MARK: - Helpers
@@ -128,7 +128,7 @@ final class MessageStoreMergedWindowTests: XCTestCase {
 
     func testMergedWindowEmptyWindowReturnsCurrent() {
         let current = [makeMessage(id: "c1", ts: 100)]
-        let result = MessageStore.mergedWindow([], with: current, around: "c1")
+        let result = ChatMessageWindowing.mergedWindow([], with: current, around: "c1")
         XCTAssertEqual(result, current)
     }
 
@@ -138,7 +138,7 @@ final class MessageStoreMergedWindowTests: XCTestCase {
         let c1 = makeMessage(id: "c1", ts: 100)
         let c2 = makeMessage(id: "w2", ts: 150)  // duplicate of w2
 
-        let result = MessageStore.mergedWindow([w1, w2], with: [c1, c2], around: "c1")
+        let result = ChatMessageWindowing.mergedWindow([w1, w2], with: [c1, c2], around: "c1")
         // Should have 3 unique messages, sorted ascending
         XCTAssertEqual(result.count, 3)
         XCTAssertEqual(result.map(\.id), ["w1", "c1", "w2"])
@@ -146,14 +146,14 @@ final class MessageStoreMergedWindowTests: XCTestCase {
 
     func testMergedWindowAroundTarget() {
         let messages = (0..<20).map { makeMessage(id: "m\($0)", ts: Double($0 * 100)) }
-        let result = MessageStore.mergedWindow(messages, with: [], around: "m10")
+        let result = ChatMessageWindowing.mergedWindow(messages, with: [], around: "m10")
         // Should center around m10 with ±window
         XCTAssertTrue(result.contains(where: { $0.id == "m10" }))
     }
 
     func testMergedWindowTargetNotFoundReturnsTail() {
         let messages = (0..<100).map { makeMessage(id: "m\($0)", ts: Double($0 * 100)) }
-        let result = MessageStore.mergedWindow(messages, with: [], around: "nonexistent")
+        let result = ChatMessageWindowing.mergedWindow(messages, with: [], around: "nonexistent")
         XCTAssertEqual(result.count, 90)  // suffix(90)
     }
 
@@ -174,7 +174,7 @@ final class MessageStoreDayRangeTests: XCTestCase {
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
         let date = cal.date(from: DateComponents(year: 2026, month: 7, day: 10))!
 
-        let range = MessageStore.dayRange(for: date)
+        let range = ChatMessageWindowing.dayRange(for: date)
         let diffMs = range.end - range.start
         // Should be exactly 86400000 ms (24 hours)
         XCTAssertEqual(diffMs, 86_400_000, accuracy: 1)
@@ -185,7 +185,7 @@ final class MessageStoreDayRangeTests: XCTestCase {
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
         let date = cal.date(from: DateComponents(year: 2026, month: 1, day: 15, hour: 14, minute: 30))!
 
-        let range = MessageStore.dayRange(for: date)
+        let range = ChatMessageWindowing.dayRange(for: date)
         let startDate = Date(timeIntervalSince1970: range.start / 1000)
         let components = cal.dateComponents([.hour, .minute], from: startDate)
         XCTAssertEqual(components.hour, 0)
@@ -197,17 +197,17 @@ final class MessageStoreDayRangeTests: XCTestCase {
 final class MessageStoreMediaPlaceholderTests: XCTestCase {
 
     func testPlaceholderText() {
-        XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "video"), "[视频]")
-        XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "voice"), "[语音]")
-        XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "file"), "[文件]")
-        XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "image"), "[图片]")
-        XCTAssertEqual(MessageStore.mediaPlaceholderText(for: "sticker"), "[图片]")
+        XCTAssertEqual(PendingMessageFactory.placeholderText(for: "video"), "[视频]")
+        XCTAssertEqual(PendingMessageFactory.placeholderText(for: "voice"), "[语音]")
+        XCTAssertEqual(PendingMessageFactory.placeholderText(for: "file"), "[文件]")
+        XCTAssertEqual(PendingMessageFactory.placeholderText(for: "image"), "[图片]")
+        XCTAssertEqual(PendingMessageFactory.placeholderText(for: "sticker"), "[图片]")
     }
 
     func testMediaFileExtensionPreservesQuickTimeContainer() {
-        XCTAssertEqual(MessageStore.fileExtension(for: "video/quicktime"), "mov")
-        XCTAssertEqual(MessageStore.fileExtension(for: "video/mp4"), "mp4")
-        XCTAssertEqual(MessageStore.fileExtension(for: "image/png"), "png")
+        XCTAssertEqual(MediaUploadService.fileExtension(for: "video/quicktime"), "mov")
+        XCTAssertEqual(MediaUploadService.fileExtension(for: "video/mp4"), "mp4")
+        XCTAssertEqual(MediaUploadService.fileExtension(for: "image/png"), "png")
     }
 }
 
@@ -219,7 +219,7 @@ final class MessageStoreLatestWindowTests: XCTestCase {
         var pending = makeMessage(id: "tmp-1", ts: 300)
         pending.pending = true
 
-        let result = MessageStore.latestWindow(latest, preservingOutboundFrom: [historical, pending])
+        let result = ChatMessageWindowing.latestWindow(latest, preservingOutboundFrom: [historical, pending])
 
         XCTAssertEqual(result.map(\.id), ["new-1", "new-2", "tmp-1"])
     }

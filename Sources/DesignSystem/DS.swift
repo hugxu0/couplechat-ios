@@ -201,32 +201,6 @@ enum DS {
         }
     }
 
-    // MARK: - UIKit 桥接（聊天 cell / 控制器读同一套数值）
-    enum UIKitToken {
-        static let bubbleRadius: CGFloat = Radius.bubble
-        static let bubbleGapSame: CGFloat = Spacing.bubbleGapSame
-        static let bubbleGapOther: CGFloat = Spacing.bubbleGapOther
-        static let pageInset: CGFloat = Spacing.page
-        static let cardRadius: CGFloat = Radius.card
-
-        static var textPrimary: UIColor {
-            UIColor { $0.userInterfaceStyle == .dark
-                ? UIColor(white: 0.93, alpha: 1)
-                : UIColor(red: 0.20, green: 0.16, blue: 0.15, alpha: 1) }
-        }
-
-        static var textSecondary: UIColor {
-            UIColor { $0.userInterfaceStyle == .dark
-                ? UIColor(white: 0.62, alpha: 1)
-                : UIColor(red: 0.55, green: 0.50, blue: 0.48, alpha: 1) }
-        }
-
-        static var bubbleOther: UIColor {
-            UIColor { $0.userInterfaceStyle == .dark
-                ? UIColor(white: 0.16, alpha: 1)
-                : .white }
-        }
-    }
 }
 
 // =============================================================

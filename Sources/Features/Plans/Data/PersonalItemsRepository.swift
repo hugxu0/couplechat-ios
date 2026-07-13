@@ -17,8 +17,8 @@ struct PersonalItemsRepository {
         var query: [String] = []
         if let kind { query.append("kind=\(kind.rawValue)") }
         query.append("scope=\(scope)")
-        guard let request = authorizedRequest(
-            "api/me/items?\(query.joined(separator: "&"))", token: token),
+        guard let request = APIRequestFactory.authorized(
+            path: "api/me/items?\(query.joined(separator: "&"))", token: token),
               let (data, response) = try? await httpClient.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
         return (try? JSONDecoder().decode(ItemsResponse.self, from: data))?.items ?? []
@@ -61,8 +61,8 @@ struct PersonalItemsRepository {
     }
 
     func delete(_ item: PersonalItem, token: String) async -> Bool {
-        guard let request = authorizedRequest(
-            "api/me/items/\(item.id)", method: "DELETE", token: token),
+        guard let request = APIRequestFactory.authorized(
+            path: "api/me/items/\(item.id)", method: "DELETE", token: token),
               let (_, response) = try? await httpClient.data(for: request) else { return false }
         let succeeded = (response as? HTTPURLResponse)?.statusCode == 200
         if succeeded { NotificationCenter.default.post(name: Self.changedNotification, object: nil) }
@@ -75,7 +75,8 @@ struct PersonalItemsRepository {
         body: [String: Any],
         token: String
     ) async -> PersonalItem? {
-        guard var request = authorizedRequest(path, method: method, token: token) else { return nil }
+        guard var request = APIRequestFactory.authorized(
+            path: path, method: method, token: token) else { return nil }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         guard let (data, response) = try? await httpClient.data(for: request),
@@ -84,18 +85,6 @@ struct PersonalItemsRepository {
               let item = (try? JSONDecoder().decode(ItemResponse.self, from: data))?.item else { return nil }
         NotificationCenter.default.post(name: Self.changedNotification, object: nil)
         return item
-    }
-
-    private func authorizedRequest(
-        _ path: String,
-        method: String = "GET",
-        token: String
-    ) -> URLRequest? {
-        guard let relative = URL(string: path, relativeTo: ServerConfig.baseURL) else { return nil }
-        var request = URLRequest(url: relative.absoluteURL)
-        request.httpMethod = method
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        return request
     }
 
     private struct ItemsResponse: Decodable { let items: [PersonalItem] }

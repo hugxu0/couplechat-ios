@@ -24,10 +24,10 @@ final class DeviceSessionRepository {
     }
 
     func list(token: String) async throws -> [AccountDevice] {
-        var request = URLRequest(
-            url: ServerConfig.baseURL.appendingPathComponent("api/v2/me/devices"))
-        request.timeoutInterval = 15
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let request = APIRequestFactory.authorized(
+            path: "api/v2/me/devices", token: token) else {
+            throw DeviceSessionError.message("服务器地址无效")
+        }
         let data = try await responseData(for: request, expectedStatus: 200)
         return try JSONDecoder().decode(DeviceListEnvelope.self, from: data).devices
     }
@@ -36,11 +36,10 @@ final class DeviceSessionRepository {
         guard let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
             throw DeviceSessionError.message("设备标识无效")
         }
-        var request = URLRequest(
-            url: ServerConfig.baseURL.appendingPathComponent("api/v2/me/devices/\(encoded)"))
-        request.httpMethod = "DELETE"
-        request.timeoutInterval = 15
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let request = APIRequestFactory.authorized(
+            path: "api/v2/me/devices/\(encoded)", method: "DELETE", token: token) else {
+            throw DeviceSessionError.message("服务器地址无效")
+        }
         _ = try await responseData(for: request, expectedStatus: 200)
     }
 
@@ -50,7 +49,7 @@ final class DeviceSessionRepository {
             throw DeviceSessionError.message("服务器响应无效")
         }
         guard http.statusCode == expectedStatus else {
-            let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            let code = APIRequestFactory.errorCode(from: data)
             throw DeviceSessionError.message(
                 ServerErrorCode.message(for: code, fallback: "设备操作失败，请稍后重试"))
         }

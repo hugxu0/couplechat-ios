@@ -13,6 +13,7 @@ import {
   type MemoryLayer,
 } from "./store";
 import { activeIdentity } from "../../auth/identity";
+import { decodeCursor, encodeCursor } from "../../utils/cursor";
 
 const listQuery = z.object({
   scope: z.enum(["all", "shared", "private"]).default("all"),
@@ -43,20 +44,12 @@ function filteredScopes(username: string, scope: "all" | "shared" | "private"): 
   return visibleScopes(username);
 }
 
-function decodeCursor(value?: string): { updatedAt: number; id: string } | undefined {
-  if (!value) return undefined;
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
-    return typeof parsed.updatedAt === "number" && typeof parsed.id === "string"
-      ? { updatedAt: parsed.updatedAt, id: parsed.id }
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function encodeCursor(item: { updatedAt: number; id: string }): string {
-  return Buffer.from(JSON.stringify(item)).toString("base64url");
+function isMemoryCursor(value: unknown): value is { updatedAt: number; id: string } {
+  if (!value || typeof value !== "object") return false;
+  const cursor = value as Record<string, unknown>;
+  return typeof cursor.updatedAt === "number"
+    && Number.isFinite(cursor.updatedAt)
+    && typeof cursor.id === "string";
 }
 
 export async function registerMemoryRoutes(app: FastifyInstance) {
@@ -80,7 +73,7 @@ export async function registerMemoryRoutes(app: FastifyInstance) {
         status: parsed.data.status === "all" ? undefined : parsed.data.status,
         query: parsed.data.q,
         limit: parsed.data.limit + 1,
-        cursor: decodeCursor(parsed.data.cursor),
+        cursor: decodeCursor(parsed.data.cursor, isMemoryCursor) ?? undefined,
       }),
       memoryStatsForScopes(visibleScopes(request.user.username), identity),
     ]);

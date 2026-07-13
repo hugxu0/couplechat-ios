@@ -19,10 +19,14 @@ struct PendingOutboundMessage: Equatable {
     var attachments: [PendingOutboundAttachment] = []
 
     var isMedia: Bool {
-        ["image", "video", "voice", "file"].contains(type) || !attachments.isEmpty
+        switch type {
+        case "image", "video", "voice", "file": return true
+        default: return !attachments.isEmpty
+        }
     }
 
     func optimisticMessage(session: Session) -> ChatMessage {
+        let meta = decodedMeta
         if isMedia || type == "sticker" {
             let optimisticAttachments = attachments.map { attachment in
                 ChatAttachment(
@@ -32,11 +36,6 @@ struct PendingOutboundMessage: Equatable {
                     order: attachment.order,
                     url: attachment.uploadURL ?? URL(fileURLWithPath: attachment.localFilePath).absoluteString,
                     mimeType: attachment.mimeType)
-            }
-            let meta: ChatMessageMeta? = metaJSON.flatMap { raw in
-                guard let data = raw.data(using: .utf8),
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-                return ChatMessageMeta(dict: dict)
             }
             var message = ChatMessage(
                 optimisticMedia: type,
@@ -53,11 +52,6 @@ struct PendingOutboundMessage: Equatable {
             return message
         }
 
-        let meta: ChatMessageMeta? = metaJSON.flatMap { raw in
-            guard let data = raw.data(using: .utf8),
-                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            return ChatMessageMeta(dict: dict)
-        }
         var message = ChatMessage(
             optimisticText: text,
             me: session,
@@ -70,6 +64,14 @@ struct PendingOutboundMessage: Equatable {
         message.pending = attempts == 0
         message.failed = attempts > 0
         return message
+    }
+
+    private var decodedMeta: ChatMessageMeta? {
+        guard let metaJSON,
+              let data = metaJSON.data(using: .utf8),
+              let dictionary = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return ChatMessageMeta(dict: dictionary)
     }
 }
 

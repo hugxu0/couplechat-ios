@@ -28,14 +28,19 @@ final class CoupleOnboardingRepository {
     }
 
     func status(token: String) async throws -> Bool {
-        let request = authorizedRequest(path: "api/v2/me/couple", token: token)
+        guard let request = APIRequestFactory.authorized(
+            path: "api/v2/me/couple", token: token) else {
+            throw CoupleOnboardingError.message("服务器地址无效")
+        }
         let data = try await responseData(for: request, expectedStatus: 200)
         return try JSONDecoder().decode(CoupleStatus.self, from: data).paired
     }
 
     func create(name: String, token: String) async throws -> CoupleCreationResult {
-        var request = authorizedRequest(path: "api/v2/couples", token: token)
-        request.httpMethod = "POST"
+        guard var request = APIRequestFactory.authorized(
+            path: "api/v2/couples", method: "POST", token: token) else {
+            throw CoupleOnboardingError.message("服务器地址无效")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["name": name])
         let data = try await responseData(for: request, expectedStatus: 201)
@@ -43,8 +48,10 @@ final class CoupleOnboardingRepository {
     }
 
     func join(code: String, token: String) async throws {
-        var request = authorizedRequest(path: "api/v2/couples/join", token: token)
-        request.httpMethod = "POST"
+        guard var request = APIRequestFactory.authorized(
+            path: "api/v2/couples/join", method: "POST", token: token) else {
+            throw CoupleOnboardingError.message("服务器地址无效")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["code": code])
         let data = try await responseData(for: request, expectedStatus: 200)
@@ -52,18 +59,13 @@ final class CoupleOnboardingRepository {
     }
 
     func newInvite(token: String) async throws -> CoupleInvite {
-        var request = authorizedRequest(path: "api/v2/couples/invites", token: token)
-        request.httpMethod = "POST"
+        guard var request = APIRequestFactory.authorized(
+            path: "api/v2/couples/invites", method: "POST", token: token) else {
+            throw CoupleOnboardingError.message("服务器地址无效")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let data = try await responseData(for: request, expectedStatus: 200)
         return try JSONDecoder().decode(InviteEnvelope.self, from: data).invite
-    }
-
-    private func authorizedRequest(path: String, token: String) -> URLRequest {
-        var request = URLRequest(url: ServerConfig.baseURL.appendingPathComponent(path))
-        request.timeoutInterval = 15
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        return request
     }
 
     private func responseData(for request: URLRequest, expectedStatus: Int) async throws -> Data {
@@ -72,7 +74,7 @@ final class CoupleOnboardingRepository {
             throw CoupleOnboardingError.message("服务器响应无效")
         }
         guard http.statusCode == expectedStatus else {
-            let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            let code = APIRequestFactory.errorCode(from: data)
             throw CoupleOnboardingError.message(
                 ServerErrorCode.message(for: code, fallback: "操作失败，请稍后重试"))
         }

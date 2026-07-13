@@ -180,7 +180,7 @@ async function main() {
     );
 
     // 账号
-    const { listPublicAccounts, authenticate } = await import("../src/auth/accounts");
+    const { listPublicAccounts } = await import("../src/auth/accounts");
     const accounts = await listPublicAccounts();
     assertOk(`listPublicAccounts → ${accounts.length} 个账号`, accounts.length === 2);
 

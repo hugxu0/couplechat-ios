@@ -20,7 +20,7 @@ Thumbs.db
 server/.data/
 server/uploads/
 server/.env
-data/
+/data/
 
 # SwiftLint
 .swiftlint.cache
