@@ -40,7 +40,12 @@ jobs:
         run: npm ci
 
       - name: Test
+        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         run: npm test
+
+      - name: Quick server check
+        if: github.event_name == 'workflow_dispatch' && !inputs.full_validation
+        run: npm run typecheck
 
       - name: Build
         run: npm run build
@@ -110,6 +115,7 @@ jobs:
           done < build-artifacts/new-swift-files.txt
 
       - name: Unit tests
+        if: github.event_name != 'workflow_dispatch' || inputs.full_validation
         run: |
           set -o pipefail
           DEVICE_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPhone 17")

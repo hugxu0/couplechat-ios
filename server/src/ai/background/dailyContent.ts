@@ -99,14 +99,17 @@ export async function ensureRecommendation(date: string, force = false): Promise
 export async function dailyContent() {
   const today = cycleDate();
   const yesterday = addDays(today, -1);
-  let diary: { date: string; text: string } | null = null;
-  for (let offset = 1; offset <= 7; offset += 1) {
+  const diaries: Array<{ date: string; text: string }> = [];
+  for (let offset = 1; offset <= 30; offset += 1) {
     const date = addDays(today, -offset);
     const text = await readRuntimeState(`diary:${date}`);
-    if (text) {
-      diary = { date, text };
-      break;
-    }
+    if (text) diaries.push({ date, text });
   }
-  return { today, yesterday, diary, recommend: await readRecommendation(today) };
+  return {
+    today,
+    yesterday,
+    diary: diaries[0] ?? null,
+    diaries,
+    recommend: await readRecommendation(today),
+  };
 }

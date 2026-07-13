@@ -648,15 +648,34 @@ final class MessageStore: ObservableObject {
 
     // MARK: - 撤回
 
+    struct RecallDraft {
+        let text: String
+    }
+
+    private var recallDrafts: [String: RecallDraft] = [:]
+
+    func hasRecallDraft(messageId: String) -> Bool {
+        recallDrafts[messageId] != nil
+    }
+
+    func takeRecallDraft(messageId: String) -> RecallDraft? {
+        recallDrafts.removeValue(forKey: messageId)
+    }
+
     func recallMessage(_ message: ChatMessage, channel: ChatChannel) {
         guard let s = socketProvider?.socket, socketProvider?.isConnected == true else { return }
+        let editable = message.type == "text"
+            ? message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        if !editable.isEmpty { recallDrafts[message.id] = RecallDraft(text: message.text) }
         s.emitWithAck(
             SocketEvent.messageRecall.rawValue,
             SocketPayloadEncoder.encode(MessageRecallRequest(id: message.id))).timingOut(after: 9) { [weak self] response in
                 let ok = (response.first as? [String: Any])?["ok"] as? Bool == true
                 guard !ok else { return }
                 Task { @MainActor in
-                    guard self != nil else { return }
+                    guard let self else { return }
+                    self.recallDrafts.removeValue(forKey: message.id)
                     NotificationCenter.default.post(name: Self.recallFailedNotification, object: nil)
                 }
             }

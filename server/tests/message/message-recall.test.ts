@@ -56,6 +56,14 @@ test("recall hard-deletes the message, derivatives and orphan memory", async () 
     const result = await recallMessage({ username: "xu", name: "小旭" }, "message-to-recall");
     assert.equal(result?.deleted, true);
     assert.equal("recalledText" in (result ?? {}), false);
+    assert.equal(result?.notice?.kind, "system");
+    assert.equal(result?.notice?.text, "小旭撤回了一条消息");
+    assert.equal(JSON.stringify(result?.notice).includes("[图片]"), false);
+    assert.equal(JSON.stringify(result?.notice).includes("/media/upload-1"), false);
+    assert.ok(await get(
+      "SELECT id FROM messages WHERE id = ? AND kind = 'system'",
+      [result?.notice?.id],
+    ));
     assert.equal(await get("SELECT id FROM messages WHERE id = ?", ["message-to-recall"]), undefined);
     assert.equal(await get("SELECT id FROM uploads WHERE id = ?", ["upload-1"]), undefined);
     assert.ok(await get(

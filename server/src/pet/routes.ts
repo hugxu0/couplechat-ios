@@ -10,7 +10,7 @@ const responseBody = z.object({
   baseVersion: z.number().int().min(0),
 });
 const interactionBody = z.object({
-  kind: z.enum(["stroke", "high_five", "teaser"]),
+  kind: z.enum(["feed", "bathe", "play", "stroke", "sleep", "high_five", "teaser"]),
   idempotencyKey: z.string().min(1).max(128),
   baseVersion: z.number().int().min(0),
 });

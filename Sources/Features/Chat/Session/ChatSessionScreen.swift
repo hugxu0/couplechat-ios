@@ -102,17 +102,11 @@ struct ChatSessionScreen: View {
         GeometryReader { proxy in
             let safeTop = proxy.safeAreaInsets.top
             let topOverlayInset = safeTop + 44
-            // 使用当前窗口而不是物理屏幕尺寸，才能在 iPad Split View / Stage Manager
-            // 中真正收缩布局；键盘区域由下方 ignoresSafeArea(.keyboard) 单独处理。
-            let stableWidth = max(proxy.size.width, 1)
-            let stableHeight = max(proxy.size.height, 1)
 
             ZStack(alignment: .top) {
                 chatBackground
-                    .frame(width: stableWidth, height: stableHeight)
-                    .position(x: stableWidth / 2, y: stableHeight / 2)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
-                    .ignoresSafeArea(.all)
                     .allowsHitTesting(false)
 
                 ChatUIKitHost(
@@ -124,14 +118,15 @@ struct ChatSessionScreen: View {
                     timelineUsesLightContent: timelineUsesLightContent,
                     jumpCommand: $jumpCommand
                 )
-                .frame(width: stableWidth, height: stableHeight)
-                .position(x: stableWidth / 2, y: stableHeight / 2)
-                .ignoresSafeArea(.all)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             }
-            .frame(width: proxy.size.width, height: proxy.size.height)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea(.keyboard, edges: .bottom)
         }
+        // 根 Tab 使用系统安全区；聊天子页必须把 UIKit 宿主重新铺到窗口底部。
+        // 键盘与 Home Indicator 的位置只交给 keyboardLayoutGuide 处理，避免重复扣减。
+        .ignoresSafeArea(.container, edges: .bottom)
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .background(chatBackground.ignoresSafeArea())
         .chatNativeHeader(

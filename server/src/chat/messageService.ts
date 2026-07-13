@@ -485,6 +485,42 @@ export async function recallMessage(user: AuthUser, id: string) {
           [existing.conversation_id],
         )
       : undefined;
+    let notice: ClientMessage | undefined;
+    if (conversation && existing.conversation_id) {
+      const noticeRow: MessageRow = {
+        id: `msg_${nanoid(16)}`,
+        channel: existing.channel,
+        sender: user.username,
+        sender_name: user.name,
+        kind: "system",
+        type: "text",
+        text: `${user.name}撤回了一条消息`,
+        url: null,
+        reply_json: null,
+        meta_json: safeJson({
+          recallNotice: { messageId: id, by: user.username, byName: user.name },
+        }),
+        attachments_json: null,
+        recalled_text: null,
+        ts: recallRequestedAt,
+        client_id: null,
+        conversation_id: existing.conversation_id,
+        sender_account_id: identity.accountId,
+        origin_device_id: user.deviceId ?? null,
+        server_seq: null,
+      };
+      await db.run(
+        `INSERT INTO messages
+         (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json,
+          attachments_json, ts, client_id, conversation_id, sender_account_id, origin_device_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [noticeRow.id, noticeRow.channel, noticeRow.sender, noticeRow.sender_name,
+          noticeRow.kind, noticeRow.type, noticeRow.text, noticeRow.url, noticeRow.reply_json,
+          noticeRow.meta_json, noticeRow.attachments_json, noticeRow.ts, noticeRow.client_id,
+          noticeRow.conversation_id, noticeRow.sender_account_id, noticeRow.origin_device_id],
+      );
+      notice = mapMessage(noticeRow, toClientChannel(existing.channel as StoredChannel));
+    }
     const syncCursor = conversation ? await appendSyncEvent(db, {
       coupleId: conversation.couple_id,
       accountId: conversation.owner_account_id,
@@ -504,6 +540,7 @@ export async function recallMessage(user: AuthUser, id: string) {
         by: user.username,
         byName: user.name,
         deleted: true,
+        notice,
         syncCursor: syncCursor ?? undefined,
       },
       uploadCleanup: uploads.map((item) => ({ id: `cleanup_${item.id}`, path: item.path })),

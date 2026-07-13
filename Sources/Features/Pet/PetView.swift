@@ -5,7 +5,6 @@ struct PetView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = PetViewModel()
     @State private var showAIChat = false
-    @State private var showRename = false
     @State private var isVisible = false
 
     var body: some View {
@@ -26,7 +25,6 @@ struct PetView: View {
             .navigationDestination(isPresented: $showAIChat) {
                 ChatView(channel: .ai).appSubpageChrome()
             }
-            .sheet(isPresented: $showRename) { renameSheet }
             .task(id: store.session?.username) {
                 guard let session = store.session else { return }
                 await viewModel.load(token: session.token, username: session.username)
@@ -52,7 +50,6 @@ struct PetView: View {
                     pet: pet,
                     isBusy: viewModel.isMutating,
                     feedback: viewModel.feedback,
-                    onRename: { showRename = true },
                     onChat: { showAIChat = true },
                     onInteraction: { kind in
                         Haptics.light()
@@ -116,15 +113,6 @@ struct PetView: View {
             try? await Task.sleep(nanoseconds: 20_000_000_000)
             guard !Task.isCancelled else { return }
             if isVisible, scenePhase == .active { await refreshIfPossible() }
-        }
-    }
-
-    @ViewBuilder
-    private var renameSheet: some View {
-        if let pet = viewModel.snapshot?.pet, let session = store.session {
-            PetRenameSheet(currentName: pet.name) { name in
-                await viewModel.rename(name, token: session.token, username: session.username)
-            }
         }
     }
 }

@@ -38,21 +38,31 @@ struct CuteCatModelView: UIViewRepresentable {
             guard let modelRoot else { return }
             let action: SCNAction
             switch kind {
+            case .feed:
+                action = .sequence([
+                    .scale(by: 1.04, duration: 0.16),
+                    .scale(by: 1 / 1.04, duration: 0.22),
+                ])
+            case .bathe:
+                action = .sequence([
+                    .moveBy(x: 0, y: 0.06, z: 0, duration: 0.12),
+                    .moveBy(x: 0, y: -0.06, z: 0, duration: 0.18),
+                ])
+            case .play:
+                action = .sequence([
+                    .moveBy(x: 0, y: 0.15, z: 0, duration: 0.15),
+                    .moveBy(x: 0, y: -0.15, z: 0, duration: 0.22),
+                ])
             case .stroke:
                 action = .sequence([
-                    .scale(to: 1.05, duration: 0.14),
-                    .scale(to: 1, duration: 0.22),
+                    .scale(by: 1.05, duration: 0.14),
+                    .scale(by: 1 / 1.05, duration: 0.22),
                 ])
-            case .highFive:
+            case .sleep:
                 action = .sequence([
-                    .moveBy(x: 0, y: 0.13, z: 0, duration: 0.16),
-                    .moveBy(x: 0, y: -0.13, z: 0, duration: 0.22),
-                ])
-            case .teaser:
-                action = .sequence([
-                    .rotateBy(x: 0, y: 0.28, z: 0, duration: 0.14),
-                    .rotateBy(x: 0, y: -0.56, z: 0, duration: 0.22),
-                    .rotateBy(x: 0, y: 0.28, z: 0, duration: 0.16),
+                    .scale(by: 0.95, duration: 0.25),
+                    .wait(duration: 0.18),
+                    .scale(by: 1 / 0.95, duration: 0.24),
                 ])
             }
             modelRoot.removeAction(forKey: "pet-reaction")
@@ -89,6 +99,7 @@ struct CuteCatModelView: UIViewRepresentable {
             presentationScene.rootNode.addChildNode(fillLight())
             presentationScene.rootNode.addChildNode(ambientLight())
             container.sceneView.scene = presentationScene
+            container.setModelRoot(root)
             container.setLoaded(true)
             modelRoot = root
         }
@@ -100,7 +111,7 @@ struct CuteCatModelView: UIViewRepresentable {
             let depth = maximum.z - minimum.z
             let largest = max(width, max(height, depth))
             guard largest > 0 else { return }
-            let scale = 2.2 / largest
+            let scale = 1.5 / largest
             node.scale = SCNVector3(scale, scale, scale)
             node.position = SCNVector3(
                 -(minimum.x + maximum.x) * scale / 2,
@@ -154,6 +165,7 @@ final class CatModelContainerView: UIView {
     let sceneView = SCNView()
     private let placeholder = UIImageView(image: UIImage(systemName: "pawprint.fill"))
     private let spinner = UIActivityIndicatorView(style: .medium)
+    private weak var modelRoot: SCNNode?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -163,9 +175,12 @@ final class CatModelContainerView: UIView {
         sceneView.preferredFramesPerSecond = 60
         sceneView.isPlaying = true
         sceneView.rendersContinuously = false
-        sceneView.allowsCameraControl = true
+        sceneView.allowsCameraControl = false
         sceneView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(sceneView)
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleHorizontalPan(_:)))
+        pan.maximumNumberOfTouches = 1
+        sceneView.addGestureRecognizer(pan)
 
         placeholder.tintColor = UIColor.systemOrange.withAlphaComponent(0.26)
         placeholder.contentMode = .scaleAspectFit
@@ -191,10 +206,24 @@ final class CatModelContainerView: UIView {
         ])
         isAccessibilityElement = true
         accessibilityLabel = "大橘的三维模型"
-        accessibilityHint = "单指拖动可以转动，双指可以缩放"
+        accessibilityHint = "左右拖动可以让大橘水平转身"
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setModelRoot(_ node: SCNNode) {
+        modelRoot = node
+    }
+
+    @objc private func handleHorizontalPan(_ gesture: UIPanGestureRecognizer) {
+        guard let modelRoot else { return }
+        let translation = gesture.translation(in: sceneView)
+        // SceneKit 的 Y 轴是模型的直立轴。只增量修改 yaw，位置、pitch、roll 始终不变。
+        modelRoot.eulerAngles.y += Float(translation.x) * 0.012
+        modelRoot.eulerAngles.x = 0
+        modelRoot.eulerAngles.z = 0
+        gesture.setTranslation(.zero, in: sceneView)
+    }
 
     func setLoaded(_ loaded: Bool) {
         placeholder.isHidden = loaded

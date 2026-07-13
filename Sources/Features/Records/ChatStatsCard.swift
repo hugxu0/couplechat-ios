@@ -27,7 +27,7 @@ struct ChatStatsCard: View {
             legendRow
         }
         .padding(DS.Spacing.card)
-        .dsCard()
+        .dsCard(radius: DS.Radius.card)
         .onChange(of: mode) { selectedIndex = nil }
         .task { await refreshBuckets() }
         .onReceive(store.messageStore.timelineStore.$messagesByChannel) { _ in
@@ -118,7 +118,7 @@ struct ChatStatsCard: View {
                 .onAppear { proxy.scrollTo("day-latest", anchor: .trailing) }
                 .onChange(of: buckets.days.count) { _, _ in proxy.scrollTo("day-latest", anchor: .trailing) }
             }
-            .frame(height: 105)
+            .frame(height: 92)
         case .months:
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -128,7 +128,7 @@ struct ChatStatsCard: View {
                 .onAppear { proxy.scrollTo("month-latest", anchor: .trailing) }
                 .onChange(of: buckets.months.count) { _, _ in proxy.scrollTo("month-latest", anchor: .trailing) }
             }
-            .frame(height: 105)
+            .frame(height: 92)
         }
     }
 
@@ -149,23 +149,16 @@ struct ChatStatsCard: View {
                                 .frame(height: geo.size.height * mine / Double(maxTotal))
                         }
                     }
-                    .frame(height: 76)
+                    .frame(height: 64)
                     .frame(width: barWidth)
-                    .background(
-                        LinearGradient(
-                            colors: [DS.Palette.innerSurface.opacity(0.95), DS.Palette.innerSurface.opacity(0.52)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing))
+                    .background(DS.Palette.innerSurface.opacity(0.72))
                     .clipShape(Capsule())
-                    .overlay(alignment: .leading) {
+                    .overlay {
                         Capsule()
-                            .fill(.white.opacity(0.18))
-                            .frame(width: max(2, barWidth * 0.18))
-                            .padding(.vertical, 4)
-                            .padding(.leading, 4)
+                            .strokeBorder(
+                                selected ? theme.accent.color : .white.opacity(0.15),
+                                lineWidth: selected ? 1.5 : 0.7)
                     }
-                    .overlay(Capsule().stroke(selected ? theme.accent.color : .white.opacity(0.16), lineWidth: selected ? 1.5 : 0.7))
-                    .shadow(color: selected ? theme.accent.color.opacity(0.16) : .black.opacity(0.06), radius: 5, y: 3)
                     Text(bar.label)
                         .font(DS.Typo.micro)
                         .foregroundStyle(selected ? theme.accent.color : DS.Palette.textSecondary)
@@ -183,6 +176,7 @@ struct ChatStatsCard: View {
             }
         }
         .padding(.horizontal, 2)
+        .padding(.top, 3)
     }
 
     // MARK: 图例（选中项的双方条数）

@@ -111,6 +111,7 @@ struct ChatMessageMeta: Codable, Equatable {
     var confirm: ActionConfirm?
     var search: SearchMeta?
     var interaction: ChatInteractionMeta?
+    var recallNotice: RecallNoticeMeta?
 
     init?(dict: [String: Any]) {
         var hasAny = false
@@ -132,6 +133,12 @@ struct ChatMessageMeta: Codable, Equatable {
         } else {
             self.interaction = nil
         }
+        if let recallDict = dict["recallNotice"] as? [String: Any] {
+            recallNotice = RecallNoticeMeta(dict: recallDict)
+            hasAny = recallNotice != nil || hasAny
+        } else {
+            recallNotice = nil
+        }
         guard hasAny else { return nil }
     }
 
@@ -139,6 +146,21 @@ struct ChatMessageMeta: Codable, Equatable {
         confirm = nil
         search = nil
         self.interaction = interaction
+        recallNotice = nil
+    }
+}
+
+struct RecallNoticeMeta: Codable, Equatable {
+    let messageId: String
+    let by: String
+    let byName: String
+
+    init?(dict: [String: Any]) {
+        guard let messageId = dict["messageId"] as? String,
+              let by = dict["by"] as? String else { return nil }
+        self.messageId = messageId
+        self.by = by
+        byName = dict["byName"] as? String ?? by
     }
 }
 

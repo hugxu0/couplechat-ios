@@ -160,6 +160,13 @@ extension ChatViewController {
 }
 
 extension ChatViewController: ChatTimelineControllerDelegate {
+    func timelineDidRequestReedit(recalledMessageId: String) {
+        guard let draft = store.messageStore.takeRecallDraft(messageId: recalledMessageId) else { return }
+        composer.setText(draft.text)
+        composer.focusTextInput()
+        reloadTimeline(animated: false)
+    }
+
     func timelineDidDecideConfirm(message: ChatMessage, decision: String) {
         guard message.meta?.confirm?.status == "pending" else { return }
         store.confirmAction(messageId: message.id, decision: decision)

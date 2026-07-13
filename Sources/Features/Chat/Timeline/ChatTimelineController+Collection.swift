@@ -17,11 +17,18 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
                 for: indexPath) as! ChatTimeCell
             cell.configure(text: text, usesLightContent: presentation.timelineUsesLightContent)
             return cell
-        case .system(_, let text):
+        case .system(let itemId, let text):
             let cell = collectionView.dequeueReusableCell(
                 withReuseIdentifier: ChatSystemCell.reuseId,
                 for: indexPath) as! ChatSystemCell
-            cell.configure(text: text)
+            let recalledMessageId = reeditMessageIdsByItemId[itemId]
+            cell.configure(
+                text: text,
+                showsReedit: recalledMessageId != nil,
+                accentColor: presentation.accentColor) { [weak self] in
+                    guard let self, let recalledMessageId else { return }
+                    self.delegate?.timelineDidRequestReedit(recalledMessageId: recalledMessageId)
+                }
             return cell
         case .message(let id):
             let cell = collectionView.dequeueReusableCell(

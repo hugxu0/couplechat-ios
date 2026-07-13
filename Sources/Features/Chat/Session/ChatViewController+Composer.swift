@@ -96,12 +96,10 @@ extension ChatViewController {
             || collectionView.isDecelerating
         let wasNearBottom = timelineController.isNearBottom()
         let anchor = wasNearBottom ? nil : timelineController.visibleAnchor()
-        let panelHeight = panelContainer.isHidden ? 0 : panelHeightConstraint.constant
-        let dockHeight = composerHeightConstraint.constant + panelHeight
-        let coveredBottom = panelContainer.isHidden
-            ? max(keyboardOverlap, view.safeAreaInsets.bottom)
-            : 0
-        let bottomInset = dockHeight + coveredBottom + 8
+        // keyboardLayoutGuide 已经同时处理键盘和底部安全区。直接读取布局后的
+        // dock 顶缘，避免 SwiftUI/系统 Tab 与 UIKit 各自再扣一次安全区。
+        view.layoutIfNeeded()
+        let bottomInset = max(0, view.bounds.maxY - bottomStack.frame.minY) + 8
         let bottomInsetDelta = bottomInset - currentListBottomInset
         currentListBottomInset = bottomInset
 

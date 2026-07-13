@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RemindersView: View {
     @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var theme: ThemeManager
     @StateObject private var model = PlanViewModel()
     @State private var section: PlanSection = .calendar
     @State private var scope = "shared"
@@ -51,24 +52,27 @@ struct RemindersView: View {
     }
 
     private var sectionPicker: some View {
-        Picker("计划类型", selection: $section) {
-            ForEach(PlanSection.allCases) { section in
-                Label(section.title, systemImage: section.icon).tag(section)
-            }
+        PlanSegmentedControl(
+            options: PlanSection.allCases,
+            selection: $section,
+            title: { $0.title },
+            accent: theme.accent.color,
+            height: 50)
+        .onChange(of: section) {
+            Haptics.selection()
         }
-        .pickerStyle(.segmented)
-        .frame(minHeight: 44)
         .accessibilityHint("在日程、提醒和备忘之间切换")
     }
 
     private var scopePicker: some View {
-        Picker("可见范围", selection: $scope) {
-            Label("共享", systemImage: "person.2.fill").tag("shared")
-            Label("私人", systemImage: "person.fill").tag("personal")
-        }
-        .pickerStyle(.segmented)
-        .controlSize(.small)
-        .frame(maxWidth: 220)
+        PlanSegmentedControl(
+            options: ["shared", "personal"],
+            selection: $scope,
+            title: { $0 == "shared" ? "共享" : "私人" },
+            accent: DS.Palette.purple,
+            height: 42)
+        .frame(maxWidth: 260)
+        .frame(maxWidth: .infinity, alignment: .center)
         .onChange(of: scope) {
             Haptics.selection()
             Task { await reload() }
@@ -158,5 +162,57 @@ struct RemindersView: View {
     private func deleteEvent(_ event: CalendarEvent) {
         guard let token = store.session?.token else { return }
         Task { await model.deleteEvent(event, token: token) }
+    }
+}
+
+private struct PlanSegmentedControl<Option: Hashable>: View {
+    let options: [Option]
+    @Binding var selection: Option
+    let title: (Option) -> String
+    let accent: Color
+    let height: CGFloat
+
+    @Namespace private var selectionAnimation
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    guard selection != option else { return }
+                    withAnimation(DS.Anim.springFast) { selection = option }
+                } label: {
+                    Text(title(option))
+                        .font(DS.Typo.button)
+                        .foregroundStyle(selection == option ? Color.white : DS.Palette.textSecondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .background {
+                            if selection == option {
+                                Capsule(style: .continuous)
+                                    .fill(LinearGradient(
+                                        colors: [accent.opacity(0.98), accent.opacity(0.72)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing))
+                                    .overlay {
+                                        Capsule(style: .continuous)
+                                            .stroke(.white.opacity(0.35), lineWidth: 0.7)
+                                    }
+                                    .shadow(color: accent.opacity(0.24), radius: 7, y: 3)
+                                    .matchedGeometryEffect(id: "selection", in: selectionAnimation)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selection == option ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .frame(height: height)
+        .background(.thinMaterial, in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(DS.Palette.textTertiary.opacity(0.15), lineWidth: 0.8)
+        }
+        .shadow(color: .black.opacity(0.045), radius: 9, y: 4)
     }
 }

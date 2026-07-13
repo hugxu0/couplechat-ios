@@ -27,7 +27,7 @@ const allowedMime = new Set([
 ]);
 
 const uploadQuerySchema = z.object({
-  purpose: z.enum(["message", "avatar", "sticker"]),
+  purpose: z.enum(["message", "album", "avatar", "sticker"]),
 });
 
 function extensionFor(mimeType: string) {
