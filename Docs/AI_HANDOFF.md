@@ -144,7 +144,7 @@ docker compose -f compose.production.yml logs --tail=100 couplechat-server
 - Bark 点击后的页面 deep link 尚未接入。
 - iPad 真机和两台设备同时在线的完整矩阵尚未执行；聊天主从双栏、照片拖放和完整键盘快捷键仍待补齐。
 - 相册已支持从聊天入册及相册内直接选择普通照片/视频；Live Photo 仍只会在聊天选择阶段降级成静态图，尚未实现配对资源发送与 `PHLivePhotoView` 预览。
-- Windows 不能本地编译 iOS，需依赖 GitHub Actions 或 Mac；真机反馈第二轮已通过快速 macOS Release Archive（`29215622552`）。
+- Windows 不能本地编译 iOS，需依赖 GitHub Actions 或 Mac；真机反馈第二轮已通过完整 macOS CI 与 Release Archive（`29215988819`）。
 - 清空 App 数据后，已丢失本地文件的失败媒体无法继续重传。
 - `MessageStore` 与 `ChatStore` 仍是兼容 facade；新增领域能力不得重新塞回 facade。
 
