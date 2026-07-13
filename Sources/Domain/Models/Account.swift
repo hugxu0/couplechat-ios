@@ -11,20 +11,17 @@ struct Session: Codable {
     let username: String
     let name: String
     let deviceId: String?
-    let paired: Bool?
 
     init(
         token: String,
         username: String,
         name: String,
-        deviceId: String? = nil,
-        paired: Bool? = nil
+        deviceId: String? = nil
     ) {
         self.token = token
         self.username = username
         self.name = name
         self.deviceId = deviceId
-        self.paired = paired
     }
 }
 

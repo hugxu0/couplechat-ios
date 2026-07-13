@@ -101,6 +101,7 @@ async function main() {
       [21, "shared_calendar"],
       [22, "shared_pet"],
       [23, "pet_care_state"],
+      [24, "remove_public_registration_invites"],
     ] as const;
     assertOk(
       "数据库结构版本完整",

@@ -3,9 +3,7 @@ import SwiftUI
 struct AccountDevicesView: View {
     @EnvironmentObject private var store: ChatStore
     @State private var devices: [AccountDevice] = []
-    @State private var invite: CoupleInvite?
     @State private var loading = true
-    @State private var generatingInvite = false
     @State private var errorText: String?
     @State private var deviceToRevoke: AccountDevice?
     private let repository = DeviceSessionRepository()
@@ -13,7 +11,6 @@ struct AccountDevicesView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: DS.Spacing.section) {
-                inviteCard
                 deviceSection
             }
             .frame(maxWidth: 720)
@@ -21,7 +18,7 @@ struct AccountDevicesView: View {
             .frame(maxWidth: .infinity)
         }
         .background(AppPageBackground())
-        .navigationTitle("配对与设备")
+        .navigationTitle("设备管理")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadDevices() }
         .refreshable { await loadDevices() }
@@ -39,44 +36,12 @@ struct AccountDevicesView: View {
         }
     }
 
-    private var inviteCard: some View {
-        AppCard {
-            VStack(alignment: .leading, spacing: DS.Spacing.gap) {
-                AppSectionHeader(
-                    title: "配对邀请码",
-                    subtitle: "只有新账号加入当前两人空间时才需要")
-                if let invite {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(invite.code)
-                            .font(.system(.title, design: .monospaced).weight(.bold))
-                            .tracking(3)
-                            .foregroundStyle(DS.Palette.accent)
-                            .textSelection(.enabled)
-                        Spacer()
-                        ShareLink(item: "来和我加入悄悄话：配对邀请码 \(invite.code)") {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.title3.weight(.semibold))
-                        }
-                        .accessibilityLabel("分享邀请码")
-                    }
-                    Text("有效期至 \(dateText(invite.expiresAt))。再次生成会让旧邀请码失效。")
-                        .font(DS.Typo.caption)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                }
-                if let errorText { StatusBanner(text: errorText, kind: .error) }
-                AppPrimaryButton(
-                    title: invite == nil ? "生成邀请码" : "重新生成邀请码",
-                    busy: generatingInvite,
-                    action: generateInvite)
-            }
-        }
-    }
-
     private var deviceSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.gap) {
             AppSectionHeader(
                 title: "已登录设备",
                 subtitle: "手机和平板可以同时在线，消息、计划和共同内容会同步")
+            if let errorText { StatusBanner(text: errorText, kind: .error) }
             if loading && devices.isEmpty {
                 AppCard {
                     HStack(spacing: DS.Spacing.gap) {
@@ -153,22 +118,6 @@ struct AccountDevicesView: View {
             errorText = error.localizedDescription
         }
         loading = false
-    }
-
-    private func generateInvite() {
-        guard let token = store.session?.token, !generatingInvite else { return }
-        generatingInvite = true
-        errorText = nil
-        Task {
-            do {
-                invite = try await store.coupleOnboarding.newInvite(token: token)
-                Haptics.light()
-            } catch {
-                errorText = error.localizedDescription
-                Haptics.medium()
-            }
-            generatingInvite = false
-        }
     }
 
     private func revokeSelectedDevice() {

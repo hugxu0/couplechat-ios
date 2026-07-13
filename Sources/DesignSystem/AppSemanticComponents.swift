@@ -186,7 +186,7 @@ struct DestructiveActionRow: View {
     }
 }
 
-struct PairedEchoIndicator: View {
+struct CoupleEchoIndicator: View {
     var body: some View {
         HStack(spacing: 3) {
             Circle().fill(DS.Palette.blue).frame(width: 6, height: 6)

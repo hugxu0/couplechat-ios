@@ -26,12 +26,14 @@ function parseSeedAccounts(): SeedAccount[] {
 
 export async function seedAccounts() {
   const seed = parseSeedAccounts();
-  if (seed.length === 0 && config.isProduction) {
-    throw new Error("COUPLECHAT_ACCOUNTS is required for first production boot");
+  const fixedSeed = seed.filter((item) => item.username === "xu" || item.username === "si");
+  const fixedUsernames = new Set(fixedSeed.map((item) => item.username));
+  if ((fixedSeed.length !== 2 || fixedUsernames.size !== 2) && config.isProduction) {
+    throw new Error("COUPLECHAT_ACCOUNTS must define exactly the fixed xu and si accounts");
   }
 
   const now = Date.now();
-  for (const account of seed) {
+  for (const account of fixedSeed) {
     const existing = await get<AccountRow>("SELECT * FROM accounts WHERE username = ?", [account.username]);
     if (existing) continue;
 
@@ -125,7 +127,9 @@ export async function authenticate(username: string, password: string) {
     `SELECT account.*, member.couple_id, member.id AS member_id
        FROM accounts account
        LEFT JOIN couple_members member ON member.account_id = account.id AND member.state = 'active'
-      WHERE account.username = ? AND account.status = 'active'`,
+      WHERE account.username = ?
+        AND account.username IN ('xu', 'si')
+        AND account.status = 'active'`,
     [username],
   );
   if (!account || !verifyPassword(password, account.password_hash)) return null;

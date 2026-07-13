@@ -54,7 +54,6 @@ export async function registerAuthRoutes(app: FastifyInstance) {
       username: user.username,
       name: user.name,
       deviceId: user.deviceId,
-      paired: Boolean(user.coupleId),
     };
   });
 
@@ -70,7 +69,6 @@ export async function registerAuthRoutes(app: FastifyInstance) {
       username: user.username,
       name: user.name,
       deviceId: user.deviceId,
-      paired: Boolean(user.coupleId),
     };
   });
 
@@ -78,7 +76,6 @@ export async function registerAuthRoutes(app: FastifyInstance) {
   app.get("/api/me", { preHandler: requireAuth }, async (request) => ({
     username: request.user!.username,
     name: request.user!.name,
-    paired: Boolean(request.user!.coupleId),
   }));
 
   app.post("/api/me/push/bark", { preHandler: requireAuth }, async (request, reply) => {

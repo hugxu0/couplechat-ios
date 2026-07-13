@@ -42,7 +42,7 @@ function userFrom(socket: Socket): AuthUser {
 }
 
 function roomFor(channel: ClientChannel, user: AuthUser) {
-  return channel === "ai" ? `account:${user.accountId ?? user.username}` : `couple:${user.coupleId ?? "unpaired"}`;
+  return channel === "ai" ? `account:${user.accountId ?? user.username}` : `couple:${user.coupleId ?? "missing"}`;
 }
 
 async function safeAck(fn: () => Promise<unknown>, ack?: Ack) {

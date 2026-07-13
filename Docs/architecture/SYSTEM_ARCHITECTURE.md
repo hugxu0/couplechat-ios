@@ -29,7 +29,7 @@ Fastify + Socket.IO · 127.0.0.1:8080
 - `CouplePetRepository`：服务端宠物快照和幂等互动；
 - `VoiceTranscriptRepository`：转写查询、重试与人工纠正；
 - `SyncV2Repository`：持久化变更 cursor、ack 和离线删除恢复；
-- `CoupleOnboardingRepository`、`DeviceSessionRepository`：注册配对与多设备管理；
+- `DeviceSessionRepository`：多设备登录、列表和撤销；
 - `ChatStore`：持有 Socket，分发事件并为 View 暴露统一接口。
 
 `Sources/Platform` 与 `Features/*/Data` 承载运行时实现：
@@ -64,8 +64,7 @@ Sources/
     Sync/                    Sync V2 持久化游标与 ack
   DesignSystem/              视觉 token、语义页面组件、通用图片组件
   Features/
-    Auth/
-      Data/                  注册、配对与登录数据源
+    Auth/                    固定账号登录界面
     Chat/
       Data/                  消息 facade、时间线、outbox、转写与同步协调
       Home/                  聊天首页装配、状态/动作模型与子视图
@@ -138,7 +137,7 @@ server/src/db/
   client.ts        PostgreSQL pool、查询与连接生命周期
   transaction.ts   事务边界
   rows.ts          数据库行类型
-  migrate.ts       v1-v23 版本化 migration 与受控执行器（仅追加，v1-v10 保持兼容）
+  migrate.ts       v1-v24 版本化 migration 与受控执行器（仅追加，历史版本保持不变）
   index.ts         稳定 re-export，不承载实现
 ```
 
@@ -167,7 +166,7 @@ server/src/db/
 - 服务端把个人 AI 私聊兼容投影为 `ai:<username>`，事实所有权由 `conversation.owner_account_id` 决定。
 - 公聊房间为 `couple:<coupleId>`，个人事件房间为 `account:<accountId>`；`user:<username>` 只保留兼容监听。
 - 任何 AI 工具都不能读取另一位用户的 AI 私聊。
-- legacy `xu/si` 使用完整 Agent + Memory 工具；新注册情侣在工具完成 conversation_id 全租户迁移前使用只看当前消息的无历史 AI 模式，避免跨情侣上下文串用。
+- `xu/si` 使用完整 Agent + Memory 工具；共享与私人 AI 数据继续通过 conversation/account/couple ownership 约束。
 
 ## 不可破坏的约束
 

@@ -1142,6 +1142,21 @@ export const schemaMigrations: readonly SchemaMigration[] = [
     ALTER TABLE media_assets ALTER COLUMN source_message_id DROP NOT NULL;
     `,
   },
+  {
+    version: 24,
+    name: "remove_public_registration_invites",
+    sql: `
+    UPDATE auth_sessions session
+       SET revoked_at = COALESCE(session.revoked_at, (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT)
+      FROM accounts account
+     WHERE session.account_id = account.id
+       AND account.username NOT IN ('xu', 'si');
+    UPDATE accounts
+       SET status = 'disabled', updated_at = (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+     WHERE username NOT IN ('xu', 'si') AND status = 'active';
+    DROP TABLE IF EXISTS couple_invites;
+    `,
+  },
 ];
 
 export async function migrate(

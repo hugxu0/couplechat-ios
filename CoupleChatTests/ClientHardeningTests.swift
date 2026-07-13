@@ -64,17 +64,14 @@ final class ClientHardeningTests: XCTestCase {
         XCTAssertEqual(AIMemoryDetailView.resolvedImportance(original: 5, isImportant: false), 3)
     }
 
-    func testSessionPairingFlagSupportsNewAndLegacyResponses() throws {
+    func testSessionDecodesFixedAccountResponse() throws {
         let decoder = JSONDecoder()
-        let unpaired = try decoder.decode(
+        let session = try decoder.decode(
             Session.self,
-            from: Data(#"{"token":"t","username":"new_user","name":"新人","deviceId":"dev_1","paired":false}"#.utf8))
-        let legacy = try decoder.decode(
-            Session.self,
-            from: Data(#"{"token":"t","username":"xu","name":"小旭","deviceId":"dev_2"}"#.utf8))
+            from: Data(#"{"token":"t","username":"xu","name":"小旭","deviceId":"dev_1"}"#.utf8))
 
-        XCTAssertEqual(unpaired.paired, false)
-        XCTAssertNil(legacy.paired)
+        XCTAssertEqual(session.username, "xu")
+        XCTAssertEqual(session.deviceId, "dev_1")
     }
 
     func testNewServerErrorsHaveActionableMessages() {
@@ -83,7 +80,7 @@ final class ClientHardeningTests: XCTestCase {
             "消息发送超过 2 分钟，已经不能撤回")
         XCTAssertEqual(
             ServerErrorCode.message(for: "couple_required", fallback: "fallback"),
-            "请先完成情侣配对，再使用共享功能")
+            "共享空间暂时不可用，请联系管理员")
     }
 
     private func message(

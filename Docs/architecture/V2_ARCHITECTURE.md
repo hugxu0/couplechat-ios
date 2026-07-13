@@ -2,13 +2,13 @@
 
 > 决策日期：2026-07-13
 > 迁移原则：扩表 → 回填 → 双写 → 切流 → 最后收缩
-> 兼容要求：不修改任何已发布的 v1–v10 migration；v11–v23 已作为追加迁移落地，后续只能继续追加；`xu / si` 不重新注册、不重新配对、数据无损
+> 兼容要求：不修改任何已发布的 v1–v23 migration；v24 已移除公开注册与邀请码设施；`xu / si` 及现有共享数据保持无损
 
 截至 2026-07-13，身份、设备会话、conversation ownership、Sync V2、Memory ownership、转写、相册、日历和宠物的可运行基线已落地。下文中 preference 云同步、通用 notification intent、短期 access/refresh token、`sync:available` 唤醒和完整统一媒体库仍是后续目标，不应误读成当前生产能力。
 
 ## 1. 为什么先做公共底座
 
-V2 要支持其他情侣、同账号多设备、相册、日历和服务端宠物。如果继续使用全局 `couple` channel、账号级单 Bark key 和无确认的 Socket 状态覆盖，新功能完成后仍会因所有权和同步模型变化而重写。
+当前产品要支持同账号多设备、相册、日历和服务端宠物。即使只服务两位用户，也不能继续使用无所有权的全局数据、账号级单 Bark key 和无确认的 Socket 状态覆盖。
 
 这里的情侣隔离首先是功能正确性，而不是安全优先级：服务端必须知道一张照片、一个计划和一只宠物究竟属于哪对情侣。
 
@@ -50,7 +50,7 @@ Account
 
 ## 3. 核心表
 
-### 3.1 Account、Couple、Member、Invite
+### 3.1 Account、Couple、Member
 
 现有 `accounts.username` 在兼容期保留为主键，新增不可变 `accounts.id`、`status`、`version`。
 
@@ -63,12 +63,9 @@ couple_members
   UNIQUE(couple_id, account_id)
   UNIQUE(account_id) WHERE state = 'active'
 
-couple_invites
-  id, couple_id, code_hash, created_by_member_id,
-  expires_at, used_at, used_by_account_id, revoked_at
 ```
 
-一对情侣最多两名 active member，由创建/加入事务校验。邀请码只存 hash。
+生产环境只保留 `xu/si` 两个 active account 和现有 active couple/member。v24 停用其他账号、撤销其会话并删除 `couple_invites`；不再提供运行时创建或加入关系的接口。
 
 ### 3.2 Device 与 Session
 
@@ -365,7 +362,7 @@ xu / si AI conversation conv_legacy_ai_xu / conv_legacy_ai_si
 | v13 | `identity_v2_expand` | 旧账号、密码、消息数量不变 |
 | v14 | `devices_sessions_push` | 手机和平板独立登录/撤销；旧 Bark 继续工作 |
 | v15 | `reminder_delivery_per_endpoint` | 同账号多设备独立去重与失败重试 |
-| v16 | `conversations_and_ownership` | 新测试情侣无法查询 legacy couple 数据 |
+| v16 | `conversations_and_ownership` | 共享与私人数据按 conversation/account/couple 归属 |
 | v17 | `sync_v2_core` | 事务事件、设备 cursor 与撤回 tombstone |
 | v18 | `tenant_memory_and_settings` | Memory/简单共享设置按 account/couple 隔离 |
 | v19 | `voice_transcription` | 转写状态、job lease、纠正与撤回级联 |
@@ -373,6 +370,7 @@ xu / si AI conversation conv_legacy_ai_xu / conv_legacy_ai_si
 | v21 | `shared_calendar` | 共享/私人日历、参与者和版本冲突 |
 | v22 | `shared_pet` | 宠物、题目、双人回应、藏品、场景和足迹 |
 | v23 | `pet_care_state` | 大橘四项状态、互动冷却与持久化养成状态 |
+| v24 | `remove_public_registration_invites` | 停用非固定账号、撤销会话并删除邀请码表 |
 
 最终 contract migration 只在所有真实设备升级 V2 后执行，包括删除旧全局 clientId 索引、停止 legacy 双写和将新 ownership 字段设为 NOT NULL。
 
@@ -381,11 +379,11 @@ xu / si AI conversation conv_legacy_ai_xu / conv_legacy_ai_si
 1. 只部署 schema expansion，不改变接口行为。
 2. 部署同时支持 v1/v2 的服务器；v1 请求在服务端解析为 legacy account/couple。
 3. legacy couple 的 v1 mutation 双写新 canonical 表与旧投影。
-4. 发布 iOS V2，注册 device、使用 cursor sync、导入本地账号数据。
+4. 发布 iOS V2，绑定 device、使用 cursor sync、导入本地账号数据。
 5. 确认两位用户的实际 iPhone/iPad 均为 protocol v2。
-6. 再开放其他情侣注册配对。
-7. `/api/accounts` 兼容期只返回 `xu/si`；V2 登录不再依赖公开账号列表。
-8. 旧客户端退出后停止双写，最后执行 contract migration。
+6. `/api/accounts` 只返回 `xu/si`，服务端认证同时执行固定账号白名单。
+7. v24 删除公开注册/邀请码接口并停用历史第三方账号。
+8. 旧客户端退出后停止双写，最后执行其余 contract migration。
 
 ## 12. 轻量备份
 
@@ -398,7 +396,7 @@ xu / si AI conversation conv_legacy_ai_xu / conv_legacy_ai_si
 
 ## 13. 必须自动化的验收矩阵
 
-- legacy `xu/si` 数据无损，新测试 couple 无法读取其消息、Memory、presence、提醒和媒体。
+- `xu/si` 数据无损，已停用账号和被撤销会话不能继续登录或读取数据。
 - 同一账号 iPhone/iPad 同时在线；撤销一个 session 不影响另一个。
 - A 离线、B 修改任意实体，A 仅靠 cursor 补齐；mutation 重试十次只产生一次结果。
 - recall/delete 在离线设备恢复后清掉所有派生数据。

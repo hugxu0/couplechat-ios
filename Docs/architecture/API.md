@@ -15,23 +15,11 @@ Authorization: Bearer <token>
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `GET` | `/health` | 数据库健康检查 |
-| `GET` | `/api/accounts` | 未登录时返回 legacy 快捷账号；带 token 时返回当前情侣成员 |
+| `GET` | `/api/accounts` | 未登录时返回 `xu/si` 快捷账号；带 token 时返回当前共享空间成员 |
 | `POST` | `/api/login` | legacy 兼容登录；旧客户端可不传设备信息 |
 | `POST` | `/api/v2/login` | 使用 `username/password/device` 登录并绑定当前设备 |
-| `POST` | `/api/v2/register` | 使用 `username/password/name/device` 注册并绑定当前设备 |
 
-登录成功返回 `token`、`username`、`name`、`deviceId` 和 `paired`。V2 的登录与注册都要求 device；字段与设备 Bark PUT 使用的安装信息一致。注册用户名为 3–24 位小写字母、数字或下划线，密码至少 8 位。
-
-### 注册与配对
-
-| 方法 | 路径 | 用途 |
-|---|---|---|
-| `POST` | `/api/v2/couples` | 创建两人空间并生成 7 天邀请码 |
-| `POST` | `/api/v2/couples/invites` | 重新生成邀请码，旧码立即失效 |
-| `POST` | `/api/v2/couples/join` | 使用邀请码加入，最多两名 active member |
-| `GET` | `/api/v2/me/couple` | 查询当前账号是否已配对 |
-
-创建/加入操作按账号事务串行，避免同一账号并发进入两段关系。新注册情侣的大橘当前使用“无历史模式”：可正常回复当前消息和识图，但在 conversation/Memory 工具完成全租户迁移前不会读取历史。
+登录成功返回 `token`、`username`、`name` 和 `deviceId`。V2 登录要求 device，字段与设备 Bark PUT 使用的安装信息一致。服务端只认证 `xu/si`；注册、情侣空间创建/加入、邀请码和配对状态接口均不存在。
 
 ### 当前用户与同步
 
@@ -47,7 +35,7 @@ Authorization: Bearer <token>
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `GET` | `/api/v2/me/devices` | 查看当前账号的有效设备与 Bark 状态 |
-| `PUT` | `/api/v2/me/devices/current/push/bark` | 注册/更新当前安装并设置本设备 Bark key |
+| `PUT` | `/api/v2/me/devices/current/push/bark` | 绑定/更新当前安装并设置本设备 Bark key |
 | `DELETE` | `/api/v2/me/devices/:id` | 撤销一台设备并停用它的推送 endpoint |
 
 PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`buildNumber`、`locale`、`timezone` 和可为 null 的 `barkKey`。安装 ID 由 iOS Keychain 持久化；同一账号的 iPhone/iPad 可各自保留独立 Bark key。

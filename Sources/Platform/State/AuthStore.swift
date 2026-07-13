@@ -72,26 +72,6 @@ final class AuthStore: ObservableObject {
         return try JSONDecoder().decode(Session.self, from: data)
     }
 
-    func register(username: String, displayName: String, password: String) async throws -> Session {
-        var request = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/v2/register"))
-        request.timeoutInterval = 15
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(RegisterRequest(
-            username: username,
-            displayName: displayName,
-            password: password,
-            device: currentDevice()))
-        let (data, response) = try await httpClient.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              http.statusCode == 201 else {
-            let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
-            let message = ServerErrorCode.message(for: code, fallback: "注册失败，请稍后重试")
-            throw NSError(domain: "register", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
-        }
-        return try JSONDecoder().decode(Session.self, from: data)
-    }
-
     private func currentDevice() -> LoginDevice {
         let bundle = Bundle.main
         return LoginDevice(
@@ -220,13 +200,6 @@ final class AuthStore: ObservableObject {
 
 private struct LoginRequest: Encodable {
     let username: String
-    let password: String
-    let device: LoginDevice
-}
-
-private struct RegisterRequest: Encodable {
-    let username: String
-    let displayName: String
     let password: String
     let device: LoginDevice
 }

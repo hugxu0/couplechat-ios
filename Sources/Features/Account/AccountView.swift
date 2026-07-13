@@ -262,7 +262,7 @@ struct AccountView: View {
             NavigationLink {
                 AccountDevicesView().appSubpageChrome()
             } label: {
-                settingRowLabel(icon: "iphone.and.arrow.forward", title: "配对与设备", subtitle: "邀请码 · 手机与 iPad 登录")
+                settingRowLabel(icon: "iphone.and.arrow.forward", title: "设备管理", subtitle: "手机与 iPad 同时登录")
             }
             .buttonStyle(PressableStyle())
             divider

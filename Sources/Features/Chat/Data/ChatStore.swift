@@ -33,7 +33,6 @@ final class ChatStore: ObservableObject {
     let personalItems: PersonalItemsRepository
     let memoryControl: AIMemoryRepository
     let syncV2: SyncV2Repository
-    let coupleOnboarding: CoupleOnboardingRepository
     lazy var historySync = HistorySyncCoordinator(
         isLoggedIn: { [weak self] in self?.loggedIn == true },
         historyWorker: { [weak self] channel, onProgress in
@@ -72,7 +71,6 @@ final class ChatStore: ObservableObject {
     // 便捷访问（保持向后兼容）
     var session: Session? { auth.session }
     var loggedIn: Bool { auth.loggedIn }
-    var requiresPairing: Bool { auth.session?.paired == false }
     var partner: Account? { auth.partner }
     var messagesByChannel: [String: [ChatMessage]] { messageStore.messagesByChannel }
     var readStates: [String: [String: Double]] { messageStore.readStates }
@@ -133,7 +131,6 @@ final class ChatStore: ObservableObject {
         personalItems = PersonalItemsRepository(httpClient: httpClient)
         memoryControl = AIMemoryRepository(httpClient: httpClient)
         syncV2 = SyncV2Repository(httpClient: httpClient)
-        coupleOnboarding = CoupleOnboardingRepository(httpClient: httpClient)
         auth.socketProvider = realtime
         messageStore.socketProvider = realtime
         shared.socketProvider = realtime
@@ -162,11 +159,6 @@ final class ChatStore: ObservableObject {
 
     func bootstrap() async {
         guard let session = auth.savedSession() else { return }
-        if session.paired == false {
-            auth.activate(session, accounts: [], persist: false)
-            MediaFavoriteStore.shared.activate(username: session.username)
-            return
-        }
         let snapshotTask = Task { try await fetchBootstrap(session: session) }
         localCacheAvailable = await openLocalDatabase(username: session.username)
         if localCacheAvailable {
@@ -195,11 +187,6 @@ final class ChatStore: ObservableObject {
 
     func login(username: String, password: String) async throws {
         let session = try await auth.authenticate(username: username, password: password)
-        if session.paired == false {
-            auth.activate(session, accounts: [], persist: true)
-            MediaFavoriteStore.shared.activate(username: session.username)
-            return
-        }
         let snapshotTask = Task { try await fetchBootstrap(session: session) }
         localCacheAvailable = await openLocalDatabase(username: session.username)
         if localCacheAvailable {
@@ -582,62 +569,6 @@ final class ChatStore: ObservableObject {
     private func stopPersistentSyncLoop() {
         persistentSyncTask?.cancel()
         persistentSyncTask = nil
-    }
-
-    func register(username: String, displayName: String, password: String) async throws {
-        let session = try await auth.register(
-            username: username,
-            displayName: displayName,
-            password: password)
-        auth.activate(session, accounts: [], persist: true)
-        MediaFavoriteStore.shared.activate(username: session.username)
-    }
-
-    func refreshPairingStatus() async {
-        guard let session = auth.session, session.paired == false else { return }
-        guard (try? await coupleOnboarding.status(token: session.token)) == true else { return }
-        await completePairing()
-    }
-
-    func createCouple(name: String) async throws -> CoupleCreationResult {
-        guard let session = auth.session else { throw BootstrapError.unauthorized }
-        return try await coupleOnboarding.create(name: name, token: session.token)
-    }
-
-    func joinCouple(code: String) async throws {
-        guard let session = auth.session else { throw BootstrapError.unauthorized }
-        try await coupleOnboarding.join(code: code, token: session.token)
-        await completePairing()
-    }
-
-    func completePairing() async {
-        guard let current = auth.session else { return }
-        let session = Session(
-            token: current.token,
-            username: current.username,
-            name: current.name,
-            deviceId: current.deviceId,
-            paired: true)
-        localCacheAvailable = await openLocalDatabase(username: session.username)
-        if localCacheAvailable {
-            await messageStore.restoreLocalCache(for: session)
-            await shared.restoreCachedSharedState()
-        }
-        auth.activate(session, accounts: [], persist: true)
-        MediaFavoriteStore.shared.activate(username: session.username)
-        auth.restoreCachedPartner()
-        realtime.connect()
-        do {
-            let snapshot = try await fetchBootstrap(session: session)
-            await messageStore.applyBootstrap(snapshot, session: session)
-            shared.applySharedInit(snapshot.sharedState)
-            auth.activate(session, accounts: snapshot.accounts, persist: false)
-            await recoverSyncV2()
-        } catch BootstrapError.unauthorized {
-            logout()
-        } catch {
-            realtime.setLastError(error.localizedDescription)
-        }
     }
 
     @discardableResult

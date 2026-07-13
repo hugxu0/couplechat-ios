@@ -15,7 +15,6 @@ import { registerAiDebugRoutes } from "./ai/debug/routes";
 import { registerAiMcpRoutes } from "./ai/mcp/routes";
 import { registerMemoryRoutes } from "./ai/memory/routes";
 import { registerSyncV2Routes } from "./sync/v2Routes";
-import { registerCoupleRoutes } from "./auth/coupleRoutes";
 import { errorCodeFor } from "./errors/errorCodes";
 import { registerTranscriptionRoutes } from "./transcription/routes";
 import { registerAlbumRoutes } from "./albums/routes";
@@ -63,7 +62,6 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   app.get("/health", readiness);
 
   await registerAuthRoutes(app);
-  await registerCoupleRoutes(app);
   await registerDeviceRoutes(app);
   await registerMediaAccessRoutes(app);
   await registerUploadRoutes(app);

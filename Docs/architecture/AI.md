@@ -1,6 +1,6 @@
 # 大橘 AI 系统
 
-> 当前生产是 legacy V1；本文同时描述尚未部署的 V2 候选。legacy `xu/si` 使用完整 Agent、MCP、历史检索与自动 Memory；新注册情侣当前只使用本条消息和当前图片的无历史回复，完整工具链在 conversation ownership 全租户化后再开放。
+> 当前生产只服务 `xu/si`。两位用户使用完整 Agent、MCP、历史检索与自动 Memory，数据通过 conversation/account/couple ownership 约束。
 
 ## 回答链路
 
@@ -16,7 +16,7 @@ legacy `xu/si` 主人消息写入 PostgreSQL
        → 消息入库并广播
 ```
 
-`couple` 频道仅在出现 `AI_TRIGGER_ALIASES` 时直接回答；个人 `ai` 频道每条文字或图片都进入回答链路。每个频道串行执行，超时会释放队列并提供可见反馈，积压时保留最新请求。新情侣也遵守相同触发规则，但目前不注入历史摘要、Memory 或 MCP 工具。
+`couple` 频道仅在出现 `AI_TRIGGER_ALIASES` 时直接回答；个人 `ai` 频道每条文字或图片都进入回答链路。每个频道串行执行，超时会释放队列并提供可见反馈，积压时保留最新请求。
 
 ## 代码位置
 
@@ -35,7 +35,7 @@ legacy `xu/si` 主人消息写入 PostgreSQL
 
 ## Agent 输入
 
-legacy 完整 Agent 每轮初始输入包含北京时间、说话人、频道权限、窗口外摘要、最近 14 条聊天和当前问题。工具结果由 Agent 在同一轮继续处理，不重复塞进初始输入。新情侣的候选实现只传当前问题和当前图片，避免旧全局上下文跨情侣串用。
+完整 Agent 每轮初始输入包含北京时间、说话人、频道权限、窗口外摘要、最近 14 条聊天和当前问题。工具结果由 Agent 在同一轮继续处理，不重复塞进初始输入。
 
 窗口外摘要保存在 `ai_runtime_state`，它是可重建的上下文，不是长期事实，也不能替代主人原文证据。
 
@@ -79,7 +79,7 @@ legacy 完整 Agent 每轮初始输入包含北京时间、说话人、频道权
 - 可以分别立即整理共同聊天和当前账号的 AI 私聊。
 - 列表已支持 cursor 分页、版本冲突和 Sync V2 跨设备刷新。
 
-尚未完成的是来源证据一键跳回聊天和本地离线缓存；完整 Agent 自动整理对新情侣开放前，还需把所有 runtime/tool 调用迁移到 `conversation_id/couple_id/account_id`。详见 `V2_ARCHITECTURE.md`。
+尚未完成的是来源证据一键跳回聊天和本地离线缓存；runtime/tool 的长期收敛仍以 `conversation_id/couple_id/account_id` 为边界。详见 `V2_ARCHITECTURE.md`。
 
 ## MCP 工具
 
@@ -127,7 +127,7 @@ EMBEDDING_DIM=1024
 
 ## 本机调试
 
-仅在迁移到 v23 的隔离恢复库运行调试服务后打开 `http://127.0.0.1:8080/ai-debug`。当前 V2 工作树不得用 `npm run dev:cloud-db` 直接写生产库。调试页支持：
+仅在迁移到 v24 的隔离恢复库运行调试服务后打开 `http://127.0.0.1:8080/ai-debug`。当前 V2 工作树不得用 `npm run dev:cloud-db` 直接写生产库。调试页支持：
 
 - 两位账号与公聊/私聊切换；
 - 查看 Agent instructions、输入、工具调用、输出和耗时；

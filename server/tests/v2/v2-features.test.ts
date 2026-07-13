@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { withTestDatabase } from "../support/postgresHarness";
 
-test("V2 transcription, albums, calendar and pet are durable and couple-isolated", async () => {
+test("V2 transcription, albums, calendar and pet are durable for the fixed couple", async () => {
   const previousTranscription = {
     provider: process.env.TRANSCRIPTION_PROVIDER,
     baseUrl: process.env.TRANSCRIPTION_BASE_URL,
@@ -17,6 +17,8 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
     await withTestDatabase(async () => {
       const { buildApp } = await import("../../src/app");
       const { all, get, run } = await import("../../src/db");
+      const { ensureLegacyConversations, ensureLegacyCouple } = await import("../../src/auth/accounts");
+      const { hashPassword } = await import("../../src/auth/password");
       const { verifyActiveToken } = await import("../../src/auth/token");
       const { createMessage, fetchMessages, recallMessage, searchMessages } = await import("../../src/chat/messageService");
       const { runTranscriptWorkerOnce } = await import("../../src/transcription/service");
@@ -32,32 +34,30 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
         locale: "zh_CN",
         timezone: "Asia/Shanghai",
       });
-      const register = async (username: string) => {
+      const createFixedAccount = async (username: string, displayName: string) => {
+        const now = Date.now();
+        await run(
+          `INSERT INTO accounts
+           (id, username, display_name, password_hash, avatar, status, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, '', 'active', 0, ?, ?)`,
+          [`acc_legacy_${username}`, username, displayName, hashPassword("password-123"), now, now],
+        );
+      };
+      await createFixedAccount("xu", "小旭");
+      await createFixedAccount("si", "小偲");
+      await ensureLegacyCouple();
+      await ensureLegacyConversations();
+      const login = async (username: string) => {
         const response = await app.inject({
           method: "POST",
-          url: "/api/v2/register",
-          payload: { username, displayName: username.toUpperCase(), password: "password-123", device: device(username) },
+          url: "/api/v2/login",
+          payload: { username, password: "password-123", device: device(username) },
         });
-        assert.equal(response.statusCode, 201, response.body);
+        assert.equal(response.statusCode, 200, response.body);
         return response.json().token as string;
       };
-      const pair = async (ownerToken: string, memberToken: string, name: string) => {
-        const created = await app.inject({
-          method: "POST", url: "/api/v2/couples", headers: auth(ownerToken), payload: { name },
-        });
-        assert.equal(created.statusCode, 201, created.body);
-        const invitation = created.json().invite.code as string;
-        const joined = await app.inject({
-          method: "POST", url: "/api/v2/couples/join", headers: auth(memberToken), payload: { code: invitation },
-        });
-        assert.equal(joined.statusCode, 200, joined.body);
-      };
-      const aliceToken = await register("alice");
-      const bobToken = await register("bob_user");
-      const carolToken = await register("carol");
-      const daveToken = await register("dave_user");
-      await pair(aliceToken, bobToken, "Alice + Bob");
-      await pair(carolToken, daveToken, "Carol + Dave");
+      const aliceToken = await login("xu");
+      const bobToken = await login("si");
       const alice = await verifyActiveToken(aliceToken);
       const bob = await verifyActiveToken(bobToken);
       assert.ok(alice?.coupleId && bob?.coupleId);
@@ -71,7 +71,7 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       };
 
       // Transcription: queued -> processing -> completed, correction is returned and searchable.
-      await insertUpload("up_voice_success_001", "alice", "audio/m4a");
+      await insertUpload("up_voice_success_001", "xu", "audio/m4a");
       const voice = await createMessage(alice!, {
         channel: "couple", type: "voice", text: "", uploadId: "up_voice_success_001", clientId: "voice-success",
       });
@@ -91,10 +91,6 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       assert.equal(completed.text, "我们周末一起去公园");
       assert.equal((await fetchMessages(bob!, { channel: "couple" }))[0].transcript?.text, completed.text);
       assert.deepEqual((await searchMessages(bob!, "couple", "公园")).map((item) => item.id), [voice.id]);
-      const foreignTranscript = await app.inject({
-        method: "GET", url: `/api/v2/messages/${voice.id}/transcript`, headers: auth(carolToken),
-      });
-      assert.equal(foreignTranscript.statusCode, 404);
       const corrected = await app.inject({
         method: "PATCH",
         url: `/api/v2/messages/${voice.id}/transcript`,
@@ -107,7 +103,7 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       assert.equal((await searchMessages(alice!, "couple", "周末")).length, 0, "corrected text replaces raw search text");
 
       // Failed jobs are explicitly retryable and a provider-neutral scheduler can complete them.
-      await insertUpload("up_voice_retry_0002", "alice", "audio/m4a");
+      await insertUpload("up_voice_retry_0002", "xu", "audio/m4a");
       const retryVoice = await createMessage(alice!, {
         channel: "couple", type: "voice", text: "", uploadId: "up_voice_retry_0002", clientId: "voice-retry",
       });
@@ -132,7 +128,7 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       ))?.status, "completed");
 
       // 升级前的历史语音没有 transcript 行，首次手动重试也必须能补建任务。
-      await insertUpload("up_voice_legacy_0003", "alice", "audio/m4a");
+      await insertUpload("up_voice_legacy_0003", "xu", "audio/m4a");
       const legacyVoice = await createMessage(alice!, {
         channel: "couple", type: "voice", text: "", uploadId: "up_voice_legacy_0003", clientId: "voice-legacy",
       });
@@ -154,7 +150,7 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       delete process.env.TRANSCRIPTION_BASE_URL;
       delete process.env.TRANSCRIPTION_API_KEY;
       delete process.env.TRANSCRIPTION_MODEL;
-      await insertUpload("up_voice_unavailable", "alice", "audio/m4a");
+      await insertUpload("up_voice_unavailable", "xu", "audio/m4a");
       const unavailableVoice = await createMessage(alice!, {
         channel: "couple", type: "voice", text: "", uploadId: "up_voice_unavailable", clientId: "voice-unavailable",
       });
@@ -173,7 +169,7 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       assert.equal(await get("SELECT 1 AS found FROM transcript_jobs WHERE message_id = ?", [voice.id]), undefined);
 
       // Albums: import from this couple's chat, de-duplicate, note, cover URL and leap-day On This Day.
-      await insertUpload("up_album_photo_0003", "alice", "image/jpeg");
+      await insertUpload("up_album_photo_0003", "xu", "image/jpeg");
       const photo = await createMessage(alice!, {
         channel: "couple", type: "image", text: "旧照片", uploadId: "up_album_photo_0003", clientId: "album-photo",
       });
@@ -195,7 +191,7 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       assert.equal(duplicateAdd.statusCode, 201, duplicateAdd.body);
       assert.equal(duplicateAdd.json().added.length, 0);
       const assetId = firstAdd.json().added[0].asset.id as string;
-      await insertUpload("up_album_direct_0004", "alice", "video/mp4", "album");
+      await insertUpload("up_album_direct_0004", "xu", "video/mp4", "album");
       const directAdd = await app.inject({
         method: "POST",
         url: `/api/v2/albums/${albumId}/items/from-upload`,
@@ -220,10 +216,6 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       assert.equal(anniversary.statusCode, 200, anniversary.body);
       assert.equal(anniversary.json().assets[0].id, assetId, "Feb 29 appears on Feb 28 in a non-leap year");
       assert.equal(anniversary.json().assets[0].note.text, "那天风很温柔");
-      const foreignAlbum = await app.inject({
-        method: "GET", url: `/api/v2/albums/${albumId}/items`, headers: auth(carolToken),
-      });
-      assert.equal(foreignAlbum.statusCode, 404);
       assert.equal((await recallMessage(alice!, photo.id))?.deleted, true);
       assert.equal(await get("SELECT 1 AS found FROM media_assets WHERE id = ?", [assetId]), undefined);
       assert.equal(await get("SELECT 1 AS found FROM media_notes WHERE asset_id = ?", [assetId]), undefined);
@@ -370,9 +362,6 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       });
       assert.equal(rename.statusCode, 200, rename.body);
       assert.equal(rename.json().pet.name, "橘宝");
-      const carolPet = await app.inject({ method: "GET", url: "/api/v2/pet", headers: auth(carolToken) });
-      assert.notEqual(carolPet.json().pet.id, initialPet.id);
-
       const syncRows = await all<{ entity_type: string }>(
         "SELECT entity_type FROM sync_events WHERE couple_id = ?", [alice!.coupleId],
       );
