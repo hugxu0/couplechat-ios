@@ -58,24 +58,11 @@ struct PetView: View {
                                 kind: kind, token: session.token, username: session.username)
                         }
                     })
-
-                PetContentPanel(
-                    pet: pet,
-                    currentUsername: session.username,
-                    isBusy: viewModel.isMutating,
-                    errorMessage: viewModel.errorMessage,
-                    usingCachedSnapshot: viewModel.usingCachedSnapshot,
-                    showsDrawerHandle: false,
-                    onRespond: { text in
-                        await viewModel.respond(text: text, token: session.token, username: session.username)
-                    },
-                    onPlaceItems: { ids in
-                        Task {
-                            await viewModel.updateScene(
-                                placedItemIds: ids, token: session.token, username: session.username)
-                        }
-                    },
-                    onRefresh: { await refreshIfPossible() })
+                if viewModel.usingCachedSnapshot {
+                    StatusBanner(text: "网络暂不可用，正在展示上次同步的大橘状态", kind: .info)
+                } else if let message = viewModel.errorMessage {
+                    StatusBanner(text: message, kind: .warning)
+                }
             }
             .frame(maxWidth: 820)
             .padding(.horizontal, DS.Spacing.page)
@@ -84,7 +71,6 @@ struct PetView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
-        .refreshable { await refreshIfPossible() }
     }
 
     private var unavailableState: some View {

@@ -13,6 +13,8 @@ struct AlbumDetailView: View {
     @State private var showingSettings = false
     @State private var confirmingDelete = false
     @State private var showingMediaPicker = false
+    @State private var showingPostComposer = false
+    @State private var draftMedia: [AlbumPickedMedia] = []
     @State private var uploadProgress: (completed: Int, total: Int)?
 
     init(album: MomentAlbum) {
@@ -25,7 +27,10 @@ struct AlbumDetailView: View {
                 albumHeader
                 content
             }
-            .padding(DS.Spacing.page)
+            .frame(maxWidth: 760)
+            .padding(.horizontal, DS.Spacing.page)
+            .padding(.vertical, DS.Spacing.gap)
+            .frame(maxWidth: .infinity)
         }
         .background(AppPageBackground())
         .navigationTitle(model.album.title)
@@ -35,10 +40,10 @@ struct AlbumDetailView: View {
                 Button {
                     showingMediaPicker = true
                 } label: {
-                    Image(systemName: "photo.badge.plus").frame(width: 40, height: 40)
+                    Image(systemName: "square.and.pencil").frame(width: 40, height: 40)
                 }
                 .disabled(uploadProgress != nil)
-                .accessibilityLabel("从手机上传照片或视频")
+                .accessibilityLabel("发表共同动态")
                 Menu {
                     Button("编辑相册", systemImage: "pencil") { showingSettings = true }
                     Button("删除相册", systemImage: "trash", role: .destructive) { confirmingDelete = true }
@@ -68,9 +73,22 @@ struct AlbumDetailView: View {
         }
         .sheet(isPresented: $showingMediaPicker) {
             AlbumMediaPicker(isPresented: $showingMediaPicker) { items in
-                upload(items)
+                guard !items.isEmpty else { return }
+                draftMedia = items
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    showingPostComposer = true
+                }
             }
             .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showingPostComposer, onDismiss: discardDraftMedia) {
+            AlbumPostComposerSheet(mediaCount: draftMedia.count) { caption in
+                let items = draftMedia
+                draftMedia = []
+                showingPostComposer = false
+                upload(items, caption: caption)
+            }
+            .presentationDetents([.medium])
         }
         .confirmationDialog(
             "删除“\(model.album.title)”？",
@@ -88,11 +106,16 @@ struct AlbumDetailView: View {
     }
 
     private var albumHeader: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.compact) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("\(model.album.itemCount) 个共同片段")
-                    .font(DS.Typo.secondary.weight(.semibold))
-                    .foregroundStyle(DS.Palette.purple)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("我们的动态")
+                        .font(DS.Typo.cardTitle)
+                        .foregroundStyle(DS.Palette.textPrimary)
+                    Text("\(timelinePosts.count) 条记录 · \(model.album.itemCount) 个片段")
+                        .font(DS.Typo.caption)
+                        .foregroundStyle(DS.Palette.textSecondary)
+                }
                 Spacer()
                 if let progress = uploadProgress {
                     ProgressView(value: Double(progress.completed), total: Double(progress.total))
@@ -107,7 +130,9 @@ struct AlbumDetailView: View {
                     .foregroundStyle(DS.Palette.textSecondary)
             }
         }
+        .padding(DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .dsCard(radius: DS.Radius.card)
         .accessibilityElement(children: .combine)
     }
 
@@ -119,10 +144,10 @@ struct AlbumDetailView: View {
         } else if model.assets.isEmpty {
             VStack(spacing: 14) {
                 AppEmptyState(
-                    "相册还是空的",
+                    "还没有共同动态",
                     systemImage: "photo.badge.plus",
-                    detail: "可以从手机直接上传，也可以在聊天里长按照片或视频收藏。")
-                Button("从手机选择", systemImage: "photo.on.rectangle.angled") {
+                    detail: "选几张照片或一段视频，写下当时想说的话。")
+                Button("发表第一条", systemImage: "square.and.pencil") {
                     showingMediaPicker = true
                 }
                 .buttonStyle(.borderedProminent)
@@ -130,13 +155,12 @@ struct AlbumDetailView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 260)
         } else {
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 142, maximum: 260), spacing: 4)],
-                spacing: 4
-            ) {
-                ForEach(model.assets) { asset in
-                    assetTile(asset)
-                        .task { await loadMore(asset) }
+            LazyVStack(spacing: 0) {
+                ForEach(timelinePosts) { post in
+                    timelinePost(post)
+                    if post.id != timelinePosts.last?.id {
+                        Divider().padding(.leading, 70)
+                    }
                 }
             }
             if model.loadingMore {
@@ -145,6 +169,60 @@ struct AlbumDetailView: View {
         }
         if let message = model.errorMessage {
             StatusBanner(text: message, kind: .error)
+        }
+    }
+
+    private func timelinePost(_ post: AlbumTimelinePost) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(spacing: 4) {
+                Text(post.day)
+                    .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(DS.Palette.textPrimary)
+                Text(post.month)
+                    .font(DS.Typo.micro.weight(.semibold))
+                    .foregroundStyle(DS.Palette.textSecondary)
+                Circle()
+                    .fill(DS.Palette.orange)
+                    .frame(width: 8, height: 8)
+                    .overlay(Circle().stroke(DS.Palette.cardSurface, lineWidth: 3))
+                    .padding(.top, 5)
+                Rectangle()
+                    .fill(DS.Palette.orange.opacity(0.16))
+                    .frame(width: 1)
+                    .frame(maxHeight: .infinity)
+            }
+            .frame(width: 54)
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(sharedAuthorName)
+                        .font(DS.Typo.secondary.weight(.semibold))
+                        .foregroundStyle(DS.Palette.textPrimary)
+                    Spacer()
+                    Text(post.time)
+                        .font(DS.Typo.micro.monospacedDigit())
+                        .foregroundStyle(DS.Palette.textTertiary)
+                }
+                if !post.caption.isEmpty {
+                    Text(post.caption)
+                        .font(DS.Typo.body)
+                        .foregroundStyle(DS.Palette.textPrimary)
+                        .lineSpacing(4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                postMediaGrid(post.assets)
+            }
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .task { if let last = post.assets.last { await loadMore(last) } }
+        }
+    }
+
+    private func postMediaGrid(_ assets: [MomentAsset]) -> some View {
+        let count = min(3, max(1, assets.count))
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: count)
+        return LazyVGrid(columns: columns, spacing: 4) {
+            ForEach(assets) { asset in assetTile(asset) }
         }
     }
 
@@ -174,19 +252,7 @@ struct AlbumDetailView: View {
             .frame(maxWidth: .infinity)
             .aspectRatio(1, contentMode: .fill)
             .clipped()
-            .overlay(alignment: .bottomLeading) {
-                if let caption = asset.caption, !caption.isEmpty {
-                    Text(caption)
-                        .font(DS.Typo.caption.weight(.medium))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LinearGradient(
-                            colors: [.clear, .black.opacity(0.64)],
-                            startPoint: .top, endPoint: .bottom))
-                }
-            }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(alignment: .topTrailing) {
                 if asset.isVideo {
                     Image(systemName: "play.fill")
@@ -200,13 +266,13 @@ struct AlbumDetailView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("编辑注脚", systemImage: "pencil") { captionAsset = asset }
+            Button("编辑文案", systemImage: "pencil") { captionAsset = asset }
             Button("移出相册", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                 Task { await remove(asset) }
             }
         }
         .accessibilityLabel(asset.caption?.isEmpty == false ? asset.caption! : (asset.isVideo ? "视频" : "照片"))
-        .accessibilityHint("轻点查看，长按编辑注脚")
+        .accessibilityHint("轻点查看，长按编辑文案")
     }
 
     private func load() async {
@@ -244,7 +310,7 @@ struct AlbumDetailView: View {
         await model.load(token: token, force: true)
     }
 
-    private func upload(_ items: [AlbumPickedMedia]) {
+    private func upload(_ items: [AlbumPickedMedia], caption: String) {
         guard !items.isEmpty, let session = store.session else { return }
         uploadProgress = (0, items.count)
         Task {
@@ -262,16 +328,138 @@ struct AlbumDetailView: View {
                     } else {
                         continue
                     }
-                    await model.addUpload(
+                    let added = await model.addUpload(
                         uploadId: uploaded.id,
                         takenAt: item.takenAt,
                         token: session.token)
+                    if !caption.isEmpty {
+                        for asset in added {
+                            _ = await model.updateCaption(
+                                asset: asset, caption: caption, token: session.token)
+                        }
+                    }
                 } catch {
                     await MainActor.run { model.errorMessage = error.localizedDescription }
                 }
                 await MainActor.run { uploadProgress = (index + 1, items.count) }
             }
             await MainActor.run { uploadProgress = nil }
+        }
+    }
+
+    private var timelinePosts: [AlbumTimelinePost] {
+        AlbumTimelinePost.group(model.assets)
+    }
+
+    private var sharedAuthorName: String {
+        let mine = store.session?.name ?? "我"
+        let partner = store.partner?.name ?? "TA"
+        return "\(mine)和\(partner)"
+    }
+
+    private func discardDraftMedia() {
+        guard !showingPostComposer else { return }
+        draftMedia.forEach { $0.removeTemporaryFile() }
+        draftMedia = []
+    }
+}
+
+private struct AlbumTimelinePost: Identifiable {
+    let id: String
+    let timestamp: Int
+    let caption: String
+    let assets: [MomentAsset]
+
+    var day: String { Self.dayFormatter.string(from: date) }
+    var month: String { Self.monthFormatter.string(from: date) }
+    var time: String { Self.timeFormatter.string(from: date) }
+
+    private var date: Date { Date(timeIntervalSince1970: Double(timestamp) / 1_000) }
+
+    static func group(_ assets: [MomentAsset]) -> [AlbumTimelinePost] {
+        let grouped = Dictionary(grouping: assets) { asset in
+            let minute = asset.takenAt / 60_000
+            let caption = asset.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return "\(minute)|\(caption)"
+        }
+        return grouped.map { key, values in
+            let ordered = values.sorted { $0.takenAt > $1.takenAt }
+            return AlbumTimelinePost(
+                id: key,
+                timestamp: ordered.map(\.takenAt).max() ?? 0,
+                caption: ordered.first?.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                assets: ordered)
+        }
+        .sorted { $0.timestamp > $1.timestamp }
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd"
+        return formatter
+    }()
+
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月"
+        return formatter
+    }()
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日 HH:mm"
+        return formatter
+    }()
+}
+
+private struct AlbumPostComposerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let mediaCount: Int
+    let onPublish: (String) -> Void
+    @State private var caption = ""
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    Image(systemName: "photo.stack.fill")
+                        .font(.title2)
+                        .foregroundStyle(DS.Palette.orange)
+                        .frame(width: 48, height: 48)
+                        .background(DS.Palette.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 13))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("已选择 \(mediaCount) 个片段")
+                            .font(DS.Typo.secondary.weight(.semibold))
+                        Text("将以一条共同动态发表")
+                            .font(DS.Typo.caption)
+                            .foregroundStyle(DS.Palette.textSecondary)
+                    }
+                }
+
+                TextField("写下这一刻…", text: $caption, axis: .vertical)
+                    .font(DS.Typo.body)
+                    .lineLimit(4...8)
+                    .padding(14)
+                    .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: 14))
+                Spacer(minLength: 0)
+            }
+            .padding(DS.Spacing.page)
+            .background(AppPageBackground())
+            .navigationTitle("发表动态")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("发表") {
+                        onPublish(caption.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
         }
     }
 }
@@ -316,8 +504,11 @@ private struct AlbumMediaPicker: UIViewControllerRepresentable {
         nonisolated func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             Task { @MainActor in
                 var loaded: [AlbumPickedMedia] = []
+                let batchTimestamp = Int(Date().timeIntervalSince1970 * 1_000)
                 for result in results {
-                    if let media = await Self.load(result.itemProvider) { loaded.append(media) }
+                    if let media = await Self.load(result.itemProvider, takenAt: batchTimestamp) {
+                        loaded.append(media)
+                    }
                 }
                 await MainActor.run {
                     self.parent.isPresented = false
@@ -326,13 +517,13 @@ private struct AlbumMediaPicker: UIViewControllerRepresentable {
             }
         }
 
-        private static func load(_ provider: NSItemProvider) async -> AlbumPickedMedia? {
+        private static func load(_ provider: NSItemProvider, takenAt: Int) async -> AlbumPickedMedia? {
             if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier),
                let file = await copiedFile(from: provider, typeIdentifier: UTType.movie.identifier) {
                 let mime = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "video/quicktime"
                 return AlbumPickedMedia(
                     data: nil, fileURL: file, mimeType: mime,
-                    takenAt: Int(Date().timeIntervalSince1970 * 1_000))
+                    takenAt: takenAt)
             }
             let identifiers = [UTType.jpeg.identifier, UTType.png.identifier, UTType.heic.identifier, UTType.image.identifier]
             for identifier in identifiers where provider.hasItemConformingToTypeIdentifier(identifier) {
@@ -340,7 +531,7 @@ private struct AlbumMediaPicker: UIViewControllerRepresentable {
                     let mime = UTType(identifier)?.preferredMIMEType ?? "image/jpeg"
                     return AlbumPickedMedia(
                         data: data, fileURL: nil, mimeType: mime,
-                        takenAt: Int(Date().timeIntervalSince1970 * 1_000))
+                        takenAt: takenAt)
                 }
             }
             return nil
@@ -392,10 +583,10 @@ private struct CaptionEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("这张照片背后的故事", text: $caption, axis: .vertical)
+                TextField("写下这一刻", text: $caption, axis: .vertical)
                     .lineLimit(3...8)
             }
-            .navigationTitle("共同注脚")
+            .navigationTitle("编辑文案")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
@@ -433,7 +624,7 @@ private struct MomentAssetViewer: View {
                     Button("关闭") { dismiss() }.tint(.white)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button("注脚", systemImage: "pencil") {
+                    Button("文案", systemImage: "pencil") {
                         dismiss()
                         editCaption()
                     }

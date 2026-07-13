@@ -33,6 +33,23 @@ export async function generateDiary(date: string): Promise<void> {
   if (text) await writeRuntimeState(`diary:${date}`, text.slice(0, 1200));
 }
 
+let diaryHistoryBackfilling = false;
+
+export async function backfillDiaryHistory(days = 30): Promise<void> {
+  if (diaryHistoryBackfilling || !aiEnabled()) return;
+  diaryHistoryBackfilling = true;
+  try {
+    const today = cycleDate();
+    for (let offset = 1; offset <= days; offset += 1) {
+      await generateDiary(addDays(today, -offset)).catch((error) => {
+        console.warn("[ai] 历史日记生成失败:", error instanceof Error ? error.message : error);
+      });
+    }
+  } finally {
+    diaryHistoryBackfilling = false;
+  }
+}
+
 export async function readRecommendation(date: string): Promise<Recommendation | null> {
   try {
     const raw = await readRuntimeState(`recommend:${date}`);

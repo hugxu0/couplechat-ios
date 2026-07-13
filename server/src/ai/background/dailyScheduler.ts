@@ -1,4 +1,4 @@
-import { ensureRecommendation, generateDiary } from "./dailyContent";
+import { backfillDiaryHistory, ensureRecommendation, generateDiary } from "./dailyContent";
 import { DAY_ROLLOVER_HOUR } from "../settings";
 import { aiEnabled } from "../provider";
 import { addDays, beijingParts, cycleDate } from "../time";
@@ -17,6 +17,7 @@ async function maintainDailyContent(): Promise<void> {
     await ensureRecommendation(cycleDate()).catch((error) => {
       console.warn("[ai] 每日推荐生成失败:", error instanceof Error ? error.message : error);
     });
+    await backfillDiaryHistory(30);
   } finally {
     running = false;
   }

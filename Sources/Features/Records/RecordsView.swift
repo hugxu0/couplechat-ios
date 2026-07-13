@@ -25,8 +25,10 @@ struct RecordsView: View {
             .scrollIndicators(.hidden)
             .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
-            .refreshable { await reload(force: true) }
             .task { await reload() }
+            .task(id: "diary-history.\(store.session?.username ?? "none")") {
+                await loadDiaryHistoryUntilAvailable()
+            }
             .onReceive(NotificationCenter.default.publisher(for: MomentsViewModel.albumsChanged)) { _ in
                 Task { await reload(force: true) }
             }
@@ -152,12 +154,6 @@ struct RecordsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
                     .shadow(color: theme.accent.color.opacity(0.18), radius: 18, y: 9)
                 }
-                .overlay(alignment: .topTrailing) {
-                    Image(systemName: "pencil")
-                        .font(DS.Typo.caption.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .padding(14)
-                }
             }
             .buttonStyle(PressableStyle())
             .accessibilityLabel("我们在一起\(togetherLabel)，轻点编辑日期")
@@ -211,8 +207,8 @@ struct RecordsView: View {
                     ContentUnavailableView(
                         "还没有日记",
                         systemImage: "book.closed",
-                        description: Text("大橘会把有聊天的日子慢慢记下来"))
-                        .frame(maxWidth: .infinity, minHeight: 150)
+                        description: Text("正在整理最近 30 天有聊天的日子"))
+                        .frame(maxWidth: .infinity, minHeight: 280)
                 } else {
                     ScrollView(.vertical) {
                         LazyVStack(spacing: DS.Spacing.compact) {
@@ -239,7 +235,7 @@ struct RecordsView: View {
                             }
                         }
                     }
-                    .frame(minHeight: 260, maxHeight: 360)
+                    .frame(minHeight: 320, maxHeight: 460)
                     .scrollIndicators(.hidden)
                 }
             }
@@ -271,6 +267,16 @@ struct RecordsView: View {
         async let dailyResult = store.dailyContent.fetch(token: token)
         let (_, fetchedDaily) = await (moments, dailyResult)
         if let fetchedDaily { daily = fetchedDaily }
+    }
+
+    private func loadDiaryHistoryUntilAvailable() async {
+        guard let token = store.session?.token else { return }
+        for _ in 0..<4 {
+            if !(daily?.diaries.isEmpty ?? true) { return }
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            guard !Task.isCancelled else { return }
+            if let fetched = await store.dailyContent.fetch(token: token) { daily = fetched }
+        }
     }
 
     private func loadMore(_ album: MomentAlbum) async {

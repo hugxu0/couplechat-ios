@@ -143,7 +143,7 @@ final class AlbumDetailViewModel: ObservableObject {
         }
     }
 
-    func addUpload(uploadId: String, takenAt: Int, token: String) async {
+    func addUpload(uploadId: String, takenAt: Int, token: String) async -> [MomentAsset] {
         do {
             let added = try await repository.addUpload(
                 albumId: album.id, uploadId: uploadId, takenAt: takenAt, token: token)
@@ -155,8 +155,10 @@ final class AlbumDetailViewModel: ObservableObject {
                 album.version += 1
                 NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
             }
+            return added
         } catch {
             errorMessage = error.localizedDescription
+            return []
         }
     }
 
