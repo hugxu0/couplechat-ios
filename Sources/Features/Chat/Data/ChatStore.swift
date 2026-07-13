@@ -135,6 +135,11 @@ final class ChatStore: ObservableObject {
         messageStore.socketProvider = realtime
         shared.socketProvider = realtime
 
+        StickerStore.shared.configureSharedSync { [weak self] value in
+            guard let self, self.auth.session != nil else { return }
+            self.shared.setShared("stickers", value: value, session: self.auth.session)
+        }
+
         realtime.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &childStateCancellables)
@@ -151,7 +156,13 @@ final class ChatStore: ObservableObject {
         // ObservableObject，必须显式转发，否则状态已写入但首页不会立即重绘。
         shared.$sharedState
             .dropFirst()
-            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if let library = self.shared.sharedValue("stickers") {
+                    StickerStore.shared.applySharedLibrary(library)
+                }
+                self.objectWillChange.send()
+            }
             .store(in: &childStateCancellables)
     }
 
