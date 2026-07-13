@@ -18,20 +18,24 @@ struct MediaPagerView: View {
     init(
         messages: [ChatMessage],
         selectedId: Binding<String?>,
+        showsBackdrop: Bool = true,
         onZoomScaleChange: @escaping (CGFloat) -> Void = { _ in }
     ) {
         self.items = messages.flatMap(MediaBrowserItem.items(for:))
         _selectedId = selectedId
+        self.showsBackdrop = showsBackdrop
         self.onZoomScaleChange = onZoomScaleChange
     }
 
     init(
         items: [MediaBrowserItem],
         selectedId: Binding<String?>,
+        showsBackdrop: Bool = true,
         onZoomScaleChange: @escaping (CGFloat) -> Void = { _ in }
     ) {
         self.items = items
         _selectedId = selectedId
+        self.showsBackdrop = showsBackdrop
         self.onZoomScaleChange = onZoomScaleChange
     }
 
