@@ -3,6 +3,7 @@ import AVKit
 import AVFoundation
 import UIKit
 import Photos
+import Combine
 
 /// 沉浸式媒体浏览：不显示页码或工具栏，操作只在手势和长按菜单中出现。
 struct MediaPagerView: View {
@@ -71,7 +72,7 @@ struct MediaPagerView: View {
                         let item = items[index]
                         MediaPage(
                             item: item,
-                            shouldLoadMedia: abs(index - selectedIndex) <= 1,
+                            shouldLoadMedia: abs(index - selectedIndex) <= 2,
                             isFavorite: favorites.contains(item),
                             onSave: { save(item) },
                             onToggleFavorite: { toggleFavorite(item) },
@@ -109,8 +110,8 @@ struct MediaPagerView: View {
     private func prefetchAroundSelection() {
         guard !items.isEmpty else { return }
         guard let currentIndex = items.firstIndex(where: { $0.id == selectedId }) else { return }
-        let lower = max(items.startIndex, currentIndex - 2)
-        let upper = min(items.index(before: items.endIndex), currentIndex + 2)
+        let lower = max(items.startIndex, currentIndex - 3)
+        let upper = min(items.index(before: items.endIndex), currentIndex + 3)
         for index in lower...upper {
             guard !items[index].isVideo, let url = items[index].mediaURL else { continue }
             Task.detached(priority: .userInitiated) {
@@ -311,6 +312,7 @@ private struct MediaViewerVideoPage: View {
     let url: URL
     @State private var player: AVPlayer
     @State private var resumeAfterCancellation = false
+    @State private var showsPoster = true
 
     init(url: URL) {
         self.url = url
@@ -318,7 +320,25 @@ private struct MediaViewerVideoPage: View {
     }
 
     var body: some View {
-        VideoPlayer(player: player)
+        ZStack {
+            VideoPlayer(player: player)
+            if showsPoster {
+                ZStack {
+                    VideoThumbnailView(url: url)
+                        .scaledToFit()
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 56, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
+                }
+                .transition(.opacity)
+                .allowsHitTesting(false)
+            }
+        }
+            .onReceive(player.publisher(for: \.timeControlStatus)) { status in
+                guard status == .playing, showsPoster else { return }
+                withAnimation(.easeOut(duration: 0.2)) { showsPoster = false }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .mediaViewerPauseVideo)) { _ in
                 resumeAfterCancellation = player.timeControlStatus == .playing
                 player.pause()
@@ -333,15 +353,36 @@ private struct MediaViewerVideoPage: View {
 
 enum MediaSaver {
     static func saveImage(from url: URL) async -> Bool {
+        let destination: URL
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            guard let image = UIImage(data: data) else { return false }
-            await MainActor.run {
-                UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+            let (downloaded, response) = try await URLSession.shared.download(from: url)
+            destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(imageExtension(for: response, fallbackURL: url))
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: downloaded, to: destination)
+            defer { try? FileManager.default.removeItem(at: destination) }
+            try await PHPhotoLibrary.shared().performChanges {
+                let request = PHAssetCreationRequest.forAsset()
+                request.addResource(with: .photo, fileURL: destination, options: nil)
             }
             return true
         } catch {
             return false
+        }
+    }
+
+    private static func imageExtension(for response: URLResponse, fallbackURL: URL) -> String {
+        switch response.mimeType?.lowercased() {
+        case "image/heic": return "heic"
+        case "image/heif": return "heif"
+        case "image/png": return "png"
+        case "image/gif": return "gif"
+        case "image/webp": return "webp"
+        case "image/tiff": return "tiff"
+        case "image/jpeg": return "jpg"
+        default:
+            return fallbackURL.pathExtension.isEmpty ? "jpg" : fallbackURL.pathExtension
         }
     }
 

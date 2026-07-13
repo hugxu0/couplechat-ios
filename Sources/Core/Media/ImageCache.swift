@@ -13,7 +13,7 @@ final class ImageCache {
     private let fileManager = FileManager.default
     let directory: URL
     private let ioQueue = DispatchQueue(label: "image-cache-io", qos: .utility)
-    private static let maxDownloadBytes: Int64 = 25 * 1024 * 1024
+    private static let maxDownloadBytes: Int64 = 50 * 1024 * 1024
     private static let maxDecodedPixelSize = 2_400
 
     private init() {

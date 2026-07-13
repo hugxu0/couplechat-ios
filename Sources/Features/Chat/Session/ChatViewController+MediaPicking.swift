@@ -3,6 +3,7 @@ import AVKit
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
+import ImageIO
 
 extension ChatViewController: PHPickerViewControllerDelegate {
     nonisolated func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
@@ -31,7 +32,11 @@ extension ChatViewController: PHPickerViewControllerDelegate {
 
     private func loadStickerResult(_ result: PHPickerResult?, groupId: String) async {
         guard let provider = result?.itemProvider else { return }
-        let identifiers = [UTType.png.identifier, UTType.jpeg.identifier, UTType.gif.identifier, UTType.webP.identifier, UTType.image.identifier]
+        let identifiers = [
+            UTType.heic.identifier, UTType.heif.identifier,
+            UTType.png.identifier, UTType.jpeg.identifier,
+            UTType.gif.identifier, UTType.webP.identifier, UTType.image.identifier
+        ]
         for identifier in identifiers where provider.hasItemConformingToTypeIdentifier(identifier) {
             guard let data = await provider.loadData(typeIdentifier: identifier),
                   let image = UIImage(data: data) else { continue }
@@ -56,16 +61,17 @@ extension ChatViewController: PHPickerViewControllerDelegate {
         for identifier in identifiers where provider.hasItemConformingToTypeIdentifier(identifier) {
             if let data = await provider.loadData(typeIdentifier: identifier),
                let image = UIImage(data: data) {
-                let mime = UTType(identifier)?.preferredMIMEType ?? "image/jpeg"
-                let normalized = normalizedImagePayload(data, image: image, mimeType: mime)
+                let mime = detectedImageMIMEType(data)
+                    ?? UTType(identifier)?.preferredMIMEType
+                    ?? "image/jpeg"
                 let previewURL = writeTemporaryPreview(
-                    data: normalized.data,
-                    preferredExtension: normalized.mimeType == "image/png" ? "png" : "jpg")
+                    data: data,
+                    preferredExtension: imageExtension(for: mime))
                 return ChatPendingMedia(
                     id: UUID().uuidString,
                     image: image,
-                    data: normalized.data,
-                    mimeType: normalized.mimeType,
+                    data: data,
+                    mimeType: mime,
                     messageType: "image",
                     localPreviewURL: previewURL)
             }
@@ -81,18 +87,21 @@ extension ChatViewController: PHPickerViewControllerDelegate {
         return ChatPendingMedia(id: UUID().uuidString, image: thumb, data: data, mimeType: mime, messageType: "video", localPreviewURL: url)
     }
 
-    private func normalizedImagePayload(
-        _ data: Data,
-        image: UIImage,
-        mimeType: String
-    ) -> (data: Data, mimeType: String) {
-        if mimeType == "image/jpeg" || mimeType == "image/png" || mimeType == "image/gif" || mimeType == "image/webp" {
-            return (data, mimeType)
+    private func detectedImageMIMEType(_ data: Data) -> String? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let type = CGImageSourceGetType(source) else { return nil }
+        return UTType(type as String)?.preferredMIMEType
+    }
+
+    private func imageExtension(for mimeType: String) -> String {
+        switch mimeType.lowercased() {
+        case "image/heic": return "heic"
+        case "image/heif": return "heif"
+        case "image/png": return "png"
+        case "image/gif": return "gif"
+        case "image/webp": return "webp"
+        default: return "jpg"
         }
-        if let jpeg = image.jpegData(compressionQuality: 0.86) {
-            return (jpeg, "image/jpeg")
-        }
-        return (data, mimeType)
     }
 
     private func videoThumbnail(url: URL) async -> UIImage? {

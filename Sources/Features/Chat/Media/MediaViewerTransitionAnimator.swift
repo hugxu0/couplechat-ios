@@ -21,7 +21,7 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        presenting ? 0.34 : 0.28
+        0.34
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {

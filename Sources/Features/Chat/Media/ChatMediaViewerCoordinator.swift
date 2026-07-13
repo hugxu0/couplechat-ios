@@ -94,20 +94,9 @@ final class MediaViewerHostController: UIViewController {
     var transitionContentView: UIView { hostingController.view }
 
     init(items: [MediaBrowserItem], session: MediaViewerSession) {
-        let selection = Binding<String?>(
-            get: { session.selectedId },
-            set: { value in
-                if let value {
-                    session.selectedId = value
-                } else {
-                    session.requestDismiss()
-                }
-            })
-        let content = MediaPagerView(
-            items: items,
-            selectedId: selection,
-            showsBackdrop: false,
-            onZoomScaleChange: { session.zoomScale = $0 })
+        // 由观察 session 的容器建立 Binding。之前只用闭包 Binding，翻页后 SwiftUI
+        // 不会因 @Published selectedId 重绘，加载窗口会永远停在最初图片的前后各一张。
+        let content = MediaViewerSessionContent(items: items, session: session)
             .environmentObject(MediaFavoriteStore.shared)
         hostingController = UIHostingController(rootView: AnyView(content))
         super.init(nibName: nil, bundle: nil)
@@ -178,5 +167,23 @@ final class MediaViewerHostController: UIViewController {
 
     @objc private func requestDismiss() {
         dismiss(animated: true)
+    }
+}
+
+private struct MediaViewerSessionContent: View {
+    let items: [MediaBrowserItem]
+    @ObservedObject var session: MediaViewerSession
+
+    var body: some View {
+        MediaPagerView(
+            items: items,
+            selectedId: Binding(
+                get: { session.selectedId },
+                set: { value in
+                    if let value { session.selectedId = value }
+                    else { session.requestDismiss() }
+                }),
+            showsBackdrop: false,
+            onZoomScaleChange: { session.zoomScale = $0 })
     }
 }
