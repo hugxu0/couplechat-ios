@@ -254,7 +254,12 @@ extension ChatViewController {
     private func startVoicePlayback(_ message: ChatMessage, localURL: URL) {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            // Chat voice messages must follow both high-quality A2DP headphones and
+            // hands-free Bluetooth devices. The speaker remains the fallback route.
+            try session.setCategory(
+                .playAndRecord,
+                mode: .default,
+                options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers])
             try session.setActive(true)
         } catch {
             return
