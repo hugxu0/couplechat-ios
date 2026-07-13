@@ -88,20 +88,24 @@ struct CuteCatModelView: UIViewRepresentable {
         private func install(_ loadedScene: SCNScene) {
             guard let container else { return }
             let presentationScene = SCNScene()
-            let root = SCNNode()
+            let pivot = SCNNode()
+            let content = SCNNode()
             for child in loadedScene.rootNode.childNodes {
-                root.addChildNode(child.clone())
+                content.addChildNode(child.clone())
             }
-            normalize(root)
-            presentationScene.rootNode.addChildNode(root)
+            // 模型内容只负责缩放与居中，外层 pivot 只负责水平旋转。
+            // 两者分开后旋转轴会稳定穿过身体中心，不再绕偏移后的节点公转。
+            normalize(content)
+            pivot.addChildNode(content)
+            presentationScene.rootNode.addChildNode(pivot)
             presentationScene.rootNode.addChildNode(cameraNode())
             presentationScene.rootNode.addChildNode(keyLight())
             presentationScene.rootNode.addChildNode(fillLight())
             presentationScene.rootNode.addChildNode(ambientLight())
             container.sceneView.scene = presentationScene
-            container.setModelRoot(root)
+            container.setModelRoot(pivot)
             container.setLoaded(true)
-            modelRoot = root
+            modelRoot = pivot
         }
 
         private func normalize(_ node: SCNNode) {

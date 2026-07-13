@@ -102,7 +102,18 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
             return CGAffineTransform(scaleX: 0.94, y: 0.94)
         }
         let frame = source.convert(source.bounds, to: container)
-        let scale = max(0.12, min(frame.width / max(1, target.width), frame.height / max(1, target.height)))
+        // 全屏浏览使用 aspect-fit。缩放基准必须是屏幕中真正显示出来的媒体矩形，
+        // 而不是 hosting view 的整屏边界，否则竖图/横图会缩成源缩略图内部的一张小卡片。
+        let sourceSize = source.bounds.size
+        let fitScale = min(
+            target.width / max(1, sourceSize.width),
+            target.height / max(1, sourceSize.height))
+        let displayedSize = CGSize(
+            width: sourceSize.width * fitScale,
+            height: sourceSize.height * fitScale)
+        let scale = max(0.12, min(
+            frame.width / max(1, displayedSize.width),
+            frame.height / max(1, displayedSize.height)))
         let translation = CGPoint(x: frame.midX - target.midX, y: frame.midY - target.midY)
         return CGAffineTransform(translationX: translation.x, y: translation.y)
             .scaledBy(x: scale, y: scale)

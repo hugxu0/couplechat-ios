@@ -207,15 +207,15 @@ struct ChatHomeView: View {
             if colorScheme == .dark {
                 LinearGradient(
                     colors: [
-                        Color(red: 0.17, green: 0.075, blue: 0.13),
-                        Color(red: 0.12, green: 0.045, blue: 0.09),
-                        Color(red: 0.075, green: 0.045, blue: 0.115),
+                        Color(red: 0.10, green: 0.115, blue: 0.17),
+                        Color(red: 0.065, green: 0.075, blue: 0.12),
+                        Color(red: 0.085, green: 0.07, blue: 0.15),
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
                 RadialGradient(
-                    colors: [theme.accent.color.opacity(0.18), DS.Palette.pink.opacity(0.08), .clear],
+                    colors: [theme.accent.color.opacity(0.16), DS.Palette.purple.opacity(0.07), .clear],
                     center: .top,
                     startRadius: 8,
                     endRadius: 210
@@ -412,8 +412,8 @@ struct ChatHomeView: View {
                         .foregroundStyle(DS.Palette.textSecondary)
                         .padding(.horizontal, 13)
                         .frame(height: 36)
-                        .background(.white.opacity(0.52), in: Capsule())
-                        .overlay(Capsule().stroke(.white.opacity(0.72), lineWidth: 1))
+                        .background(DS.Palette.innerSurface, in: Capsule())
+                        .overlay(Capsule().stroke(DS.Palette.textTertiary.opacity(0.16), lineWidth: 1))
                 }
                 .buttonStyle(PressableStyle())
             }
@@ -446,7 +446,7 @@ struct ChatHomeView: View {
                         .foregroundStyle(DS.Palette.textSecondary)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background(.white.opacity(0.48), in: Capsule())
+                        .background(DS.Palette.innerSurface, in: Capsule())
                 }
             }
 

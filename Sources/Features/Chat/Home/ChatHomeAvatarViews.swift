@@ -34,7 +34,7 @@ struct ChatHomeCoupleAvatarColumn: View {
                 }
                 .frame(width: 88, height: 88)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 4))
+                .overlay(Circle().stroke(DS.Palette.innerSurface.opacity(0.92), lineWidth: 4))
                 .shadow(color: ring.opacity(0.18), radius: 10, y: 5)
 
                 Circle()
@@ -62,7 +62,7 @@ struct ChatHomeCoupleAvatarColumn: View {
                     .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.pink)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(.white.opacity(0.64), in: Capsule())
+                    .background(DS.Palette.innerSurface, in: Capsule())
             }
             .frame(minWidth: 76, minHeight: 34)
             .contentShape(Capsule())
@@ -84,19 +84,22 @@ struct ChatHomeCoupleAvatarColumn: View {
                 .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.textPrimary.opacity(0.62))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(.white.opacity(0.54), in: Capsule())
+                .background(DS.Palette.innerSurface, in: Capsule())
         }
     }
 }
 
 struct ChatHomeAvatarIllustration: View {
+    @Environment(\.colorScheme) private var colorScheme
     let kind: ChatHomeAvatarArt
     let fallback: String
 
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color.white.opacity(0.75), Color(red: 1.0, green: 0.95, blue: 0.97).opacity(0.6)],
+                colors: colorScheme == .dark
+                    ? [Color(red: 0.16, green: 0.18, blue: 0.25), Color(red: 0.12, green: 0.13, blue: 0.21)]
+                    : [Color.white.opacity(0.75), Color(red: 1.0, green: 0.95, blue: 0.97).opacity(0.6)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )

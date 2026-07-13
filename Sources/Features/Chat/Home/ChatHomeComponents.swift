@@ -46,10 +46,10 @@ struct ChatHomeStatusChip: View {
                 Capsule().fill(
                     selected
                         ? AnyShapeStyle(status.color.opacity(0.14))
-                        : AnyShapeStyle(.white.opacity(0.52))
+                        : AnyShapeStyle(DS.Palette.innerSurface)
                 )
             )
-            .overlay(Capsule().stroke(selected ? status.color.opacity(0.22) : .white.opacity(0.72), lineWidth: 1))
+            .overlay(Capsule().stroke(selected ? status.color.opacity(0.22) : DS.Palette.textTertiary.opacity(0.16), lineWidth: 1))
             .shadow(color: selected ? status.color.opacity(0.12) : .clear, radius: 7, y: 3)
             .contentShape(Capsule())
         }
@@ -67,6 +67,7 @@ struct ChatHomeStatusChip: View {
 }
 
 struct ChatHomeActionButton: View {
+    @Environment(\.colorScheme) private var colorScheme
     let action: ChatHomeQuickAction
     let sent: Bool
     let onTap: () -> Void
@@ -78,14 +79,16 @@ struct ChatHomeActionButton: View {
                     RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
                         .fill(
                             LinearGradient(
-                                colors: [action.background.opacity(0.82), action.background.opacity(0.42)],
+                                colors: colorScheme == .dark
+                                    ? [action.background.opacity(0.34), action.background.opacity(0.16)]
+                                    : [action.background.opacity(0.82), action.background.opacity(0.42)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
                         .overlay {
                             RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
-                                .stroke(.white.opacity(0.5), lineWidth: 1)
+                                .stroke(DS.Palette.textTertiary.opacity(0.15), lineWidth: 1)
                         }
                         .frame(height: 40)
                     Text(sent ? "✓" : action.emoji)
@@ -129,12 +132,12 @@ struct ChatHomeLatestRow: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, DS.Spacing.compact)
                 .background(
-                    mine ? accent.opacity(0.16) : Color.white.opacity(0.62),
+                    mine ? accent.opacity(0.16) : DS.Palette.innerSurface,
                     in: RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous)
-                        .stroke(mine ? accent.opacity(0.12) : .white.opacity(0.56), lineWidth: 1)
+                        .stroke(mine ? accent.opacity(0.12) : DS.Palette.textTertiary.opacity(0.14), lineWidth: 1)
                 )
 
             if mine {
@@ -150,6 +153,6 @@ struct ChatHomeLatestRow: View {
             url: avatarURL,
             fallbackEmoji: avatarText,
             size: 31,
-            background: .white.opacity(0.7))
+            background: DS.Palette.innerSurface)
     }
 }

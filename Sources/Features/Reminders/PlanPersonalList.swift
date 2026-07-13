@@ -13,15 +13,22 @@ struct PlanPersonalList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.section) {
+            HStack {
+                Text(kind == .reminder ? "提醒" : "备忘")
+                    .font(DS.Typo.cardTitle)
+                    .foregroundStyle(DS.Palette.textPrimary)
+                Spacer()
+                Button(createTitle, systemImage: "plus", action: onCreate)
+                    .font(DS.Typo.button)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+            }
             summary
             if loading && items.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 180)
             } else if items.isEmpty {
                 VStack(spacing: DS.Spacing.gap) {
                     AppEmptyState(emptyTitle, systemImage: kind == .reminder ? "bell.slash" : "text.book.closed")
-                    Button(createTitle, systemImage: "plus", action: onCreate)
-                        .buttonStyle(.borderedProminent)
-                        .frame(minHeight: 44)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)

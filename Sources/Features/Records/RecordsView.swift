@@ -9,7 +9,7 @@ struct RecordsView: View {
     @State private var showingDateEditor = false
 
     var body: some View {
-        NavigationSplitView {
+        NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DS.Spacing.section) {
                     coupleOverview
@@ -36,9 +36,6 @@ struct RecordsView: View {
                 }
                 Task { await reload(force: true) }
             }
-            .onReceive(NotificationCenter.default.publisher(for: MomentsViewModel.albumsChanged)) { _ in
-                Task { await reload(force: true) }
-            }
             .sheet(isPresented: $showingCreateAlbum) {
                 AlbumCreateSheet { title, note in
                     guard let token = store.session?.token else { return false }
@@ -49,12 +46,6 @@ struct RecordsView: View {
             .sheet(isPresented: $showingDateEditor) {
                 DateEditorSheet().presentationDetents([.medium, .large])
             }
-        } detail: {
-            ContentUnavailableView(
-                "选择一册时光",
-                systemImage: "photo.on.rectangle.angled",
-                description: Text("相册会在这里以更宽的画布展开"))
-                .background(AppPageBackground())
         }
     }
 
@@ -211,7 +202,7 @@ struct RecordsView: View {
                         .font(DS.Typo.cardTitle)
                         .foregroundStyle(DS.Palette.orange)
                     Spacer()
-                    Text("最近 30 天")
+                    Text(diaryEntries.isEmpty ? "最近 30 天" : "最近 \(diaryEntries.count) 篇")
                         .font(DS.Typo.micro)
                         .foregroundStyle(DS.Palette.textTertiary)
                 }
@@ -224,28 +215,32 @@ struct RecordsView: View {
                         .frame(maxWidth: .infinity, minHeight: 150)
                 } else {
                     ScrollView(.vertical) {
-                        LazyVStack(spacing: 0) {
+                        LazyVStack(spacing: DS.Spacing.compact) {
                             ForEach(diaryEntries, id: \.date) { diary in
                                 VStack(alignment: .leading, spacing: 9) {
                                     Text(diary.date)
                                         .font(DS.Typo.caption.weight(.semibold))
                                         .foregroundStyle(DS.Palette.orange)
-                    Text(diary.text)
-                        .font(DS.Typo.body)
-                        .foregroundStyle(DS.Palette.textPrimary)
-                        .lineSpacing(4)
-                                        .lineLimit(7)
-                                    Spacer(minLength: 0)
+                                    Text(diary.text)
+                                        .font(DS.Typo.body)
+                                        .foregroundStyle(DS.Palette.textPrimary)
+                                        .lineSpacing(5)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
-                                .frame(maxWidth: .infinity, minHeight: 168, maxHeight: 168, alignment: .topLeading)
-                                .padding(.top, 4)
+                                .padding(14)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                                .background(
+                                    DS.Palette.innerSurface,
+                                    in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
+                                        .stroke(DS.Palette.orange.opacity(0.12), lineWidth: 0.8)
+                                }
                             }
                         }
-                        .scrollTargetLayout()
                     }
-                    .frame(height: 168)
+                    .frame(minHeight: 260, maxHeight: 360)
                     .scrollIndicators(.hidden)
-                    .scrollTargetBehavior(.paging)
                 }
             }
         }

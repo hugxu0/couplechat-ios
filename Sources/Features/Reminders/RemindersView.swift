@@ -30,7 +30,6 @@ struct RemindersView: View {
             .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
             .task { await reload() }
-            .refreshable { await reload() }
             .onReceive(NotificationCenter.default.publisher(for: PersonalItemsRepository.changedNotification)) { _ in
                 Task { await reload() }
             }
