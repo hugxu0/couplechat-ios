@@ -110,6 +110,13 @@ final class ChatTimelineController: NSObject {
         let wasShowingActivity = items.contains { $0.id.hasPrefix("__ai_activity__") }
         let oldLast = lastMessageId(in: items)
         let oldCount = messageCount(in: items)
+        for message in messages where message.type == "voice" {
+            guard let incoming = message.transcript else { continue }
+            if let current = voiceTranscripts[message.id], current.version >= incoming.version {
+                continue
+            }
+            voiceTranscripts[message.id] = incoming
+        }
         let result = ChatTimelineBuilder.build(
             messages: messages,
             activity: activity,

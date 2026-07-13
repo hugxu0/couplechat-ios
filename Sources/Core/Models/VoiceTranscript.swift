@@ -1,6 +1,6 @@
 import Foundation
 
-enum VoiceTranscriptStatus: String, Decodable, Equatable {
+enum VoiceTranscriptStatus: String, Codable, Equatable {
     case none
     case queued
     case processing
@@ -10,6 +10,10 @@ enum VoiceTranscriptStatus: String, Decodable, Equatable {
 
     init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(serverValue: value)
+    }
+
+    init(serverValue value: String) {
         switch value {
         case "pending", "queued": self = .queued
         case "processing": self = .processing
@@ -21,7 +25,7 @@ enum VoiceTranscriptStatus: String, Decodable, Equatable {
     }
 }
 
-struct VoiceTranscript: Decodable, Equatable {
+struct VoiceTranscript: Codable, Equatable {
     let messageId: String
     let status: VoiceTranscriptStatus
     let text: String?
@@ -73,6 +77,25 @@ struct VoiceTranscript: Decodable, Equatable {
         self.errorMessage = errorMessage
         self.updatedAt = updatedAt
         self.version = version
+    }
+
+    init?(dict: [String: Any], fallbackMessageId: String = "") {
+        guard let rawStatus = dict["status"] as? String else { return nil }
+        messageId = dict["messageId"] as? String
+            ?? dict["id"] as? String
+            ?? fallbackMessageId
+        status = VoiceTranscriptStatus(serverValue: rawStatus)
+        text = dict["text"] as? String ?? dict["transcript"] as? String
+        language = dict["language"] as? String ?? dict["locale"] as? String
+        confidence = (dict["confidence"] as? NSNumber)?.doubleValue
+            ?? dict["confidence"] as? Double
+        errorMessage = dict["errorMessage"] as? String ?? dict["error"] as? String
+        updatedAt = (dict["updatedAt"] as? NSNumber)?.intValue
+            ?? dict["updatedAt"] as? Int
+            ?? 0
+        version = (dict["version"] as? NSNumber)?.intValue
+            ?? dict["version"] as? Int
+            ?? 0
     }
 
     static func processing(messageId: String) -> VoiceTranscript {

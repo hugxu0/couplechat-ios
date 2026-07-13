@@ -16,6 +16,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var replyPreview: String?
     var meta: ChatMessageMeta?
     var attachments: [ChatAttachment]?
+    var transcript: VoiceTranscript?
     var pending = false
     var failed = false
 
@@ -58,6 +59,11 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         } else {
             attachments = nil
         }
+        if let transcriptDict = dict["transcript"] as? [String: Any] {
+            transcript = VoiceTranscript(dict: transcriptDict, fallbackMessageId: id)
+        } else {
+            transcript = nil
+        }
     }
 
     init(optimisticText text: String, me: Session, clientId: String, channel: String,
@@ -77,6 +83,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.replyPreview = replyPreview
         self.meta = meta
         self.attachments = nil
+        self.transcript = nil
     }
 
     init(optimisticMedia type: String, text: String, localURL: String?, me: Session, clientId: String, channel: String,
@@ -94,6 +101,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.pending = true
         self.meta = meta
         self.attachments = attachments
+        self.transcript = nil
     }
 
     var date: Date { Date(timeIntervalSince1970: ts / 1000) }

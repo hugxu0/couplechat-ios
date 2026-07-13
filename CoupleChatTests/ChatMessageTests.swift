@@ -23,6 +23,29 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertEqual(msg?.ts, 1710000000000)
     }
 
+    func testVoiceMessageHydratesTranscriptFromMessagePayload() {
+        let message = ChatMessage(dict: [
+            "id": "voice_001",
+            "sender": "si",
+            "type": "voice",
+            "text": "",
+            "channel": "couple",
+            "ts": 1_710_000_000_000,
+            "transcript": [
+                "messageId": "voice_001",
+                "status": "completed",
+                "text": "晚上一起吃饭",
+                "language": "zh",
+                "version": 3,
+                "updatedAt": 1_710_000_000_100,
+            ],
+        ])
+
+        XCTAssertEqual(message?.transcript?.status, .ready)
+        XCTAssertEqual(message?.transcript?.text, "晚上一起吃饭")
+        XCTAssertEqual(message?.transcript?.version, 3)
+    }
+
     func testInitFromDictMissingId() {
         let dict: [String: Any] = [
             "sender": "xu",

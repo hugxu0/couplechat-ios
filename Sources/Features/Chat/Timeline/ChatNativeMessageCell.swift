@@ -138,6 +138,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
 
         mediaIconView.contentMode = .scaleAspectFit
         mediaIconView.tintColor = .secondaryLabel
+        mediaIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        mediaIconView.isAccessibilityElement = false
 
         albumScrollView.isPagingEnabled = true
         albumScrollView.showsHorizontalScrollIndicator = false
@@ -219,6 +221,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         voiceTranscriptExpanded = false
         mediaImageView.image = nil
         mediaIconView.image = nil
+        mediaIconView.isHidden = false
         bodyLabel.text = nil
         bodyLabel.attributedText = nil
         replyLabel.text = nil
@@ -619,6 +622,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             iconName = "doc.fill"
         }
         mediaIconView.image = UIImage(systemName: iconName)
+        mediaIconView.isHidden = false
         let foreground = mine ? UIColor.white : (usesDarkIncomingBubble ? .white : accentColor)
         mediaIconView.tintColor = foreground
         switch message.type {
@@ -646,7 +650,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             title = "转文字"
             icon = "text.bubble"
             enabled = true
-        case .queued, .processing:
+        case .queued:
+            title = "等待中"
+            icon = "clock"
+            enabled = false
+        case .processing:
             title = "转写中"
             icon = "ellipsis"
             enabled = false
@@ -655,21 +663,30 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             icon = voiceTranscriptExpanded ? "chevron.up" : "text.quote"
             enabled = true
         case .failed, .unavailable:
-            title = "重试"
+            title = "重试转写"
             icon = "arrow.clockwise"
             enabled = true
         }
         var configuration = UIButton.Configuration.plain()
         configuration.title = title
-        configuration.image = UIImage(systemName: icon)
+        configuration.image = UIImage(
+            systemName: icon,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
         configuration.imagePadding = 4
         configuration.baseForegroundColor = foreground
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 7, bottom: 5, trailing: 7)
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 7, bottom: 4, trailing: 7)
+        let buttonFont = UIFontMetrics(forTextStyle: .caption1).scaledFont(
+            for: .systemFont(ofSize: 12, weight: .semibold))
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = buttonFont
+            return outgoing
+        }
         transcriptButton.configuration = configuration
         transcriptButton.backgroundColor = foreground.withAlphaComponent(0.12)
         transcriptButton.isEnabled = enabled
         transcriptButton.alpha = enabled ? 1 : 0.72
-        transcriptButton.accessibilityLabel = transcript?.status == .failed
+        transcriptButton.accessibilityLabel = transcript?.status == .failed || transcript?.status == .unavailable
             ? "语音转写失败，重试"
             : title
         transcriptLabel.text = transcript?.text
