@@ -12,10 +12,10 @@ extension PendingOutboundMessage {
                     order: attachment.order)
             }
         }
-        let interaction = metaJSON
+        let decodedMeta = metaJSON
             .flatMap { $0.data(using: .utf8) }
             .flatMap { try? JSONDecoder().decode(ChatMessageMeta.self, from: $0) }
-            ?.interaction
+        let interaction = decodedMeta?.interaction
         return MessageSendRequest(
             channel: channel,
             type: type,
