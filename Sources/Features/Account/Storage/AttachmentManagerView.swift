@@ -2,7 +2,6 @@ import SwiftUI
 
 struct AttachmentManagerView: View {
     @EnvironmentObject private var store: ChatStore
-    @EnvironmentObject private var app: AppState
     @State private var channel: ChatChannel = .couple
     @State private var items: [ChatMessage] = []
 
@@ -54,8 +53,6 @@ struct AttachmentManagerView: View {
         }
         .navigationTitle("文件管理")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { app.pushSubpage() }
-        .onDisappear { app.popSubpage() }
         .task(id: channel) {
             items = await store.messageStore.mediaMessages(
                 for: channel, includeFiles: true, limit: 300)

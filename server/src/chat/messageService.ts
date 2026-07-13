@@ -471,7 +471,7 @@ export async function recallMessage(user: AuthUser, id: string) {
     }
     await db.run("DELETE FROM ai_runtime_state WHERE key = ?", [`context:${existing.channel}`]);
     if (existing.channel === "couple") {
-      await db.run("DELETE FROM ai_runtime_state WHERE key LIKE 'diary:%' OR key LIKE 'recommend:%'");
+      await db.run("DELETE FROM ai_runtime_state WHERE key LIKE 'diary:%'");
     }
     // 旧三张 AI 表没有 evidence 外键，无法定向证明内容来源；它们已不再被 runtime
     // 使用，撤回时清空比继续保留可能含原文的历史派生更符合硬删除语义。

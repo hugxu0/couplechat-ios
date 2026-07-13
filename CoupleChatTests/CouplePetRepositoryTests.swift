@@ -19,7 +19,6 @@ private actor CouplePetHTTPClient: HTTPClient {
         return (data, response)
     }
 }
-
 private struct OfflinePetHTTPClient: HTTPClient {
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         throw URLError(.notConnectedToInternet)
@@ -33,26 +32,23 @@ final class CouplePetRepositoryTests: XCTestCase {
 
         let snapshot = try await repository.fetch(token: "pet-token")
 
-        XCTAssertEqual(snapshot.pet.name, "大橘")
         XCTAssertEqual(snapshot.pet.version, 7)
-        XCTAssertEqual(snapshot.pet.today?.responses.count, 2)
-        XCTAssertTrue(snapshot.pet.today?.isCompleted == true)
-        XCTAssertEqual(snapshot.pet.today?.reward?.item?.name, "同心晚霞")
-        XCTAssertEqual(snapshot.pet.today?.reward?.item?.quantity, 1)
-        XCTAssertEqual(snapshot.pet.inventory.first?.name, "晚霞花瓶")
+        XCTAssertEqual(snapshot.pet.satiety, 81)
+        XCTAssertEqual(snapshot.pet.cleanliness, 88)
+        XCTAssertEqual(snapshot.pet.energy, 100)
+        XCTAssertEqual(snapshot.pet.latestInteraction?.kind, .stroke)
         let requests = await client.requests
         let request = try XCTUnwrap(requests.first)
         XCTAssertEqual(request.url?.path, "/api/v2/pet")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer pet-token")
     }
 
-    func testRespondSendsVersionAndIdempotencyKey() async throws {
+    func testInteractSendsVersionAndIdempotencyKey() async throws {
         let client = CouplePetHTTPClient(data: Self.snapshotData)
         let repository = CouplePetRepository(httpClient: client)
 
-        _ = try await repository.respond(
-            promptId: "prompt_today",
-            text: "今天的天空是粉色",
+        _ = try await repository.interact(
+            kind: .play,
             baseVersion: 7,
             token: "token",
             idempotencyKey: "response-once")
@@ -63,8 +59,8 @@ final class CouplePetRepositoryTests: XCTestCase {
         let body = try XCTUnwrap(
             JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
         XCTAssertEqual(request.httpMethod, "POST")
-        XCTAssertEqual(request.url?.path, "/api/v2/pet/today/responses")
-        XCTAssertEqual(body["promptId"] as? String, "prompt_today")
+        XCTAssertEqual(request.url?.path, "/api/v2/pet/interactions")
+        XCTAssertEqual(body["kind"] as? String, "play")
         XCTAssertEqual(body["baseVersion"] as? Int, 7)
         XCTAssertEqual(body["idempotencyKey"] as? String, "response-once")
     }
@@ -75,7 +71,7 @@ final class CouplePetRepositoryTests: XCTestCase {
         let repository = CouplePetRepository(httpClient: client)
 
         do {
-            _ = try await repository.rename("橘子", baseVersion: 3, token: "token")
+            _ = try await repository.interact(kind: .stroke, baseVersion: 3, token: "token")
             XCTFail("Expected a version conflict")
         } catch let error as CouplePetRepositoryError {
             XCTAssertEqual(error, .conflict)
@@ -138,96 +134,18 @@ final class CouplePetRepositoryTests: XCTestCase {
         "version": 7,
         "level": 2,
         "experience": 44,
+        "satiety": 81,
+        "cleanliness": 88,
         "mood": 90,
-        "coins": 5,
-        "scene": {
-          "id": "window_nook",
-          "title": "窗边小窝",
-          "artworkURL": null,
-          "placedItemIds": ["collectible_sunset"]
-        },
-        "today": {
-          "id": "prompt_today",
-          "prompt": "今天抬头时，天空是什么颜色？",
-          "responseType": "text",
-          "status": "settled",
-          "responses": [
-            {
-              "username": "xu",
-              "displayName": "嘘嘘",
-              "text": "淡蓝色",
-              "respondedAt": 1783900800000
-            },
-            {
-              "username": "si",
-              "displayName": "思思",
-              "text": "晚霞粉",
-              "respondedAt": 1783900860000
-            }
-          ],
-          "reward": {
-            "experience": 10,
-            "coins": 2,
-            "item": {
-              "id": "collectible_together",
-              "name": "同心晚霞",
-              "kind": "photo",
-              "symbolName": "sun.horizon.fill"
-            }
-          }
-        },
-        "inventory": [{
-          "id": "collectible_sunset",
-          "name": "晚霞花瓶",
-          "kind": "plant",
-          "symbolName": "camera.macro",
-          "unlockedAt": 1783900800000,
-          "isPlaced": true,
-          "quantity": 1
-        }],
-        "moments": [{
-          "id": "moment_1",
-          "title": "第一次共同回应",
-          "detail": "两个人都留下了今天的颜色",
+        "energy": 100,
+        "latestInteraction": {
+          "id": "action_1",
+          "kind": "stroke",
+          "actorName": "嘘嘘",
           "createdAt": 1783900800000
-        }],
-        "latestInteraction": null
+        },
+        "interactionCooldowns": []
       }
     }
     """#.utf8)
-}
-
-final class DajuLayoutTests: XCTestCase {
-    func testLandscapeIPadKeepsSixtyFortyNookAndPanel() {
-        let metrics = DajuLayoutMetrics.resolve(
-            width: 1_024, height: 740, hasRegularHorizontalSizeClass: true)
-
-        XCTAssertEqual(metrics.mode, .split)
-        XCTAssertEqual(metrics.panelWidth, 409.6, accuracy: 0.1)
-        XCTAssertEqual(metrics.sceneWidth, 600.4, accuracy: 0.1)
-    }
-
-    func testWideIPadCapsContentAndPanelWidth() {
-        let metrics = DajuLayoutMetrics.resolve(
-            width: 1_366, height: 1_024, hasRegularHorizontalSizeClass: true)
-
-        XCTAssertEqual(metrics.totalContentWidth, 1_050)
-        XCTAssertEqual(metrics.panelWidth, 420)
-        XCTAssertEqual(metrics.sceneWidth, 616)
-    }
-
-    func testPhoneAndPortraitIPadUseStackedDrawer() {
-        XCTAssertEqual(DajuLayoutMetrics.resolve(
-            width: 390, height: 844, hasRegularHorizontalSizeClass: false).mode, .stacked)
-        XCTAssertEqual(DajuLayoutMetrics.resolve(
-            width: 834, height: 1_194, hasRegularHorizontalSizeClass: true).mode, .stacked)
-    }
-
-    func testPhoneLandscapeLeavesRoomForContentDrawer() {
-        let metrics = DajuLayoutMetrics.resolve(
-            width: 820, height: 390, hasRegularHorizontalSizeClass: false)
-
-        XCTAssertEqual(metrics.mode, .stacked)
-        XCTAssertEqual(metrics.stackedSceneHeight, 195, accuracy: 0.1)
-    }
 }

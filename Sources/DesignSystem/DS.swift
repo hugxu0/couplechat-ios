@@ -33,13 +33,6 @@ enum DS {
     enum Palette {
         /// 主题色（跟随「我的 → 外观」选择）
         static var accent: Color { ThemeManager.shared.accent.color }
-        /// 主题渐变
-        static var accentGradient: LinearGradient {
-            LinearGradient(
-                colors: [ThemeManager.shared.accent.color, ThemeManager.shared.accent.colorAlt],
-                startPoint: .leading, endPoint: .trailing)
-        }
-
         /// 明暗自适应颜色的便捷构造
         private static func adaptive(light: UIColor, dark: UIColor) -> Color {
             Color(UIColor { $0.userInterfaceStyle == .dark ? dark : light })
@@ -240,25 +233,6 @@ extension View {
     /// 主内容卡片（渐变背景上的 soft glass card）
     func dsCard(radius: CGFloat = DS.Radius.card, elevated: Bool = true) -> some View {
         modifier(CardStyle(radius: radius, elevated: elevated))
-    }
-
-    /// 与 `dsCard` 同族的表面样式；保留旧名避免大面积改调用点。
-    /// 新代码请优先写 `dsCard`。
-    func appSurface(radius: CGFloat = DS.Radius.card) -> some View {
-        dsCard(radius: radius, elevated: true)
-    }
-
-    /// 悬浮控制层的统一材质：iOS 26 液态玻璃；旧系统退回 material。
-    @ViewBuilder
-    func dsGlass<S: Shape>(in shape: S) -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: shape)
-        } else {
-            self
-                .background(.ultraThinMaterial)
-                .clipShape(shape)
-                .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
-        }
     }
 
     /// 可交互液态玻璃：圆形小按钮用

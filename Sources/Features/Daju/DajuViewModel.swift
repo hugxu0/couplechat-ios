@@ -82,17 +82,6 @@ final class DajuViewModel: ObservableObject {
         }
     }
 
-    func respond(text: String, token: String, username: String) async -> Bool {
-        guard let pet = snapshot?.pet, let prompt = pet.today else { return false }
-        return await mutate(token: token, username: username) {
-            try await repository.respond(
-                promptId: prompt.id,
-                text: text,
-                baseVersion: pet.version,
-                token: token)
-        }
-    }
-
     func interact(kind: PetInteractionKind, token: String, username: String) async {
         guard let pet = snapshot?.pet else { return }
         let succeeded = await mutate(token: token, username: username) {
@@ -102,34 +91,6 @@ final class DajuViewModel: ObservableObject {
                 token: token)
         }
         if succeeded { feedback = kind.confirmation }
-    }
-
-    func updateScene(
-        placedItemIds: [String],
-        token: String,
-        username: String
-    ) async {
-        guard let pet = snapshot?.pet else { return }
-        let succeeded = await mutate(token: token, username: username) {
-            try await repository.updateScene(
-                placedItemIds: placedItemIds,
-                baseVersion: pet.version,
-                token: token)
-        }
-        if succeeded { feedback = "窗边小窝已经同步给你们两个人" }
-    }
-
-    func rename(_ name: String, token: String, username: String) async -> Bool {
-        guard let pet = snapshot?.pet else { return false }
-        let succeeded = await mutate(token: token, username: username) {
-            try await repository.rename(name, baseVersion: pet.version, token: token)
-        }
-        if succeeded { feedback = "以后就叫 \(name)" }
-        return succeeded
-    }
-
-    func dismissFeedback() {
-        feedback = nil
     }
 
     private func prepareAccount(_ account: String) {

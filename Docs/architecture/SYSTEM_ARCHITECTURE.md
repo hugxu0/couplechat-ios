@@ -27,7 +27,7 @@ Fastify + Socket.IO · 127.0.0.1:8080
 - `MomentsRepository`：共同相册、聊天媒体入册、注脚与那年今日；
 - `CalendarRepository`：共享/私人日历、版本冲突与完成状态；
 - `CouplePetRepository`：服务端宠物快照和幂等互动；
-- `VoiceTranscriptRepository`：转写查询、重试与人工纠正；
+- `VoiceTranscriptRepository`：转写查询与失败重试；
 - `SyncV2Repository`：持久化变更 cursor、ack 和离线删除恢复；
 - `DeviceSessionRepository`：多设备登录、列表和撤销；
 - `ChatStore`：持有 Socket，分发事件并为 View 暴露统一接口。
@@ -52,7 +52,7 @@ Fastify + Socket.IO · 127.0.0.1:8080
 
 ```text
 Sources/
-  App/                       App 入口、通知代理、根 Tab 与 AppState 装配
+  App/                       App 入口、通知代理与根 Tab
   Domain/
     Models/                  跨功能领域模型和协议数据
   Platform/
@@ -124,8 +124,8 @@ ChatHomeView
 | `transcription/` | OpenAI-compatible 转写 provider、job lease 与 worker |
 | `albums/` | 共同相册、媒体资产、注脚和那年今日 |
 | `calendar/` | 共享/私人日历、时区、完成和版本冲突 |
-| `pet/` | 共同宠物、每日题目、藏品、场景和幂等互动 |
-| `daily/` | 日记与今日推荐接口 |
+| `pet/` | 共同宠物状态衰减、五种互动、冷却与幂等同步 |
+| `daily/` | 最近 30 天大橘日记接口 |
 | `push/` | Bark 推送策略 |
 | `ai/` | Agent、MCP、Memory、上下文和后台任务 |
 | `contracts/` | 实时协议的服务端权威定义 |

@@ -6,7 +6,6 @@ enum V2RepositoryError: LocalizedError, Equatable {
     case invalidResponse
     case albumConflict(MomentAlbum)
     case calendarConflict(CalendarEvent)
-    case transcriptConflict(VoiceTranscript)
 
     var errorDescription: String? {
         switch self {
@@ -15,7 +14,6 @@ enum V2RepositoryError: LocalizedError, Equatable {
         case .invalidResponse: return "服务器返回了无法识别的数据"
         case .albumConflict: return "相册已在另一台设备更新，已载入最新版本"
         case .calendarConflict: return "日程已在另一台设备更新，已载入最新版本"
-        case .transcriptConflict: return "转写已在另一台设备更新，已载入最新版本"
         }
     }
 }

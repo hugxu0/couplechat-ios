@@ -12,8 +12,6 @@ struct ChatDetailSettingsView: View {
 
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var app: AppState
-    @Environment(\.dismiss) private var dismiss
 
     @State private var showSearch = false
     @State private var showMedia = false
@@ -34,8 +32,6 @@ struct ChatDetailSettingsView: View {
     private var avatarUsername: String? {
         channel == .ai ? "ai" : partnerUsername
     }
-
-    @AppStorage("chat_muted") private var chatMuted: Bool = false
 
     var body: some View {
         List {
@@ -67,9 +63,6 @@ struct ChatDetailSettingsView: View {
         } message: {
             Text("仅自己可见，不会同步给对方")
         }
-        // 子页保持底部标签栏隐藏
-        .onAppear { app.pushSubpage() }
-        .onDisappear { app.popSubpage() }
         .task {
             mediaItemCount = await store.mediaItemCount(for: channel, includeFiles: true)
         }
@@ -197,14 +190,6 @@ struct ChatDetailSettingsView: View {
 
     private var settingsSection: some View {
         Section {
-            HStack {
-                Label("消息免打扰", systemImage: "bell.slash.fill")
-                    .foregroundStyle(DS.Palette.textPrimary)
-                Spacer()
-                Toggle("", isOn: $chatMuted)
-                    .labelsHidden()
-            }
-
             Button {
                 showWallpaper = true
             } label: {

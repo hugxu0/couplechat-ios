@@ -109,7 +109,6 @@ GitHub Actions 的 `iOS 日常验证与构建` 分成两档，服务端与客户
 - 颜色、圆角、间距、字体、动画、阴影只从 `Sources/DesignSystem/DS.swift` 取值；页面内不要再写散落魔法数。
 - 常规文案用 `DS.Typo.body/secondary/caption/button/sectionLabel/micro`；大数字用 `displayHero/displayMetric/displayNumber`；装饰性巨型图标可保留固定字号。
 - 内容卡片用 `dsCard()` / `AppCard`；浮动层（Tab 栏、输入栏、浮钮）用 `dsGlass` / `dsGlassInteractive`。
-- `appSurface()` 已收敛为 `dsCard` 的兼容别名，新代码请直接写 `dsCard`。
 - 动画优先 `DS.Anim.*`，需要尊重「减少动态效果」时用 `DS.Anim.withMotion` 或 `DS.Anim.motion`。
 - 语义组件放在 `AppSemanticComponents.swift`：`RootPageHeader`、`AppSectionHeader`、`AppPrimaryButton`、`StatusBanner`、`AppEmptyState` 等；重复样式先抽组件再改页面。
 - 聊天 UIKit 路径需要同一数值时读 `DS.UIKitToken`，避免 SwiftUI / UIKit 各写一套。

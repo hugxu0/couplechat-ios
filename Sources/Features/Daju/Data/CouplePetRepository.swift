@@ -12,24 +12,6 @@ struct CouplePetRepository {
         return try await perform(request)
     }
 
-    func respond(
-        promptId: String,
-        text: String,
-        baseVersion: Int,
-        token: String,
-        idempotencyKey: String = UUID().uuidString
-    ) async throws -> CouplePetSnapshot {
-        try await mutate(
-            path: "api/v2/pet/today/responses",
-            method: "POST",
-            body: PromptResponseBody(
-                promptId: promptId,
-                text: text,
-                idempotencyKey: idempotencyKey,
-                baseVersion: baseVersion),
-            token: token)
-    }
-
     func interact(
         kind: PetInteractionKind,
         baseVersion: Int,
@@ -43,30 +25,6 @@ struct CouplePetRepository {
                 kind: kind.rawValue,
                 idempotencyKey: idempotencyKey,
                 baseVersion: baseVersion),
-            token: token)
-    }
-
-    func updateScene(
-        placedItemIds: [String],
-        baseVersion: Int,
-        token: String
-    ) async throws -> CouplePetSnapshot {
-        try await mutate(
-            path: "api/v2/pet/scene",
-            method: "PATCH",
-            body: SceneBody(placedItemIds: placedItemIds, baseVersion: baseVersion),
-            token: token)
-    }
-
-    func rename(
-        _ name: String,
-        baseVersion: Int,
-        token: String
-    ) async throws -> CouplePetSnapshot {
-        try await mutate(
-            path: "api/v2/pet/name",
-            method: "PATCH",
-            body: NameBody(name: name, baseVersion: baseVersion),
             token: token)
     }
 
@@ -105,7 +63,7 @@ struct CouplePetRepository {
         if http.statusCode == 401 { throw CouplePetRepositoryError.unauthorized }
         let code = (try? JSONDecoder().decode(ErrorResponse.self, from: data))?.error
         if http.statusCode == 409 {
-            if code == "version_conflict" || code == "already_responded" {
+            if code == "version_conflict" {
                 throw CouplePetRepositoryError.conflict
             }
             throw CouplePetRepositoryError.server(code ?? "request_conflict")
@@ -120,26 +78,9 @@ struct CouplePetRepository {
         }
     }
 
-    private struct PromptResponseBody: Encodable {
-        let promptId: String
-        let text: String
-        let idempotencyKey: String
-        let baseVersion: Int
-    }
-
     private struct InteractionBody: Encodable {
         let kind: String
         let idempotencyKey: String
-        let baseVersion: Int
-    }
-
-    private struct SceneBody: Encodable {
-        let placedItemIds: [String]
-        let baseVersion: Int
-    }
-
-    private struct NameBody: Encodable {
-        let name: String
         let baseVersion: Int
     }
 

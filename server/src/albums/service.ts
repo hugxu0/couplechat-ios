@@ -490,31 +490,6 @@ export async function upsertMediaNote(
   });
 }
 
-export async function deleteMediaAsset(user: AuthUser, assetId: string) {
-  return transaction(async (db) => {
-    const identity = await activeIdentityIn(db, user);
-    if (!identity?.coupleId) return null;
-    const asset = await db.get<{ id: string }>(
-      "SELECT id FROM media_assets WHERE id = ? AND couple_id = ? FOR UPDATE",
-      [assetId, identity.coupleId],
-    );
-    if (!asset) return null;
-    const now = Date.now();
-    await db.run("DELETE FROM media_assets WHERE id = ?", [assetId]);
-    await appendSyncEvent(db, {
-      coupleId: identity.coupleId,
-      entityType: "media_asset",
-      entityId: assetId,
-      operation: "delete",
-      payload: { id: assetId },
-      actorAccountId: identity.accountId,
-      actorDeviceId: user.deviceId,
-      createdAt: now,
-    });
-    return { ok: true };
-  });
-}
-
 export async function onThisDay(
   user: AuthUser,
   input: { timezone: string; date: string; cursor?: string; limit: number },

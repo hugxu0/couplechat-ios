@@ -102,14 +102,6 @@ final class StickerStore: ObservableObject {
         return group
     }
 
-    func renameGroup(_ group: StickerGroup, to name: String) {
-        guard let i = groups.firstIndex(where: { $0.id == group.id }) else { return }
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        groups[i].name = String(trimmed.prefix(8))
-        saveGroups()
-    }
-
     func deleteGroup(_ group: StickerGroup) {
         guard group.id != Self.defaultGroupId else { return }
         // 组里的贴纸挪回默认组，不直接删图

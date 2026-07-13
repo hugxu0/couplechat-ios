@@ -2,9 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { requireAuth } from "../../auth/httpAuth";
 import { config } from "../../config";
 import { AI_DEBUG_PAGE } from "./page";
-import { getLiveTrace, listLiveTraces, traceBegin, traceFlush, type TraceEntry } from "./trace";
-import { runAgentReply } from "../agent/runtime";
-import type { Trigger } from "../agent/replyQueue";
+import { getLiveTrace, listLiveTraces, type TraceEntry } from "./trace";
 import { listPublicAccounts } from "../../auth/accounts";
 import { flushMemory } from "../memory/extractor";
 import { MEMORY_LAYERS, listMemoryForDebug, memoryStats, reconcileMemoryLifecycle, type MemoryLayer } from "../memory/store";
@@ -52,38 +50,6 @@ export async function registerAiDebugRoutes(app: FastifyInstance) {
       return { ok: true, traces };
     },
   );
-
-  // 不写消息、不广播的 Agent/MCP 烟雾测试；仅本机开发环境且仍要求真实登录。
-  app.post<{ Body: { question?: string; channel?: "couple" | "ai"; username?: string } }>(
-    "/api/ai-debug/agent-smoke",
-    async (request, reply) => {
-      if (!isLoopback(request)) return reply.code(404).send({ error: "not_found" });
-      const question = String(request.body?.question ?? "").trim();
-      if (!question) return reply.code(400).send({ error: "question_required" });
-      const publicAccounts = await listPublicAccounts();
-      const user = publicAccounts.find((account) => account.username === request.body?.username) ?? publicAccounts[0];
-      if (!user) return reply.code(503).send({ error: "account_unavailable" });
-      const storedChannel = request.body?.channel === "couple" ? "couple" : `ai:${user.username}`;
-      const trigger: Trigger = {
-        storedChannel,
-        question,
-        requesterName: user.name,
-        requesterUsername: user.username,
-      };
-      const trace = traceBegin(storedChannel, user.name, question);
-      try {
-        const result = await runAgentReply(trigger, trace);
-        return { ok: Boolean(result), result, traceId: trace.id };
-      } finally {
-        traceFlush(trace);
-      }
-    },
-  );
-
-  app.get("/api/ai-debug/memory/stats", async (request, reply) => {
-    if (!isLoopback(request)) return reply.code(404).send({ error: "not_found" });
-    return { ok: true, stats: await memoryStats() };
-  });
 
   app.get<{ Querystring: { channel?: "couple" | "ai"; username?: string; layer?: string; status?: string; limit?: string } }>(
     "/api/ai-debug/memory",

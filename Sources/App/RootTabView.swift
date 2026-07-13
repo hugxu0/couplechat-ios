@@ -21,22 +21,8 @@ enum MainTab: String, CaseIterable {
     }
 }
 
-/// 跨页面共享的 App 状态（哪些子页需要隐藏底部标签栏）
-final class AppState: ObservableObject {
-    /// 子页栈深度：每进入一个沉浸式子页（聊天、聊天详情、主题、存储…）+1，逐层退出时 -1。
-    /// 用计数而不是单个布尔，避免多层 push 时系统 Tab 可见性抖动。
-    @Published private var subpageDepth = 0
-
-    /// 只要还在任意沉浸式子页里就隐藏系统 Tab chrome。
-    var hidesTabBar: Bool { subpageDepth > 0 }
-
-    func pushSubpage() { subpageDepth += 1 }
-    func popSubpage() { subpageDepth = max(0, subpageDepth - 1) }
-}
-
 struct RootTabView: View {
     @State private var tab: MainTab = .chat
-    @StateObject private var app = AppState()
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var timelineStore: ChatTimelineStore
     // 订阅主题变化：主题色一改，标签栏和全部子页立即重绘
@@ -86,7 +72,6 @@ struct RootTabView: View {
                 .zIndex(10)
             }
         }
-        .animation(DS.Anim.spring, value: app.hidesTabBar)
         .onChange(of: tab) { Haptics.selection() }
         .onAppear {
             lastSeenEffectMessageId = coupleMessages.last?.id
@@ -102,7 +87,6 @@ struct RootTabView: View {
         .onChange(of: screenNoteId) {
             handleIncomingNote()
         }
-        .environmentObject(app)
     }
 
     private func handleIncomingInteraction() {

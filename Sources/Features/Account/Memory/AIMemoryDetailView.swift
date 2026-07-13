@@ -2,7 +2,6 @@ import SwiftUI
 
 struct AIMemoryDetailView: View {
     @EnvironmentObject private var store: ChatStore
-    @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
 
     @State private var item: AIMemoryItem
@@ -39,8 +38,6 @@ struct AIMemoryDetailView: View {
             }
         }
         .overlay { if isSaving { ProgressView().controlSize(.large) } }
-        .onAppear { app.pushSubpage() }
-        .onDisappear { app.popSubpage() }
         .task { await loadEvidence() }
         .confirmationDialog(
             "让大橘忘掉这条记忆？",

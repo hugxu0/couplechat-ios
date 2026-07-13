@@ -2,7 +2,6 @@ import SwiftUI
 
 struct AIMemoryControlCenterView: View {
     @EnvironmentObject private var store: ChatStore
-    @EnvironmentObject private var app: AppState
 
     @State private var scope = AIMemoryScopeFilter.all
     @State private var layer: AIMemoryLayer?
@@ -29,8 +28,6 @@ struct AIMemoryControlCenterView: View {
         .searchable(text: $searchText, prompt: "搜索大橘记住的内容")
         .refreshable { await load() }
         .toolbar { refreshMenu }
-        .onAppear { app.pushSubpage() }
-        .onDisappear { app.popSubpage() }
         .task(id: LoadKey(scope: scope, layer: layer, query: searchText)) {
             if !searchText.isEmpty {
                 try? await Task.sleep(nanoseconds: 280_000_000)

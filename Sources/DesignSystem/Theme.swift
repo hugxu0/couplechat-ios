@@ -305,7 +305,6 @@ enum ChatSurfaceTone: Equatable {
     }
 
     var usesLightContent: Bool { self == .lightContent }
-    var usesDarkText: Bool { self == .darkContent }
 }
 
 final class ThemeManager: ObservableObject {

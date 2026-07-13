@@ -35,7 +35,6 @@ struct VoiceTranscriptRepository {
     private func request(
         path: String,
         method: String = "GET",
-        body: Data? = nil,
         token: String
     ) async throws -> Data {
         guard let url = URL(string: path, relativeTo: ServerConfig.baseURL)?.absoluteURL else {
@@ -43,24 +42,10 @@ struct VoiceTranscriptRepository {
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.httpBody = body
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await httpClient.data(for: request)
         guard let code = (response as? HTTPURLResponse)?.statusCode else {
             throw V2RepositoryError.invalidResponse
-        }
-        if code == 409,
-           let envelope = try? JSONDecoder().decode(TranscriptEnvelope.self, from: data),
-           let transcript = envelope.transcript {
-            throw V2RepositoryError.transcriptConflict(transcript)
-        }
-        // Older servers returned the authoritative `.unavailable` transcript with 503.
-        // Preserve that state instead of letting the presentation layer rewrite it as failed.
-        if code == 503,
-           let envelope = try? JSONDecoder().decode(TranscriptEnvelope.self, from: data),
-           envelope.transcript != nil {
-            return data
         }
         guard (200..<300).contains(code) else { throw V2RepositoryError.server(code) }
         return data

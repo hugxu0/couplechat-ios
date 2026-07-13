@@ -7,7 +7,6 @@ import UIKit
 struct StorageView: View {
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var historySync: HistorySyncCoordinator
-    @EnvironmentObject private var app: AppState
 
     @State private var breakdown: AppStorageBreakdown?
     @State private var showClearConfirm = false
@@ -40,8 +39,7 @@ struct StorageView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("存储空间")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { app.pushSubpage(); refresh() }
-        .onDisappear { app.popSubpage() }
+        .onAppear { refresh() }
         .onChange(of: historySync.operation) { refresh() }
         .confirmationDialog("清理图片缓存", isPresented: $showClearConfirm, titleVisibility: .visible) {
             Button("清理", role: .destructive) { clearCache() }

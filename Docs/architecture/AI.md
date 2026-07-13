@@ -30,7 +30,7 @@
 | `memory/extractor.ts` | 新消息增量整理与强校验 |
 | `memory/maintenance.ts` | 过期状态、计划和无效证据维护 |
 | `conversation/` | 最近消息、上下文摘要和原文搜索 |
-| `background/` | 日记、推荐和周期任务 |
+| `background/` | 大橘日记和周期维护任务 |
 | `debug/` | 本机 Trace 与 Memory 调试页 |
 
 ## Agent 输入

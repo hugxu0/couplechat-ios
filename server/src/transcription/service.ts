@@ -169,45 +169,6 @@ export async function retryTranscript(user: AuthUser, messageId: string) {
   });
 }
 
-export async function correctTranscript(user: AuthUser, messageId: string, text: string, baseVersion?: number) {
-  return transaction(async (db) => {
-    const identity = await activeIdentityIn(db, user);
-    if (!identity) return null;
-    const row = await db.get<TranscriptRow & { couple_id: string | null; owner_account_id: string | null }>(
-      "SELECT * FROM message_transcripts WHERE message_id = ? FOR UPDATE",
-      [messageId],
-    );
-    if (!row || !transcriptVisible(row, identity)) return null;
-    if (baseVersion !== undefined && row.version !== baseVersion) {
-      return { conflict: true as const, transcript: mapTranscript(row) };
-    }
-    const now = Date.now();
-    await db.run(
-      `UPDATE message_transcripts SET status = 'completed', corrected_text = ?, corrected_by_account_id = ?,
-       corrected_at = ?, last_error = NULL, version = version + 1, updated_at = ? WHERE message_id = ?`,
-      [text, identity.accountId, now, now, messageId],
-    );
-    await db.run(
-      `UPDATE transcript_jobs SET status = 'completed', lease_until = NULL, last_error = NULL,
-       completed_at = ?, updated_at = ? WHERE message_id = ?`,
-      [now, now, messageId],
-    );
-    const updated = await db.get<TranscriptRow>("SELECT * FROM message_transcripts WHERE message_id = ?", [messageId]);
-    await appendSyncEvent(db, {
-      coupleId: row.couple_id,
-      accountId: row.owner_account_id,
-      entityType: "message_transcript",
-      entityId: messageId,
-      operation: "upsert",
-      payload: updated ? mapTranscript(updated) : { messageId },
-      actorAccountId: identity.accountId,
-      actorDeviceId: user.deviceId,
-      createdAt: now,
-    });
-    return { conflict: false as const, transcript: updated ? mapTranscript(updated) : null };
-  });
-}
-
 async function claimJob(provider: TranscriptionProvider): Promise<ClaimedJob | null> {
   return transaction(async (db) => {
     const now = Date.now();

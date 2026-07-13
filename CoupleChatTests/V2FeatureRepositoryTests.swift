@@ -148,8 +148,6 @@ final class V2FeatureRepositoryTests: XCTestCase {
             messageId: "missing", token: "token")
         XCTAssertNil(transcript)
     }
-
-
     func testTranscriptRetryUsesDedicatedRouteWithoutForceBody() async throws {
         let client = V2FeatureHTTPClient(#"""
         {"transcript":{"messageId":"m1","status":"pending","text":"","version":2,"updatedAt":3}}
@@ -162,20 +160,6 @@ final class V2FeatureRepositoryTests: XCTestCase {
         XCTAssertEqual(request?.url?.path, "/api/v2/messages/m1/transcript/retry")
         XCTAssertEqual(request?.httpMethod, "POST")
         XCTAssertNil(request?.httpBody)
-    }
-
-    func testTranscriptRetryPreservesUnavailableStateFromLegacy503() async throws {
-        let client = V2FeatureHTTPClient(#"""
-        {"error":"transcription_unavailable","transcript":{"messageId":"m1",
-        "status":"unavailable","text":"","errorMessage":"provider_not_configured",
-        "version":2,"updatedAt":3}}
-        """#, statusCode: 503)
-
-        let transcript = try await VoiceTranscriptRepository(httpClient: client).retry(
-            messageId: "m1", token: "token")
-
-        XCTAssertEqual(transcript.status, .unavailable)
-        XCTAssertEqual(transcript.errorMessage, "provider_not_configured")
     }
 
     func testTypedConflictsCarryAuthoritativeEntities() async throws {

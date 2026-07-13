@@ -70,7 +70,7 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
         );
       };
 
-      // Transcription: queued -> processing -> completed, correction is returned and searchable.
+      // Transcription: queued -> processing -> completed and searchable.
       await insertUpload("up_voice_success_001", "xu", "audio/m4a");
       const voice = await createMessage(alice!, {
         channel: "couple", type: "voice", text: "", uploadId: "up_voice_success_001", clientId: "voice-success",
@@ -86,21 +86,14 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
         method: "GET", url: `/api/v2/messages/${voice.id}/transcript`, headers: auth(bobToken),
       });
       assert.equal(transcriptResponse.statusCode, 200, transcriptResponse.body);
-      const completed = transcriptResponse.json().transcript as { status: string; version: number; text: string };
+      const completed = transcriptResponse.json().transcript as { status: string; text: string };
       assert.equal(completed.status, "completed");
       assert.equal(completed.text, "我们周末一起去公园");
       assert.equal((await fetchMessages(bob!, { channel: "couple" }))[0].transcript?.text, completed.text);
       assert.deepEqual((await searchMessages(bob!, "couple", "公园")).map((item) => item.id), [voice.id]);
-      const corrected = await app.inject({
-        method: "PATCH",
-        url: `/api/v2/messages/${voice.id}/transcript`,
-        headers: auth(bobToken),
-        payload: { text: "我们周六一起去公园", baseVersion: completed.version },
-      });
-      assert.equal(corrected.statusCode, 200, corrected.body);
-      assert.equal(corrected.json().transcript.corrected, true);
-      assert.equal((await searchMessages(alice!, "couple", "周六"))[0]?.id, voice.id);
-      assert.equal((await searchMessages(alice!, "couple", "周末")).length, 0, "corrected text replaces raw search text");
+      assert.equal((await app.inject({
+        method: "PATCH", url: `/api/v2/messages/${voice.id}/transcript`, headers: auth(bobToken),
+      })).statusCode, 404, "transcript correction is not a product feature");
 
       // Failed jobs are explicitly retryable and a provider-neutral scheduler can complete them.
       await insertUpload("up_voice_retry_0002", "xu", "audio/m4a");
@@ -285,55 +278,37 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
       });
       assert.equal(deletedCalendar.statusCode, 200, deletedCalendar.body);
 
-      // Pet: one authoritative couple pet, asynchronous two-person settlement, idempotency and versioned scene.
+      // Pet: one authoritative couple pet with five durable, versioned interactions.
       const alicePetResponse = await app.inject({ method: "GET", url: "/api/v2/pet", headers: auth(aliceToken) });
       const bobPetResponse = await app.inject({ method: "GET", url: "/api/v2/pet", headers: auth(bobToken) });
       assert.equal(alicePetResponse.statusCode, 200, alicePetResponse.body);
       const initialPet = alicePetResponse.json().pet as any;
       assert.equal(initialPet.id, bobPetResponse.json().pet.id);
-      assert.equal(initialPet.name, "大橘");
       assert.equal(initialPet.satiety, 80);
       assert.equal(initialPet.cleanliness, 80);
       assert.equal(initialPet.energy, 100);
-      assert.equal(initialPet.inventory.length, 1);
-      const aliceAnswer = await app.inject({
-        method: "POST", url: "/api/v2/pet/today/responses", headers: auth(aliceToken),
-        payload: { promptId: initialPet.today.id, text: "一起散步", idempotencyKey: "answer-alice-1", baseVersion: 0 },
-      });
-      assert.equal(aliceAnswer.statusCode, 200, aliceAnswer.body);
-      assert.equal(aliceAnswer.json().pet.version, 0, "first response keeps the shared baseVersion usable");
-      const bobAnswer = await app.inject({
-        method: "POST", url: "/api/v2/pet/today/responses", headers: auth(bobToken),
-        payload: { promptId: initialPet.today.id, text: "去吃甜品", idempotencyKey: "answer-bob-1", baseVersion: 0 },
-      });
-      assert.equal(bobAnswer.statusCode, 200, bobAnswer.body);
-      const settledPet = bobAnswer.json().pet as any;
-      assert.equal(settledPet.today.status, "settled");
-      assert.equal(settledPet.today.responses.length, 2);
-      assert.equal(settledPet.inventory.length, 2);
-      assert.equal(settledPet.moments.length, 1);
-      const bobAnswerRetry = await app.inject({
-        method: "POST", url: "/api/v2/pet/today/responses", headers: auth(bobToken),
-        payload: { promptId: initialPet.today.id, text: "ignored retry body", idempotencyKey: "answer-bob-1", baseVersion: 0 },
-      });
-      assert.equal(bobAnswerRetry.statusCode, 200, bobAnswerRetry.body);
-      assert.equal((await get<{ count: number }>("SELECT COUNT(*) AS count FROM pet_moments"))?.count, 1);
+      assert.equal(initialPet.mood, 80);
+      for (const removedPath of ["/api/v2/pet/today", "/api/v2/pet/scene", "/api/v2/pet/name"]) {
+        assert.equal((await app.inject({ method: "GET", url: removedPath, headers: auth(aliceToken) })).statusCode, 404);
+      }
       const interaction = await app.inject({
         method: "POST", url: "/api/v2/pet/interactions", headers: auth(aliceToken),
-        payload: { kind: "high_five", idempotencyKey: "interaction-1", baseVersion: settledPet.version },
+        payload: { kind: "stroke", idempotencyKey: "interaction-1", baseVersion: initialPet.version },
       });
       assert.equal(interaction.statusCode, 200, interaction.body);
       assert.equal(interaction.json().pet.latestInteraction.kind, "stroke");
+      assert.equal(interaction.json().pet.mood, 86);
+      assert.equal(interaction.json().pet.experience, 1);
       const interactionRetry = await app.inject({
         method: "POST", url: "/api/v2/pet/interactions", headers: auth(aliceToken),
-        payload: { kind: "high_five", idempotencyKey: "interaction-1", baseVersion: settledPet.version },
+        payload: { kind: "stroke", idempotencyKey: "interaction-1", baseVersion: initialPet.version },
       });
       assert.equal(interactionRetry.statusCode, 200, interactionRetry.body);
       assert.equal((await get<{ count: number }>("SELECT COUNT(*) AS count FROM pet_actions"))?.count, 1);
       const interactionCooldown = await app.inject({
         method: "POST", url: "/api/v2/pet/interactions", headers: auth(bobToken),
         payload: {
-          kind: "high_five",
+          kind: "stroke",
           idempotencyKey: "interaction-2",
           baseVersion: interaction.json().pet.version,
         },
@@ -342,26 +317,6 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
       assert.equal(interactionCooldown.json().error, "pet_interaction_cooldown");
       assert.ok(interactionCooldown.json().availableAt > Date.now());
       assert.equal((await get<{ count: number }>("SELECT COUNT(*) AS count FROM pet_actions"))?.count, 1);
-      const interactionPet = interaction.json().pet as any;
-      const rewardItemId = interactionPet.inventory.find((item: any) => item.kind === "keepsake").id as string;
-      assert.equal((await get<{ coins: number }>("SELECT coins FROM pets WHERE id = ?", [interactionPet.id]))?.coins, 0);
-      const scene = await app.inject({
-        method: "PATCH", url: "/api/v2/pet/scene", headers: auth(bobToken),
-        payload: { placedItemIds: [rewardItemId], baseVersion: interactionPet.version },
-      });
-      assert.equal(scene.statusCode, 200, scene.body);
-      assert.deepEqual(scene.json().pet.scene.placedItemIds, [rewardItemId]);
-      const staleRename = await app.inject({
-        method: "PATCH", url: "/api/v2/pet/name", headers: auth(aliceToken),
-        payload: { name: "橘宝", baseVersion: interactionPet.version },
-      });
-      assert.equal(staleRename.statusCode, 409);
-      const rename = await app.inject({
-        method: "PATCH", url: "/api/v2/pet/name", headers: auth(aliceToken),
-        payload: { name: "橘宝", baseVersion: scene.json().pet.version },
-      });
-      assert.equal(rename.statusCode, 200, rename.body);
-      assert.equal(rename.json().pet.name, "橘宝");
       const syncRows = await all<{ entity_type: string }>(
         "SELECT entity_type FROM sync_events WHERE couple_id = ?", [alice!.coupleId],
       );

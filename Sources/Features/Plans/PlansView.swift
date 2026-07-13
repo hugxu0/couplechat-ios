@@ -105,19 +105,6 @@ struct PlansView: View {
         }
     }
 
-    private var subtitle: String {
-        scope == "shared" ? "两个人、每台设备，始终是同一份安排" : "只属于创建者的安排"
-    }
-
-    private func createCurrent() {
-        Haptics.medium()
-        switch section {
-        case .calendar: eventEditor = .create(selectedDate)
-        case .reminder: itemEditor = .create(.reminder)
-        case .memo: itemEditor = .create(.memo)
-        }
-    }
-
     private func moveMonth(_ offset: Int) {
         guard let next = Calendar.current.date(byAdding: .month, value: offset, to: selectedDate) else { return }
         selectedDate = next

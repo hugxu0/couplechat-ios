@@ -6,7 +6,6 @@ import {
   addUploadedMedia,
   createAlbum,
   deleteAlbum,
-  deleteMediaAsset,
   listAlbumItems,
   listAlbums,
   onThisDay,
@@ -142,14 +141,6 @@ export async function registerAlbumRoutes(app: FastifyInstance) {
     if (!result) return reply.code(404).send({ error: "not_found" });
     if (result.conflict) return reply.code(409).send({ error: "version_conflict", version: result.version });
     return { note: result.note };
-  });
-
-  app.delete("/api/v2/media-assets/:assetId", { preHandler: requireAuth }, async (request, reply) => {
-    if (!request.user) return reply.code(401).send({ error: "unauthorized" });
-    const params = assetParams.safeParse(request.params);
-    if (!params.success) return reply.code(400).send({ error: "invalid_request" });
-    const result = await deleteMediaAsset(request.user, params.data.assetId);
-    return result ?? reply.code(404).send({ error: "not_found" });
   });
 
   app.get("/api/v2/media/on-this-day", { preHandler: requireAuth }, async (request, reply) => {

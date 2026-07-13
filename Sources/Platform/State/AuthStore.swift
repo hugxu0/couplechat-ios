@@ -131,15 +131,6 @@ final class AuthStore: ObservableObject {
         return accounts
     }
 
-    func resolvePartner() {
-        Task {
-            let accounts = await fetchAccounts()
-            if let me = session?.username {
-                partner = accounts.first { $0.username != me }
-            }
-        }
-    }
-
     // MARK: - Token 核实
 
     func verifySessionOrLogout() {
