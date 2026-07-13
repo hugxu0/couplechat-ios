@@ -59,6 +59,18 @@ struct VoiceTranscript: Codable, Equatable {
         version = try box.decodeIfPresent(Int.self, forKey: .version) ?? 0
     }
 
+    func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(messageId, forKey: .messageId)
+        try box.encode(status, forKey: .status)
+        try box.encodeIfPresent(text, forKey: .text)
+        try box.encodeIfPresent(language, forKey: .language)
+        try box.encodeIfPresent(confidence, forKey: .confidence)
+        try box.encodeIfPresent(errorMessage, forKey: .errorMessage)
+        try box.encode(updatedAt, forKey: .updatedAt)
+        try box.encode(version, forKey: .version)
+    }
+
     init(
         messageId: String,
         status: VoiceTranscriptStatus,
