@@ -1,5 +1,8 @@
 import AVKit
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
+import UIKit
 
 struct AlbumDetailView: View {
     @EnvironmentObject private var store: ChatStore
@@ -9,6 +12,8 @@ struct AlbumDetailView: View {
     @State private var captionAsset: MomentAsset?
     @State private var showingSettings = false
     @State private var confirmingDelete = false
+    @State private var showingMediaPicker = false
+    @State private var uploadProgress: (completed: Int, total: Int)?
 
     init(album: MomentAlbum) {
         _model = StateObject(wrappedValue: AlbumDetailViewModel(album: album))
@@ -26,7 +31,14 @@ struct AlbumDetailView: View {
         .navigationTitle(model.album.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showingMediaPicker = true
+                } label: {
+                    Image(systemName: "photo.badge.plus").frame(width: 40, height: 40)
+                }
+                .disabled(uploadProgress != nil)
+                .accessibilityLabel("从手机上传照片或视频")
                 Menu {
                     Button("编辑相册", systemImage: "pencil") { showingSettings = true }
                     Button("删除相册", systemImage: "trash", role: .destructive) { confirmingDelete = true }
@@ -54,6 +66,12 @@ struct AlbumDetailView: View {
                 await updateAlbum(title: title, summary: summary)
             }
         }
+        .sheet(isPresented: $showingMediaPicker) {
+            AlbumMediaPicker(isPresented: $showingMediaPicker) { items in
+                upload(items)
+            }
+            .ignoresSafeArea()
+        }
         .confirmationDialog(
             "删除“\(model.album.title)”？",
             isPresented: $confirmingDelete,
@@ -71,9 +89,18 @@ struct AlbumDetailView: View {
 
     private var albumHeader: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.compact) {
-            Text("\(model.album.itemCount) 个共同片段")
-                .font(DS.Typo.secondary.weight(.semibold))
-                .foregroundStyle(DS.Palette.purple)
+            HStack {
+                Text("\(model.album.itemCount) 个共同片段")
+                    .font(DS.Typo.secondary.weight(.semibold))
+                    .foregroundStyle(DS.Palette.purple)
+                Spacer()
+                if let progress = uploadProgress {
+                    ProgressView(value: Double(progress.completed), total: Double(progress.total))
+                        .frame(maxWidth: 120)
+                        .accessibilityLabel("正在上传")
+                        .accessibilityValue("\(progress.completed) / \(progress.total)")
+                }
+            }
             if let note = model.album.note, !note.isEmpty {
                 Text(note)
                     .font(DS.Typo.body)
@@ -90,11 +117,18 @@ struct AlbumDetailView: View {
             ProgressView("正在打开相册…")
                 .frame(maxWidth: .infinity, minHeight: 220)
         } else if model.assets.isEmpty {
-            AppEmptyState(
-                "相册还是空的",
-                systemImage: "photo.badge.plus",
-                detail: "在聊天里长按图片或视频，即可加入这个相册。")
-                .frame(maxWidth: .infinity, minHeight: 260)
+            VStack(spacing: 14) {
+                AppEmptyState(
+                    "相册还是空的",
+                    systemImage: "photo.badge.plus",
+                    detail: "可以从手机直接上传，也可以在聊天里长按照片或视频收藏。")
+                Button("从手机选择", systemImage: "photo.on.rectangle.angled") {
+                    showingMediaPicker = true
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(uploadProgress != nil)
+            }
+            .frame(maxWidth: .infinity, minHeight: 260)
         } else {
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 142, maximum: 260), spacing: 4)],
@@ -116,11 +150,25 @@ struct AlbumDetailView: View {
 
     private func assetTile(_ asset: MomentAsset) -> some View {
         Button { selectedAsset = asset } label: {
-            CachedImage(url: asset.resolvedURL) {
-                ZStack {
-                    DS.Palette.innerSurface
-                    Image(systemName: "photo")
-                        .foregroundStyle(DS.Palette.textTertiary)
+            Group {
+                if asset.isVideo {
+                    ZStack {
+                        LinearGradient(
+                            colors: [DS.Palette.purple.opacity(0.28), DS.Palette.blue.opacity(0.18)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing)
+                        Image(systemName: "play.rectangle.fill")
+                            .font(.system(size: 34, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                } else {
+                    CachedImage(url: asset.resolvedURL) {
+                        ZStack {
+                            DS.Palette.innerSurface
+                            Image(systemName: "photo")
+                                .foregroundStyle(DS.Palette.textTertiary)
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity)
@@ -194,6 +242,137 @@ struct AlbumDetailView: View {
     private func reloadUnavailableCache() async {
         guard let token = store.session?.token else { return }
         await model.load(token: token, force: true)
+    }
+
+    private func upload(_ items: [AlbumPickedMedia]) {
+        guard !items.isEmpty, let session = store.session else { return }
+        uploadProgress = (0, items.count)
+        Task {
+            let uploader = MediaUploadService()
+            for (index, item) in items.enumerated() {
+                defer { item.removeTemporaryFile() }
+                do {
+                    let uploaded: MediaUploadResult
+                    if let fileURL = item.fileURL {
+                        uploaded = try await uploader.upload(
+                            fileURL: fileURL, mimeType: item.mimeType, purpose: .album, session: session)
+                    } else if let data = item.data {
+                        uploaded = try await uploader.upload(
+                            data: data, mimeType: item.mimeType, purpose: .album, session: session)
+                    } else {
+                        continue
+                    }
+                    await model.addUpload(
+                        uploadId: uploaded.id,
+                        takenAt: item.takenAt,
+                        token: session.token)
+                } catch {
+                    await MainActor.run { model.errorMessage = error.localizedDescription }
+                }
+                await MainActor.run { uploadProgress = (index + 1, items.count) }
+            }
+            await MainActor.run { uploadProgress = nil }
+        }
+    }
+}
+
+private struct AlbumPickedMedia: Identifiable, @unchecked Sendable {
+    let id = UUID()
+    let data: Data?
+    let fileURL: URL?
+    let mimeType: String
+    let takenAt: Int
+
+    func removeTemporaryFile() {
+        guard let fileURL else { return }
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+}
+
+private struct AlbumMediaPicker: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let onPicked: ([AlbumPickedMedia]) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .any(of: [.images, .videos])
+        configuration.selectionLimit = 20
+        configuration.selection = .ordered
+        configuration.preferredAssetRepresentationMode = .current
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        private let parent: AlbumMediaPicker
+
+        init(parent: AlbumMediaPicker) { self.parent = parent }
+
+        nonisolated func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            Task { @MainActor in
+                var loaded: [AlbumPickedMedia] = []
+                for result in results {
+                    if let media = await Self.load(result.itemProvider) { loaded.append(media) }
+                }
+                await MainActor.run {
+                    self.parent.isPresented = false
+                    self.parent.onPicked(loaded)
+                }
+            }
+        }
+
+        private static func load(_ provider: NSItemProvider) async -> AlbumPickedMedia? {
+            if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier),
+               let file = await copiedFile(from: provider, typeIdentifier: UTType.movie.identifier) {
+                let mime = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "video/quicktime"
+                return AlbumPickedMedia(
+                    data: nil, fileURL: file, mimeType: mime,
+                    takenAt: Int(Date().timeIntervalSince1970 * 1_000))
+            }
+            let identifiers = [UTType.jpeg.identifier, UTType.png.identifier, UTType.heic.identifier, UTType.image.identifier]
+            for identifier in identifiers where provider.hasItemConformingToTypeIdentifier(identifier) {
+                if let data = await data(from: provider, typeIdentifier: identifier) {
+                    let mime = UTType(identifier)?.preferredMIMEType ?? "image/jpeg"
+                    return AlbumPickedMedia(
+                        data: data, fileURL: nil, mimeType: mime,
+                        takenAt: Int(Date().timeIntervalSince1970 * 1_000))
+                }
+            }
+            return nil
+        }
+
+        private static func data(from provider: NSItemProvider, typeIdentifier: String) async -> Data? {
+            await withCheckedContinuation { continuation in
+                provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
+                    continuation.resume(returning: data)
+                }
+            }
+        }
+
+        private static func copiedFile(from provider: NSItemProvider, typeIdentifier: String) async -> URL? {
+            await withCheckedContinuation { continuation in
+                provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, _ in
+                    guard let url else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let destination = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(UUID().uuidString)
+                        .appendingPathExtension(url.pathExtension.isEmpty ? "mov" : url.pathExtension)
+                    do {
+                        try FileManager.default.copyItem(at: url, to: destination)
+                        continuation.resume(returning: destination)
+                    } catch {
+                        continuation.resume(returning: nil)
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -48,8 +48,10 @@ export async function drainFileCleanupQueue(): Promise<number> {
 
 export async function cleanupAbandonedMessageUploads(now = Date.now()): Promise<number> {
   const rows = await all<UploadRow>(
-    `SELECT * FROM uploads
-      WHERE purpose = 'message' AND message_id IS NULL AND created_at < ?
+    `SELECT upload.* FROM uploads upload
+      WHERE upload.purpose IN ('message', 'album') AND upload.message_id IS NULL
+        AND upload.created_at < ?
+        AND NOT EXISTS (SELECT 1 FROM media_assets asset WHERE asset.source_upload_id = upload.id)
       ORDER BY created_at ASC LIMIT ?`,
     [now - ABANDONED_AFTER_MS, BATCH_SIZE],
   );
@@ -58,7 +60,9 @@ export async function cleanupAbandonedMessageUploads(now = Date.now()): Promise<
     try {
       await fs.rm(row.path, { force: true });
       removed += await run(
-        "DELETE FROM uploads WHERE id = ? AND purpose = 'message' AND message_id IS NULL",
+        `DELETE FROM uploads upload WHERE upload.id = ?
+           AND upload.purpose IN ('message', 'album') AND upload.message_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM media_assets asset WHERE asset.source_upload_id = upload.id)`,
         [row.id],
       );
     } catch (error) {

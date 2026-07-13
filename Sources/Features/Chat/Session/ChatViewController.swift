@@ -342,7 +342,7 @@ final class ChatViewController: UIViewController {
         panelHeightConstraint.isActive = true
         bottomConstraint = bottomStack.bottomAnchor.constraint(
             equalTo: view.keyboardLayoutGuide.topAnchor,
-            constant: -8)
+            constant: 0)
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -411,6 +411,9 @@ final class ChatViewController: UIViewController {
             playingVoiceProgress: playingVoiceProgress,
             avatarText: { [weak store] username in store?.avatarText(for: username) ?? "" },
             avatarURL: { [weak store] username in store?.avatarURL(for: username) },
-            partnerHasRead: { [weak store] message in store?.partnerHasRead(message) ?? false })
+            partnerHasRead: { [weak store] message in store?.partnerHasRead(message) ?? false },
+            canReeditRecall: { [weak store] messageId in
+                store?.messageStore.hasRecallDraft(messageId: messageId) ?? false
+            })
     }
 }

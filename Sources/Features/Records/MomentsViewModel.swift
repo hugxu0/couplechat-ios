@@ -143,6 +143,23 @@ final class AlbumDetailViewModel: ObservableObject {
         }
     }
 
+    func addUpload(uploadId: String, takenAt: Int, token: String) async {
+        do {
+            let added = try await repository.addUpload(
+                albumId: album.id, uploadId: uploadId, takenAt: takenAt, token: token)
+            for asset in added.reversed() where !assets.contains(where: { $0.id == asset.id }) {
+                assets.insert(asset, at: 0)
+                album.itemCount += 1
+            }
+            if !added.isEmpty {
+                album.version += 1
+                NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func updateAlbum(title: String, summary: String, token: String) async -> Bool {
         do {
             album = try await repository.updateAlbum(

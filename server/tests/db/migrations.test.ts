@@ -40,5 +40,6 @@ test("candidate migrations remain ordered after the published boundary", () => {
     [20, "shared_albums"],
     [21, "shared_calendar"],
     [22, "shared_pet"],
+    [23, "pet_care_state"],
   ]);
 });

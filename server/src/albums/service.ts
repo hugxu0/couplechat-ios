@@ -18,7 +18,7 @@ interface AlbumRow {
 
 interface AssetRow {
   id: string;
-  source_message_id: string;
+  source_message_id: string | null;
   kind: string;
   mime_type: string;
   url: string;
@@ -54,7 +54,7 @@ function mapAlbum(row: AlbumRow) {
 function mapAsset(row: AssetRow) {
   return {
     id: row.id,
-    sourceMessageId: row.source_message_id,
+    sourceMessageId: row.source_message_id ?? undefined,
     kind: row.kind,
     mimeType: row.mime_type,
     url: row.url,
@@ -331,6 +331,94 @@ export async function addMessageMedia(user: AuthUser, albumId: string, messageId
       });
     }
     return { messageMissing: false as const, noMedia: false as const, added };
+  });
+}
+
+export async function addUploadedMedia(
+  user: AuthUser,
+  albumId: string,
+  uploadId: string,
+  takenAt: number,
+) {
+  return transaction(async (db) => {
+    const identity = await activeIdentityIn(db, user);
+    if (!identity?.coupleId) return null;
+    const album = await ownedAlbum(db, identity.coupleId, albumId, true);
+    if (!album) return null;
+    const upload = await db.get<{
+      id: string; mime_type: string; url: string; size: number; created_at: number;
+    }>(
+      `SELECT id, mime_type, url, size, created_at FROM uploads
+       WHERE id = ? AND owner = ? AND purpose = 'album' AND message_id IS NULL FOR UPDATE`,
+      [uploadId, user.username],
+    );
+    if (!upload) return { uploadMissing: true as const };
+    const kind = mediaKind(upload.mime_type);
+    if (!kind) return { noMedia: true as const };
+
+    const now = Date.now();
+    let asset = await db.get<AssetRow>(
+      "SELECT * FROM media_assets WHERE couple_id = ? AND source_upload_id = ?",
+      [identity.coupleId, upload.id],
+    );
+    if (!asset) {
+      const assetId = `med_${nanoid(16)}`;
+      await db.run(
+        `INSERT INTO media_assets
+         (id, couple_id, source_upload_id, source_message_id, created_by_account_id,
+          kind, mime_type, url, size, taken_at, created_at, version)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 0)
+         ON CONFLICT(couple_id, source_upload_id) DO NOTHING`,
+        [assetId, identity.coupleId, upload.id, identity.accountId, kind,
+          upload.mime_type, upload.url, upload.size, takenAt || upload.created_at, now],
+      );
+      asset = await db.get<AssetRow>(
+        "SELECT * FROM media_assets WHERE couple_id = ? AND source_upload_id = ?",
+        [identity.coupleId, upload.id],
+      );
+    }
+    if (!asset) return { uploadMissing: true as const };
+
+    let item = await db.get<{ id: string }>(
+      "SELECT id FROM album_items WHERE album_id = ? AND asset_id = ?",
+      [albumId, asset.id],
+    );
+    let inserted = false;
+    if (!item) {
+      item = { id: `albi_${nanoid(16)}` };
+      inserted = Boolean(await db.run(
+        `INSERT INTO album_items (id, album_id, asset_id, added_by_account_id, added_at, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(album_id, asset_id) DO NOTHING`,
+        [item.id, albumId, asset.id, identity.accountId, now, now * 100],
+      ));
+      if (!inserted) {
+        item = await db.get<{ id: string }>(
+          "SELECT id FROM album_items WHERE album_id = ? AND asset_id = ?",
+          [albumId, asset.id],
+        );
+      }
+    }
+    if (!item) return { uploadMissing: true as const };
+    const added = [{ itemId: item.id, asset: mapAsset(asset) }];
+    if (inserted) {
+      const cover = album.cover_asset_id ?? asset.id;
+      await db.run(
+        "UPDATE albums SET cover_asset_id = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+        [cover, now, albumId],
+      );
+      const updated = await ownedAlbum(db, identity.coupleId, albumId);
+      await appendSyncEvent(db, {
+        coupleId: identity.coupleId,
+        entityType: "album",
+        entityId: albumId,
+        operation: "upsert",
+        payload: { album: updated ? mapAlbum(updated) : undefined, added },
+        actorAccountId: identity.accountId,
+        actorDeviceId: user.deviceId,
+        createdAt: now,
+      });
+    }
+    return { uploadMissing: false as const, noMedia: false as const, added };
   });
 }
 

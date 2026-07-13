@@ -13,6 +13,7 @@ protocol ChatTimelineControllerDelegate: AnyObject {
     func timelineDidTapTranscript(message: ChatMessage)
     func timelineDidCorrectTranscript(message: ChatMessage)
     func timelineDidDecideConfirm(message: ChatMessage, decision: String)
+    func timelineDidRequestReedit(recalledMessageId: String)
 }
 
 @MainActor
@@ -30,6 +31,7 @@ final class ChatTimelineController: NSObject {
         var avatarText: (String) -> String
         var avatarURL: (String) -> URL?
         var partnerHasRead: (ChatMessage) -> Bool
+        var canReeditRecall: (String) -> Bool
     }
 
     weak var delegate: ChatTimelineControllerDelegate?
@@ -39,6 +41,7 @@ final class ChatTimelineController: NSObject {
     var items: [ChatTimelineItem] = []
     var messagesById: [String: ChatMessage] = [:]
     var groupedMessageIds = Set<String>()
+    var reeditMessageIdsByItemId: [String: String] = [:]
     var layoutHeightCache: [ChatMessageLayout: CGFloat] = [:]
     var highlightedMessageId: String?
     var voiceTranscripts: [String: VoiceTranscript] = [:]
@@ -107,10 +110,15 @@ final class ChatTimelineController: NSObject {
         let wasShowingActivity = items.contains { $0.id.hasPrefix("__ai_activity__") }
         let oldLast = lastMessageId(in: items)
         let oldCount = messageCount(in: items)
-        let result = ChatTimelineBuilder.build(messages: messages, activity: activity)
+        let result = ChatTimelineBuilder.build(
+            messages: messages,
+            activity: activity,
+            currentUsername: presentation.currentUsername,
+            canReeditRecall: presentation.canReeditRecall)
         items = result.items
         messagesById = result.messagesById
         groupedMessageIds = result.groupedMessageIds
+        reeditMessageIdsByItemId = result.reeditMessageIdsByItemId
 
         if pendingTopAnchor != nil,
            let oldFirstMessageID,

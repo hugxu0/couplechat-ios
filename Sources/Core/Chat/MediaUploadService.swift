@@ -2,6 +2,7 @@ import Foundation
 
 enum MediaUploadPurpose: String {
     case message
+    case album
     case avatar
     case sticker
 }

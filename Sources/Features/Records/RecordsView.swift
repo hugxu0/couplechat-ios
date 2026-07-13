@@ -124,25 +124,47 @@ struct RecordsView: View {
                 VStack(spacing: 7) {
                     Text("我们在一起的第")
                         .font(DS.Typo.secondary.weight(.medium))
-                        .foregroundStyle(DS.Palette.textSecondary)
+                        .foregroundStyle(.white.opacity(0.82))
                     Text(togetherNumber)
                         .font(.system(size: 64, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(theme.accent.gradient)
+                        .foregroundStyle(.white)
                         .contentTransition(.numericText())
                     Text(togetherNumber == "等待设置" ? "" : "天")
                         .font(DS.Typo.secondary.weight(.semibold))
-                        .foregroundStyle(DS.Palette.textSecondary)
+                        .foregroundStyle(.white.opacity(0.86))
                     Text("有你在侧，平凡也晴朗。")
                         .font(DS.Typo.secondary)
-                        .foregroundStyle(DS.Palette.textSecondary)
+                        .foregroundStyle(.white.opacity(0.82))
                 }
                 .padding(DS.Spacing.card)
                 .frame(maxWidth: .infinity, minHeight: 220)
-                .dsCard()
+                .background {
+                    ZStack {
+                        LinearGradient(
+                            colors: [theme.accent.color, DS.Palette.purple.opacity(0.86)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing)
+                        Circle()
+                            .fill(.white.opacity(0.10))
+                            .frame(width: 170, height: 170)
+                            .offset(x: 142, y: -82)
+                        Circle()
+                            .stroke(.white.opacity(0.13), lineWidth: 18)
+                            .frame(width: 112, height: 112)
+                            .offset(x: -150, y: 92)
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 32, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.12))
+                            .rotationEffect(.degrees(-14))
+                            .offset(x: 118, y: 70)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+                    .shadow(color: theme.accent.color.opacity(0.18), radius: 18, y: 9)
+                }
                 .overlay(alignment: .topTrailing) {
                     Image(systemName: "pencil")
                         .font(DS.Typo.caption.weight(.semibold))
-                        .foregroundStyle(theme.accent.color)
+                        .foregroundStyle(.white.opacity(0.9))
                         .padding(14)
                 }
             }
@@ -177,25 +199,60 @@ struct RecordsView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 126, alignment: .leading)
-        .dsCard(radius: DS.Radius.control)
+        .dsCard(radius: DS.Radius.card)
         .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder
     private var dailyCard: some View {
-        if let diary = daily?.diary {
-            AppCard {
-                VStack(alignment: .leading, spacing: DS.Spacing.compact) {
+        AppCard {
+            VStack(alignment: .leading, spacing: DS.Spacing.compact) {
+                HStack {
                     Label("大橘日记", systemImage: "pawprint.fill")
                         .font(DS.Typo.cardTitle)
                         .foregroundStyle(DS.Palette.orange)
+                    Spacer()
+                    Text("最近 30 天")
+                        .font(DS.Typo.micro)
+                        .foregroundStyle(DS.Palette.textTertiary)
+                }
+
+                if diaryEntries.isEmpty {
+                    ContentUnavailableView(
+                        "还没有日记",
+                        systemImage: "book.closed",
+                        description: Text("大橘会把有聊天的日子慢慢记下来"))
+                        .frame(maxWidth: .infinity, minHeight: 150)
+                } else {
+                    ScrollView(.vertical) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(diaryEntries, id: \.date) { diary in
+                                VStack(alignment: .leading, spacing: 9) {
+                                    Text(diary.date)
+                                        .font(DS.Typo.caption.weight(.semibold))
+                                        .foregroundStyle(DS.Palette.orange)
                     Text(diary.text)
                         .font(DS.Typo.body)
                         .foregroundStyle(DS.Palette.textPrimary)
                         .lineSpacing(4)
+                                        .lineLimit(7)
+                                    Spacer(minLength: 0)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 168, maxHeight: 168, alignment: .topLeading)
+                                .padding(.top, 4)
+                            }
+                        }
+                        .scrollTargetLayout()
+                    }
+                    .frame(height: 168)
+                    .scrollIndicators(.hidden)
+                    .scrollTargetBehavior(.paging)
                 }
             }
         }
+    }
+
+    private var diaryEntries: [DiaryEntry] {
+        Array((daily?.diaries ?? []).prefix(30))
     }
 
     @ViewBuilder

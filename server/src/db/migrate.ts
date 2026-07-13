@@ -1116,6 +1116,32 @@ export const schemaMigrations: readonly SchemaMigration[] = [
       ON pet_moments(pet_id, created_at DESC);
     `,
   },
+  {
+    version: 23,
+    name: "pet_care_state",
+    sql: `
+    ALTER TABLE pets ADD COLUMN IF NOT EXISTS satiety INTEGER NOT NULL DEFAULT 80;
+    ALTER TABLE pets ADD COLUMN IF NOT EXISTS cleanliness INTEGER NOT NULL DEFAULT 80;
+    ALTER TABLE pets ADD COLUMN IF NOT EXISTS energy INTEGER NOT NULL DEFAULT 100;
+    ALTER TABLE pets ADD COLUMN IF NOT EXISTS state_updated_at BIGINT NOT NULL DEFAULT 0;
+    UPDATE pets SET state_updated_at = updated_at WHERE state_updated_at = 0;
+
+    ALTER TABLE pets DROP CONSTRAINT IF EXISTS pets_satiety_check;
+    ALTER TABLE pets ADD CONSTRAINT pets_satiety_check CHECK (satiety BETWEEN 0 AND 100);
+    ALTER TABLE pets DROP CONSTRAINT IF EXISTS pets_cleanliness_check;
+    ALTER TABLE pets ADD CONSTRAINT pets_cleanliness_check CHECK (cleanliness BETWEEN 0 AND 100);
+    ALTER TABLE pets DROP CONSTRAINT IF EXISTS pets_mood_check;
+    ALTER TABLE pets ADD CONSTRAINT pets_mood_check CHECK (mood BETWEEN 0 AND 100);
+    ALTER TABLE pets DROP CONSTRAINT IF EXISTS pets_energy_check;
+    ALTER TABLE pets ADD CONSTRAINT pets_energy_check CHECK (energy BETWEEN 0 AND 100);
+
+    ALTER TABLE pet_actions DROP CONSTRAINT IF EXISTS pet_actions_kind_check;
+    ALTER TABLE pet_actions ADD CONSTRAINT pet_actions_kind_check
+      CHECK (kind IN ('feed', 'bathe', 'play', 'stroke', 'sleep', 'high_five', 'teaser'));
+
+    ALTER TABLE media_assets ALTER COLUMN source_message_id DROP NOT NULL;
+    `,
+  },
 ];
 
 export async function migrate(

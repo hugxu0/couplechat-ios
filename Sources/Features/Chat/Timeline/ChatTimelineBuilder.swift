@@ -4,12 +4,15 @@ struct ChatTimelineBuildResult {
     let items: [ChatTimelineItem]
     let messagesById: [String: ChatMessage]
     let groupedMessageIds: Set<String>
+    let reeditMessageIdsByItemId: [String: String]
 }
 
 enum ChatTimelineBuilder {
     static func build(
         messages: [ChatMessage],
         activity: ChatMessage? = nil,
+        currentUsername: String? = nil,
+        canReeditRecall: (String) -> Bool = { _ in false },
         calendar: Calendar = Calendar(identifier: .gregorian),
         now: Date = Date()
     ) -> ChatTimelineBuildResult {
@@ -17,6 +20,7 @@ enum ChatTimelineBuilder {
         for message in messages { messagesById[message.id] = message }
         var items: [ChatTimelineItem] = []
         var grouped = Set<String>()
+        var reeditMessageIds: [String: String] = [:]
 
         for (index, message) in messages.enumerated() {
             let separatesTime = index == 0
@@ -30,9 +34,21 @@ enum ChatTimelineBuilder {
                       messages[index - 1].kind != "system" {
                 grouped.insert(message.id)
             }
-            items.append(message.kind == "system"
-                ? .system(id: "system-\(message.id)", text: message.text)
-                : .message(id: message.id))
+            if message.kind == "system" {
+                let itemId = "system-\(message.id)"
+                if let recall = message.meta?.recallNotice {
+                    let mine = recall.by == currentUsername
+                    let text = mine ? "你撤回了一条消息" : "\(recall.byName)撤回了一条消息"
+                    items.append(.system(id: itemId, text: text))
+                    if mine, canReeditRecall(recall.messageId) {
+                        reeditMessageIds[itemId] = recall.messageId
+                    }
+                } else {
+                    items.append(.system(id: itemId, text: message.text))
+                }
+            } else {
+                items.append(.message(id: message.id))
+            }
         }
 
         if let activity {
@@ -42,7 +58,8 @@ enum ChatTimelineBuilder {
         return ChatTimelineBuildResult(
             items: items,
             messagesById: messagesById,
-            groupedMessageIds: grouped)
+            groupedMessageIds: grouped,
+            reeditMessageIdsByItemId: reeditMessageIds)
     }
 
     static func timeLabel(for date: Date, calendar: Calendar, now: Date) -> String {

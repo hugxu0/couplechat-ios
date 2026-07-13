@@ -129,7 +129,10 @@ export function registerRealtime(io: Server) {
         const recalled = await messages.recall(user, input.id);
         if (!recalled) return { ok: false, error: errorCodes.notFound };
         io.to(roomFor(recalled.channel, user)).emit(socketEvents.messageRecalled, recalled);
-        return { ok: true };
+        if (recalled.notice) {
+          io.to(roomFor(recalled.channel, user)).emit(socketEvents.messageNew, recalled.notice);
+        }
+        return { ok: true, notice: recalled.notice };
       }, ack),
     );
 

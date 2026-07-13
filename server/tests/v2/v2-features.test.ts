@@ -62,11 +62,11 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       const bob = await verifyActiveToken(bobToken);
       assert.ok(alice?.coupleId && bob?.coupleId);
 
-      const insertUpload = async (id: string, owner: string, mimeType: string) => {
+      const insertUpload = async (id: string, owner: string, mimeType: string, purpose = "message") => {
         await run(
           `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'message')`,
-          [id, owner, `D:/nonexistent/${id}`, `http://example.test/media/${id}`, mimeType, 128, Date.now()],
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, owner, `D:/nonexistent/${id}`, `http://example.test/media/${id}`, mimeType, 128, Date.now(), purpose],
         );
       };
 
@@ -195,6 +195,16 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       assert.equal(duplicateAdd.statusCode, 201, duplicateAdd.body);
       assert.equal(duplicateAdd.json().added.length, 0);
       const assetId = firstAdd.json().added[0].asset.id as string;
+      await insertUpload("up_album_direct_0004", "alice", "video/mp4", "album");
+      const directAdd = await app.inject({
+        method: "POST",
+        url: `/api/v2/albums/${albumId}/items/from-upload`,
+        headers: auth(aliceToken),
+        payload: { uploadId: "up_album_direct_0004", takenAt: Date.parse("2025-07-12T08:00:00Z") },
+      });
+      assert.equal(directAdd.statusCode, 201, directAdd.body);
+      assert.equal(directAdd.json().added[0].asset.kind, "video");
+      assert.equal(directAdd.json().added[0].asset.sourceMessageId, undefined);
       const albumList = await app.inject({ method: "GET", url: "/api/v2/albums", headers: auth(bobToken) });
       assert.equal(albumList.json().albums[0].coverURL, `http://example.test/media/up_album_photo_0003`);
       const note = await app.inject({
@@ -221,7 +231,7 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
         method: "GET", url: `/api/v2/albums/${albumId}/items`, headers: auth(bobToken),
       });
       assert.equal(emptiedAlbum.statusCode, 200, emptiedAlbum.body);
-      assert.equal(emptiedAlbum.json().items.length, 0);
+      assert.equal(emptiedAlbum.json().items.length, 1, "direct uploads survive recalling an unrelated chat message");
       assert.equal(emptiedAlbum.json().album.coverURL, undefined);
       const deletedAlbum = await app.inject({
         method: "DELETE", url: `/api/v2/albums/${albumId}`, headers: auth(aliceToken),
@@ -290,6 +300,9 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
       const initialPet = alicePetResponse.json().pet as any;
       assert.equal(initialPet.id, bobPetResponse.json().pet.id);
       assert.equal(initialPet.name, "大橘");
+      assert.equal(initialPet.satiety, 80);
+      assert.equal(initialPet.cleanliness, 80);
+      assert.equal(initialPet.energy, 100);
       assert.equal(initialPet.inventory.length, 1);
       const aliceAnswer = await app.inject({
         method: "POST", url: "/api/v2/pet/today/responses", headers: auth(aliceToken),
@@ -318,7 +331,7 @@ test("V2 transcription, albums, calendar and pet are durable and couple-isolated
         payload: { kind: "high_five", idempotencyKey: "interaction-1", baseVersion: settledPet.version },
       });
       assert.equal(interaction.statusCode, 200, interaction.body);
-      assert.equal(interaction.json().pet.latestInteraction.kind, "high_five");
+      assert.equal(interaction.json().pet.latestInteraction.kind, "stroke");
       const interactionRetry = await app.inject({
         method: "POST", url: "/api/v2/pet/interactions", headers: auth(aliceToken),
         payload: { kind: "high_five", idempotencyKey: "interaction-1", baseVersion: settledPet.version },

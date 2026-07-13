@@ -162,6 +162,12 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         updatePlaceholder()
     }
 
+    func setText(_ text: String) {
+        textView.text = text
+        textViewDidChange(textView)
+        updatePlaceholder()
+    }
+
     func focusTextInput() {
         textView.becomeFirstResponder()
     }

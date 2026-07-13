@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth/httpAuth";
 import {
   addMessageMedia,
+  addUploadedMedia,
   createAlbum,
   deleteAlbum,
   deleteMediaAsset,
@@ -101,6 +102,26 @@ export async function registerAlbumRoutes(app: FastifyInstance) {
     const result = await addMessageMedia(request.user, params.data.albumId, body.data.messageId);
     if (!result || ("messageMissing" in result && result.messageMissing)) return reply.code(404).send({ error: "not_found" });
     if ("noMedia" in result && result.noMedia) return reply.code(400).send({ error: "message_has_no_album_media" });
+    return reply.code(201).send(result);
+  });
+
+  app.post("/api/v2/albums/:albumId/items/from-upload", { preHandler: requireAuth }, async (request, reply) => {
+    if (!request.user) return reply.code(401).send({ error: "unauthorized" });
+    const params = idParams.safeParse(request.params);
+    const body = z.object({
+      uploadId: z.string().min(1).max(128),
+      takenAt: z.number().int().positive().optional(),
+    }).safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_request" });
+    const result = await addUploadedMedia(
+      request.user,
+      params.data.albumId,
+      body.data.uploadId,
+      body.data.takenAt ?? Date.now(),
+    );
+    if (!result) return reply.code(404).send({ error: "not_found" });
+    if (result.uploadMissing) return reply.code(404).send({ error: "upload_not_found" });
+    if (result.noMedia) return reply.code(400).send({ error: "unsupported_album_media" });
     return reply.code(201).send(result);
   });
 

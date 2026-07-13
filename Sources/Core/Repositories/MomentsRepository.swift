@@ -96,6 +96,21 @@ struct MomentsRepository {
         return try JSONDecoder().decode(AddedEnvelope.self, from: data).added.map(\.displayAsset)
     }
 
+    func addUpload(
+        albumId: String,
+        uploadId: String,
+        takenAt: Int,
+        token: String
+    ) async throws -> [MomentAsset] {
+        let body = AddUploadMutation(uploadId: uploadId, takenAt: takenAt)
+        let data = try await request(
+            path: "api/v2/albums/\(albumId)/items/from-upload",
+            method: "POST",
+            body: body,
+            token: token)
+        return try JSONDecoder().decode(AddedEnvelope.self, from: data).added.map(\.displayAsset)
+    }
+
     func updateCaption(
         assetId: String,
         text: String,
@@ -218,6 +233,7 @@ private extension MomentsRepository {
     struct AlbumMutation: Encodable { let title: String; let summary: String }
     struct AlbumPatch: Encodable { let title: String; let summary: String; let baseVersion: Int }
     struct AddMessageMutation: Encodable { let messageId: String }
+    struct AddUploadMutation: Encodable { let uploadId: String; let takenAt: Int }
     struct NoteMutation: Encodable { let text: String; let baseVersion: Int? }
     struct VersionMutation: Encodable { let baseVersion: Int }
 }
