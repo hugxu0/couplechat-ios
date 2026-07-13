@@ -190,7 +190,7 @@ struct AlbumDetailView: View {
         let spacing: CGFloat = 12
         let bodyWidth = max(0, width - railWidth - spacing)
 
-        HStack(alignment: .top, spacing: 12) {
+        return HStack(alignment: .top, spacing: spacing) {
             VStack(spacing: 4) {
                 Text(post.day)
                     .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
