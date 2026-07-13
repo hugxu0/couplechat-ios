@@ -17,9 +17,9 @@ final class HTTPClientTests: XCTestCase {
     func testAuthStoreUsesInjectedHTTPClient() async throws {
         let url = URL(string: "https://example.com/api/accounts")!
         let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
-        let body = """
+        let body = Data("""
         [{"username":"xu","name":"小旭","avatar":"🐶"}]
-        """.data(using: .utf8)!
+        """.utf8)
         let store = AuthStore(httpClient: StubHTTPClient(dataToReturn: body, responseToReturn: response))
 
         let accounts = await store.fetchAccounts()

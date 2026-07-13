@@ -30,9 +30,9 @@ private actor RecordingHTTPClient: HTTPClient {
 final class ChatRemoteDataSourceTests: XCTestCase {
     func testFetchMessagesBuildsAuthorizedPageRequest() async {
         let url = URL(string: "https://example.com/api/messages")!
-        let body = """
+        let body = Data("""
         {"list":[{"id":"m1","sender":"xu","senderName":"小旭","kind":"user","type":"text","text":"hello","channel":"couple","ts":100}]}
-        """.data(using: .utf8)!
+        """.utf8)
         let client = RecordingHTTPClient(data: body, responseURL: url)
         let source = ChatRemoteDataSource(httpClient: client)
 
@@ -53,9 +53,9 @@ final class ChatRemoteDataSourceTests: XCTestCase {
 
     func testFetchHistoryPageDecodesMessagesAndTotal() async {
         let url = URL(string: "https://example.com/api/messages")!
-        let body = """
+        let body = Data("""
         {"list":[{"id":"m2","sender":"si","senderName":"小偲","kind":"user","type":"text","text":"晚安","channel":"couple","ts":200}],"total":18}
-        """.data(using: .utf8)!
+        """.utf8)
         let client = RecordingHTTPClient(data: body, responseURL: url)
         let source = ChatRemoteDataSource(httpClient: client)
 
