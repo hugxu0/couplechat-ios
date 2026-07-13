@@ -28,10 +28,24 @@ final class ChatMessageActionProviderTests: XCTestCase {
             [.reply, .addToAlbum])
     }
 
-    private func makeMessage(type: String, sender: String, ts: Double) -> ChatMessage {
-        ChatMessage(dict: [
+    func testStickerFromEitherUserCanBeAddedToStickerLibrary() {
+        let incoming = makeMessage(type: "sticker", sender: "si", ts: 1_000, url: "/uploads/cat.gif")
+        XCTAssertEqual(
+            ChatMessageActionProvider.actions(for: incoming, currentUsername: "xu", nowMilliseconds: 500_000),
+            [.reply, .addToStickers])
+
+        let own = makeMessage(type: "sticker", sender: "xu", ts: 100_000, url: "https://hoo66.top/uploads/cat.gif")
+        XCTAssertEqual(
+            ChatMessageActionProvider.actions(for: own, currentUsername: "xu", nowMilliseconds: 110_000),
+            [.reply, .addToStickers, .recall])
+    }
+
+    private func makeMessage(type: String, sender: String, ts: Double, url: String? = nil) -> ChatMessage {
+        var dictionary: [String: Any] = [
             "id": "message-\(type)-\(sender)", "sender": sender, "senderName": sender,
             "kind": "user", "type": type, "text": "hello", "channel": "couple", "ts": ts,
-        ])!
+        ]
+        dictionary["url"] = url
+        return ChatMessage(dict: dictionary)!
     }
 }

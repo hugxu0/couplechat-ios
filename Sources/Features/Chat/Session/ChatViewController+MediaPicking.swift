@@ -32,15 +32,20 @@ extension ChatViewController: PHPickerViewControllerDelegate {
 
     private func loadStickerResult(_ result: PHPickerResult?, groupId: String) async {
         guard let provider = result?.itemProvider else { return }
+        // 优先请求原生动图表示；如果先询问 PNG/JPEG，Photos 可能把 GIF
+        // 转成静态首帧后返回，后续即使保留原始 Data 也无法恢复动画。
         let identifiers = [
+            UTType.gif.identifier, UTType.webP.identifier,
             UTType.heic.identifier, UTType.heif.identifier,
-            UTType.png.identifier, UTType.jpeg.identifier,
-            UTType.gif.identifier, UTType.webP.identifier, UTType.image.identifier
+            UTType.png.identifier, UTType.jpeg.identifier, UTType.image.identifier,
         ]
         for identifier in identifiers where provider.hasItemConformingToTypeIdentifier(identifier) {
             guard let data = await provider.loadData(typeIdentifier: identifier),
-                  let image = UIImage(data: data) else { continue }
-            addStickerImage(image, to: groupId)
+                  UIImage(data: data) != nil else { continue }
+            let mimeType = detectedImageMIMEType(data)
+                ?? UTType(identifier)?.preferredMIMEType
+                ?? "image/jpeg"
+            addStickerData(data, mimeType: mimeType, to: groupId)
             return
         }
     }
@@ -57,7 +62,10 @@ extension ChatViewController: PHPickerViewControllerDelegate {
     }
 
     private func loadImage(from provider: NSItemProvider) async -> ChatPendingMedia? {
-        let identifiers = [UTType.png.identifier, UTType.jpeg.identifier, UTType.gif.identifier, UTType.webP.identifier, UTType.image.identifier]
+        let identifiers = [
+            UTType.gif.identifier, UTType.webP.identifier,
+            UTType.png.identifier, UTType.jpeg.identifier, UTType.image.identifier,
+        ]
         for identifier in identifiers where provider.hasItemConformingToTypeIdentifier(identifier) {
             if let data = await provider.loadData(typeIdentifier: identifier),
                let image = UIImage(data: data) {

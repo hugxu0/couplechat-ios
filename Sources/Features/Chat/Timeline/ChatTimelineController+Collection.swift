@@ -201,6 +201,7 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         switch action {
         case .copy: return "复制"
         case .reply: return "引用"
+        case .addToStickers: return "添加到表情"
         case .addToAlbum: return "加入共同相册"
         case .recall: return "撤回"
         case .retry: return "重新发送"
@@ -212,6 +213,7 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         switch action {
         case .copy: return "doc.on.doc"
         case .reply: return "arrowshape.turn.up.left"
+        case .addToStickers: return "plus.circle"
         case .addToAlbum: return "photo.badge.plus"
         case .recall, .discard: return "trash"
         case .retry: return "arrow.clockwise"

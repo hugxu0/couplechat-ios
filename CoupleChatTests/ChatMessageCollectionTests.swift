@@ -95,6 +95,30 @@ final class ChatMessageCollectionTests: XCTestCase {
         XCTAssertNil(item.sendRequest(channel: .couple))
     }
 
+    func testStickerSendRequestUsesRemoteURLWithoutUploadReference() {
+        let item = PendingOutboundMessage(
+            clientId: "tmp-sticker",
+            channel: "couple",
+            type: "sticker",
+            text: "[表情]",
+            replyTo: nil,
+            replyPreview: nil,
+            localFilePath: nil,
+            mimeType: nil,
+            uploadId: nil,
+            uploadURL: "/uploads/cat.gif",
+            createdAt: 1,
+            attempts: 0,
+            lastError: nil)
+
+        let request = item.sendRequest(channel: .couple)
+        XCTAssertNotNil(request)
+        let resolvedURL = request.flatMap { $0.url }.flatMap { URL(string: $0) }
+        XCTAssertEqual(resolvedURL?.path, "/uploads/cat.gif")
+        XCTAssertTrue(resolvedURL?.scheme == "https" || resolvedURL?.scheme == "http")
+        XCTAssertNil(request?.uploadId)
+    }
+
     private func message(_ id: String, ts: Double) -> ChatMessage {
         ChatMessage(dict: [
             "id": id,

@@ -196,7 +196,7 @@ docker compose -f compose.production.yml logs --tail=100 couplechat-server
 3. 停止正式后端，备份 PostgreSQL、`uploads/` 和部署配置，并验证 dump 可读；
 4. 从停止后的旧库重新导出窗口数据，禁止使用盘点阶段的活动库副本；
 5. 在一个数据库事务中替换目标窗口，保留源消息 ID、时间、回复关系和消息类型；
-6. 媒体先按哈希验证再落盘。旧贴纸消息必须写为 `sticker`，不能退化成普通 `image`；自定义表情库写入共享 `couple_settings.stickers`，由客户端同步到双方设备；
+6. 媒体先按哈希验证再落盘。旧贴纸消息必须写为 `sticker`，不能退化成普通 `image`；一次性迁移可继续写入兼容键 `couple_settings.stickers`，客户端首次登录会分别复制到两个账号的 `stickers_user_<账号编码>`，之后两人的表情库独立同步；
 7. 只为“目标库独有且被清除”的垃圾消息生成删除同步事件，不能给重新导入的同 ID 消息生成删除事件；
 8. 大橘日记按日期写入 `ai_runtime_state`；Memory 按频道重置到窗口起点后重新扫描，`couple` 属于共同记忆，`ai:<username>` 属于对应用户的私人记忆；
 9. 独立校验消息字段、分类型数量、媒体哈希、表情数量、日记和 Memory 游标，成功后再启动正式后端；

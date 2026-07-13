@@ -1,6 +1,7 @@
 import UIKit
 import CryptoKit
 import ImageIO
+import UniformTypeIdentifiers
 
 // 全 App 共用的图片缓存：内存（NSCache）+ 磁盘（Caches/MediaCache）。
 // 头像、聊天图片都走这里，避免每次滚动 / 进页面重复下载。
@@ -15,6 +16,7 @@ final class ImageCache {
     private let ioQueue = DispatchQueue(label: "image-cache-io", qos: .utility)
     private static let maxDownloadBytes: Int64 = 50 * 1024 * 1024
     private static let maxDecodedPixelSize = 2_400
+    private static let maxAnimatedPixelSize = 600
 
     private init() {
         let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -111,10 +113,14 @@ final class ImageCache {
 
     /// 已经拿到 Data（比如自己刚上传的图）时直接落缓存，省一次下载。
     func store(data: Data, image: UIImage? = nil, for url: URL) {
-        let img = image ?? Self.decodeForDisplay(data)
-        if let img { memory.setObject(img, forKey: url.absoluteString as NSString) }
         let file = fileURL(for: url)
-        ioQueue.async {
+        if let image {
+            memory.setObject(image, forKey: url.absoluteString as NSString)
+        }
+        ioQueue.async { [memory] in
+            if image == nil, let decoded = Self.decodeForDisplay(data) {
+                memory.setObject(decoded, forKey: url.absoluteString as NSString)
+            }
             do {
                 try data.write(to: file)
             } catch {
@@ -174,6 +180,10 @@ final class ImageCache {
     private static func decodeForDisplay(_ data: Data) -> UIImage? {
         guard Int64(data.count) <= maxDownloadBytes,
               let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        if isAnimatedSource(source),
+           let animated = decodeAnimatedImage(source) {
+            return animated
+        }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
@@ -182,5 +192,52 @@ final class ImageCache {
         ]
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
         return UIImage(cgImage: cgImage).preparingForDisplay() ?? UIImage(cgImage: cgImage)
+    }
+
+    private static func isAnimatedSource(_ source: CGImageSource) -> Bool {
+        guard CGImageSourceGetCount(source) > 1,
+              let identifier = CGImageSourceGetType(source),
+              let type = UTType(identifier as String) else { return false }
+        // HEIC 也可能包含深度图等多个 image item，但它们不是逐帧动画。
+        return type.conforms(to: .gif) || type == .png || type == .webP
+    }
+
+    /// Preserve animated GIF/APNG data as an animated UIImage. The disk cache always stores the
+    /// untouched bytes; frames are downsampled only for the in-memory rendering copy so a large
+    /// sticker cannot exhaust memory while scrolling.
+    private static func decodeAnimatedImage(_ source: CGImageSource) -> UIImage? {
+        let count = CGImageSourceGetCount(source)
+        guard count > 1 else { return nil }
+        let pixelBudget = 2_000_000.0 // roughly 8 MB of decoded BGRA frames
+        let budgetedPixelSize = Int(sqrt(pixelBudget / Double(count)))
+        let maxPixelSize = min(maxAnimatedPixelSize, max(160, budgetedPixelSize))
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        var frames: [UIImage] = []
+        frames.reserveCapacity(count)
+        var duration: TimeInterval = 0
+        for index in 0..<count {
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
+                source, index, options as CFDictionary) else { return nil }
+            frames.append(UIImage(cgImage: cgImage))
+            duration += frameDuration(source: source, index: index)
+        }
+        guard duration > 0 else { duration = Double(count) * 0.1 }
+        return UIImage.animatedImage(with: frames, duration: duration)
+    }
+
+    private static func frameDuration(source: CGImageSource, index: Int) -> TimeInterval {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+              let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+        else { return 0.1 }
+        let unclamped = (gif[kCGImagePropertyGIFUnclampedDelayTime] as? NSNumber)?.doubleValue
+        let clamped = (gif[kCGImagePropertyGIFDelayTime] as? NSNumber)?.doubleValue
+        let value = unclamped ?? clamped ?? 0.1
+        // Very small delays are commonly encoder placeholders and render too fast on iOS.
+        return value < 0.02 ? 0.1 : value
     }
 }

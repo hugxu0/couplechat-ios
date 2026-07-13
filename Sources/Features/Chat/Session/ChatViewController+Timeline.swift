@@ -200,6 +200,10 @@ extension ChatViewController: ChatTimelineControllerDelegate {
             UIPasteboard.general.string = message.displayText
         case .reply:
             setReplyTarget(message)
+        case .addToStickers:
+            guard let url = message.url, !url.isEmpty else { return }
+            StickerStore.shared.add(url: url)
+            Haptics.light()
         case .addToAlbum:
             presentAlbumPicker(for: message)
         case .recall:

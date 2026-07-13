@@ -135,9 +135,12 @@ final class ChatStore: ObservableObject {
         messageStore.socketProvider = realtime
         shared.socketProvider = realtime
 
-        StickerStore.shared.configureSharedSync { [weak self] value in
-            guard let self, self.auth.session != nil else { return }
-            self.shared.setShared("stickers", value: value, session: self.auth.session)
+        StickerStore.shared.configureSync { [weak self] value in
+            guard let self, let session = self.auth.session else { return }
+            self.shared.setShared(
+                StickerStore.sharedKey(for: session.username),
+                value: value,
+                session: session)
         }
 
         realtime.objectWillChange
@@ -156,11 +159,19 @@ final class ChatStore: ObservableObject {
         // ObservableObject，必须显式转发，否则状态已写入但首页不会立即重绘。
         shared.$sharedState
             .dropFirst()
-            .sink { [weak self] _ in
+            .sink { [weak self] state in
                 guard let self else { return }
-                if let library = self.shared.sharedValue("stickers") {
-                    StickerStore.shared.applySharedLibrary(library)
+                guard let username = self.auth.session?.username else {
+                    self.objectWillChange.send()
+                    return
                 }
+                let key = StickerStore.sharedKey(for: username)
+                guard let entry = state[key] as? [String: Any],
+                      let library = entry["value"] as? [String: Any] else {
+                    self.objectWillChange.send()
+                    return
+                }
+                StickerStore.shared.applySyncedLibrary(library)
                 self.objectWillChange.send()
             }
             .store(in: &childStateCancellables)
@@ -177,6 +188,7 @@ final class ChatStore: ObservableObject {
             await shared.restoreCachedSharedState()
         }
         auth.activate(session, accounts: [], persist: false)
+        StickerStore.shared.activate(username: session.username)
         MediaFavoriteStore.shared.activate(username: session.username)
         auth.restoreCachedPartner()
         realtime.connect()
@@ -184,9 +196,11 @@ final class ChatStore: ObservableObject {
             let snapshot = try await snapshotTask.value
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
+            completeStickerInitialSync(for: session)
             auth.activate(session, accounts: snapshot.accounts, persist: false)
             await recoverSyncV2()
         } catch BootstrapError.unauthorized {
+            StickerStore.shared.deactivate()
             auth.logout()
         } catch {
             // 已登录用户离线启动时仍可查看有界本地缓存；连接恢复后前台刷新会补最新快照。
@@ -205,6 +219,7 @@ final class ChatStore: ObservableObject {
             await shared.restoreCachedSharedState()
         }
         auth.activate(session, accounts: [], persist: true)
+        StickerStore.shared.activate(username: session.username)
         MediaFavoriteStore.shared.activate(username: session.username)
         auth.restoreCachedPartner()
         realtime.connect()
@@ -212,6 +227,7 @@ final class ChatStore: ObservableObject {
             let snapshot = try await snapshotTask.value
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
+            completeStickerInitialSync(for: session)
             auth.activate(session, accounts: snapshot.accounts, persist: false)
             await recoverSyncV2()
         } catch BootstrapError.unauthorized {
@@ -224,6 +240,13 @@ final class ChatStore: ObservableObject {
 
     private func openLocalDatabase(username: String) async -> Bool {
         await persistence.open(username: username)
+    }
+
+    private func completeStickerInitialSync(for session: Session) {
+        StickerStore.shared.completeInitialSync(
+            personalLibrary: shared.sharedValue(
+                StickerStore.sharedKey(for: session.username)),
+            legacySharedLibrary: shared.sharedValue("stickers"))
     }
 
     private func fetchBootstrap(session: Session) async throws -> AppBootstrapSnapshot {
@@ -248,6 +271,7 @@ final class ChatStore: ObservableObject {
             let snapshot = try await fetchBootstrap(session: session)
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
+            completeStickerInitialSync(for: session)
             auth.activate(session, accounts: snapshot.accounts, persist: false)
             realtime.setLastError(nil)
             return true
@@ -272,6 +296,7 @@ final class ChatStore: ObservableObject {
         messageStore.aiReplying = false
         messageStore.resetPendingReadReceipts()
         realtime.setLastError(nil)
+        StickerStore.shared.deactivate()
         MediaFavoriteStore.shared.deactivate()
         auth.logout()
         if let sessionToRevoke {
@@ -362,9 +387,9 @@ final class ChatStore: ObservableObject {
         Task { await messageStore.sendSticker(url: url, channel: channel, session: session) }
     }
 
-    func uploadSticker(_ image: UIImage) async -> String? {
+    func uploadSticker(data: Data, mimeType: String) async -> String? {
         guard let session = auth.session else { return nil }
-        return await messageStore.uploadSticker(image, session: session)
+        return await messageStore.uploadSticker(data: data, mimeType: mimeType, session: session)
     }
 
     func uploadAvatar(_ image: UIImage) async -> Bool {

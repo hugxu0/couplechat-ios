@@ -423,12 +423,12 @@ final class MessageStore: ObservableObject {
         await schedulePendingOutbound(draft.outbound, channel: channel, session: session)
     }
 
-    func uploadSticker(_ image: UIImage, session: Session) async -> String? {
-        guard let data = image.jpegData(compressionQuality: 0.9),
+    func uploadSticker(data: Data, mimeType: String, session: Session) async -> String? {
+        guard mimeType.hasPrefix("image/"),
               let uploaded = try? await uploadMedia(
-                data: data, mimeType: "image/jpeg", purpose: .sticker, session: session) else { return nil }
+                data: data, mimeType: mimeType, purpose: .sticker, session: session) else { return nil }
         if let url = ServerConfig.resolveMediaURL(uploaded.url) {
-            ImageCache.shared.store(data: data, image: image, for: url)
+            ImageCache.shared.store(data: data, for: url)
         }
         return uploaded.url
     }

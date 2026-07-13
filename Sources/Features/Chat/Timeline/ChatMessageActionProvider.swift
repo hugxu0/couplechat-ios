@@ -3,6 +3,7 @@ import Foundation
 enum ChatMessageAction: Equatable {
     case copy
     case reply
+    case addToStickers
     case addToAlbum
     case recall
     case retry
@@ -22,6 +23,9 @@ enum ChatMessageActionProvider {
         var actions: [ChatMessageAction] = []
         if message.type == "text" { actions.append(.copy) }
         actions.append(.reply)
+        if message.type == "sticker", message.mediaURL != nil {
+            actions.append(.addToStickers)
+        }
         if message.channel == "couple", message.type == "image" || message.type == "video" {
             actions.append(.addToAlbum)
         }

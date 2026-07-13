@@ -3,6 +3,20 @@ import Foundation
 extension PendingOutboundMessage {
     func sendRequest(channel: ChatChannel) -> MessageSendRequest? {
         guard attachments.allSatisfy({ $0.uploadId != nil }) else { return nil }
+        // Stickers are already uploaded assets referenced by URL. The sticker library stores
+        // the server's compact relative path, while the realtime contract deliberately accepts
+        // only an absolute URL. Do not route these through the local-media upload branch merely
+        // because they have no uploadId; canonicalize the existing remote URL instead.
+        let requestURL: String?
+        if type == "sticker" {
+            guard uploadId == nil,
+                  let resolved = ServerConfig.resolveMediaURL(uploadURL),
+                  resolved.scheme == "http" || resolved.scheme == "https"
+            else { return nil }
+            requestURL = resolved.absoluteString
+        } else {
+            requestURL = uploadURL
+        }
         let attachmentRequests = attachments.isEmpty ? nil : attachments.compactMap { attachment in
             attachment.uploadId.map {
                 MessageAttachmentRequest(
@@ -20,7 +34,7 @@ extension PendingOutboundMessage {
             channel: channel,
             type: type,
             text: text,
-            url: uploadURL,
+            url: requestURL,
             uploadId: uploadId,
             replyTo: replyTo,
             replyPreview: replyPreview,

@@ -40,6 +40,7 @@ extension ChatViewController {
         var config = PHPickerConfiguration(photoLibrary: .shared())
         config.filter = .images
         config.selectionLimit = 1
+        config.preferredAssetRepresentationMode = .current
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
         present(picker, animated: true)
@@ -93,9 +94,9 @@ extension ChatViewController {
         reloadTimeline(animated: false)
     }
 
-    func addStickerImage(_ image: UIImage, to groupId: String) {
+    func addStickerData(_ data: Data, mimeType: String, to groupId: String) {
         Task {
-            guard let url = await store.uploadSticker(image) else {
+            guard let url = await store.uploadSticker(data: data, mimeType: mimeType) else {
                 Haptics.medium()
                 return
             }
@@ -104,32 +105,4 @@ extension ChatViewController {
         }
     }
 
-    func showStickerManage() {
-        let alert = UIAlertController(title: "表情管理", message: nil, preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "新建分组", style: .default) { [weak self] _ in
-            self?.showCreateStickerGroup()
-        })
-        let groups = StickerStore.shared.sortedGroups.filter { $0.id != StickerStore.defaultGroupId }
-        for group in groups {
-            alert.addAction(UIAlertAction(title: "删除分组：\(group.name)", style: .destructive) { _ in
-                StickerStore.shared.deleteGroup(group)
-            })
-        }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = panelContainer
-            popover.sourceRect = panelContainer.bounds
-        }
-        present(alert, animated: true)
-    }
-
-    func showCreateStickerGroup() {
-        let alert = UIAlertController(title: "新建分组", message: nil, preferredStyle: .alert)
-        alert.addTextField { $0.placeholder = "分组名（最多 8 字）" }
-        alert.addAction(UIAlertAction(title: "创建", style: .default) { _ in
-            _ = StickerStore.shared.createGroup(name: alert.textFields?.first?.text ?? "")
-        })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        present(alert, animated: true)
-    }
 }

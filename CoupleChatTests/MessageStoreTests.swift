@@ -208,6 +208,7 @@ final class MessageStoreMediaPlaceholderTests: XCTestCase {
         XCTAssertEqual(MediaUploadService.fileExtension(for: "video/quicktime"), "mov")
         XCTAssertEqual(MediaUploadService.fileExtension(for: "video/mp4"), "mp4")
         XCTAssertEqual(MediaUploadService.fileExtension(for: "image/png"), "png")
+        XCTAssertEqual(MediaUploadService.fileExtension(for: "image/gif"), "gif")
     }
 }
 

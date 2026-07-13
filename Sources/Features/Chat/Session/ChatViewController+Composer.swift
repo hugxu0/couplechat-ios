@@ -267,9 +267,6 @@ extension ChatViewController: ChatStickerPanelViewDelegate {
         presentStickerPicker(groupId: groupId)
     }
 
-    func stickerPanelDidRequestManage(_ panel: ChatStickerPanelView) {
-        showStickerManage()
-    }
 }
 
 extension ChatViewController: ChatComposerViewDelegate {

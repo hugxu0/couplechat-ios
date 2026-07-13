@@ -18,9 +18,13 @@ struct CachedImage<Placeholder: View>: View {
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: contentMode)
+                if image.images?.isEmpty == false {
+                    AnimatedCachedImage(image: image, contentMode: contentMode)
+                } else {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: contentMode)
+                }
             } else {
                 placeholder()
             }
@@ -34,6 +38,31 @@ struct CachedImage<Placeholder: View>: View {
                 image = await ImageCache.shared.image(for: url)
             }
         }
+    }
+}
+
+/// SwiftUI's `Image(uiImage:)` displays only the first frame of an animated UIImage.
+/// Keep the normal SwiftUI rendering path for still images and bridge only animations.
+private struct AnimatedCachedImage: UIViewRepresentable {
+    let image: UIImage
+    let contentMode: ContentMode
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.clipsToBounds = true
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        guard view.image !== image || view.contentMode != uiContentMode else { return }
+        view.stopAnimating()
+        view.image = image
+        view.contentMode = uiContentMode
+        view.startAnimating()
+    }
+
+    private var uiContentMode: UIView.ContentMode {
+        contentMode == .fit ? .scaleAspectFit : .scaleAspectFill
     }
 }
 

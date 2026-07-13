@@ -23,7 +23,7 @@ Fastify + Socket.IO · 127.0.0.1:8080
 - `AuthStore`：登录、token、当前用户和另一位用户；
 - `MessageStore`：消息、同步、发送、搜索、撤回、上传和 outbox；
 - `SharedStore`：共享状态、纪念日、提醒和每日内容；
-- `StickerStore`：自定义表情的本地离线缓存；表情列表、分组、收藏和排序通过 `SharedStore` 同步到双方所有设备；
+- `StickerStore`：自定义表情的账号级离线缓存；固定总库、自建分组和排序通过账号专属 shared-state key 同步到同账号所有设备，两个账号互不覆盖；
 - `AIMemoryRepository`：Memory 控制中心的列表、证据、纠正、删除和立即整理；
 - `MomentsRepository`：共同相册、聊天媒体入册、注脚与那年今日；
 - `CalendarRepository`：共享/私人日历、版本冲突与完成状态；
@@ -47,7 +47,7 @@ Fastify + Socket.IO · 127.0.0.1:8080
 - `RealtimeEventRouter`：消息、已读、AI、presence 和共享状态等领域事件路由；
 - `HTTPClient`：可注入 REST 边界；
 - `ServerConfig`：服务端地址；
-- `ImageCache`、`StickerStore`、`MediaFavoriteStore`：本机媒体状态；收藏按登录账号分区。
+- `ImageCache`、`StickerStore`、`MediaFavoriteStore`：本机媒体状态；动态贴纸保留原始 GIF/WebP 数据，表情库与收藏均按登录账号分区；同账号多设备的表情变更以记录修订和删除墓碑合并，避免并发添加丢失或旧设备复活已删除内容。
 
 ### 客户端目录与所有权
 

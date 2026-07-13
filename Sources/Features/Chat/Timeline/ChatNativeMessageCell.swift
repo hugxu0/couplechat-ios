@@ -210,6 +210,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         representedVoiceURL = nil
         voiceTranscript = nil
         voiceTranscriptExpanded = false
+        mediaImageView.stopAnimating()
         mediaImageView.image = nil
         mediaIconView.image = nil
         mediaIconView.isHidden = false
@@ -556,7 +557,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 let image = await VideoThumbnailGenerator.image(for: url)
                 await MainActor.run {
                     guard let self, self.representedImageURL == url else { return }
-                    self.mediaImageView.image = image
+                    self.applyMediaImage(image)
                     self.mediaIconView.isHidden = false
                     self.setNeedsLayout()
                 }
@@ -564,7 +565,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             return
         }
         if let cached = ImageCache.shared.memoryImage(for: url) {
-            mediaImageView.image = cached
+            applyMediaImage(cached)
             mediaIconView.isHidden = message.type != "video"
             setNeedsLayout()
             return
@@ -573,7 +574,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             let image = await ImageCache.shared.image(for: url)
             await MainActor.run {
                 guard let self, self.representedImageURL == url else { return }
-                self.mediaImageView.image = image
+                self.applyMediaImage(image)
                 self.mediaIconView.isHidden = message.type != "video" && image != nil
                 self.setNeedsLayout()
             }
@@ -599,9 +600,19 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             guard let url = attachment.mediaURL else { continue }
             Task { [weak imageView] in
                 let image = await ImageCache.shared.image(for: url)
-                await MainActor.run { imageView?.image = image }
+                await MainActor.run {
+                    imageView?.stopAnimating()
+                    imageView?.image = image
+                    if image?.images?.isEmpty == false { imageView?.startAnimating() }
+                }
             }
         }
+    }
+
+    private func applyMediaImage(_ image: UIImage?) {
+        mediaImageView.stopAnimating()
+        mediaImageView.image = image
+        if image?.images?.isEmpty == false { mediaImageView.startAnimating() }
     }
 
     private func configureAttachment(_ message: ChatMessage) {
