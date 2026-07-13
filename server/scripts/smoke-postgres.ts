@@ -48,9 +48,9 @@ async function main() {
         "acc_legacy_si", "si", "小偲", "smoke-hash", now, now,
       ],
     );
-    const { ensureLegacyCouple, ensureLegacyConversations } = await import("../src/auth/accounts");
-    await ensureLegacyCouple();
-    await ensureLegacyConversations();
+    const { ensureFixedCouple, ensureFixedConversations } = await import("../src/auth/accounts");
+    await ensureFixedCouple();
+    await ensureFixedConversations();
     for (let index = 0; index < 120; index += 1) {
       const sender = index % 2 === 0 ? "xu" : "si";
       await db.run(

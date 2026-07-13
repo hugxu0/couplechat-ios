@@ -101,7 +101,7 @@ GitHub Actions 的 `iOS 日常验证与构建` 分成两档，服务端与客户
 - 网络请求通过 `HTTPClient`，Socket payload 通过 `SocketPayloadEncoder`。
 - 新协议先改两端契约，再改调用点，并补契约测试。
 - 新数据库字段在 `server/src/db/migrate.ts` 追加版本化变更；`index.ts` 只做稳定 re-export。
-- Bug 修复优先补最小复现测试；无法自动化的真机问题写入 `../current/STATUS.md`。
+- Bug 修复优先补最小复现测试；无法自动化的真机问题写入 `../current/PROJECT.md` 的“当前限制”，修复后立即删除该条。
 - 日志不得包含 token、密码、API key、完整私聊内容或数据库连接串。
 
 ### 设计系统约定

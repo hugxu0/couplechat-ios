@@ -14,9 +14,9 @@ test("memory control routes isolate private scope and support review actions", a
               ('acc_test_si', 'si', '小偲', 'unused', '', 'active', 0, ?, ?)`,
       [now, now, now, now],
     );
-    const { ensureLegacyCouple, ensureLegacyConversations } = await import("../../src/auth/accounts");
-    await ensureLegacyCouple();
-    await ensureLegacyConversations();
+    const { ensureFixedCouple, ensureFixedConversations } = await import("../../src/auth/accounts");
+    await ensureFixedCouple();
+    await ensureFixedConversations();
     await run(
       `INSERT INTO messages
        (id, channel, sender, sender_name, kind, type, text, ts, conversation_id, sender_account_id)

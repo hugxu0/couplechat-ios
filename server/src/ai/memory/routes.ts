@@ -180,9 +180,6 @@ export async function registerMemoryRoutes(app: FastifyInstance) {
     const parsed = refreshBody.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
     const channel = parsed.data.scope === "shared" ? "couple" : `ai:${request.user.username}`;
-    if (parsed.data.scope === "shared" && identity.coupleId !== "cpl_legacy_xusi") {
-      return reply.code(409).send({ error: "memory_tenant_refresh_pending" });
-    }
     await flushMemory(channel);
     return { ok: true, stats: await memoryStatsForScopes(visibleScopes(request.user.username), identity) };
   });

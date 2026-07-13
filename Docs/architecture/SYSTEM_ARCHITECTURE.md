@@ -164,7 +164,7 @@ server/src/db/
 
 - 客户端频道只有 `couple` 和 `ai`。
 - 服务端把个人 AI 私聊兼容投影为 `ai:<username>`，事实所有权由 `conversation.owner_account_id` 决定。
-- 公聊房间为 `couple:<coupleId>`，个人事件房间为 `account:<accountId>`；`user:<username>` 只保留兼容监听。
+- 公聊房间为 `couple:<coupleId>`，个人事件房间为 `account:<accountId>`。
 - 任何 AI 工具都不能读取另一位用户的 AI 私聊。
 - `xu/si` 使用完整 Agent + Memory 工具；共享与私人 AI 数据继续通过 conversation/account/couple ownership 约束。
 

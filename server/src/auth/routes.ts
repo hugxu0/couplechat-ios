@@ -1,11 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { authenticate, listPublicAccounts, setBarkKey } from "./accounts";
+import { authenticate, listPublicAccounts } from "./accounts";
 import { createToken } from "./token";
 import { requireAuth } from "./httpAuth";
 import { errorCodes } from "../errors/errorCodes";
 import { createDeviceSession } from "./devices";
-import type { AuthUser } from "../types";
 import { verifyActiveToken } from "./token";
 
 const loginDeviceBody = z.object({
@@ -21,12 +20,7 @@ const loginDeviceBody = z.object({
 const loginBody = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
-  device: loginDeviceBody.optional(),
-});
-const v2LoginBody = loginBody.extend({ device: loginDeviceBody });
-
-const barkBody = z.object({
-  barkKey: z.string().trim().min(1).nullable(),
+  device: loginDeviceBody,
 });
 
 export async function registerAuthRoutes(app: FastifyInstance) {
@@ -37,28 +31,8 @@ export async function registerAuthRoutes(app: FastifyInstance) {
     return listPublicAccounts(user ?? undefined);
   });
 
-  app.post("/api/login", async (request, reply) => {
-    const parsed = loginBody.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: errorCodes.invalidRequest });
-
-    const authenticated = await authenticate(parsed.data.username, parsed.data.password);
-    if (!authenticated) return reply.code(401).send({ error: errorCodes.invalidCredentials });
-    let user: AuthUser | null = authenticated;
-    if (parsed.data.device) {
-      user = await createDeviceSession(user, parsed.data.device);
-      if (!user) return reply.code(401).send({ error: errorCodes.unauthorized });
-    }
-
-    return {
-      token: createToken(user),
-      username: user.username,
-      name: user.name,
-      deviceId: user.deviceId,
-    };
-  });
-
   app.post("/api/v2/login", async (request, reply) => {
-    const parsed = v2LoginBody.safeParse(request.body);
+    const parsed = loginBody.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: errorCodes.invalidRequest });
     const authenticated = await authenticate(parsed.data.username, parsed.data.password);
     if (!authenticated) return reply.code(401).send({ error: errorCodes.invalidCredentials });
@@ -78,11 +52,4 @@ export async function registerAuthRoutes(app: FastifyInstance) {
     name: request.user!.name,
   }));
 
-  app.post("/api/me/push/bark", { preHandler: requireAuth }, async (request, reply) => {
-    const parsed = barkBody.safeParse(request.body);
-    if (!parsed.success || !request.user) return reply.code(400).send({ error: "invalid_request" });
-
-    await setBarkKey(request.user.username, parsed.data.barkKey);
-    return { ok: true };
-  });
 }

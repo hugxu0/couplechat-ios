@@ -365,7 +365,8 @@ export async function confirmAction(
         : null;
       const room = scope === "shared"
         ? `couple:${stored.coupleId}`
-        : ownerAccount ? `account:${ownerAccount.id}` : `user:${owner}`;
+        : ownerAccount ? `account:${ownerAccount.id}` : null;
+      if (!room) throw new Error(`active account not found for ${owner}`);
       io.to(room).emit(socketEvents.personalItemChanged, {
         action: item.action.type,
         source: "ai",

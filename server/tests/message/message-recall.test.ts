@@ -13,9 +13,9 @@ test("recall hard-deletes the message, derivatives and orphan memory", async () 
               ('acc_test_si', 'si', '小偲', 'unused', '', 'active', 0, ?, ?)`,
       [now, now, now, now],
     );
-    const { ensureLegacyCouple, ensureLegacyConversations } = await import("../../src/auth/accounts");
-    await ensureLegacyCouple();
-    await ensureLegacyConversations();
+    const { ensureFixedCouple, ensureFixedConversations } = await import("../../src/auth/accounts");
+    await ensureFixedCouple();
+    await ensureFixedConversations();
     await run(
       `INSERT INTO messages
        (id, channel, sender, sender_name, kind, type, text, url, ts, conversation_id, sender_account_id)

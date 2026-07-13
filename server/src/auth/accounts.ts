@@ -41,19 +41,20 @@ export async function seedAccounts() {
       `INSERT INTO accounts
        (id, username, display_name, password_hash, avatar, status, version, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?)`,
-      [legacyAccountId(account.username), account.username, account.displayName,
+      [fixedAccountId(account.username), account.username, account.displayName,
         hashPassword(account.password), account.avatar, now, now],
     );
   }
-  await ensureLegacyCouple();
-  await ensureLegacyConversations();
+  await ensureFixedCouple();
+  await ensureFixedConversations();
 }
 
-export function legacyAccountId(username: string): string {
+export function fixedAccountId(username: string): string {
+  // These IDs already own production data. Keep the values stable even though onboarding is gone.
   return `acc_legacy_${username}`;
 }
 
-export async function ensureLegacyCouple(): Promise<void> {
+export async function ensureFixedCouple(): Promise<void> {
   const xu = await get<AccountRow & { id: string }>("SELECT * FROM accounts WHERE username = 'xu'");
   const si = await get<AccountRow & { id: string }>("SELECT * FROM accounts WHERE username = 'si'");
   if (!xu || !si) return;
@@ -79,7 +80,7 @@ export async function ensureLegacyCouple(): Promise<void> {
   );
 }
 
-export async function ensureLegacyConversations(): Promise<void> {
+export async function ensureFixedConversations(): Promise<void> {
   const now = Date.now();
   if (await get("SELECT 1 AS found FROM couples WHERE id = 'cpl_legacy_xusi'")) {
     await run(
@@ -140,8 +141,4 @@ export async function authenticate(username: string, password: string) {
     coupleId: account.couple_id ?? undefined,
     memberId: account.member_id ?? undefined,
   };
-}
-
-export async function setBarkKey(username: string, barkKey: string | null) {
-  await run("UPDATE accounts SET bark_key = ?, updated_at = ? WHERE username = ?", [barkKey, Date.now(), username]);
 }

@@ -15,9 +15,9 @@ test("personal items preserve visibility and complete the AI confirmation flow",
               (?, 'si', '小偲', 'unused', '', 'active', 0, ?, ?)`,
       ["acc_test_xu", now, now, "acc_test_si", now, now],
     );
-    const { ensureLegacyCouple, ensureLegacyConversations } = await import("../../src/auth/accounts");
-    await ensureLegacyCouple();
-    await ensureLegacyConversations();
+    const { ensureFixedCouple, ensureFixedConversations } = await import("../../src/auth/accounts");
+    await ensureFixedCouple();
+    await ensureFixedConversations();
     const xu = { username: "xu", name: "小旭" };
     const si = { username: "si", name: "小偲" };
     const personal = await items.createPersonalItem(xu, { kind: "memo", title: "私有备忘" });
@@ -60,8 +60,20 @@ test("personal items preserve visibility and complete the AI confirmation flow",
 
     const login = await app.inject({
       method: "POST",
-      url: "/api/login",
-      payload: { username: "missing", password: "wrong" },
+      url: "/api/v2/login",
+      payload: {
+        username: "missing",
+        password: "wrong",
+        device: {
+          installationId: "missing-account-test-device",
+          platform: "ios",
+          deviceName: "Test iPhone",
+          appVersion: "1",
+          buildNumber: "1",
+          locale: "zh-CN",
+          timezone: "Asia/Shanghai",
+        },
+      },
     });
     assert.equal(login.statusCode, 401);
     assert.equal(login.json().error, "invalid_credentials");

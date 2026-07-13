@@ -6,7 +6,7 @@ test("authentication is limited to the two fixed accounts and onboarding routes 
   await withTestDatabase(async () => {
     const { buildApp } = await import("../../src/app");
     const { run } = await import("../../src/db");
-    const { ensureLegacyConversations, ensureLegacyCouple } = await import("../../src/auth/accounts");
+    const { ensureFixedConversations, ensureFixedCouple } = await import("../../src/auth/accounts");
     const { hashPassword } = await import("../../src/auth/password");
     const now = Date.now();
     for (const [username, displayName] of [["xu", "小旭"], ["si", "小偲"], ["old_user", "旧账号"]]) {
@@ -17,8 +17,8 @@ test("authentication is limited to the two fixed accounts and onboarding routes 
         [`acc_test_${username}`, username, displayName, hashPassword("password-123"), now, now],
       );
     }
-    await ensureLegacyCouple();
-    await ensureLegacyConversations();
+    await ensureFixedCouple();
+    await ensureFixedConversations();
 
     const app = await buildApp();
     const accounts = await app.inject({ method: "GET", url: "/api/accounts" });
@@ -49,6 +49,8 @@ test("authentication is limited to the two fixed accounts and onboarding routes 
     assert.equal(retiredAccount.statusCode, 401);
 
     for (const request of [
+      { method: "POST", url: "/api/login" },
+      { method: "POST", url: "/api/me/push/bark" },
       { method: "POST", url: "/api/v2/register" },
       { method: "POST", url: "/api/v2/couples" },
       { method: "POST", url: "/api/v2/couples/invites" },

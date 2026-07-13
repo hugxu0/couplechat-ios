@@ -1,73 +1,51 @@
 # 悄悄话
 
-可注册、可配对、支持多设备同步的情侣 App。客户端使用 SwiftUI + UIKit，服务端使用 Fastify + Socket.IO + PostgreSQL，并集成“大橘”AI。
+只服务 `xu` 与 `si` 两位固定用户、支持 iPhone/iPad 多设备同步的情侣 App。客户端使用 SwiftUI + UIKit，服务端使用 Fastify、Socket.IO、PostgreSQL，并集成“大橘”AI。
 
-生产服务地址：`https://hoo66.top`
+生产服务：`https://hoo66.top`
 
 ## 当前能力
 
-- legacy 快捷登录、V2 注册/邀请码配对、多设备会话、实时在线状态、严格已读、硬删除撤回、引用回复和消息搜索
-- 文字、图片、视频、语音、文件和贴纸；Live Photo 当前按静态图发送，配对资源协议仍保留
-- 设备端 SQLite 缓存、离线历史、可靠发送队列和媒体缓存
-- 纪念日、共同相册/那年今日、共享/私人日历、提醒、备忘、共同宠物、聊天统计、主题和聊天壁纸
-- `couple` 公聊与个人 `ai` 私聊
-- legacy `xu/si` 的完整大橘 Agent/图片理解/联网查询/结构化 Memory/确认卡；新情侣当前为无历史基础 AI
-- Docker Compose 生产部署，PostgreSQL 与媒体文件持久化
+- 固定双账号登录、设备会话、实时在线、严格已读、撤回、引用、搜索和离线历史。
+- 文字、原图、视频、语音、文件与贴纸消息；语音异步转写；Live Photo 当前按静态图处理。
+- 纪念日、聊天统计、共同相册、那年今日、共享/私人日历、提醒与备忘。
+- 服务端持久化的大橘状态、互动与 AI 私聊，以及可管理的结构化 Memory。
+- SQLite 本地缓存、可靠发送队列、媒体缓存、Socket.IO 实时同步和 Bark 多设备通知。
 
-## 快速入口
+公开注册、邀请码、创建或加入其他情侣空间均已删除。
 
-- [文档导航](Docs/README.md)：按当前状态、产品、架构、开发和运维分类的入口
-- [当前项目文档](Docs/current/PROJECT.md)：当前状态、限制、架构边界和接手顺序
-- [产品计划](Docs/product/PRODUCT_PLAN.md)：产品边界、功能设计和验收标准
-- [系统架构](Docs/architecture/SYSTEM_ARCHITECTURE.md)：前后端模块、数据流和关键约束
-- [V2 技术架构](Docs/architecture/V2_ARCHITECTURE.md)：多情侣、多设备、同步和迁移路线
-- [接口契约](Docs/architecture/API.md)：REST 与 Socket.IO 协议
-- [AI 系统](Docs/architecture/AI.md)：Agent、MCP、Memory 和调试方式
-- [开发指南](Docs/development/DEVELOPMENT.md)：本地调试、构建和日常验证
-- [生产部署](Docs/operations/DEPLOYMENT.md)：生产拓扑、更新和备份
-- [历史重构计划](Docs/archive/2026-07-12/REFACTOR_PLAN.md)：V1 发布阶段的任务与验收证据
-- [发布完成报告](Docs/archive/2026-07-12/RELEASE_REPORT_2026-07-12.md)：上一轮架构、体验、验证和上线结果
-- [发布证据](Docs/archive/2026-07-12/evidence/RELEASE_MATRIX.md)：候选版本的验证矩阵
+## 文档
 
-## 仓库结构
+- [当前项目](Docs/current/PROJECT.md)：功能、限制、保护边界和验证基线。
+- [系统架构](Docs/architecture/SYSTEM_ARCHITECTURE.md)：客户端、服务端、数据与实时链路。
+- [接口契约](Docs/architecture/API.md)：当前 REST 与 Socket.IO 协议。
+- [AI 系统](Docs/architecture/AI.md)：Agent、Memory、MCP 与调试。
+- [开发指南](Docs/development/DEVELOPMENT.md)：本地开发、测试和构建。
+- [生产部署](Docs/operations/DEPLOYMENT.md)：部署、备份和恢复。
+
+仓库不保存历史报告、交接记录、旧计划或发布快照；Git 历史负责追溯。
+
+## 目录
 
 ```text
-CoupleChatTests/       iOS 日常单元测试
-CoupleChatUITests/     DEBUG 视觉夹具 UI 测试
-Docs/                  按生命周期分层的项目文档
-  current/             唯一的当前项目文档
-  product/             产品边界与功能计划
-  architecture/        系统、协议与 AI 架构
-  development/         本地开发与构建
-  operations/          生产部署与备份
-  archive/              按日期归档的历史计划、报告与证据
+CoupleChatTests/       iOS 单元测试
+CoupleChatUITests/     DEBUG 视觉夹具测试
+Docs/                  仅包含现行文档
 Sources/
-  App/                 App 入口、启动与主导航
-  Domain/              跨功能领域模型
-  Platform/             网络、Socket、本地数据库、媒体和状态
-  DesignSystem/        主题和通用视觉组件
-  Features/            登录配对、聊天、时光、计划、宠物、个人中心与设备/Memory 设置
+  App/                 App 入口与主导航
+  Domain/              领域模型
+  Platform/            网络、Socket、持久化、媒体与状态
+  DesignSystem/        主题与通用视觉组件
+  Features/            Chat、Moments、Plans、Daju、Account
 server/
-  deploy/              当前生产 nginx 配置
-  scripts/             日常开发与健康检查脚本
+  deploy/              生产 nginx 配置
+  scripts/             开发、部署与健康检查脚本
   src/                 服务端业务代码
-.github/workflows/     iOS 构建与测试
+.github/workflows/     iOS 构建、测试与 IPA 打包
 project.yml            XcodeGen 工程定义
 ```
 
-## 常用命令
-
-当前 V2 工作树需要 v23 schema，不能直接在仍处于 v10 发布边界的生产库上启动。生产只做只读连接检查：
-
-```powershell
-cd server
-npm install
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-cloud-db.ps1 -CheckOnly
-```
-
-服务端功能调试使用从备份恢复并迁移到 v23 的隔离 PostgreSQL；`dev:cloud-db` 已强制关闭 migration，schema 不匹配时会安全退出。
-
-后端日常验证：
+## 常用验证
 
 ```powershell
 cd server
@@ -76,12 +54,12 @@ npm run build
 npm run healthcheck -- https://hoo66.top
 ```
 
-iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLint、单元测试和 Archive，具体见 [开发指南](Docs/development/DEVELOPMENT.md)。
+iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLint、单元测试、Archive 和 IPA 打包。
 
-## 重要约束
+## 不可破坏的边界
 
-- `xu` 与 `si` 是 legacy 迁移标识，现有生产数据依赖它们；V2 新账号不得继续写死这两个用户名。
-- 生产数据库是线上事实源；开发与 AI 调试不得直接写生产聊天或 Memory，必须使用隔离恢复库。
-- `.env`、`server/.data/`、`server/uploads/` 和任何数据库备份不得提交。
-- Socket 字段变化必须同时更新 `server/src/contracts/realtime.ts` 与 `Sources/Platform/Networking/SocketContract.swift`。
-- 生产已执行 v1–v23，v1–v10 保持不可改写；后续数据库变化只能追加新版本。
+- 生产数据库与媒体目录是事实源；调试不得直接改写生产聊天或 Memory。
+- 数据库迁移 v1–v24 已上线，旧迁移不可删除或改写；新变化只能追加版本。
+- 现有数据库主键包含 `legacy` 字样，它们属于线上数据身份，不代表仍支持旧产品流程。
+- Socket 字段变化必须同步修改 `server/src/contracts/realtime.ts`、`Sources/Platform/Networking/SocketContract.swift` 和测试。
+- `.env`、`server/.data/`、`server/uploads/`、数据库备份与构建产物不得提交。

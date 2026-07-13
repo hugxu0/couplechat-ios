@@ -17,7 +17,7 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
     await withTestDatabase(async () => {
       const { buildApp } = await import("../../src/app");
       const { all, get, run } = await import("../../src/db");
-      const { ensureLegacyConversations, ensureLegacyCouple } = await import("../../src/auth/accounts");
+      const { ensureFixedConversations, ensureFixedCouple } = await import("../../src/auth/accounts");
       const { hashPassword } = await import("../../src/auth/password");
       const { verifyActiveToken } = await import("../../src/auth/token");
       const { createMessage, fetchMessages, recallMessage, searchMessages } = await import("../../src/chat/messageService");
@@ -45,8 +45,8 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
       };
       await createFixedAccount("xu", "小旭");
       await createFixedAccount("si", "小偲");
-      await ensureLegacyCouple();
-      await ensureLegacyConversations();
+      await ensureFixedCouple();
+      await ensureFixedConversations();
       const login = async (username: string) => {
         const response = await app.inject({
           method: "POST",

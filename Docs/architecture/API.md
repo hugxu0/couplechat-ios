@@ -16,10 +16,9 @@ Authorization: Bearer <token>
 |---|---|---|
 | `GET` | `/health` | 数据库健康检查 |
 | `GET` | `/api/accounts` | 未登录时返回 `xu/si` 快捷账号；带 token 时返回当前共享空间成员 |
-| `POST` | `/api/login` | legacy 兼容登录；旧客户端可不传设备信息 |
 | `POST` | `/api/v2/login` | 使用 `username/password/device` 登录并绑定当前设备 |
 
-登录成功返回 `token`、`username`、`name` 和 `deviceId`。V2 登录要求 device，字段与设备 Bark PUT 使用的安装信息一致。服务端只认证 `xu/si`；注册、情侣空间创建/加入、邀请码和配对状态接口均不存在。
+登录成功返回 `token`、`username`、`name` 和 `deviceId`。登录必须提供 device，字段与设备 Bark PUT 使用的安装信息一致。服务端只认证 `xu/si`；注册、情侣空间创建/加入、邀请码和配对状态接口均不存在。
 
 ### 当前用户与同步
 
@@ -28,12 +27,6 @@ Authorization: Bearer <token>
 | `GET` | `/api/me` | 核验 token，返回当前账号 |
 | `GET` | `/api/bootstrap` | 最近消息、账号、已读和共享状态快照 |
 | `GET` | `/api/messages` | 消息分页或增量读取 |
-| `POST` | `/api/me/push/bark` | 设置或清除当前账号 Bark key |
-
-旧 `/api/me/push/bark` 为 V1 兼容接口。新客户端使用设备级接口：
-
-| 方法 | 路径 | 用途 |
-|---|---|---|
 | `GET` | `/api/v2/me/devices` | 查看当前账号的有效设备与 Bark 状态 |
 | `PUT` | `/api/v2/me/devices/current/push/bark` | 绑定/更新当前安装并设置本设备 Bark key |
 | `DELETE` | `/api/v2/me/devices/:id` | 撤销一台设备并停用它的推送 endpoint |
@@ -97,7 +90,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 
 共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion }`，importance 范围 `1...5`；版本冲突返回 409 和权威 `item`，客户端会载入它。删除会记录 exclusion，不能被相同证据自动重新生成。`POST refresh` body 为 `{ scope: "shared" | "private" }`。
 
-### Sync V2
+### 增量同步
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -194,7 +187,7 @@ io("https://hoo66.top", { auth: { token } })
 
 - `type`：`text/image/video/sticker/voice/file`。
 - 图片、视频、语音和文件必须引用 `uploadId`；贴纸可使用已有贴纸 URL。
-- 服务端契约支持 Live Photo `attachments`，每个 asset 至少有 `photo`，可带 `pairedVideo`；当前 iOS 选择器仍只发送静态照片，完整配对资源列入 V2 媒体域。
+- 服务端契约支持 Live Photo `attachments`，每个 asset 至少有 `photo`，可带 `pairedVideo`；当前 iOS 选择器仍只发送静态照片。
 - `clientId` 应始终提供，用于重试幂等。
 
 ### 服务端推送

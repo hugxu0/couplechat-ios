@@ -5,7 +5,7 @@
 ## 回答链路
 
 ```text
-legacy `xu/si` 主人消息写入 PostgreSQL
+`xu/si` 主人消息写入 PostgreSQL
   ├─ 增量整理 Memory
   ├─ 更新窗口外对话摘要
   └─ 需要回复时
@@ -79,7 +79,7 @@ legacy `xu/si` 主人消息写入 PostgreSQL
 - 可以分别立即整理共同聊天和当前账号的 AI 私聊。
 - 列表已支持 cursor 分页、版本冲突和 Sync V2 跨设备刷新。
 
-尚未完成的是来源证据一键跳回聊天和本地离线缓存；runtime/tool 的长期收敛仍以 `conversation_id/couple_id/account_id` 为边界。详见 `V2_ARCHITECTURE.md`。
+尚未完成的是来源证据一键跳回聊天和本地离线缓存；runtime/tool 以 `conversation_id/couple_id/account_id` 为边界。
 
 ## MCP 工具
 
@@ -127,7 +127,7 @@ EMBEDDING_DIM=1024
 
 ## 本机调试
 
-仅在迁移到 v24 的隔离恢复库运行调试服务后打开 `http://127.0.0.1:8080/ai-debug`。当前 V2 工作树不得用 `npm run dev:cloud-db` 直接写生产库。调试页支持：
+仅在迁移到 v24 的隔离恢复库运行调试服务后打开 `http://127.0.0.1:8080/ai-debug`。不得用 `npm run dev:cloud-db` 直接写生产库。调试页支持：
 
 - 两位账号与公聊/私聊切换；
 - 查看 Agent instructions、输入、工具调用、输出和耗时；
@@ -135,4 +135,4 @@ EMBEDDING_DIM=1024
 - 手动整理当前频道的新消息；
 - 有明确确认步骤地清除当前频道最近消息。
 
-调试页只在非生产环境且 loopback 请求下可访问。它连接生产数据库，任何写入都会影响真实数据。
+调试页只在非生产环境且 loopback 请求下可访问。它必须连接隔离恢复库，不能连接生产数据库。

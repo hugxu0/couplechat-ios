@@ -80,8 +80,6 @@ export function registerRealtime(io: Server) {
     }
     if (user.coupleId) socket.join(`couple:${user.coupleId}`);
     socket.join(`account:${user.accountId ?? user.username}`);
-    // 兼容仍监听 user:username 的 AI/事项事件，V2 域逐步切到 account:id。
-    socket.join(`user:${user.username}`);
 
     markConnected(user, socket.id);
     broadcastPresence(io, user.coupleId);
