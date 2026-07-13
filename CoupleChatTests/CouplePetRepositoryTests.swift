@@ -121,7 +121,7 @@ final class CouplePetRepositoryTests: XCTestCase {
         let snapshot = try JSONDecoder().decode(CouplePetSnapshot.self, from: Self.snapshotData)
         cache.save(snapshot, username: "xu")
         let repository = CouplePetRepository(httpClient: OfflinePetHTTPClient())
-        let viewModel = PetViewModel(repository: repository, cache: cache)
+        let viewModel = DajuViewModel(repository: repository, cache: cache)
 
         await viewModel.load(token: "offline", username: "xu")
 
@@ -197,9 +197,9 @@ final class CouplePetRepositoryTests: XCTestCase {
     """#.utf8)
 }
 
-final class PetLayoutTests: XCTestCase {
+final class DajuLayoutTests: XCTestCase {
     func testLandscapeIPadKeepsSixtyFortyNookAndPanel() {
-        let metrics = PetLayoutMetrics.resolve(
+        let metrics = DajuLayoutMetrics.resolve(
             width: 1_024, height: 740, hasRegularHorizontalSizeClass: true)
 
         XCTAssertEqual(metrics.mode, .split)
@@ -208,7 +208,7 @@ final class PetLayoutTests: XCTestCase {
     }
 
     func testWideIPadCapsContentAndPanelWidth() {
-        let metrics = PetLayoutMetrics.resolve(
+        let metrics = DajuLayoutMetrics.resolve(
             width: 1_366, height: 1_024, hasRegularHorizontalSizeClass: true)
 
         XCTAssertEqual(metrics.totalContentWidth, 1_050)
@@ -217,14 +217,14 @@ final class PetLayoutTests: XCTestCase {
     }
 
     func testPhoneAndPortraitIPadUseStackedDrawer() {
-        XCTAssertEqual(PetLayoutMetrics.resolve(
+        XCTAssertEqual(DajuLayoutMetrics.resolve(
             width: 390, height: 844, hasRegularHorizontalSizeClass: false).mode, .stacked)
-        XCTAssertEqual(PetLayoutMetrics.resolve(
+        XCTAssertEqual(DajuLayoutMetrics.resolve(
             width: 834, height: 1_194, hasRegularHorizontalSizeClass: true).mode, .stacked)
     }
 
     func testPhoneLandscapeLeavesRoomForContentDrawer() {
-        let metrics = PetLayoutMetrics.resolve(
+        let metrics = DajuLayoutMetrics.resolve(
             width: 820, height: 390, hasRegularHorizontalSizeClass: false)
 
         XCTAssertEqual(metrics.mode, .stacked)

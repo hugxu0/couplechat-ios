@@ -227,7 +227,7 @@ io("https://hoo66.top", { auth: { token } })
 ## 协议修改流程
 
 1. 修改 `server/src/contracts/realtime.ts` 的事件和 Zod schema。
-2. 修改 `Sources/Core/Networking/SocketContract.swift` 的事件和请求结构。
+2. 修改 `Sources/Platform/Networking/SocketContract.swift` 的事件和请求结构。
 3. 更新服务端处理与 iOS 调用点。
 4. 补充 `SocketContractTests` 或后端冒烟断言。
 5. 更新本文档。

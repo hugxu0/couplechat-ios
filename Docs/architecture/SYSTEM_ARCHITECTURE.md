@@ -32,7 +32,7 @@ Fastify + Socket.IO · 127.0.0.1:8080
 - `CoupleOnboardingRepository`、`DeviceSessionRepository`：注册配对与多设备管理；
 - `ChatStore`：持有 Socket，分发事件并为 View 暴露统一接口。
 
-`Sources/Core` 还包含：
+`Sources/Platform` 与 `Features/*/Data` 承载运行时实现：
 
 - `ChatPersistence` actor：生产代码访问 SQLite 的唯一入口，实现 `ChatPersistenceProtocol`；
 - `ChatLocalDatabase`：actor 内部的 SQLite connection 与 SQL 实现，页面和 Store 不直接调用；
@@ -53,18 +53,21 @@ Fastify + Socket.IO · 127.0.0.1:8080
 ```text
 Sources/
   App/                       App 入口、通知代理、根 Tab 与 AppState 装配
-  Core/
-    Models/                  跨功能领域模型
+  Domain/
+    Models/                  跨功能领域模型和协议数据
+  Platform/
     Networking/              HTTP、Socket 契约与远端数据源
     Persistence/             SQLite actor、Keychain 与本地数据
-    Chat/                    消息 facade、时间线、outbox 与同步协调
-    Shared/                  账号、共享状态、每日内容与个人事项
+    State/                   登录与共享状态
     Media/                   图片、贴纸与收藏缓存
     Support/                 Markdown、格式化与启动快照
+    Sync/                    Sync V2 持久化游标与 ack
   DesignSystem/              视觉 token、语义页面组件、通用图片组件
   Features/
-    Auth/                    登录
+    Auth/
+      Data/                  注册、配对与登录数据源
     Chat/
+      Data/                  消息 facade、时间线、outbox、转写与同步协调
       Home/                  聊天首页装配、状态/动作模型与子视图
       Session/               会话页装配、composer、原生顶栏与控制器扩展
       Timeline/              时间线、消息 cell、滚动状态、消息动作、贴纸面板
@@ -73,14 +76,19 @@ Sources/
       Settings/              会话详情设置
       Presentation/          互动特效与聊天呈现模型
       Fixtures/              DEBUG-only 聊天顶部视觉夹具
-    Records/                 共同相册、那年今日、统计、日期/纪念日
-    Reminders/               日历、提醒、备忘、编辑器与 Markdown 预览
-    Profile/                 我的主页
+    Moments/
+      Data/                  共同相册、那年今日、统计数据源
+    Plans/
+      Data/                  日历、提醒与备忘数据源
+    Account/
+      Data/                  Memory、设备会话数据源
       Memory/                Memory 控制中心、详情与语义组件
       Theme/                 主题样式
       Storage/               存储与附件管理
       Favorites/             收藏媒体
-    Pet/                     共同宠物、小窝、今日回应、藏品和足迹
+    Daju/
+      Data/                  共同宠物数据源
+                            共同宠物、互动、模型和大橘私聊入口
 ```
 
 `MessageStore` 与 `ChatStore` 为兼容现有页面保留 facade，但不再拥有全部底层实现。新增功能应优先进入已有的 Repository、Coordinator 或专用 Store；只有跨模块装配和向后兼容转发可以留在 facade，避免重新形成单体状态对象。
@@ -130,7 +138,7 @@ server/src/db/
   client.ts        PostgreSQL pool、查询与连接生命周期
   transaction.ts   事务边界
   rows.ts          数据库行类型
-  migrate.ts       v1-v22 版本化 migration 与受控执行器（仅 v1-v10 已发布冻结）
+  migrate.ts       v1-v23 版本化 migration 与受控执行器（仅追加，v1-v10 保持兼容）
   index.ts         稳定 re-export，不承载实现
 ```
 

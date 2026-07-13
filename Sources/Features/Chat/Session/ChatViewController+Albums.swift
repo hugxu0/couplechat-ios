@@ -40,7 +40,7 @@ extension ChatViewController {
             do {
                 _ = try await MomentsRepository().addMessage(
                     albumId: album.id, messageId: message.id, token: token)
-                NotificationCenter.default.post(name: RecordsViewModel.albumsChanged, object: nil)
+                NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
                 self?.presentAlbumMessage(title: "已加入“\(album.title)”", message: "可以在时光页补上一句共同注脚。")
             } catch {
                 self?.presentAlbumMessage(title: "加入失败", message: error.localizedDescription)

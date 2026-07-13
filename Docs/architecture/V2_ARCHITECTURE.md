@@ -2,7 +2,7 @@
 
 > 决策日期：2026-07-13
 > 迁移原则：扩表 → 回填 → 双写 → 切流 → 最后收缩
-> 兼容要求：不修改任何已发布的 v1–v10 migration；v11–v22 仍是本次未发布候选，可在首次生产迁移前修正；`xu / si` 不重新注册、不重新配对、数据无损
+> 兼容要求：不修改任何已发布的 v1–v10 migration；v11–v23 已作为追加迁移落地，后续只能继续追加；`xu / si` 不重新注册、不重新配对、数据无损
 
 截至 2026-07-13，身份、设备会话、conversation ownership、Sync V2、Memory ownership、转写、相册、日历和宠物的可运行基线已落地。下文中 preference 云同步、通用 notification intent、短期 access/refresh token、`sync:available` 唤醒和完整统一媒体库仍是后续目标，不应误读成当前生产能力。
 
@@ -372,6 +372,7 @@ xu / si AI conversation conv_legacy_ai_xu / conv_legacy_ai_si
 | v20 | `shared_albums` | 媒体资产、相册、项目和共同注脚 |
 | v21 | `shared_calendar` | 共享/私人日历、参与者和版本冲突 |
 | v22 | `shared_pet` | 宠物、题目、双人回应、藏品、场景和足迹 |
+| v23 | `pet_care_state` | 大橘四项状态、互动冷却与持久化养成状态 |
 
 最终 contract migration 只在所有真实设备升级 V2 后执行，包括删除旧全局 clientId 索引、停止 legacy 双写和将新 ownership 字段设为 NOT NULL。
 

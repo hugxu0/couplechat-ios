@@ -58,16 +58,16 @@ struct RootTabView: View {
                 ChatHomeView()
                     .tabItem { Label(MainTab.chat.rawValue, systemImage: MainTab.chat.icon) }
                     .tag(MainTab.chat)
-                RecordsView()
+                MomentsView()
                     .tabItem { Label(MainTab.records.rawValue, systemImage: MainTab.records.icon) }
                     .tag(MainTab.records)
-                PetView()
+                DajuView()
                     .tabItem { Label(MainTab.pet.rawValue, systemImage: MainTab.pet.icon) }
                     .tag(MainTab.pet)
-                RemindersView()
+                PlansView()
                     .tabItem { Label(MainTab.reminders.rawValue, systemImage: MainTab.reminders.icon) }
                     .tag(MainTab.reminders)
-                ProfileView()
+                AccountView()
                     .tabItem { Label(MainTab.profile.rawValue, systemImage: MainTab.profile.icon) }
                     .tag(MainTab.profile)
             }

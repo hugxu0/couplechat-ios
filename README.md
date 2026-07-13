@@ -17,8 +17,7 @@
 ## 快速入口
 
 - [文档导航](Docs/README.md)：按当前状态、产品、架构、开发和运维分类的入口
-- [当前状态](Docs/current/STATUS.md)：已实现功能、限制和待处理问题
-- [AI 接手说明](Docs/current/HANDOFF.md)：当前分支、验证结果和接手顺序
+- [当前项目文档](Docs/current/PROJECT.md)：当前状态、限制、架构边界和接手顺序
 - [产品计划](Docs/product/PRODUCT_PLAN.md)：产品边界、功能设计和验收标准
 - [系统架构](Docs/architecture/SYSTEM_ARCHITECTURE.md)：前后端模块、数据流和关键约束
 - [V2 技术架构](Docs/architecture/V2_ARCHITECTURE.md)：多情侣、多设备、同步和迁移路线
@@ -26,9 +25,9 @@
 - [AI 系统](Docs/architecture/AI.md)：Agent、MCP、Memory 和调试方式
 - [开发指南](Docs/development/DEVELOPMENT.md)：本地调试、构建和日常验证
 - [生产部署](Docs/operations/DEPLOYMENT.md)：生产拓扑、更新和备份
-- [历史重构计划](Docs/history/REFACTOR_PLAN.md)：V1 发布阶段的任务与验收证据
-- [发布完成报告](Docs/history/RELEASE_REPORT_2026-07-12.md)：上一轮架构、体验、验证和上线结果
-- [发布证据](Docs/evidence/RELEASE_MATRIX.md)：候选版本的验证矩阵
+- [历史重构计划](Docs/archive/2026-07-12/REFACTOR_PLAN.md)：V1 发布阶段的任务与验收证据
+- [发布完成报告](Docs/archive/2026-07-12/RELEASE_REPORT_2026-07-12.md)：上一轮架构、体验、验证和上线结果
+- [发布证据](Docs/archive/2026-07-12/evidence/RELEASE_MATRIX.md)：候选版本的验证矩阵
 
 ## 仓库结构
 
@@ -36,16 +35,16 @@
 CoupleChatTests/       iOS 日常单元测试
 CoupleChatUITests/     DEBUG 视觉夹具 UI 测试
 Docs/                  按生命周期分层的项目文档
-  current/             当前状态与 AI 接手入口
+  current/             唯一的当前项目文档
   product/             产品边界与功能计划
   architecture/        系统、协议与 AI 架构
   development/         本地开发与构建
   operations/          生产部署与备份
-  history/              历史计划与发布报告
-  evidence/             发布矩阵与性能证据
+  archive/              按日期归档的历史计划、报告与证据
 Sources/
   App/                 App 入口、启动与主导航
-  Core/                状态、网络、Socket、本地数据库和模型
+  Domain/              跨功能领域模型
+  Platform/             网络、Socket、本地数据库、媒体和状态
   DesignSystem/        主题和通用视觉组件
   Features/            登录配对、聊天、时光、计划、宠物、个人中心与设备/Memory 设置
 server/
@@ -58,7 +57,7 @@ project.yml            XcodeGen 工程定义
 
 ## 常用命令
 
-当前 V2 工作树需要 v22 schema，不能直接在仍处于 v10 发布边界的生产库上启动。生产只做只读连接检查：
+当前 V2 工作树需要 v23 schema，不能直接在仍处于 v10 发布边界的生产库上启动。生产只做只读连接检查：
 
 ```powershell
 cd server
@@ -66,7 +65,7 @@ npm install
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-cloud-db.ps1 -CheckOnly
 ```
 
-服务端功能调试使用从备份恢复并迁移到 v22 的隔离 PostgreSQL；`dev:cloud-db` 已强制关闭 migration，schema 不匹配时会安全退出。
+服务端功能调试使用从备份恢复并迁移到 v23 的隔离 PostgreSQL；`dev:cloud-db` 已强制关闭 migration，schema 不匹配时会安全退出。
 
 后端日常验证：
 
@@ -84,5 +83,5 @@ iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLin
 - `xu` 与 `si` 是 legacy 迁移标识，现有生产数据依赖它们；V2 新账号不得继续写死这两个用户名。
 - 生产数据库是线上事实源；开发与 AI 调试不得直接写生产聊天或 Memory，必须使用隔离恢复库。
 - `.env`、`server/.data/`、`server/uploads/` 和任何数据库备份不得提交。
-- Socket 字段变化必须同时更新 `server/src/contracts/realtime.ts` 与 `Sources/Core/Networking/SocketContract.swift`。
-- 生产已执行 v1–v22，全部 migration 自 2026-07-13 起冻结；后续数据库变化只能追加新版本。
+- Socket 字段变化必须同时更新 `server/src/contracts/realtime.ts` 与 `Sources/Platform/Networking/SocketContract.swift`。
+- 生产已执行 v1–v23，v1–v10 保持不可改写；后续数据库变化只能追加新版本。
