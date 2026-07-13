@@ -226,7 +226,7 @@ final class ImageCache {
             frames.append(UIImage(cgImage: cgImage))
             duration += frameDuration(source: source, index: index)
         }
-        guard duration > 0 else { duration = Double(count) * 0.1 }
+        if duration <= 0 { duration = Double(count) * 0.1 }
         return UIImage.animatedImage(with: frames, duration: duration)
     }
 
