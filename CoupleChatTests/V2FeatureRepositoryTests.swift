@@ -123,13 +123,14 @@ final class V2FeatureRepositoryTests: XCTestCase {
         XCTAssertEqual(body?["endAt"] as? Int, Int(nextDay.timeIntervalSince1970 * 1_000))
     }
 
-    func testTranscriptDecodesEnvelopeAndCorrectionUsesPatch() async throws {
+    func testTranscriptFetchDecodesCompletedEnvelope() async throws {
         let client = V2FeatureHTTPClient(#"""
         {"transcript":{"messageId":"m1","status":"completed","text":"晚上吃火锅","language":"zh-CN",
         "version":8,"updatedAt":1234}}
         """#)
-        let transcript = try await VoiceTranscriptRepository(httpClient: client).correct(
-            messageId: "m1", text: "晚上吃火锅", baseVersion: 8, token: "token")
+        let fetched = try await VoiceTranscriptRepository(httpClient: client).fetch(
+            messageId: "m1", token: "token")
+        let transcript = try XCTUnwrap(fetched)
 
         XCTAssertEqual(transcript.messageId, "m1")
         XCTAssertEqual(transcript.status, .ready)
@@ -137,12 +138,8 @@ final class V2FeatureRepositoryTests: XCTestCase {
         XCTAssertEqual(transcript.language, "zh-CN")
         XCTAssertEqual(transcript.version, 8)
         let request = await client.request
-        XCTAssertEqual(request?.httpMethod, "PATCH")
+        XCTAssertEqual(request?.httpMethod, "GET")
         XCTAssertEqual(request?.url?.path, "/api/v2/messages/m1/transcript")
-        let body = try XCTUnwrap(request?.httpBody)
-        let mutation = try JSONSerialization.jsonObject(with: body) as? [String: Any]
-        XCTAssertEqual(mutation?["text"] as? String, "晚上吃火锅")
-        XCTAssertEqual(mutation?["baseVersion"] as? Int, 8)
     }
 
     func testTranscript404ReturnsNil() async throws {
@@ -194,19 +191,6 @@ final class V2FeatureRepositoryTests: XCTestCase {
         } catch V2RepositoryError.albumConflict(let current) {
             XCTAssertEqual(current.title, "新标题")
             XCTAssertEqual(current.version, 9)
-        }
-
-        let transcriptClient = V2FeatureHTTPClient(#"""
-        {"error":"version_conflict","transcript":{"messageId":"m1","status":"completed",
-        "text":"另一台设备的版本","version":10,"updatedAt":3}}
-        """#, statusCode: 409)
-        do {
-            _ = try await VoiceTranscriptRepository(httpClient: transcriptClient).correct(
-                messageId: "m1", text: "旧修改", baseVersion: 1, token: "token")
-            XCTFail("expected transcript conflict")
-        } catch V2RepositoryError.transcriptConflict(let current) {
-            XCTAssertEqual(current.text, "另一台设备的版本")
-            XCTAssertEqual(current.version, 10)
         }
 
         let calendarClient = V2FeatureHTTPClient(#"""
