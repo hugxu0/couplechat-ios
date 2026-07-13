@@ -342,7 +342,7 @@ final class ChatViewController: UIViewController {
         panelHeightConstraint.isActive = true
         bottomConstraint = bottomStack.bottomAnchor.constraint(
             equalTo: view.keyboardLayoutGuide.topAnchor,
-            constant: 0)
+            constant: -8)
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
