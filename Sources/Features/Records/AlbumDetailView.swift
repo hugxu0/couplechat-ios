@@ -22,17 +22,28 @@ struct AlbumDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: DS.Spacing.section) {
-                albumHeader
-                content
+        ZStack {
+            Color(uiColor: .systemBackground)
+                .ignoresSafeArea()
+            AppPageBackground()
+
+            GeometryReader { proxy in
+                let pageWidth = min(
+                    760,
+                    max(0, proxy.size.width - DS.Spacing.page * 2))
+
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: DS.Spacing.section) {
+                        albumHeader
+                        content(width: pageWidth)
+                    }
+                    .frame(width: pageWidth, alignment: .leading)
+                    .padding(.vertical, DS.Spacing.gap)
+                    .frame(maxWidth: .infinity)
+                }
+                .scrollClipDisabled(false)
             }
-            .frame(maxWidth: 760)
-            .padding(.horizontal, DS.Spacing.page)
-            .padding(.vertical, DS.Spacing.gap)
-            .frame(maxWidth: .infinity)
         }
-        .background(AppPageBackground())
         .navigationTitle(model.album.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -137,7 +148,7 @@ struct AlbumDetailView: View {
     }
 
     @ViewBuilder
-    private var content: some View {
+    private func content(width: CGFloat) -> some View {
         if model.loading && model.assets.isEmpty {
             ProgressView("正在打开相册…")
                 .frame(maxWidth: .infinity, minHeight: 220)
@@ -157,12 +168,14 @@ struct AlbumDetailView: View {
         } else {
             LazyVStack(spacing: 0) {
                 ForEach(timelinePosts) { post in
-                    timelinePost(post)
+                    timelinePost(post, width: width)
                     if post.id != timelinePosts.last?.id {
                         Divider().padding(.leading, 70)
                     }
                 }
             }
+            .frame(width: width, alignment: .leading)
+            .clipped()
             if model.loadingMore {
                 ProgressView().frame(maxWidth: .infinity).padding()
             }
@@ -172,7 +185,11 @@ struct AlbumDetailView: View {
         }
     }
 
-    private func timelinePost(_ post: AlbumTimelinePost) -> some View {
+    private func timelinePost(_ post: AlbumTimelinePost, width: CGFloat) -> some View {
+        let railWidth: CGFloat = 54
+        let spacing: CGFloat = 12
+        let bodyWidth = max(0, width - railWidth - spacing)
+
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 4) {
                 Text(post.day)
@@ -191,7 +208,7 @@ struct AlbumDetailView: View {
                     .frame(width: 1)
                     .frame(maxHeight: .infinity)
             }
-            .frame(width: 54)
+            .frame(width: railWidth)
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
@@ -210,25 +227,31 @@ struct AlbumDetailView: View {
                         .lineSpacing(4)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                postMediaGrid(post.assets)
+                postMediaGrid(post.assets, width: bodyWidth)
             }
             .padding(.vertical, 16)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: bodyWidth, alignment: .leading)
             .task { if let last = post.assets.last { await loadMore(last) } }
         }
+        .frame(width: width, alignment: .leading)
+        .clipped()
     }
 
-    private func postMediaGrid(_ assets: [MomentAsset]) -> some View {
+    private func postMediaGrid(_ assets: [MomentAsset], width: CGFloat) -> some View {
         let count = min(3, max(1, assets.count))
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: count)
+        let gap: CGFloat = 4
+        let tileWidth = max(1, (width - gap * CGFloat(count - 1)) / CGFloat(count))
+        let columns = Array(repeating: GridItem(.fixed(tileWidth), spacing: gap), count: count)
         return LazyVGrid(columns: columns, spacing: 4) {
-            ForEach(assets) { asset in assetTile(asset) }
+            ForEach(assets) { asset in assetTile(asset, side: tileWidth) }
         }
+        .frame(width: width, alignment: .leading)
+        .clipped()
     }
 
-    private func assetTile(_ asset: MomentAsset) -> some View {
+    private func assetTile(_ asset: MomentAsset, side: CGFloat) -> some View {
         Button { selectedAsset = asset } label: {
-            Group {
+            ZStack {
                 if asset.isVideo {
                     ZStack {
                         LinearGradient(
@@ -249,8 +272,7 @@ struct AlbumDetailView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(1, contentMode: .fill)
+            .frame(width: side, height: side)
             .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(alignment: .topTrailing) {
