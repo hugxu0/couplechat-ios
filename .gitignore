@@ -9,6 +9,9 @@ DerivedData/
 dist/
 node_modules/
 
+# 已复制到 Sources/Resources 的本地模型源文件
+cute_cat.glb
+
 # macOS / 编辑器
 .DS_Store
 Thumbs.db

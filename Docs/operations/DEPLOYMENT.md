@@ -40,7 +40,7 @@ COUPLECHAT_ACCOUNTS=xu|小旭|<password>|🐶;si|小偲|<password>|🐰
 APP_DEEP_LINK_SCHEME=couplechat://
 ```
 
-AI 和 embedding 配置见 [AI 系统](AI.md)。`.env` 权限应为 `600`，不能通过日志、聊天或 Git 传递完整内容。
+AI 和 embedding 配置见 [AI 系统](../architecture/AI.md)。`.env` 权限应为 `600`，不能通过日志、聊天或 Git 传递完整内容。
 
 ## 更新服务
 

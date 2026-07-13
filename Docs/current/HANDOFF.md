@@ -8,7 +8,7 @@
 
 ## 1. 当前结论
 
-个人版 V1 已上线；2026-07-13 用户确认进入可扩展 V2：未来支持其他情侣注册配对、同账号 iPhone/iPad、多设备全量同步、共同相册/那年今日、共享日历、语音转写、Memory 控制中心和服务端持久化大橘。产品与迁移权威文档为 `V2_PRODUCT_PLAN.md`、`V2_ARCHITECTURE.md`，旧 R0-R8 文档保留为历史证据。
+个人版 V1 已上线；2026-07-13 用户确认进入可扩展 V2：未来支持其他情侣注册配对、同账号 iPhone/iPad、多设备全量同步、共同相册/那年今日、共享日历、语音转写、Memory 控制中心和服务端持久化大橘。产品与迁移权威文档为 `../product/PRODUCT_PLAN.md`、`../architecture/V2_ARCHITECTURE.md`，旧 R0-R8 文档保留为历史证据。
 
 发布与后续维护状态：
 
@@ -38,18 +38,18 @@
 - 2026-07-13 录音首次授权竞态与离页/后台中断已修正；媒体收藏按账号分区。
 - 2026-07-13 V2 服务端与 v11–v22 已部署生产：注册/邀请码配对、多设备会话与设备级 Bark、conversation ownership、Sync V2、Memory、转写、相册、日历和持久化大橘均已上线；iOS 候选仍待真机验收。
 
-详细改造与证据见 `Docs/RELEASE_REPORT_2026-07-12.md`。
+详细改造与证据见 `../history/RELEASE_REPORT_2026-07-12.md`。
 
 ## 2. 接手顺序
 
 开始任何新任务前完整阅读：
 
-1. `Docs/PROJECT_STATUS.md`
-2. `Docs/V2_PRODUCT_PLAN.md`
-3. `Docs/V2_ARCHITECTURE.md`
-4. `Docs/ARCHITECTURE.md`
-5. `Docs/DEVELOPMENT.md`
-6. 与任务直接相关的 `Docs/API.md`、`Docs/AI.md` 或 `Docs/DEPLOYMENT.md`
+1. `../current/STATUS.md`
+2. `../product/PRODUCT_PLAN.md`
+3. `../architecture/V2_ARCHITECTURE.md`
+4. `../architecture/SYSTEM_ARCHITECTURE.md`
+5. `../development/DEVELOPMENT.md`
+6. 与任务直接相关的 `../architecture/API.md`、`../architecture/AI.md` 或 `../operations/DEPLOYMENT.md`
 
 然后运行：
 
@@ -158,4 +158,4 @@ docker compose -f compose.production.yml logs --tail=100 couplechat-server
 4. 有第二台设备时执行多设备/iPad 真机矩阵，并补聊天 iPad 双栏、拖放和键盘交互。
 5. 在隔离环境做 v10 → v22 migration、备份、真实恢复和回滚演练；确认后再安排生产发布。
 
-R5.3/R5.4 的历史拆分背景见 `Docs/REFACTOR_PLAN.md`；V2 的现行边界以 `V2_ARCHITECTURE.md` 为准。
+R5.3/R5.4 的历史拆分背景见 `../history/REFACTOR_PLAN.md`；V2 的现行边界以 `../architecture/V2_ARCHITECTURE.md` 为准。

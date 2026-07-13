@@ -1,7 +1,7 @@
 import Foundation
 
 @MainActor
-final class MomentsViewModel: ObservableObject {
+final class RecordsViewModel: ObservableObject {
     static let albumsChanged = Notification.Name("v2AlbumsChanged")
     @Published private(set) var albums: [MomentAlbum] = []
     @Published private(set) var onThisDay: [OnThisDayMoment] = []
@@ -93,7 +93,7 @@ final class AlbumDetailViewModel: ObservableObject {
         } catch V2RepositoryError.albumConflict(let current) {
             album = current
             errorMessage = V2RepositoryError.albumConflict(current).localizedDescription
-            NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
+            NotificationCenter.default.post(name: RecordsViewModel.albumsChanged, object: nil)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -114,7 +114,7 @@ final class AlbumDetailViewModel: ObservableObject {
         } catch V2RepositoryError.albumConflict(let current) {
             album = current
             errorMessage = V2RepositoryError.albumConflict(current).localizedDescription
-            NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
+            NotificationCenter.default.post(name: RecordsViewModel.albumsChanged, object: nil)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -153,7 +153,7 @@ final class AlbumDetailViewModel: ObservableObject {
             }
             if !added.isEmpty {
                 album.version += 1
-                NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
+                NotificationCenter.default.post(name: RecordsViewModel.albumsChanged, object: nil)
             }
             return added
         } catch {
@@ -166,12 +166,12 @@ final class AlbumDetailViewModel: ObservableObject {
         do {
             album = try await repository.updateAlbum(
                 album, title: title, summary: summary, token: token)
-            NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
+            NotificationCenter.default.post(name: RecordsViewModel.albumsChanged, object: nil)
             return true
         } catch V2RepositoryError.albumConflict(let current) {
             album = current
             errorMessage = V2RepositoryError.albumConflict(current).localizedDescription
-            NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
+            NotificationCenter.default.post(name: RecordsViewModel.albumsChanged, object: nil)
             return false
         } catch {
             errorMessage = error.localizedDescription
@@ -189,7 +189,7 @@ final class AlbumDetailViewModel: ObservableObject {
             assets.removeAll { $0.albumItemId == itemId }
             album.itemCount = max(0, album.itemCount - 1)
             album.version += 1
-            NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
+            NotificationCenter.default.post(name: RecordsViewModel.albumsChanged, object: nil)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -198,12 +198,12 @@ final class AlbumDetailViewModel: ObservableObject {
     func deleteAlbum(token: String) async -> Bool {
         do {
             try await repository.deleteAlbum(album, token: token)
-            NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
+            NotificationCenter.default.post(name: RecordsViewModel.albumsChanged, object: nil)
             return true
         } catch V2RepositoryError.albumConflict(let current) {
             album = current
             errorMessage = V2RepositoryError.albumConflict(current).localizedDescription
-            NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
+            NotificationCenter.default.post(name: RecordsViewModel.albumsChanged, object: nil)
             return false
         } catch {
             errorMessage = error.localizedDescription

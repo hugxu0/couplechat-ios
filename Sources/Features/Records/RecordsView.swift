@@ -3,7 +3,7 @@ import SwiftUI
 struct RecordsView: View {
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
-    @StateObject private var model = MomentsViewModel()
+    @StateObject private var model = RecordsViewModel()
     @State private var daily: DailyContent?
     @State private var showingCreateAlbum = false
     @State private var showingDateEditor = false
@@ -29,7 +29,7 @@ struct RecordsView: View {
             .task(id: "diary-history.\(store.session?.username ?? "none")") {
                 await loadDiaryHistoryUntilAvailable()
             }
-            .onReceive(NotificationCenter.default.publisher(for: MomentsViewModel.albumsChanged)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: RecordsViewModel.albumsChanged)) { _ in
                 Task { await reload(force: true) }
             }
             .onReceive(NotificationCenter.default.publisher(for: .persistentSyncChanged)) { note in

@@ -1,6 +1,6 @@
 # 悄悄话
 
-当前生产后端已升级为可注册/邀请码配对的 V2，现有两位 legacy 用户继续无感使用；V2 iOS 候选仍需在真机安装回归。客户端使用 SwiftUI + UIKit，服务端使用 Fastify + Socket.IO + PostgreSQL，并集成“大橘”AI。
+可注册、可配对、支持多设备同步的情侣 App。客户端使用 SwiftUI + UIKit，服务端使用 Fastify + Socket.IO + PostgreSQL，并集成“大橘”AI。
 
 生产服务地址：`https://hoo66.top`
 
@@ -16,25 +16,33 @@
 
 ## 快速入口
 
-- [文档导航](Docs/README.md)：新开发者或 AI 的阅读起点
-- [AI 接手说明](Docs/AI_HANDOFF.md)：当前进度、接手步骤、验证记录和下一任务提示词
-- [项目现状](Docs/PROJECT_STATUS.md)：已实现功能、限制和待处理问题
-- [V2 产品计划](Docs/V2_PRODUCT_PLAN.md)：当前候选、完整 MVP 和剩余增强
-- [V2 技术架构](Docs/V2_ARCHITECTURE.md)：所有权、同步、迁移和发布路线
-- [R0-R8 历史重构计划](Docs/REFACTOR_PLAN.md)：V1 发布阶段的历史任务与验收证据
-- [系统架构](Docs/ARCHITECTURE.md)：前后端模块、数据流和关键约束
-- [开发指南](Docs/DEVELOPMENT.md)：本地调试、构建和日常验证
-- [接口契约](Docs/API.md)：REST 与 Socket.IO 协议
-- [AI 系统](Docs/AI.md)：Agent、MCP、Memory 和调试方式
-- [生产部署](Docs/DEPLOYMENT.md)：RFCHost 的运行、更新和备份
-- [R0-R8 完成报告](Docs/RELEASE_REPORT_2026-07-12.md)：本轮架构、体验、验证和上线结果
+- [文档导航](Docs/README.md)：按当前状态、产品、架构、开发和运维分类的入口
+- [当前状态](Docs/current/STATUS.md)：已实现功能、限制和待处理问题
+- [AI 接手说明](Docs/current/HANDOFF.md)：当前分支、验证结果和接手顺序
+- [产品计划](Docs/product/PRODUCT_PLAN.md)：产品边界、功能设计和验收标准
+- [系统架构](Docs/architecture/SYSTEM_ARCHITECTURE.md)：前后端模块、数据流和关键约束
+- [V2 技术架构](Docs/architecture/V2_ARCHITECTURE.md)：多情侣、多设备、同步和迁移路线
+- [接口契约](Docs/architecture/API.md)：REST 与 Socket.IO 协议
+- [AI 系统](Docs/architecture/AI.md)：Agent、MCP、Memory 和调试方式
+- [开发指南](Docs/development/DEVELOPMENT.md)：本地调试、构建和日常验证
+- [生产部署](Docs/operations/DEPLOYMENT.md)：生产拓扑、更新和备份
+- [历史重构计划](Docs/history/REFACTOR_PLAN.md)：V1 发布阶段的任务与验收证据
+- [发布完成报告](Docs/history/RELEASE_REPORT_2026-07-12.md)：上一轮架构、体验、验证和上线结果
+- [发布证据](Docs/evidence/RELEASE_MATRIX.md)：候选版本的验证矩阵
 
 ## 仓库结构
 
 ```text
 CoupleChatTests/       iOS 日常单元测试
 CoupleChatUITests/     DEBUG 视觉夹具 UI 测试
-Docs/                  项目唯一文档目录
+Docs/                  按生命周期分层的项目文档
+  current/             当前状态与 AI 接手入口
+  product/             产品边界与功能计划
+  architecture/        系统、协议与 AI 架构
+  development/         本地开发与构建
+  operations/          生产部署与备份
+  history/              历史计划与发布报告
+  evidence/             发布矩阵与性能证据
 Sources/
   App/                 App 入口、启动与主导航
   Core/                状态、网络、Socket、本地数据库和模型
@@ -69,7 +77,7 @@ npm run build
 npm run healthcheck -- https://hoo66.top
 ```
 
-iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLint、单元测试和 Archive，具体见 [开发指南](Docs/DEVELOPMENT.md)。
+iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLint、单元测试和 Archive，具体见 [开发指南](Docs/development/DEVELOPMENT.md)。
 
 ## 重要约束
 
