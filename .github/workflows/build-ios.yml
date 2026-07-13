@@ -171,13 +171,13 @@ jobs:
           mkdir -p build/Payload
           cp -R build/CoupleChat.xcarchive/Products/Applications/CoupleChat.app build/Payload/
           cd build
-          zip -qry CoupleChat-unsigned.ipa Payload
+          zip -qry CoupleChat-latest.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v7
         with:
-          name: CoupleChat-unsigned-${{ github.run_number }}
-          path: build/CoupleChat-unsigned.ipa
+          name: CoupleChat-latest
+          path: build/CoupleChat-latest.ipa
           retention-days: 30
 
       - name: Upload build diagnostics
