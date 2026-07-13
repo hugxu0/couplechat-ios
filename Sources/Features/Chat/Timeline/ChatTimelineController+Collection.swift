@@ -139,6 +139,11 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         contextMenuConfigurationForItemAt indexPath: IndexPath,
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
+        // 首次进入聊天时，时间线可能还有一次异步的“贴到最新”校正。
+        // 长按前先结束校正并固化布局，避免系统预览与背后的 cell 使用两套坐标。
+        completeFollowingLatest()
+        collectionView.layer.removeAllAnimations()
+        collectionView.layoutIfNeeded()
         guard let message = contextMenuMessage(at: indexPath, point: point) else { return nil }
         return UIContextMenuConfiguration(identifier: message.id as NSString, previewProvider: nil) { [weak self] _ in
             guard let self else { return nil }
@@ -217,7 +222,9 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         guard let id = configuration.identifier as? String,
               let indexPath = indexPath(forMessageId: id),
               let cell = collectionView.cellForItem(at: indexPath) as? ChatNativeMessageCell else { return nil }
-        return cell.bubbleTargetedPreview()
+        collectionView.layoutIfNeeded()
+        cell.layoutIfNeeded()
+        return cell.bubbleTargetedPreview(in: collectionView)
     }
 
 }

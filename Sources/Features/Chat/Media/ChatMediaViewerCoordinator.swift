@@ -69,16 +69,9 @@ final class ChatMediaViewerCoordinator: NSObject, UIViewControllerTransitioningD
     func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
         MediaViewerTransitionAnimator(
             presenting: false,
-            interactiveDismissal: interactionController?.isInteracting == true,
             selectedId: session?.selectedId,
             sourceProvider: sourceProvider,
             completion: { [weak self] in self?.finishSession() })
-    }
-
-    func interactionControllerForDismissal(
-        using animator: UIViewControllerAnimatedTransitioning
-    ) -> UIViewControllerInteractiveTransitioning? {
-        interactionController?.isInteracting == true ? interactionController : nil
     }
 
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
@@ -148,5 +141,42 @@ final class MediaViewerHostController: UIViewController {
             hostingController.view.topAnchor.constraint(equalTo: view.topAnchor),
             hostingController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    func updateInteractiveDismissal(translationY: CGFloat) {
+        let progress = MediaViewerTransitionMetrics.progress(
+            translationY: translationY,
+            height: view.bounds.height)
+        transitionContentView.transform = MediaViewerTransitionMetrics.interactiveTransform(
+            translationY: translationY,
+            height: view.bounds.height)
+        transitionContentView.alpha = max(0.42, 1 - progress * 0.58)
+        backdropView.alpha = MediaViewerTransitionMetrics.backgroundAlpha(progress: progress)
+    }
+
+    func restoreInteractiveDismissal() {
+        let animator = UIViewPropertyAnimator(duration: 0.34, dampingRatio: 0.82) {
+            self.transitionContentView.transform = .identity
+            self.transitionContentView.alpha = 1
+            self.backdropView.alpha = 1
+        }
+        animator.startAnimation()
+    }
+
+    override var keyCommands: [UIKeyCommand]? {
+        [UIKeyCommand(
+            input: UIKeyCommand.inputEscape,
+            modifierFlags: [],
+            action: #selector(requestDismiss),
+            discoverabilityTitle: "关闭预览")]
+    }
+
+    override func accessibilityPerformEscape() -> Bool {
+        requestDismiss()
+        return true
+    }
+
+    @objc private func requestDismiss() {
+        dismiss(animated: true)
     }
 }

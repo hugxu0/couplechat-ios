@@ -2,7 +2,6 @@ import UIKit
 
 final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     private let presenting: Bool
-    private let interactiveDismissal: Bool
     private let selectedId: String?
     private let sourceProvider: ((String) -> UIView?)?
     private let completion: (() -> Void)?
@@ -11,13 +10,11 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
 
     init(
         presenting: Bool,
-        interactiveDismissal: Bool = false,
         selectedId: String?,
         sourceProvider: ((String) -> UIView?)?,
         completion: (() -> Void)? = nil
     ) {
         self.presenting = presenting
-        self.interactiveDismissal = interactiveDismissal
         self.selectedId = selectedId
         self.sourceProvider = sourceProvider
         self.completion = completion
@@ -57,9 +54,7 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
 
         let source = selectedId.flatMap { sourceProvider?($0) }
         let sourceTransform = transform(from: source, in: container, target: contentView.bounds)
-        let dismissalTransform = interactiveDismissal
-            ? MediaViewerTransitionMetrics.interactiveTransform(progress: 1, height: container.bounds.height)
-            : sourceTransform
+        let dismissalTransform = sourceTransform
         if presenting {
             backdropView?.alpha = 0
             contentView.alpha = 0

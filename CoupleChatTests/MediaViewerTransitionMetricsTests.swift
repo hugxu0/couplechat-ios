@@ -16,15 +16,15 @@ final class MediaViewerTransitionMetricsTests: XCTestCase {
     }
 
     func testProgressAndVisualValuesAreClamped() {
-        XCTAssertEqual(MediaViewerTransitionMetrics.progress(translationY: -20, height: 800), 0)
-        XCTAssertEqual(MediaViewerTransitionMetrics.progress(translationY: 900, height: 800), 1)
+        XCTAssertGreaterThan(MediaViewerTransitionMetrics.progress(translationY: -20, height: 800), 0)
+        XCTAssertEqual(MediaViewerTransitionMetrics.progress(translationY: -900, height: 800), 1)
         XCTAssertEqual(MediaViewerTransitionMetrics.scale(progress: 1), 0.78)
         XCTAssertEqual(MediaViewerTransitionMetrics.backgroundAlpha(progress: 1), 0)
     }
 
     func testInteractiveTransformTracksFingerDistanceAndScale() {
-        let transform = MediaViewerTransitionMetrics.interactiveTransform(progress: 0.5, height: 800)
-        XCTAssertEqual(transform.ty, 288, accuracy: 0.001)
+        let transform = MediaViewerTransitionMetrics.interactiveTransform(translationY: -128, height: 800)
+        XCTAssertEqual(transform.ty, -128, accuracy: 0.001)
         XCTAssertEqual(transform.a, 0.89, accuracy: 0.001)
         XCTAssertEqual(transform.d, 0.89, accuracy: 0.001)
     }
@@ -33,7 +33,7 @@ final class MediaViewerTransitionMetricsTests: XCTestCase {
         XCTAssertTrue(MediaViewerTransitionMetrics.shouldFinish(
             translationY: 200, velocityY: 100, height: 800))
         XCTAssertTrue(MediaViewerTransitionMetrics.shouldFinish(
-            translationY: 30, velocityY: 1_100, height: 800))
+            translationY: -30, velocityY: -1_100, height: 800))
         XCTAssertFalse(MediaViewerTransitionMetrics.shouldFinish(
             translationY: 60, velocityY: 300, height: 800))
     }

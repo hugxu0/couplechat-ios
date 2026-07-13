@@ -1001,7 +1001,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         bubbleView.frame.contains(point)
     }
 
-    func bubbleTargetedPreview() -> UITargetedPreview {
+    func bubbleTargetedPreview(in container: UIView) -> UITargetedPreview {
         let parameters = UIPreviewParameters()
         // 系统会在长按时用 targeted preview 临时替换原视图。明确提供当前气泡填充色，
         // 避免透明 preview 参数让文字浮在模糊背景上，看起来像气泡底色消失。
@@ -1015,6 +1015,10 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             roundedRect: bubbleView.bounds,
             cornerRadius: bubbleView.layer.cornerRadius
         )
-        return UITargetedPreview(view: bubbleView, parameters: parameters)
+        let center = container.convert(
+            CGPoint(x: bubbleView.bounds.midX, y: bubbleView.bounds.midY),
+            from: bubbleView)
+        let target = UIPreviewTarget(container: container, center: center)
+        return UITargetedPreview(view: bubbleView, parameters: parameters, target: target)
     }
 }

@@ -100,26 +100,9 @@ struct MediaPagerView: View {
                 .transition(.opacity)
             }
 
-            VStack {
-                HStack {
-                    Spacer()
-                    Button {
-                        selectedId = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .accessibilityLabel("关闭预览")
-                }
-                Spacer()
-            }
-            .padding(.top, 10)
-            .padding(.trailing, 14)
         }
         .background(Color.clear)
+        .accessibilityAction(.escape) { selectedId = nil }
         .preferredColorScheme(.dark)
     }
 
@@ -279,7 +262,7 @@ private struct ZoomableRemoteImage: View {
         .offset(offset)
         .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.86), value: scale)
         .simultaneousGesture(magnifyGesture)
-        .simultaneousGesture(dragGesture)
+        .simultaneousGesture(dragGesture, including: scale > 1.01 ? .all : .none)
         .onChange(of: scale) { onScaleChange(scale) }
         .onDisappear { onScaleChange(1) }
         .onTapGesture(count: 2) {

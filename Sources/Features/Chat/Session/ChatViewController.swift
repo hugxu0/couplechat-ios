@@ -220,10 +220,16 @@ final class ChatViewController: UIViewController {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
+        if !theme.hasCustomWallpaper(for: channel) {
+            let dark = traitCollection.userInterfaceStyle == .dark
+            usesDarkChatSurface = dark
+            timelineUsesLightContent = dark
+        }
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
         stickerPanel?.applyTheme(
             accentColor: theme.accent.uiColor,
             usesLightContent: composerUsesLightContent)
+        timelineController.updatePresentation(makeTimelinePresentation())
         timelineController.invalidateAppearance()
         applyInputLayout(duration: 0, curve: .curveEaseOut)
     }
@@ -262,6 +268,7 @@ final class ChatViewController: UIViewController {
             refreshComposerSurfaceTone(force: true)
         }
         if surfaceChanged || timelineChanged, collectionView != nil {
+            timelineController.updatePresentation(makeTimelinePresentation())
             timelineController.invalidateAppearance()
         }
         setTopOverlayInset(topOverlayInset)

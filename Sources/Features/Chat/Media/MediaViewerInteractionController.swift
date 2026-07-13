@@ -1,16 +1,14 @@
 import UIKit
 
-final class MediaViewerInteractionController: UIPercentDrivenInteractiveTransition, UIGestureRecognizerDelegate {
-    private weak var viewController: UIViewController?
+final class MediaViewerInteractionController: NSObject, UIGestureRecognizerDelegate {
+    private weak var viewController: MediaViewerHostController?
     private let canStart: () -> Bool
     private lazy var pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan))
-    private(set) var isInteracting = false
 
-    init(viewController: UIViewController, canStart: @escaping () -> Bool) {
+    init(viewController: MediaViewerHostController, canStart: @escaping () -> Bool) {
         self.viewController = viewController
         self.canStart = canStart
         super.init()
-        completionCurve = .easeOut
         pan.delegate = self
         viewController.view.addGestureRecognizer(pan)
     }
@@ -18,8 +16,7 @@ final class MediaViewerInteractionController: UIPercentDrivenInteractiveTransiti
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard canStart(), let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
         let velocity = pan.velocity(in: pan.view)
-        return velocity.y > 0
-            && MediaViewerTransitionMetrics.axis(translation: .zero, velocity: velocity) == .vertical
+        return MediaViewerTransitionMetrics.axis(translation: .zero, velocity: velocity) == .vertical
     }
 
     func gestureRecognizer(
@@ -33,33 +30,24 @@ final class MediaViewerInteractionController: UIPercentDrivenInteractiveTransiti
         guard let view = gesture.view else { return }
         let translation = gesture.translation(in: view)
         let velocity = gesture.velocity(in: view)
-        let progress = MediaViewerTransitionMetrics.progress(
-            translationY: translation.y,
-            height: view.bounds.height)
-
         switch gesture.state {
         case .began:
-            isInteracting = true
             NotificationCenter.default.post(name: .mediaViewerPauseVideo, object: nil)
-            viewController?.dismiss(animated: true)
         case .changed:
-            update(progress)
+            viewController?.updateInteractiveDismissal(translationY: translation.y)
         case .ended:
             let shouldFinish = MediaViewerTransitionMetrics.shouldFinish(
                 translationY: translation.y,
                 velocityY: velocity.y,
                 height: view.bounds.height)
             if shouldFinish {
-                finish()
-                isInteracting = false
+                viewController?.dismiss(animated: true)
             } else {
-                cancel()
-                isInteracting = false
+                viewController?.restoreInteractiveDismissal()
                 NotificationCenter.default.post(name: .mediaViewerResumeVideo, object: nil)
             }
         case .cancelled, .failed:
-            cancel()
-            isInteracting = false
+            viewController?.restoreInteractiveDismissal()
             NotificationCenter.default.post(name: .mediaViewerResumeVideo, object: nil)
         default:
             break
