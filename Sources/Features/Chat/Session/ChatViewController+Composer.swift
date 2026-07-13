@@ -150,7 +150,7 @@ extension ChatViewController {
             channel: channel,
             replyTo: target?.id,
             replyPreview: target?.replyPreviewText)
-        reloadTimeline(animated: false)
+        reloadTimeline(animated: true)
         hidePanel(animated: true)
     }
 
@@ -158,7 +158,7 @@ extension ChatViewController {
         Haptics.light()
         stickToLatestAfterNextReload = true
         store.sendSticker(url: sticker.url, channel: channel)
-        reloadTimeline(animated: false)
+        reloadTimeline(animated: true)
     }
 
     func summonDaju() {

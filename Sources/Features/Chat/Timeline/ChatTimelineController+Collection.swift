@@ -105,7 +105,9 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         forItemAt indexPath: IndexPath
     ) {
         guard indexPath.item < items.count,
-              case .message(let id) = items[indexPath.item],
+              case .message(let id) = items[indexPath.item] else { return }
+        animateCellIfNeeded(cell, messageID: id)
+        guard
               let message = messagesById[id],
               !message.pending,
               !message.failed else { return }

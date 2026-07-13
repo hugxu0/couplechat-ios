@@ -10,6 +10,7 @@ final class MediaViewerInteractionController: NSObject, UIGestureRecognizerDeleg
         self.canStart = canStart
         super.init()
         pan.delegate = self
+        pan.cancelsTouchesInView = true
         viewController.view.addGestureRecognizer(pan)
     }
 
@@ -23,7 +24,9 @@ final class MediaViewerInteractionController: NSObject, UIGestureRecognizerDeleg
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        true
+        // 一旦纵向退出手势成立，就独占本次触摸，避免底层分页 ScrollView
+        // 同时接收横向位移而出现斜着翻页、退出两套动画互相抢占。
+        false
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {

@@ -52,6 +52,7 @@ final class ChatTimelineController: NSObject {
     var scrollState = ChatScrollState()
     private var suppressesJumpToLatest = false
     private var followLatestGeneration = 0
+    var pendingAnimatedMessageIDs = Set<String>()
     var topInset: CGFloat = 96
     var bottomInset: CGFloat = 0
     private var lastMeasuredWidth: CGFloat = 0
@@ -101,6 +102,7 @@ final class ChatTimelineController: NSObject {
     }
 
     func reload(messages: [ChatMessage], activity: ChatMessage?, animated: Bool) {
+        let oldMessageIdentities = Set(messagesById.values.map { $0.clientId ?? $0.id })
         let oldFirstMessageID = items.compactMap { item -> String? in
             if case .message(let id) = item { return id }
             return nil
@@ -155,6 +157,12 @@ final class ChatTimelineController: NSObject {
             messageCountIncreased: messageCount(in: items) > oldCount,
             wasShowingAIActivity: wasShowingActivity)
         execute(decision, oldAnchor: oldAnchor, animated: animated)
+        if animated {
+            let inserted = messagesById.values.filter {
+                !oldMessageIdentities.contains($0.clientId ?? $0.id)
+            }
+            animateInsertedMessages(Set(inserted.map(\.id)))
+        }
         scheduleInitialPositioning()
     }
 
@@ -232,7 +240,7 @@ final class ChatTimelineController: NSObject {
         case .forceLatest:
             stickToLatestAfterNextReload = false
             browsingHistoricalWindow = false
-            followLatest(animated: false)
+            followLatest(animated: animated)
         case .restorePendingAnchor:
             if let anchor = pendingTopAnchor { restore(anchor) }
             pendingTopAnchor = nil
@@ -330,5 +338,38 @@ final class ChatTimelineController: NSObject {
         followLatestGeneration += 1
         suppressesJumpToLatest = false
         delegate?.timelineDidScroll()
+    }
+
+    private func animateInsertedMessages(_ messageIDs: Set<String>) {
+        guard !messageIDs.isEmpty, messageIDs.count <= 3, !items.isEmpty else { return }
+        pendingAnimatedMessageIDs.formUnion(messageIDs)
+        collectionView.layoutIfNeeded()
+        messageIDs.forEach { id in
+            guard let path = indexPath(forMessageId: id) else { return }
+            guard let cell = collectionView.cellForItem(at: path) else { return }
+            animateCellIfNeeded(cell, messageID: id)
+        }
+    }
+
+    func animateCellIfNeeded(_ cell: UICollectionViewCell, messageID: String) {
+        guard pendingAnimatedMessageIDs.remove(messageID) != nil else { return }
+
+        if UIAccessibility.isReduceMotionEnabled {
+            cell.alpha = 0
+            UIView.animate(withDuration: 0.18) { cell.alpha = 1 }
+            return
+        }
+        cell.alpha = 0
+        cell.transform = CGAffineTransform(translationX: 0, y: 12).scaledBy(x: 0.985, y: 0.985)
+        UIView.animate(
+            withDuration: 0.28,
+            delay: 0,
+            usingSpringWithDamping: 0.88,
+            initialSpringVelocity: 0.2,
+            options: [.beginFromCurrentState, .allowUserInteraction]
+        ) {
+            cell.alpha = 1
+            cell.transform = .identity
+        }
     }
 }

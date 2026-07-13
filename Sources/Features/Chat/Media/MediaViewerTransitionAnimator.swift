@@ -53,7 +53,8 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
         let backdropView = mediaHost?.backdropView
 
         let source = selectedId.flatMap { sourceProvider?($0) }
-        let sourceTransform = transform(from: source, in: container, target: contentView.bounds)
+        let targetFrame = contentView.convert(contentView.bounds, to: container)
+        let sourceTransform = transform(from: source, in: container, target: targetFrame)
         let dismissalTransform = sourceTransform
         if presenting {
             backdropView?.alpha = 0
@@ -115,7 +116,11 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
             frame.width / max(1, displayedSize.width),
             frame.height / max(1, displayedSize.height)))
         let translation = CGPoint(x: frame.midX - target.midX, y: frame.midY - target.midY)
-        return CGAffineTransform(translationX: translation.x, y: translation.y)
-            .scaledBy(x: scale, y: scale)
+        // 直接写入矩阵，避免连续拼接 transform 时平移量受缩放顺序影响，
+        // 让媒体中心精确落到聊天缩略图中心。
+        return CGAffineTransform(
+            a: scale, b: 0,
+            c: 0, d: scale,
+            tx: translation.x, ty: translation.y)
     }
 }

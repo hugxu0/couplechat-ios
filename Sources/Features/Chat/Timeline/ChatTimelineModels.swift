@@ -1,4 +1,5 @@
 import UIKit
+import ImageIO
 
 enum ChatTimelineItem: Hashable {
     case time(id: String, text: String)
@@ -143,7 +144,7 @@ enum ChatTimelineMetrics {
             contentHeight = 42
         } else { switch message.type {
         case "image", "video":
-            contentHeight = mediaSize.height
+            contentHeight = mediaContentHeight(for: message)
             if let caption = mediaCaption(for: message) {
                 contentHeight += measureText(caption, font: .systemFont(ofSize: 15), width: contentWidth) + 14
             }
@@ -212,6 +213,30 @@ enum ChatTimelineMetrics {
         case "voice": return min(containerWidth * bubbleMaxWidthRatio, transcriptExpanded ? 292 : 238)
         default: return mediaSize.width
         }
+    }
+
+    static func mediaContentHeight(for message: ChatMessage) -> CGFloat {
+        guard message.type == "image" || message.type == "video",
+              let url = message.mediaURL else { return mediaSize.height }
+
+        let size: CGSize?
+        if let cached = ImageCache.shared.memoryImage(for: url) {
+            size = cached.size
+        } else if url.isFileURL,
+                  let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+                  let height = properties[kCGImagePropertyPixelHeight] as? NSNumber {
+            size = CGSize(width: width.doubleValue, height: height.doubleValue)
+        } else {
+            size = nil
+        }
+        guard let size, size.width > 0, size.height > 0 else {
+            return mediaSize.height
+        }
+        let fittedHeight = mediaSize.width * size.height / size.width
+        // 横图不再占用竖图的 230pt 高度；竖图仍保留原来的阅读尺寸。
+        return floor(min(mediaSize.height, max(118, fittedHeight)))
     }
 
     static func mediaCaption(for message: ChatMessage) -> String? {
