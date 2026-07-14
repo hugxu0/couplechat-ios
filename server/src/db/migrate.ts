@@ -1166,6 +1166,22 @@ export const schemaMigrations: readonly SchemaMigration[] = [
       ON album_items(album_id, post_id, sort_order DESC);
     `,
   },
+  {
+    version: 26,
+    name: "memory_derivation_dependencies",
+    sql: `
+    CREATE TABLE IF NOT EXISTS ai_memory_dependencies (
+      memory_id TEXT NOT NULL REFERENCES ai_memory(id) ON DELETE CASCADE,
+      source_memory_id TEXT NOT NULL REFERENCES ai_memory(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'source',
+      created_at BIGINT NOT NULL,
+      PRIMARY KEY(memory_id, source_memory_id),
+      CHECK (memory_id <> source_memory_id)
+    );
+    CREATE INDEX IF NOT EXISTS ai_memory_dependencies_source_idx
+      ON ai_memory_dependencies(source_memory_id, memory_id);
+    `,
+  },
 ];
 
 export async function migrate(

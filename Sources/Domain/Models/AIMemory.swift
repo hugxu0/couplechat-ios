@@ -10,10 +10,45 @@ enum AIMemoryScopeFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all: return "全部"
-        case .shared: return "共同"
-        case .privateMemory: return "我的"
+        case .shared: return "两人可见"
+        case .privateMemory: return "仅自己"
         }
     }
+}
+
+enum AIMemorySubjectFilter: String, CaseIterable, Identifiable {
+    case all
+    case mine
+    case partner
+    case both
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "全部人物"
+        case .mine: return "我的事情"
+        case .partner: return "对方的事情"
+        case .both: return "两个人的事情"
+        }
+    }
+
+    func apiValue(for username: String) -> String? {
+        switch self {
+        case .all: return nil
+        case .mine: return username
+        case .partner: return username == "xu" ? "si" : "xu"
+        case .both: return "both"
+        }
+    }
+}
+
+enum AIMemoryStatusFilter: String, CaseIterable, Identifiable {
+    case active
+    case all
+
+    var id: String { rawValue }
+    var title: String { self == .active ? "当前记忆" : "含归档" }
 }
 
 enum AIMemoryLayer: String, Codable, CaseIterable, Identifiable {
@@ -58,9 +93,45 @@ struct AIMemoryItem: Codable, Identifiable, Equatable {
     let createdAt: Int
     var updatedAt: Int
     let evidenceCount: Int
+    let derivedFromCount: Int?
     let version: Int?
 
     var isShared: Bool { scope == "couple" }
+    var visibilityTitle: String { isShared ? "两人可见" : "仅自己可见" }
+    var logicalSubject: String {
+        if subjects.contains("both") || (subjects.contains("xu") && subjects.contains("si")) {
+            return "both"
+        }
+        return subjects.first ?? "both"
+    }
+    var subjectTitle: String {
+        switch logicalSubject {
+        case "xu": return "小旭"
+        case "si": return "小偲"
+        default: return "两个人"
+        }
+    }
+    var statusTitle: String {
+        switch status {
+        case "active": return "当前"
+        case "superseded": return "已归档"
+        case "completed": return "已完成"
+        case "cancelled": return "已取消"
+        case "expired": return "已过期"
+        case "retracted": return "已撤回"
+        default: return status
+        }
+    }
+}
+
+struct AIMemorySource: Codable, Identifiable, Equatable {
+    let id: String
+    let layer: AIMemoryLayer
+    let content: String
+    let subjects: [String]
+    let occurredAt: Int?
+    let validFrom: Int?
+    let updatedAt: Int
 }
 
 struct AIMemoryEvidence: Codable, Identifiable, Equatable {
@@ -79,13 +150,15 @@ struct AIMemoryStats: Codable, Equatable {
     let shared: Int
     let privateCount: Int
     let byLayer: [String: Int]
+    let bySubject: [String: Int]?
 
     enum CodingKeys: String, CodingKey {
-        case total, shared, byLayer
+        case total, shared, byLayer, bySubject
         case privateCount = "private"
     }
 
-    static let empty = AIMemoryStats(total: 0, shared: 0, privateCount: 0, byLayer: [:])
+    static let empty = AIMemoryStats(
+        total: 0, shared: 0, privateCount: 0, byLayer: [:], bySubject: [:])
 }
 
 struct AIMemorySnapshot: Equatable {

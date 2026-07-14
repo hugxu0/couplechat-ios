@@ -11,11 +11,15 @@ struct AIMemoryRepository {
         scope: AIMemoryScopeFilter,
         layer: AIMemoryLayer?,
         query: String,
+        subject: String? = nil,
+        status: AIMemoryStatusFilter = .active,
         token: String,
         cursor: String? = nil
     ) async throws -> AIMemorySnapshot {
         var queryItems = [URLQueryItem(name: "scope", value: scope.rawValue)]
         if let layer { queryItems.append(URLQueryItem(name: "layer", value: layer.rawValue)) }
+        if let subject { queryItems.append(URLQueryItem(name: "subject", value: subject)) }
+        queryItems.append(URLQueryItem(name: "status", value: status.rawValue))
         let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty { queryItems.append(URLQueryItem(name: "q", value: search)) }
         if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
@@ -33,6 +37,13 @@ struct AIMemoryRepository {
             path: "api/me/memory/\(memoryId)/evidence", token: token)
         let response: EvidenceResponse = try await perform(request)
         return response.evidence
+    }
+
+    func sources(for memoryId: String, token: String) async throws -> [AIMemorySource] {
+        let request = try authorizedRequest(
+            path: "api/me/memory/\(memoryId)/sources", token: token)
+        let response: SourcesResponse = try await perform(request)
+        return response.sources
     }
 
     func update(
@@ -117,6 +128,7 @@ struct AIMemoryRepository {
         let hasMore: Bool?
     }
     private struct EvidenceResponse: Decodable { let evidence: [AIMemoryEvidence] }
+    private struct SourcesResponse: Decodable { let sources: [AIMemorySource] }
     private struct ItemResponse: Decodable { let item: AIMemoryItem }
     private struct SuccessResponse: Decodable { let ok: Bool }
     private struct RefreshResponse: Decodable { let stats: AIMemoryStats }

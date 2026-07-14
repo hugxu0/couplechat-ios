@@ -82,6 +82,26 @@ test("memory control routes isolate private scope and support review actions", a
     });
     assert.equal(evidence.json().evidence[0].messageId, "memory-source-shared");
 
+    const derived = await addMemory({
+      layer: "relationship", scope: "couple", memoryKey: "relationship.both.recent",
+      subjects: ["both"], speakers: [], content: "两个人最近会一起讨论出行偏好",
+      sourceMessageIds: [], sourceMemoryIds: [shared!.id],
+    });
+    assert.ok(derived);
+    const sources = await app.inject({
+      method: "GET", url: `/api/me/memory/${derived!.id}/sources`,
+      headers: { authorization: `Bearer ${xuToken}` },
+    });
+    assert.equal(sources.statusCode, 200);
+    assert.equal(sources.json().sources[0].id, shared!.id);
+    const bothOnly = await app.inject({
+      method: "GET", url: "/api/me/memory?scope=all&subject=both",
+      headers: { authorization: `Bearer ${xuToken}` },
+    });
+    assert.ok(bothOnly.json().items.every((item: { subjects: string[] }) =>
+      item.subjects.length === 1 && item.subjects[0] === "both"));
+    assert.equal(bothOnly.json().stats.bySubject.both >= 2, true);
+
     const forbiddenDelete = await app.inject({
       method: "DELETE", url: `/api/me/memory/${privateItem!.id}`,
       headers: { authorization: `Bearer ${siToken}` },

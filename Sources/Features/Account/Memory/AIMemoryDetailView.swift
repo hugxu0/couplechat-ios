@@ -8,6 +8,7 @@ struct AIMemoryDetailView: View {
     @State private var draft: String
     @State private var isImportant: Bool
     @State private var evidence: [AIMemoryEvidence] = []
+    @State private var sources: [AIMemorySource] = []
     @State private var isSaving = false
     @State private var showDeleteConfirmation = false
     @State private var errorMessage: String?
@@ -38,7 +39,10 @@ struct AIMemoryDetailView: View {
             }
         }
         .overlay { if isSaving { ProgressView().controlSize(.large) } }
-        .task { await loadEvidence() }
+        .task {
+            await loadEvidence()
+            await loadSources()
+        }
         .confirmationDialog(
             "让大橘忘掉这条记忆？",
             isPresented: $showDeleteConfirmation,
@@ -59,9 +63,9 @@ struct AIMemoryDetailView: View {
                     .frame(width: 34, height: 34)
                     .background(item.layer.tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.isShared ? "共同记忆" : "只属于我")
+                    Text("\(item.subjectTitle) · \(item.visibilityTitle)")
                         .font(DS.Typo.button)
-                    Text(item.layer.title)
+                    Text("\(item.layer.title) · \(item.statusTitle)")
                         .font(DS.Typo.caption)
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
@@ -84,9 +88,10 @@ struct AIMemoryDetailView: View {
 
     @ViewBuilder
     private var sourceSection: some View {
-        Section("来自对话") {
-            if evidence.isEmpty {
-                Text(item.evidenceCount > 0 ? "正在读取来源…" : "这条记忆没有可显示的原文来源")
+        Section((item.derivedFromCount ?? 0) > 0 ? "生成依据" : "来自对话") {
+            if evidence.isEmpty && sources.isEmpty {
+                Text(item.evidenceCount > 0 || (item.derivedFromCount ?? 0) > 0
+                     ? "正在读取来源…" : "这条记忆没有可显示的来源")
                     .foregroundStyle(DS.Palette.textSecondary)
             } else {
                 ForEach(evidence) { source in
@@ -100,6 +105,17 @@ struct AIMemoryDetailView: View {
                     }
                     .padding(.vertical, 3)
                 }
+                ForEach(sources) { source in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(source.content)
+                            .font(DS.Typo.body)
+                            .foregroundStyle(DS.Palette.textPrimary)
+                        Text("\(source.layer.title) · \(sourceDate(source.occurredAt ?? source.validFrom ?? source.updatedAt))")
+                            .font(DS.Typo.micro.monospacedDigit())
+                            .foregroundStyle(DS.Palette.textSecondary)
+                    }
+                    .padding(.vertical, 3)
+                }
             }
             if let errorMessage { StatusBanner(text: errorMessage, kind: .error) }
         }
@@ -107,8 +123,10 @@ struct AIMemoryDetailView: View {
 
     private var informationSection: some View {
         Section("记录信息") {
-            LabeledContent("范围", value: item.isShared ? "共同" : "我的")
+            LabeledContent("人物", value: item.subjectTitle)
+            LabeledContent("可见范围", value: item.visibilityTitle)
             LabeledContent("分类", value: item.layer.title)
+            LabeledContent("状态", value: item.statusTitle)
             LabeledContent("最近更新", value: sourceDate(item.updatedAt))
         }
     }
@@ -132,6 +150,16 @@ struct AIMemoryDetailView: View {
         guard let token = store.session?.token, item.evidenceCount > 0 else { return }
         do {
             evidence = try await store.memoryControl.evidence(for: item.id, token: token)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadSources() async {
+        guard let token = store.session?.token, (item.derivedFromCount ?? 0) > 0 else { return }
+        do {
+            sources = try await store.memoryControl.sources(for: item.id, token: token)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

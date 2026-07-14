@@ -11,12 +11,25 @@ test("memory visibility keeps private AI scopes isolated", async () => {
   assert.deepEqual(visibleMemoryScopes("ai:si"), ["couple", "ai:si"]);
 });
 
-test("memory extraction requires a full batch unless forced", async () => {
-  const { MEMORY_SOURCE_BATCH_SIZE, minimumEvidenceForLayer, shouldExtractMemoryBatch } =
+test("memory extraction follows hybrid conversation segmentation", async () => {
+  const {
+    MEMORY_BUSY_IDLE_MS,
+    MEMORY_MAX_BATCH_AGE_MS,
+    MEMORY_QUIET_IDLE_MS,
+    MEMORY_SOURCE_BATCH_SIZE,
+    memoryExtractionDelay,
+    minimumEvidenceForLayer,
+    shouldExtractMemoryBatch,
+  } =
     await import("../../src/ai/memory/extractor");
   assert.equal(shouldExtractMemoryBatch(MEMORY_SOURCE_BATCH_SIZE - 1), false);
   assert.equal(shouldExtractMemoryBatch(1, true), true);
   assert.equal(shouldExtractMemoryBatch(0, true), false);
-  assert.equal(minimumEvidenceForLayer("insight"), 3);
+  const now = 10 * 60 * 60 * 1000;
+  assert.equal(memoryExtractionDelay(8, now, now, now), MEMORY_QUIET_IDLE_MS);
+  assert.equal(memoryExtractionDelay(20, now, now, now), MEMORY_BUSY_IDLE_MS);
+  assert.equal(memoryExtractionDelay(8, now - MEMORY_MAX_BATCH_AGE_MS, now, now), 0);
+  assert.equal(memoryExtractionDelay(MEMORY_SOURCE_BATCH_SIZE, now, now, now), 0);
+  assert.equal(minimumEvidenceForLayer("insight"), 1);
   assert.equal(minimumEvidenceForLayer("fact"), 1);
 });

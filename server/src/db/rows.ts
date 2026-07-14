@@ -118,3 +118,10 @@ export interface AiMemoryEvidenceRow {
   evidence_role: string;
   created_at: number;
 }
+
+export interface AiMemoryDependencyRow {
+  memory_id: string;
+  source_memory_id: string;
+  role: string;
+  created_at: number;
+}

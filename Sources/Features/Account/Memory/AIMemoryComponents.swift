@@ -47,9 +47,9 @@ struct AIMemoryOverviewCard: View {
             HStack(spacing: 0) {
                 metric("全部", value: stats.total)
                 Divider().frame(height: 30)
-                metric("共同", value: stats.shared)
+                metric("两人可见", value: stats.shared)
                 Divider().frame(height: 30)
-                metric("我的", value: stats.privateCount)
+                metric("仅自己", value: stats.privateCount)
             }
         }
         .padding(.vertical, 8)
@@ -132,12 +132,20 @@ struct AIMemoryRow: View {
                     .foregroundStyle(DS.Palette.textPrimary)
                     .lineLimit(3)
                 HStack(spacing: 7) {
-                    Label(item.isShared ? "共同" : "我的", systemImage: item.isShared ? "person.2.fill" : "person.fill")
+                    Label(item.subjectTitle, systemImage: item.logicalSubject == "both" ? "person.2.fill" : "person.fill")
+                    Text(item.visibilityTitle)
                     Text(item.layer.title)
-                    if item.evidenceCount > 0 { Text("来自 \(item.evidenceCount) 条对话") }
+                    if item.status != "active" { Text(item.statusTitle) }
                 }
                 .font(DS.Typo.micro)
                 .foregroundStyle(DS.Palette.textSecondary)
+                if item.evidenceCount > 0 || (item.derivedFromCount ?? 0) > 0 {
+                    Text(item.evidenceCount > 0
+                         ? "来自 \(item.evidenceCount) 条对话"
+                         : "综合 \(item.derivedFromCount ?? 0) 张基础记忆")
+                        .font(DS.Typo.micro)
+                        .foregroundStyle(DS.Palette.textSecondary)
+                }
             }
         }
         .padding(.vertical, 4)

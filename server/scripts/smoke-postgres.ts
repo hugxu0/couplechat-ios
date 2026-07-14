@@ -104,6 +104,7 @@ async function main() {
       [23, "pet_care_state"],
       [24, "remove_public_registration_invites"],
       [25, "album_timeline_posts"],
+      [26, "memory_derivation_dependencies"],
     ] as const;
     assertOk(
       "数据库结构版本完整",
@@ -454,11 +455,12 @@ async function main() {
     const { messagesAfter, ownerTextMessagesAfter } = await import("../src/ai/conversation/log");
     const tiedMessages = await messagesAfter("couple", { ts: tiedTs, id: "cursor-smoke-a" }, 10);
     const ownerTiedMessages = await ownerTextMessagesAfter("couple", { ts: tiedTs, id: "cursor-smoke-a" }, 30);
-    const { MEMORY_SOURCE_BATCH_SIZE, shouldExtractMemoryBatch } = await import("../src/ai/memory/extractor");
+    const { MEMORY_SOURCE_BATCH_SIZE, memoryExtractionDelay, shouldExtractMemoryBatch } = await import("../src/ai/memory/extractor");
     assertOk(
-      "Memory 按30条主人文字分批且使用 (ts,id) 游标",
-      MEMORY_SOURCE_BATCH_SIZE === 30 &&
-        !shouldExtractMemoryBatch(29) && shouldExtractMemoryBatch(30) && shouldExtractMemoryBatch(1, true) &&
+      "Memory 按80条硬上限与分段空闲窗口整理，并使用 (ts,id) 游标",
+      MEMORY_SOURCE_BATCH_SIZE === 80 &&
+        !shouldExtractMemoryBatch(79) && shouldExtractMemoryBatch(80) && shouldExtractMemoryBatch(1, true) &&
+        memoryExtractionDelay(20, tiedTs, tiedTs, tiedTs) === 15 * 60 * 1000 &&
         tiedMessages.some((message) => message.id === "cursor-smoke-b") &&
         !tiedMessages.some((message) => message.id === "cursor-smoke-a") &&
         ownerTiedMessages.some((message) => message.id === "cursor-smoke-b"),
@@ -537,7 +539,7 @@ async function main() {
     assertOk("Memory 计划支持完成/取消生命周期", completed && completedPlan?.status === "completed");
 
     const { minimumEvidenceForLayer } = await import("../src/ai/memory/extractor");
-    assertOk("Memory 洞察强制至少三条新消息证据", minimumEvidenceForLayer("insight") === 3);
+    assertOk("Memory 基础提取阶段不再直接生成洞察", minimumEvidenceForLayer("insight") === 1);
 
     const recallEvidence = await createMessage(user, {
       channel: "couple", type: "text", text: "这是一条即将撤回的记忆证据", clientId: "smoke-memory-recall",

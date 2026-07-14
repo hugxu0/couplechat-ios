@@ -8,6 +8,7 @@ import {
   getMemoryForControl,
   listMemoryForControl,
   memoryEvidence,
+  memorySources,
   memoryStatsForScopes,
   updateMemoryForControl,
   type MemoryLayer,
@@ -19,6 +20,7 @@ const listQuery = z.object({
   scope: z.enum(["all", "shared", "private"]).default("all"),
   layer: z.string().optional(),
   status: z.enum(["active", "all"]).default("active"),
+  subject: z.enum(["xu", "si", "both"]).optional(),
   q: z.string().max(120).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
   cursor: z.string().max(240).optional(),
@@ -71,6 +73,7 @@ export async function registerMemoryRoutes(app: FastifyInstance) {
         accountId: identity.accountId,
         layer,
         status: parsed.data.status === "all" ? undefined : parsed.data.status,
+        subject: parsed.data.subject,
         query: parsed.data.q,
         limit: parsed.data.limit + 1,
         cursor: decodeCursor(parsed.data.cursor, isMemoryCursor) ?? undefined,
@@ -111,6 +114,19 @@ export async function registerMemoryRoutes(app: FastifyInstance) {
           role: item.evidence_role,
         })),
       };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/api/me/memory/:id/sources",
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      if (!request.user) return reply.code(401).send({ error: "unauthorized" });
+      const identity = await activeIdentity(request.user);
+      if (!identity) return reply.code(401).send({ error: "unauthorized" });
+      const sources = await memorySources(
+        request.params.id, visibleScopes(request.user.username), identity);
+      return { ok: true, sources };
     },
   );
 

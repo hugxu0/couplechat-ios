@@ -3,6 +3,7 @@ export { migrate, schemaMigrations } from "./migrate";
 export { transaction, type DatabaseTransaction } from "./transaction";
 export type {
   AccountRow,
+  AiMemoryDependencyRow,
   AiMemoryEvidenceRow,
   AiMemoryRow,
   MessageRow,

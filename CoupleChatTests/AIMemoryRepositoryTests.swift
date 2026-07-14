@@ -41,7 +41,8 @@ final class AIMemoryRepositoryTests: XCTestCase {
         let repository = AIMemoryRepository(httpClient: client)
 
         let snapshot = try await repository.fetch(
-            scope: .shared, layer: .event, query: "海边", token: "token")
+            scope: .shared, layer: .event, query: "海边",
+            subject: "both", status: .all, token: "token")
 
         XCTAssertEqual(snapshot.items.first?.content, "一起去了海边")
         XCTAssertEqual(snapshot.stats.shared, 1)
@@ -53,6 +54,8 @@ final class AIMemoryRepositoryTests: XCTestCase {
         XCTAssertEqual(components?.queryItems?.first { $0.name == "scope" }?.value, "shared")
         XCTAssertEqual(components?.queryItems?.first { $0.name == "layer" }?.value, "event")
         XCTAssertEqual(components?.queryItems?.first { $0.name == "q" }?.value, "海边")
+        XCTAssertEqual(components?.queryItems?.first { $0.name == "subject" }?.value, "both")
+        XCTAssertEqual(components?.queryItems?.first { $0.name == "status" }?.value, "all")
     }
 
     func testUnauthorizedResponseIsReported() async {

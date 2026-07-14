@@ -4,6 +4,8 @@ struct AIMemoryControlCenterView: View {
     @EnvironmentObject private var store: ChatStore
 
     @State private var scope = AIMemoryScopeFilter.all
+    @State private var subject = AIMemorySubjectFilter.all
+    @State private var status = AIMemoryStatusFilter.active
     @State private var layer: AIMemoryLayer?
     @State private var searchText = ""
     @State private var snapshot = AIMemorySnapshot(items: [], stats: .empty)
@@ -19,6 +21,7 @@ struct AIMemoryControlCenterView: View {
                     isRefreshing: refreshingScope != nil)
             }
             scopeSection
+            filterSection
             categorySection
             memoriesSection
         }
@@ -28,7 +31,9 @@ struct AIMemoryControlCenterView: View {
         .searchable(text: $searchText, prompt: "搜索大橘记住的内容")
         .refreshable { await load() }
         .toolbar { refreshMenu }
-        .task(id: LoadKey(scope: scope, layer: layer, query: searchText)) {
+        .task(id: LoadKey(
+            scope: scope, subject: subject, status: status,
+            layer: layer, query: searchText)) {
             if !searchText.isEmpty {
                 try? await Task.sleep(nanoseconds: 280_000_000)
                 guard !Task.isCancelled else { return }
@@ -50,7 +55,22 @@ struct AIMemoryControlCenterView: View {
             }
             .pickerStyle(.segmented)
         } footer: {
-            Text("共同记忆会出现在两个人与大橘的对话里；“我的”只来自你的大橘私聊。")
+            Text("可见范围和人物归属是两回事：两人可见的卡片，也可能只是在记录其中一个人的事情。")
+        }
+    }
+
+    private var filterSection: some View {
+        Section("筛选") {
+            Picker("人物归属", selection: $subject) {
+                ForEach(AIMemorySubjectFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
+                }
+            }
+            Picker("记录状态", selection: $status) {
+                ForEach(AIMemoryStatusFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
+                }
+            }
         }
     }
 
@@ -83,7 +103,9 @@ struct AIMemoryControlCenterView: View {
                 HStack { Spacer(); ProgressView("正在读取…"); Spacer() }
                     .padding(.vertical, 24)
             } else if snapshot.items.isEmpty {
-                AIMemoryEmptyState(hasFilter: layer != nil || !searchText.isEmpty)
+                AIMemoryEmptyState(
+                    hasFilter: layer != nil || subject != .all
+                        || status != .active || !searchText.isEmpty)
             } else {
                 ForEach(snapshot.items) { item in
                     NavigationLink {
@@ -140,6 +162,8 @@ struct AIMemoryControlCenterView: View {
                 scope: scope,
                 layer: layer,
                 query: searchText,
+                subject: subject.apiValue(for: store.session?.username ?? "xu"),
+                status: status,
                 token: token)
             errorMessage = nil
         } catch is CancellationError {
@@ -160,6 +184,8 @@ struct AIMemoryControlCenterView: View {
                 scope: scope,
                 layer: layer,
                 query: searchText,
+                subject: subject.apiValue(for: store.session?.username ?? "xu"),
+                status: status,
                 token: token,
                 cursor: cursor)
             let known = Set(snapshot.items.map(\.id))
@@ -189,6 +215,8 @@ struct AIMemoryControlCenterView: View {
 
 private struct LoadKey: Hashable {
     let scope: AIMemoryScopeFilter
+    let subject: AIMemorySubjectFilter
+    let status: AIMemoryStatusFilter
     let layer: AIMemoryLayer?
     let query: String
 }
