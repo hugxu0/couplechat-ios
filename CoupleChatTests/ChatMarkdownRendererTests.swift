@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import CoupleChat
 
 final class ChatMarkdownRendererTests: XCTestCase {
@@ -51,6 +52,31 @@ final class ChatMarkdownRendererTests: XCTestCase {
             from: "| 项目 | 内容 |\n| --- | --- |\n| 选择 | A \\| B |")
 
         XCTAssertTrue(rendered.string.contains("内容：A | B"))
+    }
+
+    func testRendererReusesCachedStructuredMessageForTheSameStyle() {
+        let markdown = "| 日期 | 心情 |\n| --- | --- |\n| 7/12 | **开心** |"
+        let first = ChatMarkdownRenderer.attributedString(
+            from: markdown,
+            textColor: .label,
+            accentColor: .systemMint)
+        let second = ChatMarkdownRenderer.attributedString(
+            from: markdown,
+            textColor: .label,
+            accentColor: .systemMint)
+
+        XCTAssertTrue(first === second)
+    }
+
+    func testRendererCacheKeepsAccentStylesIndependent() {
+        let markdown = "| 日期 | 心情 |\n| --- | --- |\n| 7/12 | 开心 |"
+        let red = ChatMarkdownRenderer.attributedString(from: markdown, accentColor: .systemRed)
+        let blue = ChatMarkdownRenderer.attributedString(from: markdown, accentColor: .systemBlue)
+        let redHeader = red.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+        let blueHeader = blue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+
+        XCTAssertTrue(redHeader?.isEqual(UIColor.systemRed) == true)
+        XCTAssertTrue(blueHeader?.isEqual(UIColor.systemBlue) == true)
     }
 
     func testRendererKeepsIncompleteMermaidAsPlainText() {

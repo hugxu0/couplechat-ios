@@ -55,27 +55,29 @@ extension ChatViewController {
     func sendPendingMedia() {
         let items = pendingMedia
         guard !items.isEmpty else { return }
-        let caption = composer.textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = composer.textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         pendingMedia = []
         composer.setMediaPreviews([])
         composer.clearText()
         stickToLatestAfterNextReload = true
-        var captionConsumed = false
         for item in items {
-            sendSingleMedia(item, caption: captionConsumed ? nil : caption)
-            captionConsumed = captionConsumed || !caption.isEmpty
+            sendSingleMedia(item)
+        }
+        if !text.isEmpty {
+            // 输入区里的文字是一条独立消息，不作为首张图片的说明拼进媒体气泡。
+            sendText(text)
         }
         reloadTimeline(animated: false)
     }
 
-    func sendSingleMedia(_ item: ChatPendingMedia, caption: String?) {
+    func sendSingleMedia(_ item: ChatPendingMedia) {
         store.sendMedia(
             data: item.data,
             mimeType: item.mimeType,
             preferredType: item.messageType,
             localPreviewURL: item.localPreviewURL,
             channel: channel,
-            displayText: caption?.isEmpty == false ? caption : nil)
+            displayText: nil)
     }
 
     func sendFile(_ url: URL) {

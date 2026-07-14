@@ -1,14 +1,117 @@
 import UIKit
 
 enum ChatMarkdownRenderer {
+    private final class MarkdownBlocksBox: NSObject {
+        let blocks: [MarkdownBlock]
+
+        init(_ blocks: [MarkdownBlock]) {
+            self.blocks = blocks
+        }
+    }
+
+    private final class RenderCacheKey: NSObject {
+        let markdown: String
+        let font: UIFont
+        let textColor: UIColor
+        let accentColor: UIColor
+
+        init(markdown: String, font: UIFont, textColor: UIColor, accentColor: UIColor) {
+            self.markdown = markdown
+            self.font = font
+            self.textColor = textColor
+            self.accentColor = accentColor
+        }
+
+        override var hash: Int {
+            var hasher = Hasher()
+            hasher.combine(markdown)
+            hasher.combine(font.hash)
+            hasher.combine(textColor.hash)
+            hasher.combine(accentColor.hash)
+            return hasher.finalize()
+        }
+
+        override func isEqual(_ object: Any?) -> Bool {
+            guard let other = object as? RenderCacheKey else { return false }
+            return markdown == other.markdown
+                && font.isEqual(other.font)
+                && textColor.isEqual(other.textColor)
+                && accentColor.isEqual(other.accentColor)
+        }
+    }
+
+    private final class LayoutCacheKey: NSObject {
+        let markdown: String
+        let font: UIFont
+        let width: CGFloat
+
+        init(markdown: String, font: UIFont, width: CGFloat) {
+            self.markdown = markdown
+            self.font = font
+            self.width = width
+        }
+
+        override var hash: Int {
+            var hasher = Hasher()
+            hasher.combine(markdown)
+            hasher.combine(font.hash)
+            hasher.combine(width)
+            return hasher.finalize()
+        }
+
+        override func isEqual(_ object: Any?) -> Bool {
+            guard let other = object as? LayoutCacheKey else { return false }
+            return markdown == other.markdown
+                && font.isEqual(other.font)
+                && width == other.width
+        }
+    }
+
+    private static let blockCache: NSCache<NSString, MarkdownBlocksBox> = {
+        let cache = NSCache<NSString, MarkdownBlocksBox>()
+        cache.countLimit = 256
+        cache.totalCostLimit = 2 * 1_024 * 1_024
+        return cache
+    }()
+
+    private static let renderCache: NSCache<RenderCacheKey, NSAttributedString> = {
+        let cache = NSCache<RenderCacheKey, NSAttributedString>()
+        cache.countLimit = 384
+        cache.totalCostLimit = 12 * 1_024 * 1_024
+        return cache
+    }()
+
+    private static let layoutCache: NSCache<LayoutCacheKey, NSValue> = {
+        let cache = NSCache<LayoutCacheKey, NSValue>()
+        cache.countLimit = 512
+        cache.totalCostLimit = 2 * 1_024 * 1_024
+        return cache
+    }()
+
+    private static let linkExpression = try! NSRegularExpression(
+        pattern: #"\[([^\]]+)\]\(([^\s)]+)\)"#)
+    private static let codeExpression = try! NSRegularExpression(pattern: #"`([^`]+)`"#)
+    private static let boldAsteriskExpression = try! NSRegularExpression(pattern: #"\*\*([^*]+)\*\*"#)
+    private static let boldUnderscoreExpression = try! NSRegularExpression(pattern: #"__([^_]+)__"#)
+    private static let italicExpression = try! NSRegularExpression(pattern: #"(?<!\*)\*([^*\n]+)\*(?!\*)"#)
+    private static let strikethroughExpression = try! NSRegularExpression(pattern: #"~~([^~]+)~~"#)
+    private static let mermaidArrowExpression = try! NSRegularExpression(pattern: #"[│▼├└→◇┌┐└┘─]"#)
+
     static func attributedString(
         from markdown: String,
         baseFont: UIFont = .systemFont(ofSize: 17),
         textColor: UIColor = .label,
         accentColor: UIColor = .systemBlue
     ) -> NSAttributedString {
+        let cacheKey = RenderCacheKey(
+            markdown: markdown,
+            font: baseFont,
+            textColor: textColor,
+            accentColor: accentColor)
+        if let cached = renderCache.object(forKey: cacheKey) { return cached }
+
         let output = NSMutableAttributedString(string: "")
-        for block in MarkdownBlock.parse(markdown) {
+        for block in parsedBlocks(from: markdown) {
             let rendered: NSAttributedString
             switch block {
             case .paragraph(let text):
@@ -52,7 +155,20 @@ enum ChatMarkdownRenderer {
             if output.length > 0 { output.append(NSAttributedString(string: "\n\n")) }
             output.append(rendered)
         }
-        return output
+        let rendered = output.copy() as! NSAttributedString
+        renderCache.setObject(rendered, forKey: cacheKey, cost: max(1, rendered.length * 8))
+        return rendered
+    }
+
+    private static func parsedBlocks(from markdown: String) -> [MarkdownBlock] {
+        let key = markdown as NSString
+        if let cached = blockCache.object(forKey: key) { return cached.blocks }
+        let blocks = MarkdownBlock.parse(markdown)
+        blockCache.setObject(
+            MarkdownBlocksBox(blocks),
+            forKey: key,
+            cost: max(1, markdown.utf16.count * 2))
+        return blocks
     }
 
     private static func joinedLines(_ lines: [NSAttributedString]) -> NSAttributedString {
@@ -94,14 +210,18 @@ enum ChatMarkdownRenderer {
                 .foregroundColor: textColor,
             ])
         let ns = result.string as NSString
-        let arrowExpression = try? NSRegularExpression(pattern: #"[│▼├└→◇┌┐└┘─]"#)
-        for match in arrowExpression?.matches(in: result.string, range: NSRange(location: 0, length: ns.length)).reversed() ?? [] {
+        for match in mermaidArrowExpression
+            .matches(in: result.string, range: NSRange(location: 0, length: ns.length))
+            .reversed() {
             result.addAttribute(.foregroundColor, value: accentColor, range: match.range)
         }
         return result
     }
 
     static func boundingSize(for markdown: String, font: UIFont, width: CGFloat) -> CGSize {
+        let cacheKey = LayoutCacheKey(markdown: markdown, font: font, width: width)
+        if let cached = layoutCache.object(forKey: cacheKey) { return cached.cgSizeValue }
+
         // 与消息气泡实际使用的 UILabel 走同一套排版，避免富文本中的段落、
         // 粗体、列表和表格被 boundingRect 低估高度后在 cell 底部截断。
         let label = UILabel()
@@ -111,7 +231,9 @@ enum ChatMarkdownRenderer {
         label.attributedText = attributedString(from: markdown, baseFont: font)
         let fitted = label.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: ceil(min(width, fitted.width)), height: ceil(fitted.height))
+        let size = CGSize(width: ceil(min(width, fitted.width)), height: ceil(fitted.height))
+        layoutCache.setObject(NSValue(cgSize: size), forKey: cacheKey)
+        return size
     }
 
     private static func renderedLine(
@@ -211,32 +333,67 @@ enum ChatMarkdownRenderer {
         textColor: UIColor,
         accentColor: UIColor
     ) {
-        replaceMatches(in: value, pattern: #"\[([^\]]+)\]\(([^\s)]+)\)"#) { match, source in
-            NSAttributedString(
-                string: source.substring(with: match.range(at: 1)),
-                attributes: [
-                    .font: baseFont,
-                    .foregroundColor: accentColor,
-                    .underlineStyle: NSUnderlineStyle.single.rawValue,
-                    .link: source.substring(with: match.range(at: 2)),
-                ])
+        let source = value.string
+        if source.contains("[") && source.contains("](") {
+            replaceMatches(in: value, expression: linkExpression) { match, matchSource in
+                NSAttributedString(
+                    string: matchSource.substring(with: match.range(at: 1)),
+                    attributes: [
+                        .font: baseFont,
+                        .foregroundColor: accentColor,
+                        .underlineStyle: NSUnderlineStyle.single.rawValue,
+                        .link: matchSource.substring(with: match.range(at: 2)),
+                    ])
+            }
         }
-        replaceDelimited(in: value, pattern: #"`([^`]+)`"#, font: .monospacedSystemFont(ofSize: baseFont.pointSize - 1, weight: .regular), color: textColor, background: textColor.withAlphaComponent(0.08))
-        replaceDelimited(in: value, pattern: #"\*\*([^*]+)\*\*"#, font: .systemFont(ofSize: baseFont.pointSize, weight: .bold), color: textColor)
-        replaceDelimited(in: value, pattern: #"__([^_]+)__"#, font: .systemFont(ofSize: baseFont.pointSize, weight: .bold), color: textColor)
-        replaceDelimited(in: value, pattern: #"(?<!\*)\*([^*\n]+)\*(?!\*)"#, font: .italicSystemFont(ofSize: baseFont.pointSize), color: textColor)
-        replaceDelimited(in: value, pattern: #"~~([^~]+)~~"#, font: baseFont, color: textColor, strikethrough: true)
+        if source.contains("`") {
+            replaceDelimited(
+                in: value,
+                expression: codeExpression,
+                font: .monospacedSystemFont(ofSize: baseFont.pointSize - 1, weight: .regular),
+                color: textColor,
+                background: textColor.withAlphaComponent(0.08))
+        }
+        if source.contains("**") {
+            replaceDelimited(
+                in: value,
+                expression: boldAsteriskExpression,
+                font: .systemFont(ofSize: baseFont.pointSize, weight: .bold),
+                color: textColor)
+        }
+        if source.contains("__") {
+            replaceDelimited(
+                in: value,
+                expression: boldUnderscoreExpression,
+                font: .systemFont(ofSize: baseFont.pointSize, weight: .bold),
+                color: textColor)
+        }
+        if source.contains("*") {
+            replaceDelimited(
+                in: value,
+                expression: italicExpression,
+                font: .italicSystemFont(ofSize: baseFont.pointSize),
+                color: textColor)
+        }
+        if source.contains("~~") {
+            replaceDelimited(
+                in: value,
+                expression: strikethroughExpression,
+                font: baseFont,
+                color: textColor,
+                strikethrough: true)
+        }
     }
 
     private static func replaceDelimited(
         in value: NSMutableAttributedString,
-        pattern: String,
+        expression: NSRegularExpression,
         font: UIFont,
         color: UIColor,
         background: UIColor? = nil,
         strikethrough: Bool = false
     ) {
-        replaceMatches(in: value, pattern: pattern) { match, source in
+        replaceMatches(in: value, expression: expression) { match, source in
             var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
             if let background { attributes[.backgroundColor] = background }
             if strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
@@ -246,10 +403,9 @@ enum ChatMarkdownRenderer {
 
     private static func replaceMatches(
         in value: NSMutableAttributedString,
-        pattern: String,
+        expression: NSRegularExpression,
         replacement: (NSTextCheckingResult, NSString) -> NSAttributedString
     ) {
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return }
         let source = value.string as NSString
         let matches = expression.matches(in: value.string, range: NSRange(location: 0, length: source.length))
         for match in matches.reversed() {
