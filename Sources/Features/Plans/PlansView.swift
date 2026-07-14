@@ -84,26 +84,18 @@ struct PlansView: View {
 
     private var actionHeader: some View {
         HStack(spacing: DS.Spacing.gap) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(actionTitle)
-                    .font(DS.Typo.cardTitle)
-                    .foregroundStyle(DS.Palette.textPrimary)
-                Text(actionSubtitle)
-                    .font(DS.Typo.caption)
-                    .foregroundStyle(DS.Palette.textSecondary)
-            }
+            AppSectionHeader(title: actionTitle, subtitle: actionSubtitle)
             Spacer(minLength: 8)
             Button(action: openCreateEditor) {
-                Label(actionButtonTitle, systemImage: "plus")
-                    .font(DS.Typo.button)
-                    .frame(minHeight: 44)
+                Image(systemName: "plus")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(section == .calendar ? DS.Palette.purple : theme.accent.color)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
             }
-            .buttonStyle(.borderedProminent)
-            .tint(section == .calendar ? DS.Palette.purple : theme.accent.color)
-            .buttonBorderShape(.capsule)
+            .buttonStyle(.plain)
+            .accessibilityLabel(actionButtonTitle)
         }
-        .padding(DS.Spacing.gap)
-        .dsCard(radius: DS.Radius.tile)
     }
 
     private var actionTitle: String {

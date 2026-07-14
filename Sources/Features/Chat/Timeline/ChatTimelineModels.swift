@@ -193,7 +193,7 @@ enum ChatTimelineMetrics {
             return 58
         }
         if message.interactionPayload != nil {
-            return ceil(min(maxBubbleWidth, 222))
+            return ceil(min(maxBubbleWidth, 196))
         }
         if message.meta?.confirm != nil { return ceil(min(maxBubbleWidth, 300)) }
         let bodyWidth = measureTextWidth(text, font: .systemFont(ofSize: 17), maxWidth: available)

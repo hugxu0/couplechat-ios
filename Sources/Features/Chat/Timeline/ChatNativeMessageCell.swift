@@ -283,9 +283,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         bubbleView.backgroundColor = mediaOnly ? .clear : (isAIActivity
             ? accentColor.withAlphaComponent(usesDarkIncomingBubble ? 0.24 : 0.11)
             : (isInteraction
-            ? (usesDarkIncomingBubble
-                ? UIColor(red: 43.0 / 255.0, green: 40.0 / 255.0, blue: 55.0 / 255.0, alpha: 0.98)
-                : UIColor(red: 250.0 / 255.0, green: 244.0 / 255.0, blue: 248.0 / 255.0, alpha: 1))
+            ? (mine ? accentColor : incomingBubbleColor)
             : (mine ? accentColor : incomingBubbleColor)))
         bubbleView.layer.borderWidth = isInteraction ? 1 : 0
         bubbleView.layer.borderColor = isInteraction
@@ -303,19 +301,23 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         confirmCancelButton.backgroundColor = contentColor.withAlphaComponent(0.10)
         confirmButton.setTitleColor(mine ? accentColor : .white, for: .normal)
         confirmButton.backgroundColor = mine ? UIColor.white : accentColor
-        interactionTitleLabel.textColor = usesDarkIncomingBubble ? .white : UIColor.label.resolvedColor(with: traitCollection)
-        interactionSubtitleLabel.textColor = usesDarkIncomingBubble
+        interactionTitleLabel.textColor = mine || usesDarkIncomingBubble
+            ? .white
+            : UIColor.label.resolvedColor(with: traitCollection)
+        interactionSubtitleLabel.textColor = mine || usesDarkIncomingBubble
             ? UIColor.white.withAlphaComponent(0.68)
             : UIColor.secondaryLabel.resolvedColor(with: traitCollection)
-        interactionIconBackground.backgroundColor = interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.24 : 0.12)
+        interactionIconBackground.backgroundColor = mine
+            ? UIColor.white.withAlphaComponent(0.15)
+            : interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.20 : 0.10)
         aiActivityDots.forEach {
             $0.backgroundColor = accentColor.withAlphaComponent(usesDarkIncomingBubble ? 0.92 : 0.68)
         }
         interactionFeather.removeFromSuperlayer()
         if isInteraction {
             interactionFeather.colors = [
-                interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.20 : 0.12).cgColor,
-                interactionColor.withAlphaComponent(0.04).cgColor,
+                interactionColor.withAlphaComponent(mine ? 0.12 : (usesDarkIncomingBubble ? 0.10 : 0.07)).cgColor,
+                interactionColor.withAlphaComponent(0.02).cgColor,
                 UIColor.clear.cgColor
             ]
             interactionFeather.locations = [0, 0.56, 1]
@@ -720,12 +722,12 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         }
 
         if message.interactionPayload != nil {
-            let iconSize: CGFloat = 34
+            let iconSize: CGFloat = 30
             let iconX: CGFloat = 12
             let iconY = (bubbleView.bounds.height - iconSize) / 2
             interactionIconBackground.frame = CGRect(x: iconX, y: iconY, width: iconSize, height: iconSize)
             interactionEmojiLabel.frame = interactionIconBackground.frame
-            let textX = interactionIconBackground.frame.maxX + 10
+            let textX = interactionIconBackground.frame.maxX + 9
             let textWidth = max(0, bubbleView.bounds.width - textX - 12)
             interactionTitleLabel.frame = CGRect(x: textX, y: iconY - 1, width: textWidth, height: 19)
             interactionSubtitleLabel.frame = CGRect(x: textX, y: iconY + 18, width: textWidth, height: 16)

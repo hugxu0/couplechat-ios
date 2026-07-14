@@ -149,15 +149,17 @@ struct RootTabView: View {
 
     private var unreadChatCount: Int {
         guard let username = store.session?.username else { return 0 }
-        return [ChatChannel.couple, .ai].reduce(0) { total, channel in
-            let readAt = timelineStore.readStates[channel.rawValue]?[username] ?? 0
-            return total + timelineStore.messages(for: channel).filter { message in
-                message.sender != username
-                    && message.kind != "system"
-                    && !message.pending
-                    && message.ts > readAt
-            }.count
+        // “聊天”Tab 只代表两个人的公共聊天。大橘私聊属于“大橘”Tab，
+        // 不能把积累的 AI 消息算进这里，否则刚读完双人聊天仍会残留红点。
+        let channel = ChatChannel.couple
+        let readAt = timelineStore.readStates[channel.rawValue]?[username] ?? 0
+        return timelineStore.messages(for: channel).filter { message in
+            message.sender != username
+                && message.kind != "system"
+                && !message.pending
+                && message.ts > readAt
         }
+        .count
     }
 
     private func handleIncomingNote() {

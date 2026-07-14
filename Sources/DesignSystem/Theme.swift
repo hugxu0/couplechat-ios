@@ -330,18 +330,24 @@ enum ChatSurfaceTone: Equatable {
 final class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
 
+    /// 主题是个人偏好，不属于情侣共享数据。相同设备切换账号时也必须各自保留。
+    private var activeAccount: String?
+    private var storagePrefix: String {
+        activeAccount.map { "theme.account.\($0)" } ?? "theme"
+    }
+
     @Published var accent: AccentChoice {
-        didSet { UserDefaults.standard.set(accent.rawValue, forKey: "theme.accent") }
+        didSet { UserDefaults.standard.set(accent.rawValue, forKey: "\(storagePrefix).accent") }
     }
     @Published var appearance: AppearanceChoice {
-        didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "theme.appearance") }
+        didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "\(storagePrefix).appearance") }
     }
     @Published private var wallpapers: [String: String] {
-        didSet { UserDefaults.standard.set(wallpapers, forKey: "theme.wallpapers") }
+        didSet { UserDefaults.standard.set(wallpapers, forKey: "\(storagePrefix).wallpapers") }
     }
     @Published private var customWallpaperKeys: Set<String> {
         didSet {
-            UserDefaults.standard.set(Array(customWallpaperKeys), forKey: "theme.customWallpapers")
+            UserDefaults.standard.set(Array(customWallpaperKeys), forKey: "\(storagePrefix).customWallpapers")
         }
     }
 
@@ -364,6 +370,43 @@ final class ThemeManager: ObservableObject {
         customWallpaperKeys = Set(UserDefaults.standard.stringArray(forKey: "theme.customWallpapers") ?? [])
     }
 
+    func activateAccount(_ username: String?) {
+        guard let username, !username.isEmpty else { return }
+        let account = username
+            .lowercased()
+            .map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "_" }
+            .reduce(into: "") { $0.append($1) }
+        guard activeAccount != account else { return }
+
+        let defaults = UserDefaults.standard
+        let prefix = "theme.account.\(account)"
+        let initializedKey = "\(prefix).initialized"
+        if !defaults.bool(forKey: initializedKey) {
+            // 首次升级时继承当前外观一次，之后两位用户的设置完全分开。
+            defaults.set(accent.rawValue, forKey: "\(prefix).accent")
+            defaults.set(appearance.rawValue, forKey: "\(prefix).appearance")
+            defaults.set(wallpapers, forKey: "\(prefix).wallpapers")
+            defaults.set(Array(customWallpaperKeys), forKey: "\(prefix).customWallpapers")
+            for channel in customWallpaperKeys {
+                let oldURL = customDir.appendingPathComponent("\(channel).jpg")
+                let newURL = customDir.appendingPathComponent("\(account).\(channel).jpg")
+                if FileManager.default.fileExists(atPath: oldURL.path),
+                   !FileManager.default.fileExists(atPath: newURL.path) {
+                    try? FileManager.default.copyItem(at: oldURL, to: newURL)
+                }
+            }
+            defaults.set(true, forKey: initializedKey)
+        }
+
+        activeAccount = account
+        accent = AccentChoice(rawValue: defaults.string(forKey: "\(prefix).accent") ?? "") ?? .sakura
+        appearance = AppearanceChoice(rawValue: defaults.string(forKey: "\(prefix).appearance") ?? "") ?? .system
+        wallpapers = defaults.dictionary(forKey: "\(prefix).wallpapers") as? [String: String] ?? [:]
+        customWallpaperKeys = Set(defaults.stringArray(forKey: "\(prefix).customWallpapers") ?? [])
+        customWallpaperImageCache.removeAll()
+        customWallpaperLuminanceCache.removeAll()
+    }
+
     func wallpaper(for channel: ChatChannel) -> WallpaperChoice {
         WallpaperChoice(rawValue: wallpapers[channel.rawValue] ?? "") ?? .aurora
     }
@@ -380,7 +423,7 @@ final class ThemeManager: ObservableObject {
         if let image = customWallpaperImageCache[channel.rawValue] {
             return image
         }
-        let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
+        let url = customWallpaperURL(for: channel)
         guard let data = try? Data(contentsOf: url) else { return nil }
         guard let image = UIImage(data: data) else { return nil }
         customWallpaperImageCache[channel.rawValue] = image
@@ -406,7 +449,7 @@ final class ThemeManager: ObservableObject {
     }
 
     func setCustomWallpaper(imageData: Data, for channel: ChatChannel) {
-        let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
+        let url = customWallpaperURL(for: channel)
         try? imageData.write(to: url, options: .atomic)
         if let image = UIImage(data: imageData) {
             customWallpaperImageCache[channel.rawValue] = image
@@ -418,11 +461,17 @@ final class ThemeManager: ObservableObject {
     }
 
     func removeCustomWallpaper(for channel: ChatChannel) {
-        let url = customDir.appendingPathComponent("\(channel.rawValue).jpg")
+        let url = customWallpaperURL(for: channel)
         try? FileManager.default.removeItem(at: url)
         customWallpaperImageCache[channel.rawValue] = nil
         customWallpaperLuminanceCache[channel.rawValue] = nil
         customWallpaperKeys.remove(channel.rawValue)
+    }
+
+    private func customWallpaperURL(for channel: ChatChannel) -> URL {
+        let filename = activeAccount.map { "\($0).\(channel.rawValue).jpg" }
+            ?? "\(channel.rawValue).jpg"
+        return customDir.appendingPathComponent(filename)
     }
 
     private static func regionLuminance(of image: UIImage, region: WallpaperSurfaceRegion) -> CGFloat {

@@ -39,6 +39,9 @@ struct CoupleChatApp: App {
         .preferredColorScheme(theme.appearance.colorScheme)
         .tint(theme.accent.color)
         .onOpenURL { deepLinks.handle($0) }
+        .task(id: store.session?.username) {
+            theme.activateAccount(store.session?.username)
+        }
         .task {
             guard !bootstrapped else { return }
             await store.bootstrap()

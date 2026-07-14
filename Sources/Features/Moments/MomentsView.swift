@@ -4,7 +4,6 @@ struct MomentsView: View {
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
     @StateObject private var model = MomentsViewModel()
-    @State private var daily: DailyContent?
     @State private var showingCreateAlbum = false
     @State private var showingDateEditor = false
 
@@ -15,7 +14,6 @@ struct MomentsView: View {
                     coupleOverview
                     onThisDaySection
                     ChatStatsCard()
-                    dailyCard
                     albumSection
                     errorSection
                 }
@@ -26,9 +24,6 @@ struct MomentsView: View {
             .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
             .task { await reload() }
-            .task(id: "diary-history.\(store.session?.username ?? "none")") {
-                await keepDiaryHistoryInSync()
-            }
             .onReceive(NotificationCenter.default.publisher(for: MomentsViewModel.albumsChanged)) { _ in
                 Task { await reload(force: true) }
             }
@@ -216,72 +211,6 @@ struct MomentsView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var dailyCard: some View {
-        AppCard {
-            VStack(alignment: .leading, spacing: DS.Spacing.compact) {
-                HStack {
-                    Label("大橘日记", systemImage: "pawprint.fill")
-                        .font(DS.Typo.cardTitle)
-                        .foregroundStyle(DS.Palette.orange)
-                    Spacer()
-                    Text(diaryEntries.isEmpty ? "最近 30 天" : "最近 \(diaryEntries.count) 篇")
-                        .font(DS.Typo.micro)
-                        .foregroundStyle(DS.Palette.textTertiary)
-                }
-
-                if daily?.backfilling == true {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("大橘仍在整理最近 30 天，日记会陆续补齐")
-                            .font(DS.Typo.caption)
-                            .foregroundStyle(DS.Palette.textSecondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-
-                if diaryEntries.isEmpty {
-                    ContentUnavailableView(
-                        "还没有日记",
-                        systemImage: "book.closed",
-                        description: Text("正在整理最近 30 天有聊天的日子"))
-                        .frame(maxWidth: .infinity, minHeight: 280)
-                } else {
-                    ScrollView(.vertical) {
-                        VStack(spacing: DS.Spacing.compact) {
-                            ForEach(diaryEntries, id: \.date) { diary in
-                                VStack(alignment: .leading, spacing: 9) {
-                                    Text(diary.date)
-                                        .font(DS.Typo.caption.weight(.semibold))
-                                        .foregroundStyle(DS.Palette.orange)
-                                    diaryText(diary.text)
-                                        .font(DS.Typo.body)
-                                        .foregroundStyle(DS.Palette.textPrimary)
-                                        .lineSpacing(5)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                .padding(14)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                                .background(
-                                    DS.Palette.innerSurface,
-                                    in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
-                                        .stroke(DS.Palette.orange.opacity(0.12), lineWidth: 0.8)
-                                }
-                            }
-                        }
-                    }
-                    .frame(minHeight: 390, maxHeight: 560)
-                    .scrollIndicators(.hidden)
-                }
-            }
-        }
-    }
-
-    private var diaryEntries: [DiaryEntry] {
-        Array((daily?.diaries ?? []).prefix(30))
-    }
-
     @ViewBuilder
     private var errorSection: some View {
         if let message = model.errorMessage {
@@ -299,26 +228,7 @@ struct MomentsView: View {
 
     private func reload(force: Bool = false) async {
         guard let token = store.session?.token else { return }
-        async let moments: Void = model.load(token: token, force: force)
-        async let dailyResult = store.dailyContent.fetch(token: token)
-        let (_, fetchedDaily) = await (moments, dailyResult)
-        if let fetchedDaily { daily = fetchedDaily }
-    }
-
-    private func keepDiaryHistoryInSync() async {
-        guard let token = store.session?.token else { return }
-        while !Task.isCancelled && (daily == nil || daily?.backfilling == true) {
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            guard !Task.isCancelled else { return }
-            if let fetched = await store.dailyContent.fetch(token: token) { daily = fetched }
-        }
-    }
-
-    private func diaryText(_ markdown: String) -> Text {
-        if let attributed = try? AttributedString(markdown: markdown) {
-            return Text(attributed)
-        }
-        return Text(markdown)
+        await model.load(token: token, force: force)
     }
 
     private func loadMore(_ album: MomentAlbum) async {
