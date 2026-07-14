@@ -90,6 +90,8 @@ GitHub Actions 按职责拆成两条互不依赖的流程：
 
 生成的 `.xcodeproj`、`build/` 和 `build-artifacts/` 不提交。
 
+下载脚本只选择成功完成的 `main` 构建，并覆盖固定 IPA 与 SHA-256 文件。手动指定 Run ID 时也应先确认该运行的 `headSha` 是准备安装的提交，不能用仍在运行或失败的 artifact 覆盖当前可安装包。
+
 ### 本地 `build-artifacts/` 保留策略
 
 该目录只服务本机安装与排障，不进入 Git。建议只保留：
@@ -111,6 +113,14 @@ GitHub Actions 按职责拆成两条互不依赖的流程：
 - Bug 修复优先补最小复现测试；无法自动化的真机问题写入 `../current/PROJECT.md` 的“当前限制”，修复后立即删除该条。
 - 日志不得包含 token、密码、API key、完整私聊内容或数据库连接串。
 
+### 媒体交互约定
+
+- 可点击的图片/视频使用一个明确的 `Button` 或 UIKit control 承载轻点；不要对按钮内真正绘制内容的图片或视频设置 `allowsHitTesting(false)`。
+- 全屏预览 source anchor 只能作为不接收触摸的 overlay/background 存在，不得覆盖按钮手势，也不能参与媒体单元尺寸计算。
+- 细长图片可在时间线缩略图中按固定区域裁切，但裁切必须在按钮标签内部完成，不能让原图视觉层越界遮住文案、编辑按钮或相邻动态。
+- 同一媒体单元的长按菜单挂在承载轻点的控件上；编辑文案是正文行的独立操作，不放进图片预览器。
+- 调整相册布局后至少真机检查：轻点每个缩略图、长按媒体、编辑空/非空文案、单张细长图、多图、视频封面、左右翻页和上下拖动退出。
+
 ### 设计系统约定
 
 - 颜色、圆角、间距、字体、动画、阴影只从 `Sources/DesignSystem/DS.swift` 取值；页面内不要再写散落魔法数。
@@ -119,7 +129,7 @@ GitHub Actions 按职责拆成两条互不依赖的流程：
 - 动画优先 `DS.Anim.*`，需要尊重「减少动态效果」时用 `DS.Anim.withMotion` 或 `DS.Anim.motion`。
 - 语义组件放在 `AppSemanticComponents.swift`：`RootPageHeader`、`AppSectionHeader`、`AppPrimaryButton`、`StatusBanner`、`AppEmptyState` 等；重复样式先抽组件再改页面。
 - 聊天 UIKit 路径需要同一数值时读 `DS.UIKitToken`，避免 SwiftUI / UIKit 各写一套。
-- Apple 设计上下文见 `.claude/apple-design-context.md`（气质：温柔玻璃感；聊天可深度统一样式，但发送/键盘/贴底可靠性优先）。
+- Apple 设计上下文见 `.claude/apple-design-context.md`（气质：温暖、成熟、克制地使用材质；聊天发送、键盘、贴底和媒体手势可靠性优先）。
 
 ## 提交前检查
 

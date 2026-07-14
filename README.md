@@ -58,7 +58,7 @@ iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLin
 ## 不可破坏的边界
 
 - 生产数据库与媒体目录是事实源；调试不得直接改写生产聊天或 Memory。
-- 数据库迁移 v1–v24 已上线，旧迁移不可删除或改写；新变化只能追加版本。
+- 数据库迁移 v1–v25 已上线，旧迁移不可删除或改写；新变化只能追加版本。
 - 现有数据库主键包含 `legacy` 字样，它们属于线上数据身份，不代表仍支持旧产品流程。
 - Socket 字段变化必须同步修改 `server/src/contracts/realtime.ts`、`Sources/Platform/Networking/SocketContract.swift` 和测试。
 - `.env`、`server/.data/`、`server/uploads/`、数据库备份与构建产物不得提交。

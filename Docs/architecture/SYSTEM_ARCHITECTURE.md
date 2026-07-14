@@ -112,6 +112,8 @@ ChatHomeView
 
 已读只由真实显示的 collection view message cell 驱动，同时要求聊天控制器当前可见、App 处于 active；收到 Socket、恢复缓存或仅进入页面都不会自动已读。聊天容器与媒体网格使用当前窗口尺寸，支持 iPad Split View 与 Stage Manager。
 
+共同相册时间线复用 `ChatMediaViewerCoordinator`，但浏览集合只取被点击动态中的媒体。媒体缩略图由 SwiftUI `Button` 统一承载轻点与 `contextMenu` 长按，图片/视频在按钮内部按方形裁切；用于缩回原位置的 UIKit source anchor 只记录几何位置并关闭 hit testing。文案、编辑与更多操作位于媒体网格上方的独立布局行，不能用扩大的 `contentShape` 或跨层 `zIndex` 覆盖媒体命中区。
+
 ## 服务端
 
 `server/src/server.ts` 负责初始化数据库、账号、AI、Fastify 与 Socket.IO。HTTP 模块由 `app.ts` 注册：
