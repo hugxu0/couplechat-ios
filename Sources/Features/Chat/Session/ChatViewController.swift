@@ -26,6 +26,7 @@ final class ChatViewController: UIViewController {
     let jumpToBottomBackground = ChatGlassView(style: .systemThinMaterial, cornerRadius: 21)
     let jumpToBottomButton = UIButton(type: .system)
     let bottomRefreshIndicator = UIActivityIndicatorView(style: .medium)
+    var jumpToBottomWidthConstraint: NSLayoutConstraint!
     var stickerPanel: ChatStickerPanelView?
 
     var composerHeightConstraint: NSLayoutConstraint!
@@ -365,15 +366,18 @@ final class ChatViewController: UIViewController {
         jumpToBottomBackground.alpha = 0
         jumpToBottomBackground.isHidden = true
         jumpToBottomBackground.update(cornerRadius: 21, tintAlpha: 0.22, borderAlpha: 0.24)
+        jumpToBottomBackground.clipsToBounds = true
         view.addSubview(jumpToBottomBackground)
         bottomRefreshIndicator.translatesAutoresizingMaskIntoConstraints = false
         bottomRefreshIndicator.hidesWhenStopped = true
         view.addSubview(bottomRefreshIndicator)
-        jumpToBottomButton.setImage(UIImage(systemName: "chevron.down"), for: .normal)
         jumpToBottomButton.backgroundColor = .clear
         jumpToBottomButton.translatesAutoresizingMaskIntoConstraints = false
+        jumpToBottomWidthConstraint = jumpToBottomBackground.widthAnchor.constraint(equalToConstant: 42)
         jumpToBottomButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
+            self.timelineController.clearNewMessagesBelow()
+            self.updateJumpToBottomVisibility(animated: true)
             Task {
                 await self.store.restoreLatestMessages(self.channel)
                 self.timelineController.browsingHistoricalWindow = false
@@ -385,7 +389,7 @@ final class ChatViewController: UIViewController {
         }, for: .touchUpInside)
         jumpToBottomBackground.addSubview(jumpToBottomButton)
         NSLayoutConstraint.activate([
-            jumpToBottomBackground.widthAnchor.constraint(equalToConstant: 42),
+            jumpToBottomWidthConstraint,
             jumpToBottomBackground.heightAnchor.constraint(equalToConstant: 42),
             jumpToBottomBackground.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             jumpToBottomBackground.bottomAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -12),
@@ -401,6 +405,10 @@ final class ChatViewController: UIViewController {
     func applyAccentColor() {
         appliedAccent = theme.accent
         jumpToBottomButton.tintColor = theme.accent.uiColor
+        if var configuration = jumpToBottomButton.configuration {
+            configuration.baseForegroundColor = theme.accent.uiColor
+            jumpToBottomButton.configuration = configuration
+        }
         bottomRefreshIndicator.color = theme.accent.uiColor
     }
 

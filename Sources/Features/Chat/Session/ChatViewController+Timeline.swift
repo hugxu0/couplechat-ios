@@ -26,12 +26,14 @@ extension ChatViewController {
     func handleStoreChange() {
         composer.setTypingVisible(false)
         composer.setCatThinking(store.isAIComposing(in: channel))
-        let newestMessageID = store.messages(for: channel).last?.id
-        if keyboardOverlap > 0,
-           newestMessageID != lastRenderedMessageID,
-           lastRenderedMessageID != nil,
-           isNearLatestWindow() {
-            stickToLatestAfterNextReload = true
+        let messages = store.messages(for: channel)
+        if let previousLastID = lastRenderedMessageID,
+           let previousLastIndex = messages.firstIndex(where: { $0.id == previousLastID }),
+           previousLastIndex < messages.index(before: messages.endIndex) {
+            let appendedMessages = messages[messages.index(after: previousLastIndex)...]
+            let currentUsername = store.session?.username
+            let containsIncoming = appendedMessages.contains { $0.sender != currentUsername }
+            timelineController.registerReceivedMessage(isMine: !containsIncoming)
         }
         reloadTimeline(animated: true)
     }
@@ -93,12 +95,40 @@ extension ChatViewController {
     func updateJumpToBottomVisibility(animated: Bool) {
         guard jumpToBottomBackground.superview != nil else { return }
         let visible = timelineController.hasInitialPosition && timelineController.shouldShowJumpToLatest
-        let changes = { self.jumpToBottomBackground.alpha = visible ? 1 : 0 }
+        let showsNewMessageStatus = timelineController.hasNewMessagesBelow
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(systemName: "chevron.down")
+        configuration.imagePlacement = .trailing
+        configuration.imagePadding = showsNewMessageStatus ? 7 : 0
+        configuration.baseForegroundColor = theme.accent.uiColor
+        configuration.contentInsets = NSDirectionalEdgeInsets(
+            top: 0,
+            leading: showsNewMessageStatus ? 14 : 0,
+            bottom: 0,
+            trailing: showsNewMessageStatus ? 13 : 0)
+        var targetWidth: CGFloat = 42
+        if showsNewMessageStatus {
+            let titleFont = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
+                for: .systemFont(ofSize: 14, weight: .semibold))
+            var title = AttributedString("下方有新消息")
+            title.font = titleFont
+            configuration.attributedTitle = title
+            let titleWidth = ("下方有新消息" as NSString).size(withAttributes: [.font: titleFont]).width
+            targetWidth = min(max(136, ceil(titleWidth) + 46), max(136, view.bounds.width - 32))
+        }
+        jumpToBottomButton.configuration = configuration
+        jumpToBottomButton.accessibilityLabel = showsNewMessageStatus ? "下方有新消息" : "回到最新消息"
+        jumpToBottomButton.accessibilityHint = showsNewMessageStatus ? "轻点查看最新消息" : nil
+        jumpToBottomWidthConstraint.constant = targetWidth
+        let changes = {
+            self.jumpToBottomBackground.alpha = visible ? 1 : 0
+            self.view.layoutIfNeeded()
+        }
         if visible { jumpToBottomBackground.isHidden = false }
         let completion: (Bool) -> Void = { _ in
             if !visible { self.jumpToBottomBackground.isHidden = true }
         }
-        if animated {
+        if animated && !UIAccessibility.isReduceMotionEnabled {
             UIView.animate(
                 withDuration: 0.18,
                 delay: 0,

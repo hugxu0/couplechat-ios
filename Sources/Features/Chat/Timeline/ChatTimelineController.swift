@@ -175,6 +175,28 @@ final class ChatTimelineController: NSObject {
         !suppressesJumpToLatest && !(isNearBottom() && isNearLatestWindow())
     }
 
+    var hasNewMessagesBelow: Bool { scrollState.hasNewMessagesBelow }
+
+    /// 在时间线数据刷新前记录收消息时的真实阅读位置。
+    /// UICollectionView reload 后 contentSize 已改变，届时再判断是否贴底会丢失原始意图。
+    func registerReceivedMessage(isMine: Bool) {
+        scrollState.isNearBottom = isNearBottom()
+        scrollState.isAtLatestWindow = isNearLatestWindow()
+        let commands = ChatScrollReducer.reduce(
+            state: &scrollState,
+            event: .receivedMessage(isMine: isMine))
+        if commands.contains(where: {
+            if case .scrollToLatest = $0 { return true }
+            return false
+        }) {
+            stickToLatestAfterNextReload = true
+        }
+    }
+
+    func clearNewMessagesBelow() {
+        scrollState.hasNewMessagesBelow = false
+    }
+
     func setInsets(top: CGFloat, bottom: CGFloat) {
         topInset = top
         bottomInset = bottom
@@ -238,7 +260,8 @@ final class ChatTimelineController: NSObject {
         case .forceLatest:
             stickToLatestAfterNextReload = false
             browsingHistoricalWindow = false
-            followLatest(animated: false)
+            scrollState.hasNewMessagesBelow = false
+            followLatest(animated: animated && !UIAccessibility.isReduceMotionEnabled)
         case .restorePendingAnchor:
             if let anchor = pendingTopAnchor { restore(anchor) }
             pendingTopAnchor = nil
@@ -246,7 +269,7 @@ final class ChatTimelineController: NSObject {
         case .restoreVisibleAnchor:
             if let oldAnchor { restore(oldAnchor) }
         case .followLatest:
-            followLatest(animated: animated)
+            followLatest(animated: animated && !UIAccessibility.isReduceMotionEnabled)
         case .preservePosition:
             break
         }

@@ -102,10 +102,16 @@ enum ChatMarkdownRenderer {
     }
 
     static func boundingSize(for markdown: String, font: UIFont, width: CGFloat) -> CGSize {
-        attributedString(from: markdown, baseFont: font).boundingRect(
-            with: CGSize(width: width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            context: nil).integral.size
+        // 与消息气泡实际使用的 UILabel 走同一套排版，避免富文本中的段落、
+        // 粗体、列表和表格被 boundingRect 低估高度后在 cell 底部截断。
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.font = font
+        label.attributedText = attributedString(from: markdown, baseFont: font)
+        let fitted = label.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: ceil(min(width, fitted.width)), height: ceil(fitted.height))
     }
 
     private static func renderedLine(
