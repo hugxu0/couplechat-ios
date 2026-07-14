@@ -11,6 +11,8 @@ final class ImageCache {
     static let shared = ImageCache()
 
     private let memory = NSCache<NSString, UIImage>()
+    private let sizeLock = NSLock()
+    private var imageSizes: [String: CGSize] = [:]
     private let fileManager = FileManager.default
     let directory: URL
     private let ioQueue = DispatchQueue(label: "image-cache-io", qos: .utility)
@@ -40,6 +42,22 @@ final class ImageCache {
         memory.object(forKey: url.absoluteString as NSString)
     }
 
+    /// 图片解码后的尺寸独立于 NSCache 保存。系统在后台可能清理已解码图片，
+    /// 但聊天气泡的布局尺寸不能因此退回默认占位高度。
+    func imageSize(for url: URL) -> CGSize? {
+        if let image = memoryImage(for: url) { return image.size }
+        sizeLock.lock()
+        defer { sizeLock.unlock() }
+        return imageSizes[url.absoluteString]
+    }
+
+    func rememberImageSize(_ size: CGSize, for url: URL) {
+        guard size.width > 0, size.height > 0 else { return }
+        sizeLock.lock()
+        imageSizes[url.absoluteString] = size
+        sizeLock.unlock()
+    }
+
     func isCached(_ url: URL) -> Bool {
         if memory.object(forKey: url.absoluteString as NSString) != nil { return true }
         return fileManager.fileExists(atPath: fileURL(for: url).path)
@@ -55,7 +73,7 @@ final class ImageCache {
             return Self.decodeForDisplay(data)
         }.value
         if let decoded {
-            memory.setObject(decoded, forKey: url.absoluteString as NSString)
+            storeInMemory(decoded, for: url)
         }
         return decoded
     }
@@ -74,7 +92,7 @@ final class ImageCache {
                 return Self.decodeForDisplay(data)
             }.value
             if let decoded {
-                memory.setObject(decoded, forKey: url.absoluteString as NSString)
+                storeInMemory(decoded, for: url)
             }
             return decoded
         }
@@ -85,7 +103,7 @@ final class ImageCache {
             guard let data = try? Data(contentsOf: file) else { return nil }
             return Self.decodeForDisplay(data)
         }.value {
-            memory.setObject(decoded, forKey: url.absoluteString as NSString)
+            storeInMemory(decoded, for: url)
             return decoded
         }
 
@@ -100,7 +118,7 @@ final class ImageCache {
             Self.decodeForDisplay(data)
         }.value
         guard let prepared else { return nil }
-        memory.setObject(prepared, forKey: url.absoluteString as NSString)
+        storeInMemory(prepared, for: url)
         ioQueue.async {
             do {
                 try data.write(to: file)
@@ -115,11 +133,11 @@ final class ImageCache {
     func store(data: Data, image: UIImage? = nil, for url: URL) {
         let file = fileURL(for: url)
         if let image {
-            memory.setObject(image, forKey: url.absoluteString as NSString)
+            storeInMemory(image, for: url)
         }
-        ioQueue.async { [memory] in
+        ioQueue.async {
             if image == nil, let decoded = Self.decodeForDisplay(data) {
-                memory.setObject(decoded, forKey: url.absoluteString as NSString)
+                self.storeInMemory(decoded, for: url)
             }
             do {
                 try data.write(to: file)
@@ -142,6 +160,9 @@ final class ImageCache {
 
     func remove(for url: URL) {
         memory.removeObject(forKey: url.absoluteString as NSString)
+        sizeLock.lock()
+        imageSizes.removeValue(forKey: url.absoluteString)
+        sizeLock.unlock()
         let file = fileURL(for: url)
         ioQueue.async { [fileManager] in
             guard fileManager.fileExists(atPath: file.path) else { return }
@@ -169,6 +190,9 @@ final class ImageCache {
     /// 清空全部图片缓存（内存 + 磁盘）
     func clearAll() {
         memory.removeAllObjects()
+        sizeLock.lock()
+        imageSizes.removeAll()
+        sizeLock.unlock()
         ioQueue.async { [fileManager, directory] in
             guard let items = try? fileManager.contentsOfDirectory(atPath: directory.path) else { return }
             for name in items {
@@ -192,6 +216,11 @@ final class ImageCache {
         ]
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
         return UIImage(cgImage: cgImage).preparingForDisplay() ?? UIImage(cgImage: cgImage)
+    }
+
+    private func storeInMemory(_ image: UIImage, for url: URL) {
+        memory.setObject(image, forKey: url.absoluteString as NSString)
+        rememberImageSize(image.size, for: url)
     }
 
     private static func isAnimatedSource(_ source: CGImageSource) -> Bool {

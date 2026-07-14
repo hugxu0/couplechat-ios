@@ -232,6 +232,39 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
 }
 
 extension ChatTimelineController: ChatTimelineCellDelegate {
+    func chatCellDidResolveMediaLayout(_ cell: ChatNativeMessageCell, mediaSize: CGSize) {
+        guard mediaSize.width > 0, mediaSize.height > 0,
+              let path = collectionView.indexPath(for: cell), path.item < items.count,
+              case .message(let id) = items[path.item],
+              let message = messagesById[id] else { return }
+        let grouped = groupedMessageIds.contains(message.id)
+        let key = ChatMessageLayout.key(
+            message: message,
+            width: collectionView.bounds.width,
+            mine: message.sender == presentation.currentUsername,
+            groupedWithPrevious: grouped,
+            highlighted: highlightedMessageId == message.id,
+            transcript: voiceTranscripts[message.id],
+            transcriptExpanded: expandedTranscriptIDs.contains(message.id))
+        guard let oldHeight = layoutHeightCache[key] else { return }
+        let newHeight = ChatTimelineMetrics.messageHeight(
+            for: message,
+            containerWidth: collectionView.bounds.width,
+            groupedWithPrevious: grouped,
+            transcript: voiceTranscripts[message.id],
+            transcriptExpanded: expandedTranscriptIDs.contains(message.id))
+        guard abs(newHeight - oldHeight) > 0.5 else { return }
+
+        let anchor = visibleAnchor()
+        layoutHeightCache = layoutHeightCache.filter { $0.key.messageId != id }
+        UIView.performWithoutAnimation {
+            collectionView.reloadItems(at: [path])
+            collectionView.collectionViewLayout.invalidateLayout()
+            collectionView.layoutIfNeeded()
+            if let anchor { restore(anchor) }
+        }
+    }
+
     func chatCellDidDecideConfirm(_ cell: ChatNativeMessageCell, decision: String) {
         guard let path = collectionView.indexPath(for: cell), path.item < items.count,
               case .message(let id) = items[path.item], let message = messagesById[id] else { return }

@@ -221,8 +221,8 @@ enum ChatTimelineMetrics {
               let url = message.mediaURL else { return mediaSize.height }
 
         let size: CGSize?
-        if let cached = ImageCache.shared.memoryImage(for: url) {
-            size = cached.size
+        if let cachedSize = ImageCache.shared.imageSize(for: url) {
+            size = cachedSize
         } else if url.isFileURL,
                   let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

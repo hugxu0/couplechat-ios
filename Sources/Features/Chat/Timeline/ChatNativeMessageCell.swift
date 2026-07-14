@@ -570,6 +570,10 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                     self.applyMediaImage(image)
                     self.mediaIconView.isHidden = false
                     self.setNeedsLayout()
+                    if let image {
+                        ImageCache.shared.rememberImageSize(image.size, for: url)
+                        self.delegate?.chatCellDidResolveMediaLayout(self, mediaSize: image.size)
+                    }
                 }
             }
             return
@@ -587,6 +591,10 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 self.applyMediaImage(image)
                 self.mediaIconView.isHidden = message.type != "video" && image != nil
                 self.setNeedsLayout()
+                if let image {
+                    ImageCache.shared.rememberImageSize(image.size, for: url)
+                    self.delegate?.chatCellDidResolveMediaLayout(self, mediaSize: image.size)
+                }
             }
         }
     }
