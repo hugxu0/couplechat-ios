@@ -44,7 +44,7 @@ function parseState(raw: string): DerivedRunState {
 
 function sourceLine(memory: MemoryItem): string {
   const time = memory.occurredAt ?? memory.validFrom ?? memory.updatedAt;
-  return `[${memory.id}] layer=${memory.layer} subject=${memory.subjects[0] ?? "unknown"} time=${time} content=${memory.content.slice(0, 700)}`;
+  return `[${memory.id}] layer=${memory.layer} subject=${memory.subjects[0] ?? "unknown"} time=${time} content=${memory.content.slice(0, 500)}`;
 }
 
 function continuityLine(memory: MemoryItem): string {
@@ -78,12 +78,16 @@ export async function refreshDerivedMemory(
   const now = Date.now();
   const stateKey = `memory:derived:${channel}`;
   const state = parseState(await readRuntimeState(stateKey));
-  const allActive = await listActiveMemoryContext(channel, 200);
-  const sources = allActive.filter((memory) => {
+  const allActive = await listActiveMemoryContext(channel, 180);
+  const eligibleSources = allActive.filter((memory) => {
     if (!["fact", "event", "plan", "state"].includes(memory.layer)) return false;
     if (memory.layer !== "event") return true;
     return (memory.occurredAt ?? memory.updatedAt) >= now - 30 * DAY_MS;
   });
+  const sources = [
+    ...eligibleSources.filter((memory) => memory.layer !== "event").slice(0, 40),
+    ...eligibleSources.filter((memory) => memory.layer === "event").slice(0, 40),
+  ];
   if (!sources.length) return { relationship: false, insight: false };
 
   const relationshipDue = Boolean(options.forceAll || options.forceRelationship
@@ -103,7 +107,7 @@ export async function refreshDerivedMemory(
       `【基础记忆卡】\n${sources.map(sourceLine).join("\n")}`,
       `【旧高层卡，仅用于保持连续】\n${continuity.map(continuityLine).join("\n") || "（无）"}`,
     ].join("\n\n"),
-    gen: GEN.extractFacts,
+    gen: { ...GEN.extractFacts, timeoutMs: 120_000 },
   });
   if (!output) throw new Error("派生记忆模型无输出");
   const parsed = extractJson<DerivedOutput>(output);

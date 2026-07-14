@@ -19,6 +19,7 @@ async function main(): Promise<void> {
   const apply = process.argv.includes("--apply");
   const days = Math.min(90, numberArgument("--days", 14));
   const limit = Math.min(200, numberArgument("--limit", 60));
+  const batchSize = Math.min(30, numberArgument("--batch-size", 12));
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
   await initDatabase();
@@ -44,21 +45,26 @@ async function main(): Promise<void> {
       return;
     }
 
-    const output = await chat({
-      profile: "task",
-      system: [
-        "你在复核 CoupleChat 的事实、经历、计划和近况卡人物归属。只判断内容实际属于谁，不按可见范围、说话人或是否被两人讨论来判断。",
-        "subject=xu：事情主体只有小旭；subject=si：事情主体只有小偲；subject=both：两个人共同参与、共同执行或事件本身描述两人的共同经历。",
-        "不确定时保持 both。不要改写内容。",
-        '只输出 JSON：{"items":[{"id":"mem_x","subject":"xu","confidence":0.9,"reason":"事件主体是小旭"}]}',
-      ].join("\n"),
-      user: rows.map((row) => `[${row.id}] layer=${row.layer} ${row.content}`).join("\n"),
-      gen: GEN.extractFacts,
-    });
-    const parsed = extractJson<{ items?: ClassifiedSubject[] }>(output);
-    if (!parsed?.items) throw new Error("人物归属复核 JSON 无效");
+    const classified: ClassifiedSubject[] = [];
+    for (let offset = 0; offset < rows.length; offset += batchSize) {
+      const batch = rows.slice(offset, offset + batchSize);
+      const output = await chat({
+        profile: "task",
+        system: [
+          "你在复核 CoupleChat 的事实、经历、计划和近况卡人物归属。只判断内容实际属于谁，不按可见范围、说话人或是否被两人讨论来判断。",
+          "subject=xu：事情主体只有小旭；subject=si：事情主体只有小偲；subject=both：两个人共同参与、共同执行或事件本身描述两人的共同经历。",
+          "不确定时保持 both。不要改写内容。",
+          '只输出 JSON：{"items":[{"id":"mem_x","subject":"xu","confidence":0.9,"reason":"事件主体是小旭"}]}',
+        ].join("\n"),
+        user: batch.map((row) => `[${row.id}] layer=${row.layer} ${row.content}`).join("\n"),
+        gen: { ...GEN.extractFacts, timeoutMs: 120_000 },
+      });
+      const parsed = extractJson<{ items?: ClassifiedSubject[] }>(output);
+      if (!parsed?.items) throw new Error(`人物归属复核第 ${Math.floor(offset / batchSize) + 1} 批 JSON 无效`);
+      classified.push(...parsed.items);
+    }
     const rowById = new Map(rows.map((row) => [row.id, row]));
-    const accepted = parsed.items.filter((item) =>
+    const accepted = classified.filter((item) =>
       item.id && rowById.has(item.id)
       && (item.subject === "xu" || item.subject === "si" || item.subject === "both")
       && Number(item.confidence) >= 0.75);
