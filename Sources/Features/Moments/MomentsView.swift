@@ -127,6 +127,8 @@ struct MomentsView: View {
                 }
             }
         }
+        .padding(DS.Spacing.card)
+        .dsCard(radius: DS.Radius.card)
     }
 
     private var coupleOverview: some View {

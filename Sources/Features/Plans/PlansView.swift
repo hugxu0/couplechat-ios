@@ -91,6 +91,9 @@ struct PlansView: View {
                     .font(.body.weight(.semibold))
                     .foregroundStyle(section == .calendar ? DS.Palette.purple : theme.accent.color)
                     .frame(width: 44, height: 44)
+                    .background(
+                        (section == .calendar ? DS.Palette.purple : theme.accent.color).opacity(0.12),
+                        in: Circle())
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)

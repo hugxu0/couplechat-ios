@@ -785,10 +785,15 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             mediaIconView.frame = CGRect(x: paddingX, y: y + 7, width: 18, height: 18)
             voiceWaveStack.frame = CGRect(x: paddingX + 27, y: y + 6, width: 44, height: 20)
             bodyLabel.frame = CGRect(x: paddingX + 77, y: y + 7, width: 32, height: 18)
+            let availableButtonWidth = max(64, bubbleView.bounds.width - paddingX * 2 - 112)
+            let fittedButtonWidth = min(
+                availableButtonWidth,
+                max(64, ceil(transcriptButton.sizeThatFits(
+                    CGSize(width: availableButtonWidth, height: 30)).width)))
             transcriptButton.frame = CGRect(
-                x: paddingX + 112,
+                x: bubbleView.bounds.width - paddingX - fittedButtonWidth,
                 y: y + 1,
-                width: max(64, bubbleView.bounds.width - paddingX * 2 - 112),
+                width: fittedButtonWidth,
                 height: 30)
             if transcriptLabel.superview != nil {
                 let labelY = y + ChatTimelineMetrics.voiceHeight + 10

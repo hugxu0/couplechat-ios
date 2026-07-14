@@ -5,6 +5,7 @@ import UIKit
 
 struct VideoThumbnailView: View {
     let url: URL
+    var contentMode: ContentMode = .fill
     @State private var thumbnail: UIImage?
 
     var body: some View {
@@ -12,7 +13,7 @@ struct VideoThumbnailView: View {
             if let thumbnail {
                 Image(uiImage: thumbnail)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: contentMode)
             } else {
                 LinearGradient(
                     colors: [.black.opacity(0.16), .black.opacity(0.34)],

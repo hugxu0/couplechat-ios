@@ -98,13 +98,14 @@ struct MomentMosaic: View {
     }
 
     private func tile(_ asset: MomentAsset?, fallbackURL: URL? = nil, width: CGFloat) -> some View {
-        CachedImage(url: asset?.resolvedURL ?? fallbackURL) {
-            ZStack {
-                DS.Palette.innerSurface
-                Image(systemName: "photo.on.rectangle.angled")
-                    .font(.title2)
-                    .foregroundStyle(DS.Palette.textTertiary)
-            }
+        ZStack {
+            DS.Palette.innerSurface
+            media(asset, fallbackURL: fallbackURL, contentMode: .fill)
+                .scaleEffect(1.08)
+                .blur(radius: 12)
+                .opacity(0.26)
+            media(asset, fallbackURL: fallbackURL, contentMode: .fit)
+                .padding(4)
         }
         .frame(width: width)
         .frame(maxHeight: .infinity)
@@ -117,6 +118,26 @@ struct MomentMosaic: View {
                     .padding(8)
                     .background(.black.opacity(0.36), in: Circle())
                     .padding(7)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func media(
+        _ asset: MomentAsset?,
+        fallbackURL: URL?,
+        contentMode: ContentMode
+    ) -> some View {
+        if let asset, asset.isVideo, let url = asset.resolvedOriginalURL {
+            VideoThumbnailView(url: url, contentMode: contentMode)
+        } else {
+            CachedImage(url: asset?.resolvedURL ?? fallbackURL, contentMode: contentMode) {
+                ZStack {
+                    DS.Palette.innerSurface
+                    Image(systemName: "photo.on.rectangle.angled")
+                        .font(.title2)
+                        .foregroundStyle(DS.Palette.textTertiary)
+                }
             }
         }
     }

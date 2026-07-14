@@ -27,9 +27,10 @@ struct MessageHistorySyncService {
         session: Session,
         onProgress: @escaping (_ localCount: Int, _ remoteTotal: Int?) -> Void
     ) async -> MessageHistorySyncResult {
-        // 每次都从云端最新一页向前核对。旧实现从“本地最早消息”继续向前，
-        // 只能补更老的记录，最近缺失或中间断层永远不会被补齐。
-        var cursor: Double?
+        // 正常完整同步从最新一页向前核对；如果上次被暂停，则从分页断点继续，
+        // 避免每次重新扫描已经落库的几千条消息，让进度看起来长期卡在原地。
+        let checkpointKey = "history.sync.cursor.\(session.username).\(channel.rawValue)"
+        var cursor = UserDefaults.standard.object(forKey: checkpointKey) as? Double
         var localCount = await persistence.messageCount(channel: channel.rawValue)
         let initialLocalCount = localCount
         var remoteTotal: Int?
@@ -51,6 +52,10 @@ struct MessageHistorySyncService {
                 lastError = error
                 break
             }
+            if let remoteTotal, localCount >= remoteTotal {
+                completed = true
+                break
+            }
             guard !page.messages.isEmpty else {
                 completed = remoteTotal.map { localCount >= $0 } ?? true
                 if !completed, let remoteTotal {
@@ -66,6 +71,10 @@ struct MessageHistorySyncService {
             localCount = await persistence.messageCount(channel: channel.rawValue)
             downloaded = max(0, localCount - initialLocalCount)
             onProgress(localCount, remoteTotal)
+            if let remoteTotal, localCount >= remoteTotal {
+                completed = true
+                break
+            }
 
             let batchOldest = page.messages.map(\.ts).min()
             if page.messages.count < pageLimit {
@@ -80,9 +89,13 @@ struct MessageHistorySyncService {
                 break
             }
             cursor = batchOldest
+            if let cursor { UserDefaults.standard.set(cursor, forKey: checkpointKey) }
         }
 
         if Task.isCancelled { lastError = "同步已暂停" }
+        if completed && lastError == nil {
+            UserDefaults.standard.removeObject(forKey: checkpointKey)
+        }
         localCount = await persistence.messageCount(channel: channel.rawValue)
         return MessageHistorySyncResult(
             localCount: localCount,

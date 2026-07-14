@@ -147,12 +147,33 @@ struct AlbumDetailView: View {
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
                 Spacer()
-                if let progress = uploadProgress {
-                    ProgressView(value: Double(progress.completed), total: Double(progress.total))
-                        .frame(maxWidth: 120)
-                        .accessibilityLabel("正在上传")
-                        .accessibilityValue("\(progress.completed) / \(progress.total)")
+            }
+            if let progress = uploadProgress {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(progress.completed == 0 ? "正在准备上传" : "正在上传到共同相册")
+                            .font(DS.Typo.secondary.weight(.semibold))
+                            .foregroundStyle(DS.Palette.textPrimary)
+                        Spacer()
+                        Text("\(progress.completed) / \(progress.total)")
+                            .font(DS.Typo.caption.monospacedDigit())
+                            .foregroundStyle(DS.Palette.textSecondary)
+                    }
+                    ProgressView(
+                        value: Double(progress.completed),
+                        total: Double(max(1, progress.total)))
+                        .tint(DS.Palette.accent)
+                    Text("上传完成后会自动出现在时间线中")
+                        .font(DS.Typo.micro)
+                        .foregroundStyle(DS.Palette.textTertiary)
                 }
+                .padding(12)
+                .background(DS.Palette.accent.opacity(0.08), in: RoundedRectangle(
+                    cornerRadius: DS.Radius.control, style: .continuous))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("正在上传共同相册")
+                .accessibilityValue("已完成 \(progress.completed)，共 \(progress.total) 项")
             }
             if let note = model.album.note, !note.isEmpty {
                 Text(note)
@@ -297,8 +318,7 @@ struct AlbumDetailView: View {
 
     private func assetTile(_ asset: MomentAsset, postAssets: [MomentAsset], side: CGFloat) -> some View {
         Button {
-            previewItems = postAssets.map(\.mediaBrowserItem)
-            selectedMediaID = asset.id
+            openPreview(asset, in: postAssets)
         } label: {
             ZStack {
                 if asset.isVideo, let url = asset.resolvedOriginalURL {
@@ -345,6 +365,15 @@ struct AlbumDetailView: View {
         }
         .accessibilityLabel(asset.caption?.isEmpty == false ? asset.caption! : (asset.isVideo ? "视频" : "照片"))
         .accessibilityHint("轻点全屏查看，左右滑动查看这条动态中的媒体")
+    }
+
+    private func openPreview(_ asset: MomentAsset, in postAssets: [MomentAsset]) {
+        // 展示器必须先收到完整媒体数组，再设置选中项；同一轮状态更新会偶发
+        // 让 UIKit Presenter 拿到空数组，从而表现为“点了没有反应”。
+        previewItems = postAssets.map(\.mediaBrowserItem)
+        DispatchQueue.main.async {
+            selectedMediaID = asset.id
+        }
     }
 
     private func load() async {
