@@ -4,6 +4,12 @@ import SwiftUI
 // 视觉块与模型拆到 Home/ 子目录，本文件只负责装配与状态逻辑。
 
 struct ChatHomeView: View {
+    private enum ConnectionNotice: Equatable {
+        case connecting
+        case connected
+        case failed
+    }
+
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var timelineStore: ChatTimelineStore
@@ -15,10 +21,8 @@ struct ChatHomeView: View {
     @State private var editingStatusID: String?
     @State private var showNotePrompt = false
     @State private var noteText = ""
-    @State private var refreshMessage: String?
-    @State private var refreshingHome = false
-    @State private var pullRefreshArmed = true
-    @State private var pullProgress: CGFloat = 0
+    @State private var connectionNotice: ConnectionNotice?
+    @State private var connectionNoticeToken = UUID()
     @AppStorage("chat_home_statuses_v2") private var statusesJSON = ""
     @AppStorage("chat_home_custom_statuses") private var legacyCustomStatusData = ""
 
@@ -57,29 +61,15 @@ struct ChatHomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    shortPullRefreshProbe {
-                        Task { @MainActor in
-                            await Task.yield()
-                            DS.Anim.withMotion(DS.Anim.springFast) {
-                                proxy.scrollTo("chat-home-top", anchor: .top)
-                            }
-                        }
-                    }
-                    mainPanel
-                        .padding(.horizontal, DS.Spacing.page)
-                        .padding(.top, 8)
-                        .id("chat-home-top")
-                    // 卡片外保留一小段真实的滚动缓冲，供下拉刷新和底部标签栏呼吸，
-                    // 不再把这块空间塞进「最新消息」里造成一片空白。
-                    Color.clear.frame(height: 58)
-                }
-                .coordinateSpace(name: "chatHomeScroll")
-                .scrollIndicators(.hidden)
-                .background(AppPageBackground())
-                .overlay(alignment: .top) { pullRefreshIndicator }
+            ScrollView {
+                mainPanel
+                    .padding(.horizontal, DS.Spacing.page)
+                    .padding(.top, 8)
+                // 卡片外保留一小段真实的滚动缓冲，给底部标签栏留出呼吸空间。
+                Color.clear.frame(height: 58)
             }
+            .scrollIndicators(.hidden)
+            .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) {
                 ChatView().appSubpageChrome()
@@ -105,21 +95,11 @@ struct ChatHomeView: View {
                 Text("对方会被贴条挡住屏幕，需要手动撕掉。")
             }
             .overlay(alignment: .top) {
-                if let refreshMessage {
-                    Text(refreshMessage)
-                        .font(DS.Typo.sectionLabel)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill((refreshMessage == "刷新成功" ? DS.Palette.green : DS.Palette.red).opacity(0.92))
-                                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
-                        )
-                        .padding(.top, 8)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .animation(DS.Anim.ease, value: refreshMessage)
-                }
+                connectionNoticeView
+            }
+            .onAppear { handleConnectionStateChange(from: nil, to: store.connectionState) }
+            .onChange(of: store.connectionState) { oldState, newState in
+                handleConnectionStateChange(from: oldState, to: newState)
             }
         }
     }
@@ -254,55 +234,73 @@ struct ChatHomeView: View {
         }
     }
 
-    private func shortPullRefreshProbe(onRefreshFinished: @escaping () -> Void) -> some View {
-        GeometryReader { geo in
-            Color.clear
-                .onChange(of: geo.frame(in: .named("chatHomeScroll")).minY) { _, value in
-                    if !refreshingHome {
-                        pullProgress = min(1, max(0, value / 46))
-                    }
-                    if value < 8 {
-                        pullRefreshArmed = true
-                    }
-                    guard value > 46, pullRefreshArmed, !refreshingHome else { return }
-                    pullRefreshArmed = false
-                    refreshingHome = true
-                    pullProgress = 1
-                    Task {
-                        let result = await store.refreshHomeData()
-                        await MainActor.run {
-                            flashRefreshResult(result)
-                            refreshingHome = false
-                            pullProgress = 0
-                            onRefreshFinished()
-                        }
-                    }
+    @ViewBuilder
+    private var connectionNoticeView: some View {
+        if let connectionNotice {
+            HStack(spacing: 7) {
+                if connectionNotice == .connecting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(theme.accent.color)
+                } else {
+                    Image(systemName: connectionNotice == .connected
+                          ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .foregroundStyle(connectionNotice == .connected ? DS.Palette.green : DS.Palette.red)
                 }
+                Text(connectionNotice == .connecting
+                     ? "连接中" : (connectionNotice == .connected ? "连接成功" : "连接失败"))
+                    .font(DS.Typo.sectionLabel)
+                    .foregroundStyle(DS.Palette.textPrimary)
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(theme.accent.color.opacity(0.16), lineWidth: 0.8)
+            )
+            .shadow(color: .black.opacity(0.10), radius: 7, y: 3)
+            .padding(.top, 8)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .animation(DS.Anim.ease, value: connectionNotice)
+            .accessibilityLabel(connectionNotice == .connecting
+                                ? "正在连接" : (connectionNotice == .connected ? "连接成功" : "连接失败"))
         }
-        .frame(height: 0)
     }
 
-    /// QQ 式下拉指示器：跟随下拉距离渐显/旋转箭头，刷新中换成持续转圈
-    private var pullRefreshIndicator: some View {
-        Group {
-            if refreshingHome {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(DS.Palette.accent)
-            } else {
-                Image(systemName: "arrow.down")
-                    .font(DS.Typo.sectionLabel)
-                    .foregroundStyle(DS.Palette.accent)
-                    .rotationEffect(.degrees(pullProgress >= 1 ? 180 : 0))
+    private func handleConnectionStateChange(
+        from oldState: RealtimeConnectionState?,
+        to newState: RealtimeConnectionState
+    ) {
+        connectionNoticeToken = UUID()
+        switch newState {
+        case .connecting, .reconnecting:
+            DS.Anim.withMotion(DS.Anim.ease) { connectionNotice = .connecting }
+        case .connected:
+            guard oldState?.isTransient == true || connectionNotice == .connecting else {
+                connectionNotice = nil
+                return
+            }
+            DS.Anim.withMotion(DS.Anim.ease) { connectionNotice = .connected }
+            dismissConnectionNotice(after: 1.1)
+        case .failed:
+            DS.Anim.withMotion(DS.Anim.ease) { connectionNotice = .failed }
+        case .disconnected:
+            if oldState?.isTransient == true {
+                DS.Anim.withMotion(DS.Anim.ease) { connectionNotice = .failed }
             }
         }
-        .frame(width: 30, height: 30)
-        .background(DS.Palette.innerSurface, in: Circle())
-        .opacity(refreshingHome ? 1 : pullProgress)
-        .scaleEffect(refreshingHome || UIAccessibility.isReduceMotionEnabled ? 1 : 0.6 + 0.4 * pullProgress)
-        .padding(.top, DS.Spacing.compact)
-        .animation(DS.Anim.motion(DS.Anim.springFast), value: pullProgress >= 1)
-        .animation(DS.Anim.motion(DS.Anim.ease), value: refreshingHome)
+    }
+
+    private func dismissConnectionNotice(after delay: TimeInterval) {
+        let token = connectionNoticeToken
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard connectionNoticeToken == token else { return }
+            await MainActor.run {
+                DS.Anim.withMotion(DS.Anim.ease) { connectionNotice = nil }
+            }
+        }
     }
 
     private var coupleHeader: some View {
@@ -507,19 +505,6 @@ struct ChatHomeView: View {
             .shadow(color: theme.accent.color.opacity(0.22), radius: 10, y: 5)
         }
         .buttonStyle(PressableStyle())
-    }
-
-    /// 刷新结束后弹一条结果提示，1.8s 后自动消失（独立于下拉手势的生命周期）
-    private func flashRefreshResult(_ result: HomeRefreshResult) {
-        DS.Anim.withMotion(DS.Anim.ease) {
-            refreshMessage = (result.dataUpdated || result.realtimeConnected) ? "刷新成功" : "刷新失败"
-        }
-        Task {
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
-            await MainActor.run {
-                DS.Anim.withMotion(DS.Anim.ease) { refreshMessage = nil }
-            }
-        }
     }
 
     private func send(_ action: ChatHomeQuickAction) {

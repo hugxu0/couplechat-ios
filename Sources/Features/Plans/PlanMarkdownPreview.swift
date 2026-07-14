@@ -36,12 +36,12 @@ struct PlanMarkdownPreview: View {
             }
         case .numbers(let items):
             VStack(alignment: .leading, spacing: 5) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("\(index + 1).")
+                        Text("\(item.marker).")
                             .foregroundStyle(DS.Palette.accent)
                             .fontWeight(.semibold)
-                        inlineText(item)
+                        inlineText(item.text)
                     }
                 }
             }

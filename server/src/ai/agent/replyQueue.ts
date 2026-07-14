@@ -4,6 +4,7 @@ import { PACE } from "../settings";
 import { traceBegin, traceError, traceFlush, traceReply, traceTiming } from "../debug/trace";
 import { startOperation } from "../../observability/operationLog";
 import { errorCodeFor } from "../../errors/errorCodes";
+import { updateConversationContext } from "../conversation/context";
 
 export interface ReplySink {
   emit(storedChannel: string, text: string, isFirst: boolean, meta?: unknown): Promise<void>;
@@ -19,6 +20,7 @@ export interface Trigger {
   requesterUsername: string;
   messageId?: string;
   currentImageUrl?: string;
+  currentImageUrls?: string[];
   currentImageSenderName?: string;
   origin?: "user" | "conflict" | "interject";
   backgroundReason?: string;
@@ -106,6 +108,9 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
       state.emitted = true;
     }
     traceTiming(trace, "emit", emitStartedAt);
+    if (!state.cancelled) {
+      void updateConversationContext(trigger.storedChannel, trigger.messageId).catch(() => undefined);
+    }
   } catch (error) {
     failed = true;
     if (!background) sink.activity?.(trigger, "failed");

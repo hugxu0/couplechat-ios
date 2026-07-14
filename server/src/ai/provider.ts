@@ -18,6 +18,24 @@ function isClaudeModel(model: string) {
   return /^claude-/i.test(model);
 }
 
+function responsesText(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const response = data as {
+    output_text?: unknown;
+    output?: Array<{ content?: Array<{ text?: unknown }> }>;
+  };
+  if (typeof response.output_text === "string" && response.output_text.trim()) {
+    return response.output_text.trim();
+  }
+  const text = (response.output ?? [])
+    .flatMap((item) => item.content ?? [])
+    .map((content) => typeof content.text === "string" ? content.text : "")
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  return text || null;
+}
+
 interface ChatArgs {
   profile: ChatProfile;
   system: string;
@@ -104,15 +122,46 @@ async function chatOpenAi(p: AiProvider, args: ChatArgs, signal: AbortSignal): P
   return text;
 }
 
+async function chatOpenAiResponses(p: AiProvider, args: ChatArgs, signal: AbortSignal): Promise<string | null> {
+  const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/responses`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
+    body: JSON.stringify({
+      model: p.model,
+      instructions: args.system,
+      input: args.user,
+      max_output_tokens: args.gen.maxTokens,
+      temperature: args.gen.temperature,
+      reasoning: p.reasoningEffort ? { effort: p.reasoningEffort } : undefined,
+      store: false,
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    await logHttpFailure(`${args.profile} responses`, res);
+    return null;
+  }
+  const text = responsesText(await res.json());
+  if (!text) console.warn(`[ai] ${args.profile} responses 空响应`);
+  return text;
+}
+
 export async function chat(args: ChatArgs): Promise<string | null> {
   const provider = providerFor(args.profile);
   if (!provider) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), args.gen.timeoutMs ?? 30_000);
   try {
-    return isClaudeModel(provider.model)
-      ? await chatAnthropic(provider, args, controller.signal)
-      : await chatOpenAi(provider, args, controller.signal);
+    if (provider.apiMode === "anthropic" || isClaudeModel(provider.model)) {
+      return await chatAnthropic(provider, args, controller.signal);
+    }
+    if (provider.apiMode === "responses") {
+      const primary = await chatOpenAiResponses(provider, args, controller.signal);
+      if (primary) return primary;
+      if (controller.signal.aborted) return null;
+      console.warn(`[ai] ${args.profile} Responses 不可用，回退 Chat Completions`);
+    }
+    return await chatOpenAi(provider, args, controller.signal);
   } catch (error) {
     const name = error instanceof Error ? error.name : "";
     console.warn(`[ai] ${args.profile} ${name === "AbortError" ? "超时" : `失败: ${error instanceof Error ? error.message : error}`}`);
@@ -122,14 +171,45 @@ export async function chat(args: ChatArgs): Promise<string | null> {
   }
 }
 
-// 识图：OpenAI 兼容的多模态 /chat/completions，image_url 直接传公网可访问的图片地址。
-// 只在消息带图片时调用，未配置 AI_VISION_* 或调用失败都直接返回 null，调用方按纯文字兜底。
-export async function describeImage(imageUrl: string, gen: GenProfile, prompt = "用一两句话简短描述这张图片的内容，中文回答。"): Promise<string | null> {
+// 识图：OpenAI 兼容的多模态接口，支持一次联合分析最多 9 张图片。
+export async function describeImages(
+  suppliedUrls: string[],
+  gen: GenProfile,
+  prompt = "按顺序观察这些图片，说明每张图与当前问题有关的内容，并在需要时比较它们。不能确定的细节要明确说明。",
+): Promise<string | null> {
+  const imageUrls = [...new Set(suppliedUrls.filter(Boolean))].slice(0, 9);
+  if (!imageUrls.length) return null;
   const p = config.aiVision;
   if (!p) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), gen.timeoutMs ?? 30_000);
   try {
+    if (p.apiMode === "responses") {
+      const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/responses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
+        body: JSON.stringify({
+          model: p.model,
+          input: [{
+            role: "user",
+            content: [
+              { type: "input_text", text: prompt },
+              ...imageUrls.map((imageUrl) => ({ type: "input_image", image_url: imageUrl })),
+            ],
+          }],
+          max_output_tokens: gen.maxTokens,
+          temperature: gen.temperature,
+          reasoning: p.reasoningEffort ? { effort: p.reasoningEffort } : undefined,
+          store: false,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        await logHttpFailure("vision responses", res);
+        return null;
+      }
+      return responsesText(await res.json());
+    }
     const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
@@ -142,7 +222,7 @@ export async function describeImage(imageUrl: string, gen: GenProfile, prompt = 
             role: "user",
             content: [
               { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: imageUrl } },
+              ...imageUrls.map((imageUrl) => ({ type: "image_url", image_url: { url: imageUrl } })),
             ],
           },
         ],
@@ -163,6 +243,14 @@ export async function describeImage(imageUrl: string, gen: GenProfile, prompt = 
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function describeImage(
+  imageUrl: string,
+  gen: GenProfile,
+  prompt = "用一两句话简短描述这张图片的内容，中文回答。",
+): Promise<string | null> {
+  return describeImages([imageUrl], gen, prompt);
 }
 
 // 联网搜索：复用 AI_VISION_*（同一个 MiMo 账号既能识图也能联网），

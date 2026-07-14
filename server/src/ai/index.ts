@@ -21,7 +21,6 @@ import {
   setMemoryEngagementHandler,
   type MemoryEngagementSignal,
 } from "./memory/extractor";
-import { updateConversationContext } from "./conversation/context";
 import { startDailyScheduler, stopDailyScheduler } from "./background/dailyScheduler";
 import { startMemoryMaintenance, stopMemoryMaintenance } from "./memory/maintenance";
 import { subscribeMemoryDomainEvents } from "./memory/events";
@@ -86,6 +85,15 @@ function stripTrigger(text: string): string {
 
 function isTriggered(text: string): boolean {
   return config.ai.triggerAliases.some((alias) => text.includes(alias));
+}
+
+function messageImageUrls(message: ClientMessage): string[] {
+  if (message.type !== "image") return [];
+  const photos = (message.attachments ?? [])
+    .filter((attachment) => attachment.role === "photo" && attachment.url)
+    .sort((a, b) => a.order - b.order)
+    .map((attachment) => attachment.url);
+  return [...new Set(photos.length ? photos : message.url ? [message.url] : [])].slice(0, 9);
 }
 
 function makeSink(io: Server, user?: AuthUser): ReplySink {
@@ -166,18 +174,21 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
   if (message.kind !== "user") return;
   const storedChannel = toStoredChannel(message.channel, user.username);
   const isText = message.type === "text" && message.text.trim().length > 0;
-  const isImage = message.type === "image" && Boolean(message.url);
+  const hasCaption = message.text.trim().length > 0;
+  const currentImageUrls = messageImageUrls(message);
+  const isImage = currentImageUrls.length > 0;
   if (!isText && !isImage) return;
   const sink = makeSink(io, user);
 
   if (isText && aiEnabled()) {
     onMemoryMessage(storedChannel);
-    void updateConversationContext(storedChannel).catch(() => undefined);
   }
 
   if (storedChannel === "couple") {
-    if (!isText) return; // couple 频道暂不处理图片，只认文字召唤
-    const triggered = isTriggered(message.text);
+    // 公聊图片不会主动打断两人；图片说明里明确召唤时直接看当前整组，
+    // 否则可在之后的文字召唤中通过 inspect_recent_images 回看。
+    const triggered = hasCaption && isTriggered(message.text);
+    if (!triggered) return;
     if (!aiEnabled()) {
       // 配置缺失或部署切换期间，明确召唤也必须有反馈，不能静默。
       if (triggered) {
@@ -203,6 +214,9 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
           requesterName: user.name,
           requesterUsername: user.username,
           messageId: message.id,
+          currentImageUrl: currentImageUrls[0],
+          currentImageUrls,
+          currentImageSenderName: isImage ? message.senderName : undefined,
         };
       sink.activity?.(trigger, "accepted");
       queueRespond(trigger, sink);
@@ -228,14 +242,15 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
     return;
   }
 
-  // 文本和图片统一交给 Agent；图片是否需要识别由 Agent 选择工具。
+  // 文本和图片统一交给 Agent；当前整组图片直接进入主模型。
   const trigger = {
       storedChannel,
       question: message.text.trim(),
       requesterName: user.name,
       requesterUsername: user.username,
       messageId: message.id,
-      currentImageUrl: isImage ? message.url : undefined,
+      currentImageUrl: currentImageUrls[0],
+      currentImageUrls,
       currentImageSenderName: isImage ? message.senderName : undefined,
     };
   sink.activity?.(trigger, "accepted");

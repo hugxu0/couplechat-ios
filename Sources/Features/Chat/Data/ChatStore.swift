@@ -12,11 +12,6 @@ struct AIActivity: Equatable {
     var isVisible: Bool { phase == "accepted" || phase == "generating" }
 }
 
-struct HomeRefreshResult: Equatable {
-    let dataUpdated: Bool
-    let realtimeConnected: Bool
-}
-
 /// 协调层：持有 socket，分发事件给子 store，对外暴露统一接口。
 /// 子 store：AuthStore（登录）、MessageStore（消息）、SharedStore（共享状态）。
 @MainActor
@@ -113,6 +108,7 @@ final class ChatStore: ObservableObject {
     private let persistence: any ChatPersistenceProtocol
     private var childStateCancellables = Set<AnyCancellable>()
     private var localAIActivityTokens: [String: UUID] = [:]
+    private var wasBackgrounded = false
     private var syncingV2 = false
     private var persistentSyncTask: Task<Void, Never>?
 
@@ -523,15 +519,19 @@ final class ChatStore: ObservableObject {
     }
 
     func reportAway(_ away: Bool) {
+        if away { wasBackgrounded = true }
         realtime.reportAway(away)
         if away { stopPersistentSyncLoop() } else { startPersistentSyncLoop() }
     }
 
     func recoverOnForeground() {
         guard auth.session != nil else { return }
+        let needsFreshSocket = wasBackgrounded
+        wasBackgrounded = false
         reportAway(false)
-        // 退后台可能留下陈旧的在途握手；前台恢复时由连接协调器重建。
-        if !connected { realtime.forceReconnect() }
+        // iOS 暂停网络后，客户端仍可能暂时显示 connected，但底层连接已经失效。
+        // 真正进过后台就立即重建；仅从系统弹窗的 inactive 返回则保留健康连接。
+        if needsFreshSocket || !connected { realtime.forceReconnect() }
         Task {
             _ = await refreshBootstrap()
             await recoverSyncV2()
@@ -540,15 +540,6 @@ final class ChatStore: ObservableObject {
                 messageStore.flushOutbox(session: session)
             }
         }
-    }
-
-    func refreshHomeData() async -> HomeRefreshResult {
-        reportAway(false)
-        if !connected { realtime.connect() }
-        async let refreshed = refreshBootstrap()
-        async let realtime = verifyRealtimeHealth()
-        let result = await (refreshed, realtime)
-        return HomeRefreshResult(dataUpdated: result.0, realtimeConnected: result.1)
     }
 
     private func verifyRealtimeHealth() async -> Bool {

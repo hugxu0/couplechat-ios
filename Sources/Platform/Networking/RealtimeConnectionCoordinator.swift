@@ -62,8 +62,9 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         if createdSocket {
             let manager = SocketManager(socketURL: baseURL, config: [
                 .compress,
-                .reconnects(true),
-                .reconnectWaitMax(5),
+                // iOS 前后台恢复由本协调器统一管理。关闭库内重连，避免两套
+                // attempt/backoff 同时运行后互相把连接标记为“仍在进行”。
+                .reconnects(false),
             ])
             self.manager = manager
             let socket = manager.defaultSocket
@@ -74,7 +75,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
 
         guard !isConnected, !attemptInFlight, let socket else { return }
         attemptInFlight = true
-        state = createdSocket ? .connecting : .reconnecting
+        state = createdSocket && state != .reconnecting ? .connecting : .reconnecting
         let token = UUID()
         attemptToken = token
         socket.connect(withPayload: ["token": session.token])
@@ -85,9 +86,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         attemptToken = UUID()
         attemptInFlight = false
         reconnectAttempt = 0
-        socket?.disconnect()
-        manager = nil
-        socket = nil
+        tearDownSocket()
         state = .disconnected
         lastError = nil
     }
@@ -96,9 +95,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         attemptToken = UUID()
         attemptInFlight = false
         reconnectAttempt = 0
-        socket?.disconnect()
-        manager = nil
-        socket = nil
+        tearDownSocket()
         state = .reconnecting
         connect()
     }
@@ -112,12 +109,18 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
     }
 
     func verifyHealth() async -> Bool {
-        if !isConnected { connect() }
-        let deadline = Date().addingTimeInterval(2.2)
+        if !isConnected {
+            // 退避等待不应阻止用户主动回前台；connect() 会令旧 retry token 失效。
+            if !attemptInFlight { connect() }
+        }
+        let deadline = Date().addingTimeInterval(2.4)
         while !isConnected, Date() < deadline {
             try? await Task.sleep(nanoseconds: 80_000_000)
         }
-        guard isConnected, let socket else { return false }
+        guard isConnected, let socket else {
+            forceReconnect()
+            return false
+        }
         let result: [Any] = await withCheckedContinuation { continuation in
             socket.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 1.5) {
                 continuation.resume(returning: $0)
@@ -149,8 +152,12 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
                     self.state = .disconnected
                     return
                 }
-                self.attemptInFlight = true
+                self.attemptToken = UUID()
+                self.attemptInFlight = false
+                self.socket = nil
+                self.manager = nil
                 self.state = .reconnecting
+                self.scheduleRetry()
             }
         }
         socket.on(clientEvent: .error) { [weak self, weak socket] data, _ in
@@ -169,22 +176,58 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
 
     private func scheduleTimeout(for token: UUID) {
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let self,
                   self.attemptToken == token,
                   !self.isConnected,
                   self.sessionProvider() != nil else { return }
             self.attemptInFlight = false
-            self.socket?.disconnect()
-            self.manager = nil
-            self.socket = nil
+            self.attemptToken = UUID()
+            self.tearDownSocket()
             self.state = .reconnecting
-            self.reconnectAttempt += 1
-            let delay = min(5.0, pow(1.7, Double(self.reconnectAttempt)) * 0.35)
+            self.scheduleRetry()
+        }
+    }
+
+    private func scheduleRetry() {
+        guard sessionProvider() != nil else {
+            state = .disconnected
+            return
+        }
+        reconnectAttempt += 1
+        let delay = Self.retryDelay(for: reconnectAttempt)
+        let token = UUID()
+        attemptToken = token
+        Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self,
+                  self.attemptToken == token,
+                  !self.isConnected,
+                  self.sessionProvider() != nil else { return }
             self.attemptInFlight = false
             self.connect()
         }
+    }
+
+    static func retryDelay(for attempt: Int) -> TimeInterval {
+        switch max(1, attempt) {
+        case 1: return 0.35
+        case 2: return 0.7
+        case 3: return 1.4
+        case 4: return 2.4
+        default: return 3
+        }
+    }
+
+    private func tearDownSocket() {
+        // 先解除“当前 socket”身份，再 disconnect；即使库同步回调 disconnect，
+        // 旧实例也无法重新改写新连接的状态。
+        let previousSocket = socket
+        let previousManager = manager
+        socket = nil
+        manager = nil
+        previousSocket?.disconnect()
+        withExtendedLifetime(previousManager) {}
     }
 
     private func handleError(_ data: [Any]) {
@@ -203,9 +246,12 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
             lastError = "登录已过期，请重新登录"
             onUnauthorized()
         } else {
-            attemptInFlight = true
+            attemptToken = UUID()
+            attemptInFlight = false
+            tearDownSocket()
             state = .reconnecting
             lastError = nil
+            scheduleRetry()
         }
     }
 }

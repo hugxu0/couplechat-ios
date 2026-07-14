@@ -1,6 +1,7 @@
 // 读取聊天记录并压缩为适合模型输入的单行文本。
 
 import { all, type MessageRow } from "../../db";
+import type { ClientMessageAttachment } from "../../types";
 import { beijingClock } from "../time";
 import { CONTEXT } from "../settings";
 
@@ -12,6 +13,7 @@ export interface LogMessage {
   type: string;
   text: string;
   url: string | null;
+  attachments: ClientMessageAttachment[];
   ts: number;
 }
 
@@ -21,6 +23,11 @@ export interface LogCursor {
 }
 
 function mapRow(row: MessageRow): LogMessage {
+  let attachments: ClientMessageAttachment[] = [];
+  try {
+    const parsed = row.attachments_json ? JSON.parse(row.attachments_json) : [];
+    if (Array.isArray(parsed)) attachments = parsed as ClientMessageAttachment[];
+  } catch {}
   return {
     id: row.id,
     sender: row.sender,
@@ -29,16 +36,46 @@ function mapRow(row: MessageRow): LogMessage {
     type: row.type,
     text: row.text,
     url: row.url,
+    attachments,
     ts: row.ts,
   };
+}
+
+export function imageUrls(message: Pick<LogMessage, "type" | "url" | "attachments">): string[] {
+  if (message.type !== "image") return [];
+  const photos = message.attachments
+    .filter((item) => item.role === "photo" && item.url)
+    .sort((a, b) => a.order - b.order)
+    .map((item) => item.url);
+  const urls = photos.length ? photos : message.url ? [message.url] : [];
+  return [...new Set(urls)].slice(0, 9);
 }
 
 // 查找最近一条图片消息。
 export function latestImage(messages: LogMessage[]): LogMessage | undefined {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (messages[i].type === "image" && messages[i].url) return messages[i];
+    if (imageUrls(messages[i]).length) return messages[i];
   }
   return undefined;
+}
+
+/** 找到最近一组连续图片消息，保留每条消息内的多附件顺序。 */
+export function latestImageGroup(messages: LogMessage[], maxImages = 9): { messages: LogMessage[]; urls: string[] } {
+  const selected: LogMessage[] = [];
+  const urls: string[] = [];
+  let collecting = false;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const current = imageUrls(messages[index]);
+    if (!current.length) {
+      if (collecting) break;
+      continue;
+    }
+    collecting = true;
+    selected.unshift(messages[index]);
+    urls.unshift(...current);
+    if (urls.length >= maxImages) break;
+  }
+  return { messages: selected, urls: urls.slice(-Math.max(1, Math.min(9, maxImages))) };
 }
 
 // 最近 N 条消息，按时间正序返回。
@@ -46,6 +83,23 @@ export async function recentMessages(storedChannel: string, limit: number): Prom
   const rows = await all<MessageRow>(
     "SELECT * FROM messages WHERE channel = ? ORDER BY ts DESC LIMIT ?",
     [storedChannel, limit],
+  );
+  return rows.reverse().map(mapRow);
+}
+
+// 最近 N 条真实对话消息，忽略系统事件，并可排除正在处理的当前消息。
+export async function recentConversationMessages(
+  storedChannel: string,
+  limit: number,
+  excludeMessageId?: string,
+): Promise<LogMessage[]> {
+  const rows = await all<MessageRow>(
+    `SELECT * FROM messages
+     WHERE channel = ? AND kind <> 'system'${excludeMessageId ? " AND id <> ?" : ""}
+     ORDER BY ts DESC, id DESC LIMIT ?`,
+    excludeMessageId
+      ? [storedChannel, excludeMessageId, limit]
+      : [storedChannel, limit],
   );
   return rows.reverse().map(mapRow);
 }
@@ -86,7 +140,10 @@ export async function ownerTextMessagesAfter(
 }
 
 function bodyOf(m: LogMessage): string {
-  if (m.type === "image") return "[图片]";
+  if (m.type === "image") {
+    const count = imageUrls(m).length;
+    return count > 1 ? `[${count}张图片]` : "[图片]";
+  }
   if (m.type === "video") return "[视频]";
   if (m.type === "voice") return "[语音]";
   if (m.type === "sticker") return "[表情]";

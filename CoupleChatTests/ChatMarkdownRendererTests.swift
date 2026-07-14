@@ -37,6 +37,38 @@ final class ChatMarkdownRendererTests: XCTestCase {
         XCTAssertTrue(rendered.string.contains("心情：开心"))
     }
 
+    func testRendererPreservesProseDashesAndOrderedListMarkers() {
+        let rendered = ChatMarkdownRenderer.attributedString(
+            from: "今天—明天都可以，选项 A｜B\n\n5. 第五项\n6) 第六项")
+
+        XCTAssertTrue(rendered.string.contains("今天—明天都可以，选项 A｜B"))
+        XCTAssertTrue(rendered.string.contains("5. 第五项"))
+        XCTAssertTrue(rendered.string.contains("6. 第六项"))
+    }
+
+    func testRendererSupportsEscapedPipesInsideTableCells() {
+        let rendered = ChatMarkdownRenderer.attributedString(
+            from: "| 项目 | 内容 |\n| --- | --- |\n| 选择 | A \\| B |")
+
+        XCTAssertTrue(rendered.string.contains("内容：A | B"))
+    }
+
+    func testRendererKeepsIncompleteMermaidAsPlainText() {
+        let rendered = ChatMarkdownRenderer.attributedString(from: "mermaid")
+
+        XCTAssertEqual(rendered.string, "mermaid")
+    }
+
+    func testRendererAddsLinkAttribute() throws {
+        let rendered = ChatMarkdownRenderer.attributedString(
+            from: "查看 [官网](https://example.com/path)")
+        let location = try XCTUnwrap(rendered.string.range(of: "官网"))
+        let index = rendered.string.distance(from: rendered.string.startIndex, to: location.lowerBound)
+        let link = rendered.attribute(.link, at: index, effectiveRange: nil) as? String
+
+        XCTAssertEqual(link, "https://example.com/path")
+    }
+
     func testConfirmationContainsFullMemoAndScope() {
         let confirm = message(meta: [
             "confirm": [

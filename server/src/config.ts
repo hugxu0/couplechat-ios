@@ -13,6 +13,7 @@ function required(name: string): string {
 
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const tokenSecret = required("TOKEN_SECRET");
+const publicBaseURL = process.env.PUBLIC_BASE_URL ?? "http://localhost:8080";
 
 function booleanEnv(name: string, fallback: boolean): boolean {
   const value = process.env[name];
@@ -28,6 +29,8 @@ export interface AiProvider {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiMode: "responses" | "chat_completions" | "anthropic";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 }
 
 function providerFromEnv(prefix: string, fallback?: AiProvider): AiProvider | undefined {
@@ -35,7 +38,19 @@ function providerFromEnv(prefix: string, fallback?: AiProvider): AiProvider | un
   const apiKey = process.env[`${prefix}_API_KEY`] ?? fallback?.apiKey ?? "";
   const model = process.env[`${prefix}_MODEL`] ?? fallback?.model ?? "";
   if (!baseUrl || !apiKey || !model) return undefined;
-  return { baseUrl, apiKey, model };
+  const declaredMode = (process.env[`${prefix}_API_MODE`] ?? fallback?.apiMode ?? "").trim().toLowerCase();
+  const apiMode = declaredMode === "responses" || declaredMode === "anthropic"
+    ? declaredMode
+    : declaredMode === "chat_completions"
+      ? "chat_completions"
+      : /^claude-/i.test(model)
+        ? "anthropic"
+        : "chat_completions";
+  const declaredEffort = (process.env[`${prefix}_REASONING_EFFORT`] ?? fallback?.reasoningEffort ?? "").trim().toLowerCase();
+  const reasoningEffort = ["none", "minimal", "low", "medium", "high", "xhigh"].includes(declaredEffort)
+    ? declaredEffort as AiProvider["reasoningEffort"]
+    : undefined;
+  return { baseUrl, apiKey, model, apiMode, reasoningEffort };
 }
 
 // 向量账号池：一个 provider = 一个 baseUrl + 一串 key（逗号分隔）。
@@ -75,7 +90,9 @@ export const config = {
   isProduction: nodeEnv === "production",
   host: process.env.HOST ?? "0.0.0.0",
   port: Number(process.env.PORT ?? 8080),
-  publicBaseURL: process.env.PUBLIC_BASE_URL ?? "http://localhost:8080",
+  publicBaseURL,
+  barkIconURL: process.env.BARK_ICON_URL
+    ?? new URL("/assets/couplechat-icon.png", publicBaseURL).toString(),
   tokenSecret,
   accountsSeed: process.env.COUPLECHAT_ACCOUNTS ?? "",
   appDeepLinkScheme: process.env.APP_DEEP_LINK_SCHEME ?? "couplechat://",
@@ -93,6 +110,8 @@ export const config = {
       .filter(Boolean),
   },
   aiMcpUrl: process.env.AI_MCP_URL ?? `http://127.0.0.1:${Number(process.env.PORT ?? 8080)}/api/ai-mcp`,
+  tavilyMcpUrl: (process.env.TAVILY_MCP_URL ?? "").trim(),
+  tavilyApiKey: (process.env.TAVILY_API_KEY ?? "").trim(),
   // 图片识图（多模态）：只有消息带图片时才调用，未配置则直接跳过图片。
   aiVision: providerFromEnv("AI_VISION"),
   embeddingPools,

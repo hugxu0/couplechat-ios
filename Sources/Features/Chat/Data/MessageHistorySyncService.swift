@@ -27,11 +27,22 @@ struct MessageHistorySyncService {
         session: Session,
         onProgress: @escaping (_ localCount: Int, _ remoteTotal: Int?) -> Void
     ) async -> MessageHistorySyncResult {
-        // 正常完整同步从最新一页向前核对；如果上次被暂停，则从分页断点继续，
-        // 避免每次重新扫描已经落库的几千条消息，让进度看起来长期卡在原地。
-        let checkpointKey = "history.sync.cursor.\(session.username).\(channel.rawValue)"
-        var cursor = UserDefaults.standard.object(forKey: checkpointKey) as? Double
         var localCount = await persistence.messageCount(channel: channel.rawValue)
+        let defaults = UserDefaults.standard
+        let keys = Self.checkpointKeys(username: session.username, channel: channel)
+        // v1 断点只保存时间，不知道它对应的是不是当前 SQLite 文件。一旦本地库被
+        // 清理、恢复或出现中间缺口，继续使用它就会永远绕过缺失区间。
+        defaults.removeObject(forKey: keys.legacyCursor)
+        var cursor = defaults.object(forKey: keys.cursor) as? Double
+        let checkpointLocalCount = defaults.object(forKey: keys.localCount) as? Int
+        if cursor != nil,
+           checkpointLocalCount.map({ localCount < $0 }) ?? true {
+            Self.clearCheckpoint(keys, defaults: defaults)
+            cursor = nil
+        }
+        // 从断点继续的任务如果最终仍对不上总数，会自动再做一次从最新页开始的
+        // 修复扫描；从最新页开始的任务则不会无休止重复。
+        var passStartedFromLatest = cursor == nil
         let initialLocalCount = localCount
         var remoteTotal: Int?
         var downloaded = 0
@@ -58,6 +69,12 @@ struct MessageHistorySyncService {
             }
             guard !page.messages.isEmpty else {
                 completed = remoteTotal.map { localCount >= $0 } ?? true
+                if !completed, cursor != nil, !passStartedFromLatest {
+                    Self.clearCheckpoint(keys, defaults: defaults)
+                    cursor = nil
+                    passStartedFromLatest = true
+                    continue
+                }
                 if !completed, let remoteTotal {
                     lastError = "云端仍有 \(max(0, remoteTotal - localCount)) 条消息未同步，请重试"
                 }
@@ -79,6 +96,12 @@ struct MessageHistorySyncService {
             let batchOldest = page.messages.map(\.ts).min()
             if page.messages.count < pageLimit {
                 completed = remoteTotal.map { localCount >= $0 } ?? true
+                if !completed, cursor != nil, !passStartedFromLatest {
+                    Self.clearCheckpoint(keys, defaults: defaults)
+                    cursor = nil
+                    passStartedFromLatest = true
+                    continue
+                }
                 if !completed, let remoteTotal {
                     lastError = "本地 \(localCount) 条，云端 \(remoteTotal) 条，记录仍未补齐"
                 }
@@ -89,12 +112,15 @@ struct MessageHistorySyncService {
                 break
             }
             cursor = batchOldest
-            if let cursor { UserDefaults.standard.set(cursor, forKey: checkpointKey) }
+            if let cursor {
+                defaults.set(cursor, forKey: keys.cursor)
+                defaults.set(localCount, forKey: keys.localCount)
+            }
         }
 
         if Task.isCancelled { lastError = "同步已暂停" }
         if completed && lastError == nil {
-            UserDefaults.standard.removeObject(forKey: checkpointKey)
+            Self.clearCheckpoint(keys, defaults: defaults)
         }
         localCount = await persistence.messageCount(channel: channel.rawValue)
         return MessageHistorySyncResult(
@@ -103,5 +129,31 @@ struct MessageHistorySyncService {
             downloaded: downloaded,
             completed: completed && lastError == nil,
             error: lastError)
+    }
+
+    static func resetCheckpoint(username: String, channel: ChatChannel) {
+        clearCheckpoint(
+            checkpointKeys(username: username, channel: channel),
+            defaults: .standard)
+    }
+
+    private static func checkpointKeys(
+        username: String,
+        channel: ChatChannel
+    ) -> (cursor: String, localCount: String, legacyCursor: String) {
+        let suffix = "\(username).\(channel.rawValue)"
+        return (
+            cursor: "history.sync.v2.cursor.\(suffix)",
+            localCount: "history.sync.v2.local-count.\(suffix)",
+            legacyCursor: "history.sync.cursor.\(suffix)")
+    }
+
+    private static func clearCheckpoint(
+        _ keys: (cursor: String, localCount: String, legacyCursor: String),
+        defaults: UserDefaults
+    ) {
+        defaults.removeObject(forKey: keys.cursor)
+        defaults.removeObject(forKey: keys.localCount)
+        defaults.removeObject(forKey: keys.legacyCursor)
     }
 }

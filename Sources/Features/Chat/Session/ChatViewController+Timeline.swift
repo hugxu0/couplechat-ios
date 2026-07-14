@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import SafariServices
 import UIKit
 
 extension ChatViewController {
@@ -254,6 +255,14 @@ extension ChatViewController: ChatTimelineControllerDelegate {
         selectedId: String
     ) {
         presentMedia(message: message, selectedId: selectedId)
+    }
+
+    func timelineDidTapLink(_ url: URL) {
+        guard presentedViewController == nil else { return }
+        let browser = SFSafariViewController(url: url)
+        browser.dismissButtonStyle = .close
+        browser.preferredControlTintColor = theme.accent.uiColor
+        present(browser, animated: true)
     }
 
     func timelineDidTapRetry(cell: ChatNativeMessageCell, message: ChatMessage) {

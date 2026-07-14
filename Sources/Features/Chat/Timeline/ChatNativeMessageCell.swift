@@ -81,6 +81,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         bodyLabel.font = .systemFont(ofSize: 17)
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byWordWrapping
+        bodyLabel.isUserInteractionEnabled = true
+        bodyLabel.addGestureRecognizer(
+            UITapGestureRecognizer(target: self, action: #selector(handleBodyLabelTap(_:))))
 
         confirmTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         confirmItemsLabel.font = .systemFont(ofSize: 14)
@@ -193,7 +196,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         highlightView.layer.borderWidth = 0
         highlightView.isUserInteractionEnabled = false
 
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleBubbleTap))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleBubbleTap(_:)))
         tap.delegate = self
         bubbleView.addGestureRecognizer(tap)
         bubbleView.isUserInteractionEnabled = true
@@ -216,6 +219,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         mediaIconView.isHidden = false
         bodyLabel.text = nil
         bodyLabel.attributedText = nil
+        bodyLabel.accessibilityCustomActions = nil
         replyLabel.text = nil
         statusLabel.text = nil
         retryButton.isHidden = true
@@ -253,6 +257,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         self.voiceProgress = voiceProgress
         self.voiceTranscript = transcript
         self.voiceTranscriptExpanded = transcriptExpanded
+        bodyLabel.accessibilityCustomActions = nil
 
         let isAIActivity = message.id.hasPrefix("__ai_activity__")
         let avatarText = mine ? myAvatar : peerAvatar
@@ -471,6 +476,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 baseFont: bodyLabel.font,
                 textColor: bodyLabel.textColor,
                 accentColor: mine ? UIColor.white.withAlphaComponent(0.92) : accentColor)
+            installBodyLinkAccessibilityActions()
             bubbleView.addSubview(bodyLabel)
         }
         if let confirm = message.meta?.confirm { installConfirmation(confirm) }
@@ -967,7 +973,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         }
     }
 
-    @objc private func handleBubbleTap() {
+    @objc private func handleBubbleTap(_ gesture: UITapGestureRecognizer) {
         guard let message else { return }
         if message.failed {
             delegate?.chatCellDidTapRetry(self)
@@ -982,7 +988,59 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         }
     }
 
+    @objc private func handleBodyLabelTap(_ gesture: UITapGestureRecognizer) {
+        guard let message else { return }
+        if message.failed {
+            delegate?.chatCellDidTapRetry(self)
+            return
+        }
+        if let url = bodyLabel.markdownLink(at: gesture.location(in: bodyLabel)) {
+            delegate?.chatCellDidTapLink(self, url: url)
+            return
+        }
+        guard Self.canOpenMediaPreview(message) else { return }
+        switch message.type {
+        case "image", "video", "file", "voice":
+            delegate?.chatCellDidTapMedia(self)
+        default:
+            break
+        }
+    }
+
+    private func installBodyLinkAccessibilityActions() {
+        guard let attributedText = bodyLabel.attributedText else {
+            bodyLabel.accessibilityCustomActions = nil
+            return
+        }
+        var actions: [UIAccessibilityCustomAction] = []
+        attributedText.enumerateAttribute(
+            .link,
+            in: NSRange(location: 0, length: attributedText.length)
+        ) { [weak self] value, range, _ in
+            guard let self, let url = Self.linkURL(from: value) else { return }
+            let label = attributedText.attributedSubstring(from: range).string
+            actions.append(UIAccessibilityCustomAction(name: "打开\(label)") { [weak self] _ in
+                guard let self else { return false }
+                self.delegate?.chatCellDidTapLink(self, url: url)
+                return true
+            })
+        }
+        bodyLabel.accessibilityCustomActions = actions.isEmpty ? nil : actions
+    }
+
+    private static func linkURL(from value: Any?) -> URL? {
+        if let url = value as? URL { return url }
+        if let text = value as? String { return URL(string: text) }
+        return nil
+    }
+
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer.view === bubbleView,
+           bodyLabel.superview != nil,
+           bodyLabel.frame.contains(touch.location(in: bubbleView)) {
+            // 文字区域交给 bodyLabel 自己识别链接；避免父气泡手势抢先结束触摸。
+            return false
+        }
         var candidate = touch.view
         while let view = candidate, view !== bubbleView {
             if view is UIControl { return false }
@@ -1044,5 +1102,54 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             from: bubbleView)
         let target = UIPreviewTarget(container: container, center: center)
         return UITargetedPreview(view: bubbleView, parameters: parameters, target: target)
+    }
+}
+
+private extension UILabel {
+    func markdownLink(at point: CGPoint) -> URL? {
+        guard bounds.insetBy(dx: -4, dy: -4).contains(point),
+              let attributedText, attributedText.length > 0 else { return nil }
+
+        let textStorage = NSTextStorage(attributedString: attributedText)
+        let layoutManager = NSLayoutManager()
+        let textContainer = NSTextContainer(size: bounds.size)
+        textContainer.lineFragmentPadding = 0
+        textContainer.maximumNumberOfLines = numberOfLines
+        textContainer.lineBreakMode = lineBreakMode
+        layoutManager.addTextContainer(textContainer)
+        textStorage.addLayoutManager(layoutManager)
+
+        let usedRect = layoutManager.usedRect(for: textContainer)
+        let horizontalOffset: CGFloat
+        switch textAlignment {
+        case .center:
+            horizontalOffset = (bounds.width - usedRect.width) / 2 - usedRect.minX
+        case .right:
+            horizontalOffset = bounds.width - usedRect.width - usedRect.minX
+        default:
+            horizontalOffset = -usedRect.minX
+        }
+        let verticalOffset = (bounds.height - usedRect.height) / 2 - usedRect.minY
+        let containerPoint = CGPoint(x: point.x - horizontalOffset, y: point.y - verticalOffset)
+        guard usedRect.insetBy(dx: -2, dy: -2).contains(containerPoint) else { return nil }
+
+        var matchedURL: URL?
+        attributedText.enumerateAttribute(
+            .link,
+            in: NSRange(location: 0, length: attributedText.length)
+        ) { value, characterRange, stop in
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: characterRange,
+                actualCharacterRange: nil)
+            let linkRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            guard linkRect.insetBy(dx: -5, dy: -4).contains(containerPoint) else { return }
+            if let url = value as? URL {
+                matchedURL = url
+            } else if let text = value as? String {
+                matchedURL = URL(string: text)
+            }
+            if matchedURL != nil { stop.pointee = true }
+        }
+        return matchedURL
     }
 }

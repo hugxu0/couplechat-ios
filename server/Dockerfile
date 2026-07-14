@@ -15,6 +15,7 @@ WORKDIR /app
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY assets ./assets
 
 RUN mkdir -p /app/uploads /app/.data && chown -R node:node /app
 USER node

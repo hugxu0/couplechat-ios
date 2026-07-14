@@ -25,6 +25,18 @@ export interface TraceEntry {
       result: string;
       error: string;
     }>;
+    conversation?: {
+      continued: boolean;
+      turnCount: number;
+    };
+    completionReview?: {
+      checked: boolean;
+      complete: boolean;
+      repaired: boolean;
+      missing: string[];
+      unsupported: string[];
+      error?: string;
+    };
     finalOutput?: string;
     fallbackReason?: string;
   };

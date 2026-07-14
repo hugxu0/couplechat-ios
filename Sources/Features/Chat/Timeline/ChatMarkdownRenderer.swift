@@ -24,8 +24,8 @@ enum ChatMarkdownRenderer {
                     renderedLine("- " + $0, baseFont: baseFont, textColor: textColor, accentColor: accentColor)
                 })
             case .numbers(let items):
-                rendered = joinedLines(items.enumerated().map { index, item in
-                    renderedLine("\(index + 1). \(item)", baseFont: baseFont, textColor: textColor, accentColor: accentColor)
+                rendered = joinedLines(items.map { item in
+                    renderedLine("\(item.marker). \(item.text)", baseFont: baseFont, textColor: textColor, accentColor: accentColor)
                 })
             case .quote(let text):
                 rendered = renderedLine("> " + text, baseFont: baseFont, textColor: textColor, accentColor: accentColor)

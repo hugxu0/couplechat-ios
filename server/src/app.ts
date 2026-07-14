@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import Fastify from "fastify";
@@ -61,6 +62,12 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   app.get("/live", async () => ({ ok: true, process: "alive", ts: Date.now() }));
   app.get("/ready", readiness);
   app.get("/health", readiness);
+  app.get("/assets/couplechat-icon.png", async (_request, reply) => {
+    reply.header("Cache-Control", "public, max-age=604800, immutable");
+    return reply.type("image/png").send(
+      fs.createReadStream(path.join(process.cwd(), "assets", "couplechat-icon.png")),
+    );
+  });
 
   await registerAuthRoutes(app);
   await registerDeviceRoutes(app);

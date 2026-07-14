@@ -247,6 +247,11 @@ extension ChatTimelineController: ChatTimelineCellDelegate {
             selectedId: cell.selectedMediaIdentifier ?? id)
     }
 
+    func chatCellDidTapLink(_ cell: ChatNativeMessageCell, url: URL) {
+        guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else { return }
+        delegate?.timelineDidTapLink(url)
+    }
+
     func chatCellDidTapRetry(_ cell: ChatNativeMessageCell) {
         guard let path = collectionView.indexPath(for: cell), path.item < items.count,
               case .message(let id) = items[path.item], let message = messagesById[id] else { return }

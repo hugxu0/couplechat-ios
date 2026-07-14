@@ -293,22 +293,44 @@ final class MessageStore: ObservableObject {
         if let last = lastLoadOlderAt[channel.rawValue], Date().timeIntervalSince(last) < 0.45 { return }
         lastLoadOlderAt[channel.rawValue] = Date()
         loadingOlderChannels.insert(channel.rawValue)
+        defer { loadingOlderChannels.remove(channel.rawValue) }
         let limit = 22
         let firstTs = first.ts
+        var attemptedCloudPage = false
 
+        // 联网时云端页才是连续性的事实源。本地库可能因旧断点、系统中断或搜索
+        // 按日期补取而存在孤立片段，直接取“本地下一条”会跨过整个缺口。
+        if socketProvider?.isConnected == true,
+           let session = socketProvider?.currentSession {
+            attemptedCloudPage = true
+            let page = await remoteDataSource.fetchHistoryPage(
+                channel: channel,
+                before: firstTs,
+                limit: limit,
+                session: session)
+            if page.error == nil {
+                guard !page.messages.isEmpty else { return }
+                _ = await persistence.insertMessages(page.messages)
+                updateMessages(channel) { current in
+                    ChatMessageCollection.prependUnique(page.messages, to: &current)
+                }
+                return
+            }
+        }
+
+        // 无网或云端请求失败时仍允许浏览已经保存到设备上的历史。
         let localOlder = await persistence.fetchMessages(
             channel: channel.rawValue, beforeTimestamp: firstTs, limit: limit)
         if !localOlder.isEmpty {
             updateMessages(channel) { current in
                 ChatMessageCollection.prependUnique(localOlder, to: &current)
             }
-            loadingOlderChannels.remove(channel.rawValue)
             return
         }
+        guard !attemptedCloudPage else { return }
         let older = await fetchRemoteMessages(
             MessagePageRequest(channel: channel, before: firstTs, limit: limit),
             context: "loadOlder:\(channel.rawValue)")
-        defer { loadingOlderChannels.remove(channel.rawValue) }
         guard !older.isEmpty else { return }
         _ = await persistence.insertMessages(older)
         updateMessages(channel) { current in
@@ -734,6 +756,10 @@ final class MessageStore: ObservableObject {
 
     func clearLocalHistory() async {
         await persistence.deleteMessages(channel: nil)
+        if let username = socketProvider?.currentSession?.username {
+            MessageHistorySyncService.resetCheckpoint(username: username, channel: .couple)
+            MessageHistorySyncService.resetCheckpoint(username: username, channel: .ai)
+        }
         messagesByChannel = [:]
         latestPersistedMessageIDs = [:]
     }

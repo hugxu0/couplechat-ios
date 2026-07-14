@@ -1,10 +1,15 @@
 import Foundation
 
+struct MarkdownOrderedListItem: Equatable {
+    let marker: Int
+    let text: String
+}
+
 enum MarkdownBlock: Equatable {
     case paragraph(String)
     case heading(level: Int, text: String)
     case bullets([String])
-    case numbers([String])
+    case numbers([MarkdownOrderedListItem])
     case quote(String)
     case code(String)
     case mermaid(String)
@@ -29,7 +34,16 @@ enum MarkdownBlock: Equatable {
                 ?? standaloneBlock(lines, index: &index) {
                 result.append(block)
             } else {
-                result.append(paragraphBlock(lines, index: &index))
+                let startIndex = index
+                let paragraph = paragraphBlock(lines, index: &index)
+                if index == startIndex {
+                    // 任意不完整或未知的 Markdown 都必须至少消费一行，避免例如
+                    // 单独一行 `mermaid` 让解析器停在原地并阻塞聊天界面。
+                    result.append(.paragraph(line))
+                    index += 1
+                } else {
+                    result.append(paragraph)
+                }
             }
         }
         return result
@@ -37,9 +51,6 @@ enum MarkdownBlock: Equatable {
 
     private static func normalized(_ markdown: String) -> String {
         markdown
-            .replacingOccurrences(of: "｜", with: "|")
-            .replacingOccurrences(of: "—", with: "-")
-            .replacingOccurrences(of: "–", with: "-")
             .replacingOccurrences(
                 of: #"(?m)^\s*[•·]\s+"#,
                 with: "- ",
@@ -119,12 +130,12 @@ enum MarkdownBlock: Equatable {
         return nil
     }
 
-    private static func collectList(
+    private static func collectList<Item>(
         _ lines: [String],
         index: inout Int,
-        first: String,
-        parser: (String) -> String?
-    ) -> [String] {
+        first: Item,
+        parser: (String) -> Item?
+    ) -> [Item] {
         var items = [first]
         index += 1
         while index < lines.count, let item = parser(lines[index].trimmingCharacters(in: .whitespaces)) {
@@ -187,20 +198,40 @@ enum MarkdownBlock: Equatable {
         return nil
     }
 
-    private static func numberLine(_ line: String) -> String? {
+    private static func numberLine(_ line: String) -> MarkdownOrderedListItem? {
         guard let separator = line.firstIndex(where: { $0 == "." || $0 == ")" }) else { return nil }
         let prefix = line[..<separator]
-        guard !prefix.isEmpty, prefix.allSatisfy({ $0.isNumber }) else { return nil }
-        return String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
+        guard !prefix.isEmpty, prefix.allSatisfy({ $0.isNumber }), let marker = Int(prefix) else { return nil }
+        return MarkdownOrderedListItem(
+            marker: marker,
+            text: String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces))
     }
 
     private static func tableRow(_ line: String) -> [String]? {
-        guard line.contains("|") else { return nil }
-        var value = line.trimmingCharacters(in: .whitespaces)
-        if value.hasPrefix("|") { value.removeFirst() }
-        if value.hasSuffix("|") { value.removeLast() }
-        let cells = value.split(separator: "|", omittingEmptySubsequences: false)
-            .map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard line.contains("|") || line.contains("｜") else { return nil }
+        let value = line.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "｜", with: "|")
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        for character in value {
+            if escaped {
+                if character != "|" { cell.append("\\") }
+                cell.append(character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "|" {
+                cells.append(cell.trimmingCharacters(in: .whitespaces))
+                cell = ""
+            } else {
+                cell.append(character)
+            }
+        }
+        if escaped { cell.append("\\") }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        if value.hasPrefix("|"), cells.first?.isEmpty == true { cells.removeFirst() }
+        if value.hasSuffix("|"), !value.hasSuffix("\\|"), cells.last?.isEmpty == true { cells.removeLast() }
         return cells.isEmpty ? nil : cells
     }
 
@@ -208,6 +239,8 @@ enum MarkdownBlock: Equatable {
         guard let cells = tableRow(line), !cells.isEmpty else { return false }
         return cells.allSatisfy { cell in
             let value = cell.trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: "—", with: "-")
+                .replacingOccurrences(of: "–", with: "-")
             // Markdown 标准要求至少三条横线；旧 AI 偶尔只给两条。客户端
             // 容错渲染，但保存内容仍保持原文。
             return value.filter { $0 == "-" }.count >= 2

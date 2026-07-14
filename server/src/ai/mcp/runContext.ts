@@ -11,6 +11,7 @@ export interface AgentRunIdentity {
   requesterName: string;
   storedChannel: string;
   currentImageUrl?: string;
+  currentImageUrls?: string[];
   expiresAt: number;
 }
 
@@ -89,8 +90,9 @@ export async function recordAgentTool<T>(
     search_chat_messages: 2,
     get_messages_around: 2,
     get_memory_evidence: 2,
-    web_search: 2,
-    inspect_recent_image: 1,
+    fallback_web_search: 2,
+    web_extract: 1,
+    inspect_recent_images: 1,
     list_personal_items: 2,
     draft_personal_item_action: 6,
   };
