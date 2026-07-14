@@ -91,34 +91,6 @@ function calibrateEvidenceLanguage(replies: string[]): string[] {
     .replace(/从来没有说过/g, "在这次找到的记录里没有明确说过"));
 }
 
-interface CompletionReview {
-  complete: boolean;
-  missing: string[];
-  unsupported: string[];
-  nextInstruction: string;
-}
-
-const casualOnlyPattern = /^(?:你?好(?:呀|啊|哇)?|嗨|哈喽|在吗|你在干嘛|干嘛呢|早安|早上好|晚安|谢谢|谢啦|哦+|噢+|嗯+|好(?:的|呀|啊)?|哈哈+|嘿嘿+|爱你|想你了?|收到|知道了)[～~!！。,.，?？\s]*$/i;
-
-function shouldReviewCompletion(trigger: Trigger, imageCount: number): boolean {
-  if (trigger.origin === "conflict" || trigger.origin === "interject") return false;
-  if (imageCount > 0) return true;
-  const question = trigger.question.replace(/\s+/g, " ").trim();
-  if (!question) return false;
-  return !casualOnlyPattern.test(question);
-}
-
-function completionReview(raw: string): CompletionReview | null {
-  const parsed = extractJson<Partial<CompletionReview>>(raw);
-  if (!parsed || typeof parsed.complete !== "boolean") return null;
-  return {
-    complete: parsed.complete,
-    missing: Array.isArray(parsed.missing) ? parsed.missing.map(String).filter(Boolean).slice(0, 8) : [],
-    unsupported: Array.isArray(parsed.unsupported) ? parsed.unsupported.map(String).filter(Boolean).slice(0, 8) : [],
-    nextInstruction: String(parsed.nextInstruction ?? "").trim().slice(0, 1200),
-  };
-}
-
 function nativeWebCitations(rawResponses: unknown): Citation[] {
   if (!Array.isArray(rawResponses)) return [];
   const citations: Citation[] = [];
@@ -264,112 +236,11 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
           mcpServers: [mcp],
           modelSettings,
         });
-        let result = await runner.run(agent, modelInput(input), {
+        const result = await runner.run(agent, modelInput(input), {
           maxTurns: 6,
           signal: controller.signal,
         });
-        const workerRawResponses: unknown[] = [...result.rawResponses];
-        trace.agent!.completionReview = {
-          checked: false,
-          complete: true,
-          repaired: false,
-          missing: [],
-          unsupported: [],
-        };
-
-        if (shouldReviewCompletion(trigger, currentImageUrls.length) && !controller.signal.aborted) {
-          const initialRawOutput = typeof result.finalOutput === "string"
-            ? result.finalOutput
-            : JSON.stringify(result.finalOutput ?? "");
-          const toolEvidence = (trace.agent?.toolCalls ?? []).slice(-8).map((call) => ({
-            name: call.name,
-            args: call.args,
-            result: call.result.slice(0, 2500),
-            error: call.error,
-          }));
-          const citations = nativeWebCitations(result.rawResponses);
-          const reviewerSettings = {
-            ...modelSettings,
-            temperature: 0.1,
-            maxTokens: 1200,
-          } as const;
-          const reviewer = new Agent({
-            name: "完成度审查器",
-            model: providerSettings.model,
-            instructions: [
-              "你是回答发送前的内部完成度审查器，不面向用户，不重写答案，也不展示思维过程。",
-              "检查候选答案是否完整覆盖当前请求的全部对象、字段、时间范围、限制和指定格式。",
-              "涉及最新外部信息、精确数据或个人历史事实时，必须有当前运行中可观察到的工具结果或引用支撑；大橘自己在旧聊天中的说法不是证据。",
-              "多图问题必须考虑输入标明的全部图片；只分析部分图片算不完整。工具结果缺字段时，答案明确承认缺项可以视为诚实完整，擅自猜测则不完整。",
-              "只输出 JSON：{\"complete\":true或false,\"missing\":[\"缺项\"],\"unsupported\":[\"无依据结论\"],\"nextInstruction\":\"给执行Agent的简短补救指令\"}。",
-            ].join("\n"),
-            modelSettings: reviewerSettings,
-          });
-          try {
-            const reviewResult = await runner.run(reviewer, [
-              {
-                role: "user",
-                content: [{
-                  type: "input_text",
-                  text: [
-                    `当前请求：${trigger.question || "（仅发送图片）"}`,
-                    `当前图片数量：${currentImageUrls.length}`,
-                    `对话输入摘要：\n${input.slice(-16_000)}`,
-                    `候选答案：\n${initialRawOutput.slice(0, 12_000)}`,
-                    `本轮 MCP 证据：\n${JSON.stringify(toolEvidence)}`,
-                    `本轮网页引用：\n${JSON.stringify(citations)}`,
-                  ].join("\n\n"),
-                }],
-              },
-            ], { maxTurns: 1, signal: controller.signal });
-            const reviewRaw = typeof reviewResult.finalOutput === "string"
-              ? reviewResult.finalOutput
-              : JSON.stringify(reviewResult.finalOutput ?? "");
-            const review = completionReview(reviewRaw);
-            if (review) {
-              trace.agent!.completionReview = {
-                checked: true,
-                complete: review.complete,
-                repaired: false,
-                missing: review.missing,
-                unsupported: review.unsupported,
-              };
-              if (!review.complete && !controller.signal.aborted) {
-                const repairInstruction = review.nextInstruction || [
-                  ...review.missing.map((item) => `补齐：${item}`),
-                  ...review.unsupported.map((item) => `核实或删除无依据结论：${item}`),
-                ].join("；");
-                const continuedInput: AgentInputItem[] = [
-                  ...result.history,
-                  {
-                    role: "user",
-                    content: [{
-                      type: "input_text",
-                      text: `【内部完成度复核】候选答案尚未完成：${repairInstruction || "请重新核对当前请求的全部要求和证据"}。继续使用现有上下文和必要工具补齐后，重新输出完整最终 JSON。不要向主人提及复核过程。`,
-                    }],
-                  },
-                ];
-                const repaired = await runner.run(agent, continuedInput, {
-                  maxTurns: 6,
-                  signal: controller.signal,
-                });
-                const repairedRaw = typeof repaired.finalOutput === "string"
-                  ? repaired.finalOutput
-                  : JSON.stringify(repaired.finalOutput ?? "");
-                if (normalizeOutput(repairedRaw).length) {
-                  result = repaired;
-                  workerRawResponses.push(...repaired.rawResponses);
-                  trace.agent!.completionReview.repaired = true;
-                }
-              }
-            } else {
-              trace.agent!.completionReview.error = "审查结果不是有效 JSON，保留首次答案";
-            }
-          } catch (error) {
-            trace.agent!.completionReview.error = `完成度审查未完成，保留已有答案：${error instanceof Error ? error.message : String(error)}`;
-          }
-        }
-        return { result, workerRawResponses };
+        return { result, workerRawResponses: [...result.rawResponses] };
       } finally {
         await provider.close().catch(() => {});
       }
@@ -384,7 +255,6 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
       trace.agent.fallbackReason = `Responses 失败，已回退 Chat Completions：${error instanceof Error ? error.message : String(error)}`;
       console.warn("[ai] Agent Responses 失败，回退 Chat Completions");
       trace.agent.toolCalls = [];
-      trace.agent.completionReview = undefined;
       toolRun.actions.length = 0;
       toolRun.citations.length = 0;
       toolRun.usedVision = false;

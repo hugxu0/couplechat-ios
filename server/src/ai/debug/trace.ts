@@ -29,14 +29,6 @@ export interface TraceEntry {
       continued: boolean;
       turnCount: number;
     };
-    completionReview?: {
-      checked: boolean;
-      complete: boolean;
-      repaired: boolean;
-      missing: string[];
-      unsupported: string[];
-      error?: string;
-    };
     finalOutput?: string;
     fallbackReason?: string;
   };
