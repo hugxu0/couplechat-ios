@@ -18,6 +18,7 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $artifactRoot = Join-Path $repositoryRoot "build-artifacts"
 $temporaryRoot = Join-Path $artifactRoot ".ipa-download-$resolvedRunId"
 $latestIPA = Join-Path $artifactRoot "CoupleChat-latest.ipa"
+$latestChecksum = Join-Path $artifactRoot "CoupleChat-latest.ipa.sha256"
 
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 
@@ -41,9 +42,22 @@ try {
     $downloadedIPA = Get-ChildItem -LiteralPath $temporaryRoot -Recurse -File -Filter *.ipa |
         Select-Object -First 1
     if (-not $downloadedIPA) { throw "Run $resolvedRunId did not contain an IPA artifact" }
+    $downloadedChecksum = Get-ChildItem -LiteralPath $temporaryRoot -Recurse -File -Filter *.ipa.sha256 |
+        Select-Object -First 1
+    if (-not $downloadedChecksum) { throw "Run $resolvedRunId did not contain an IPA checksum" }
+
+    $checksumLine = (Get-Content -LiteralPath $downloadedChecksum.FullName -Raw).Trim()
+    if ($checksumLine -notmatch '^([0-9a-fA-F]{64})\s+') {
+        throw "Run $resolvedRunId contained an invalid IPA checksum"
+    }
+    $expectedHash = $Matches[1].ToUpperInvariant()
 
     Copy-Item -LiteralPath $downloadedIPA.FullName -Destination $latestIPA -Force
     $hash = Get-FileHash -LiteralPath $latestIPA -Algorithm SHA256
+    if ($hash.Hash -ne $expectedHash) {
+        throw "IPA checksum mismatch for run $resolvedRunId"
+    }
+    Copy-Item -LiteralPath $downloadedChecksum.FullName -Destination $latestChecksum -Force
     Write-Output "RUN_ID=$resolvedRunId"
     Write-Output "IPA=$latestIPA"
     Write-Output "SHA256=$($hash.Hash)"
