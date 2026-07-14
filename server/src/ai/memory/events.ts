@@ -3,7 +3,7 @@ import { reconcileMemoryLifecycle } from "./store";
 
 export function subscribeMemoryDomainEvents(): () => void {
   return domainEvents.subscribe("message.recalled", async () => {
-    // 撤回事务已经删除证据及失去全部证据的 Memory；这里负责清理历史遗留孤儿。
+    // 记忆不再绑定原始消息；这里只维护有效期和失去基础来源的派生卡。
     await reconcileMemoryLifecycle();
   });
 }

@@ -92,7 +92,6 @@ struct AIMemoryItem: Codable, Identifiable, Equatable {
     let supersedesId: String?
     let createdAt: Int
     var updatedAt: Int
-    let evidenceCount: Int
     let derivedFromCount: Int?
     let version: Int?
 
@@ -132,17 +131,6 @@ struct AIMemorySource: Codable, Identifiable, Equatable {
     let occurredAt: Int?
     let validFrom: Int?
     let updatedAt: Int
-}
-
-struct AIMemoryEvidence: Codable, Identifiable, Equatable {
-    let messageId: String
-    let channel: String
-    let sender: String
-    let messageTs: Int
-    let excerpt: String
-    let role: String
-
-    var id: String { messageId }
 }
 
 struct AIMemoryStats: Codable, Equatable {

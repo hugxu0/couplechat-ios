@@ -105,6 +105,7 @@ async function main() {
       [24, "remove_public_registration_invites"],
       [25, "album_timeline_posts"],
       [26, "memory_derivation_dependencies"],
+      [27, "retire_memory_message_evidence"],
     ] as const;
     assertOk(
       "数据库结构版本完整",
@@ -470,28 +471,31 @@ async function main() {
     const firstMemory = await memory.addMemory({
       layer: "fact", scope: "couple", memoryKey: "preference.smoke.color",
       subjects: [user.username], speakers: [user.username], content: "喜欢蓝色",
-      category: "preference", confidence: 0.9, importance: 3, sourceMessageIds: [created.id],
+      category: "preference", confidence: 0.9, importance: 3,
     });
     const nextMemory = await memory.addMemory({
       layer: "fact", scope: "couple", memoryKey: "preference.smoke.color",
       subjects: [user.username], speakers: [user.username], content: "现在更喜欢绿色",
-      category: "preference", confidence: 0.95, importance: 3, sourceMessageIds: [created.id],
+      category: "preference", confidence: 0.95, importance: 3,
     });
     const memoryResults = await memory.searchMemory({
       query: "", layers: ["fact"], scopes: ["couple"], subjects: [user.username], limit: 20,
     });
     const previousMemory = await db.get<{ status: string }>("SELECT status FROM ai_memory WHERE id = ?", [firstMemory!.id]);
-    const evidence = await memory.memoryEvidence(nextMemory!.id, ["couple"]);
+    const evidence = await db.get<{ count: number }>(
+      "SELECT COUNT(*)::int AS count FROM ai_memory_evidence WHERE memory_id = ?",
+      [nextMemory!.id],
+    );
     assertOk(
-      "Memory 同 key 版本替代并保留主人原文证据",
+      "Memory 同 key 版本替代且不保存原始消息证据",
       previousMemory?.status === "superseded" &&
         memoryResults.some((item) => item.id === nextMemory!.id && item.content === "现在更喜欢绿色") &&
-        evidence.some((item) => item.message_id === created.id),
+        evidence?.count === 0,
     );
     const correctedMemory = await memory.addMemory({
       layer: "fact", scope: "couple", memoryKey: "model.generated.different.key",
       subjects: [user.username], speakers: [user.username], content: "现在最喜欢黄色",
-      category: "preference", confidence: 0.96, importance: 3, sourceMessageIds: [created.id],
+      category: "preference", confidence: 0.96, importance: 3,
       targetMemoryId: nextMemory!.id,
     });
     const replacedTarget = await db.get<{ status: string }>("SELECT status FROM ai_memory WHERE id = ?", [nextMemory!.id]);
@@ -503,7 +507,7 @@ async function main() {
       layer: "event" as const, scope: "couple", memoryKey: "health.smoke.medication",
       subjects: [user.username], speakers: [user.username], content: "服用了测试药物",
       category: "health", confidence: 0.95, importance: 4,
-      occurredAt: created.ts, sourceMessageIds: [created.id],
+      occurredAt: created.ts,
     };
     const firstEvent = await memory.addMemory(eventInput);
     const repeatedEvent = await memory.addMemory(eventInput);
@@ -520,7 +524,7 @@ async function main() {
       layer: "state", scope: "couple", memoryKey: "state.smoke.temporary",
       subjects: [user.username], speakers: [user.username], content: "暂时很困",
       category: "mood", confidence: 0.9, importance: 2,
-      validFrom: Date.now() - 1000, validUntil: Date.now() - 1, sourceMessageIds: [created.id],
+      validFrom: Date.now() - 1000, validUntil: Date.now() - 1,
     });
     await memory.expireMemoryStates();
     const activeStates = await memory.searchMemory({ query: "", layers: ["state"], scopes: ["couple"] });
@@ -529,17 +533,14 @@ async function main() {
     const plan = await memory.addMemory({
       layer: "plan", scope: "couple", memoryKey: "plan.smoke.trip",
       subjects: [user.username], speakers: [user.username], content: "准备完成测试行程",
-      category: "plan", confidence: 0.9, importance: 3, sourceMessageIds: [created.id],
+      category: "plan", confidence: 0.9, importance: 3,
     });
     const completed = await memory.transitionMemory({
       memoryId: plan!.id, scope: "couple", status: "completed",
-      sourceMessageIds: [created.id], reason: "主人明确表示已经完成",
+      reason: "主人明确表示已经完成",
     });
     const completedPlan = await db.get<{ status: string }>("SELECT status FROM ai_memory WHERE id = ?", [plan!.id]);
     assertOk("Memory 计划支持完成/取消生命周期", completed && completedPlan?.status === "completed");
-
-    const { minimumEvidenceForLayer } = await import("../src/ai/memory/extractor");
-    assertOk("Memory 基础提取阶段不再直接生成洞察", minimumEvidenceForLayer("insight") === 1);
 
     const recallEvidence = await createMessage(user, {
       channel: "couple", type: "text", text: "这是一条即将撤回的记忆证据", clientId: "smoke-memory-recall",
@@ -547,14 +548,14 @@ async function main() {
     const recallBoundMemory = await memory.addMemory({
       layer: "fact", scope: "couple", memoryKey: "fact.smoke.recall",
       subjects: [user.username], speakers: [user.username], content: "临时撤回测试事实",
-      category: "test", confidence: 0.9, importance: 2, sourceMessageIds: [recallEvidence.id],
+      category: "test", confidence: 0.9, importance: 2,
     });
     await recallMessage(user, recallEvidence.id);
     const invalidatedMemory = await db.get<{ status: string }>(
       "SELECT status FROM ai_memory WHERE id = ?",
       [recallBoundMemory!.id],
     );
-    assertOk("主人撤回原消息会删除孤立 Memory 与证据链", !invalidatedMemory);
+    assertOk("主人撤回原消息不会删除独立 Memory 卡", invalidatedMemory?.status === "active");
     stopMemoryEvents();
 
     console.log("[5/5] 清理…");

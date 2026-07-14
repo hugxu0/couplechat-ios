@@ -7,7 +7,6 @@ struct AIMemoryDetailView: View {
     @State private var item: AIMemoryItem
     @State private var draft: String
     @State private var isImportant: Bool
-    @State private var evidence: [AIMemoryEvidence] = []
     @State private var sources: [AIMemorySource] = []
     @State private var isSaving = false
     @State private var showDeleteConfirmation = false
@@ -24,9 +23,14 @@ struct AIMemoryDetailView: View {
 
     var body: some View {
         Form {
+            if let errorMessage {
+                StatusBanner(text: errorMessage, kind: .error)
+            }
             identitySection
             contentSection
-            sourceSection
+            if item.layer == .relationship || item.layer == .insight {
+                sourceSection
+            }
             informationSection
             deleteSection
         }
@@ -40,7 +44,6 @@ struct AIMemoryDetailView: View {
         }
         .overlay { if isSaving { ProgressView().controlSize(.large) } }
         .task {
-            await loadEvidence()
             await loadSources()
         }
         .confirmationDialog(
@@ -51,7 +54,7 @@ struct AIMemoryDetailView: View {
             Button("忘掉这条记忆", role: .destructive) { Task { await delete() } }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("这会彻底删除记忆及其来源关联，但不会删除原聊天消息。")
+            Text("这只会删除记忆，不会删除聊天消息。")
         }
     }
 
@@ -88,23 +91,12 @@ struct AIMemoryDetailView: View {
 
     @ViewBuilder
     private var sourceSection: some View {
-        Section((item.derivedFromCount ?? 0) > 0 ? "生成依据" : "来自对话") {
-            if evidence.isEmpty && sources.isEmpty {
-                Text(item.evidenceCount > 0 || (item.derivedFromCount ?? 0) > 0
-                     ? "正在读取来源…" : "这条记忆没有可显示的来源")
+        Section("生成依据") {
+            if sources.isEmpty {
+                Text((item.derivedFromCount ?? 0) > 0
+                     ? "正在读取…" : "暂无可显示的基础记忆")
                     .foregroundStyle(DS.Palette.textSecondary)
             } else {
-                ForEach(evidence) { source in
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(source.excerpt)
-                            .font(DS.Typo.body)
-                            .foregroundStyle(DS.Palette.textPrimary)
-                        Text(sourceDate(source.messageTs))
-                            .font(DS.Typo.micro.monospacedDigit())
-                            .foregroundStyle(DS.Palette.textSecondary)
-                    }
-                    .padding(.vertical, 3)
-                }
                 ForEach(sources) { source in
                     VStack(alignment: .leading, spacing: 5) {
                         Text(source.content)
@@ -117,7 +109,6 @@ struct AIMemoryDetailView: View {
                     .padding(.vertical, 3)
                 }
             }
-            if let errorMessage { StatusBanner(text: errorMessage, kind: .error) }
         }
     }
 
@@ -136,24 +127,12 @@ struct AIMemoryDetailView: View {
             Button("忘掉这条记忆", role: .destructive) {
                 showDeleteConfirmation = true
             }
-        } footer: {
-            Text("如果你还想删除原聊天，请回到聊天中撤回对应消息。")
         }
     }
 
     private var canSave: Bool {
         let content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         return content.count >= 3 && (content != item.content || isImportant != (item.importance >= 4))
-    }
-
-    private func loadEvidence() async {
-        guard let token = store.session?.token, item.evidenceCount > 0 else { return }
-        do {
-            evidence = try await store.memoryControl.evidence(for: item.id, token: token)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
 
     private func loadSources() async {

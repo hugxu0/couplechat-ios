@@ -4,7 +4,7 @@ import { withTestDatabase } from "../support/postgresHarness";
 
 test("memory control routes isolate private scope and support review actions", async () => {
   await withTestDatabase(async () => {
-    const { run } = await import("../../src/db");
+    const { get, run } = await import("../../src/db");
     const { addMemory } = await import("../../src/ai/memory/store");
     const now = Date.now();
     await run(
@@ -29,11 +29,11 @@ test("memory control routes isolate private scope and support review actions", a
     );
     const shared = await addMemory({
       layer: "fact", scope: "couple", memoryKey: "likes.seaside", subjects: ["xu", "si"],
-      speakers: ["xu"], content: "两个人都喜欢去海边", sourceMessageIds: ["memory-source-shared"],
+      speakers: ["xu"], content: "两个人都喜欢去海边",
     });
     const privateItem = await addMemory({
       layer: "plan", scope: "ai:xu", memoryKey: "surprise", subjects: ["xu"],
-      speakers: ["xu"], content: "小旭准备了一个惊喜", sourceMessageIds: ["memory-source-private"],
+      speakers: ["xu"], content: "小旭准备了一个惊喜",
     });
     assert.ok(shared && privateItem);
 
@@ -80,12 +80,12 @@ test("memory control routes isolate private scope and support review actions", a
       method: "GET", url: `/api/me/memory/${shared!.id}/evidence`,
       headers: { authorization: `Bearer ${xuToken}` },
     });
-    assert.equal(evidence.json().evidence[0].messageId, "memory-source-shared");
+    assert.deepEqual(evidence.json().evidence, []);
 
     const derived = await addMemory({
       layer: "relationship", scope: "couple", memoryKey: "relationship.both.recent",
       subjects: ["both"], speakers: [], content: "两个人最近会一起讨论出行偏好",
-      sourceMessageIds: [], sourceMemoryIds: [shared!.id],
+      sourceMemoryIds: [shared!.id],
     });
     assert.ok(derived);
     const sources = await app.inject({
@@ -115,8 +115,18 @@ test("memory control routes isolate private scope and support review actions", a
     assert.equal(deleted.statusCode, 200);
     assert.equal(await addMemory({
       layer: "plan", scope: "ai:xu", memoryKey: "surprise", subjects: ["xu"],
-      speakers: ["xu"], content: "小旭准备了一个惊喜", sourceMessageIds: ["memory-source-private"],
+      speakers: ["xu"], content: "小旭准备了一个惊喜",
     }), null);
+    const deletedSource = await app.inject({
+      method: "DELETE", url: `/api/me/memory/${shared!.id}`,
+      headers: { authorization: `Bearer ${xuToken}` },
+    });
+    assert.equal(deletedSource.statusCode, 200);
+    const { reconcileMemoryLifecycle } = await import("../../src/ai/memory/store");
+    await reconcileMemoryLifecycle();
+    assert.equal((await get<{ status: string }>(
+      "SELECT status FROM ai_memory WHERE id = ?", [derived!.id],
+    ))?.status, "retracted");
     await app.close();
   });
 });

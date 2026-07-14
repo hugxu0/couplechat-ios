@@ -1182,6 +1182,26 @@ export const schemaMigrations: readonly SchemaMigration[] = [
       ON ai_memory_dependencies(source_memory_id, memory_id);
     `,
   },
+  {
+    version: 27,
+    name: "retire_memory_message_evidence",
+    sql: `
+    INSERT INTO ai_memory_exclusions
+      (id, couple_id, account_id, memory_key, source_message_id,
+       created_by_account_id, created_at)
+    SELECT 'mex_key_' || md5(
+             COALESCE(couple_id, '') || ':' || COALESCE(account_id, '') || ':' || memory_key
+           ),
+           couple_id, account_id, memory_key, NULL,
+           MIN(created_by_account_id), MIN(created_at)
+      FROM ai_memory_exclusions
+     GROUP BY couple_id, account_id, memory_key
+    ON CONFLICT DO NOTHING;
+
+    DELETE FROM ai_memory_exclusions WHERE source_message_id IS NOT NULL;
+    DELETE FROM ai_memory_evidence;
+    `,
+  },
 ];
 
 export async function migrate(

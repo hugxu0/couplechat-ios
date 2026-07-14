@@ -28,7 +28,7 @@ Fastify + Socket.IO · 127.0.0.1:3000
 - `MessageStore`：消息、同步、发送、搜索、撤回、上传和 outbox；
 - `SharedStore`：共享状态、纪念日、提醒和每日内容；
 - `StickerStore`：自定义表情的账号级离线缓存；固定总库、自建分组和排序通过账号专属 shared-state key 同步到同账号所有设备，两个账号互不覆盖；
-- `AIMemoryRepository`：Memory 控制中心的列表、证据、纠正、删除和立即整理；
+- `AIMemoryRepository`：Memory 控制中心的列表、派生来源、纠正、删除和立即整理；
 - `MomentsRepository`：共同相册、聊天媒体入册、注脚与那年今日；
 - `CalendarRepository`：共享/私人日历、版本冲突与完成状态；
 - `CouplePetRepository`：服务端宠物快照和幂等互动；
@@ -143,11 +143,11 @@ server/src/db/
   client.ts        PostgreSQL pool、查询与连接生命周期
   transaction.ts   事务边界
   rows.ts          数据库行类型
-  migrate.ts       v1-v25 版本化 migration 与受控执行器（仅追加，历史版本保持不变）
+  migrate.ts       v1-v27 版本化 migration 与受控执行器（仅追加，历史版本保持不变）
   index.ts         稳定 re-export，不承载实现
 ```
 
-业务模块通过接口注入 Socket、push、repository 和调度器依赖。消息撤回先在客户端时间线乐观隐藏；服务端事务内硬删除消息、附件关系、引用预览、Memory 证据和孤立 Memory，提交后立即确认，物理文件与 Trace 脱敏在持久化清理队列中后台完成。Socket 路由只解析契约、调用 use case 并 emit/ack。Bark 提醒用 `reminder_bark_deliveries` 持久化投递结果。关闭顺序由 `lifecycle/shutdown.ts` 统一管理。
+业务模块通过接口注入 Socket、push、repository 和调度器依赖。消息撤回先在客户端时间线乐观隐藏；服务端事务内硬删除消息、附件关系和引用预览，已经生成的 Memory 不再与原始消息绑定。提交后立即确认，物理文件与 Trace 脱敏在持久化清理队列中后台完成。Socket 路由只解析契约、调用 use case 并 emit/ack。Bark 提醒用 `reminder_bark_deliveries` 持久化投递结果。关闭顺序由 `lifecycle/shutdown.ts` 统一管理。
 
 ## 数据与同步
 

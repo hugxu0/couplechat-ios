@@ -44,5 +44,6 @@ test("candidate migrations remain ordered after the published boundary", () => {
     [24, "remove_public_registration_invites"],
     [25, "album_timeline_posts"],
     [26, "memory_derivation_dependencies"],
+    [27, "retire_memory_message_evidence"],
   ]);
 });

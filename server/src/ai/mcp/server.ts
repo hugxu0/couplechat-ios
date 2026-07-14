@@ -2,9 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { all, get, type MessageRow } from "../../db";
 import { accounts } from "../accounts";
-import { memoryEvidence, searchMemory, visibleMemoryScopes } from "../memory/store";
+import { searchMemory, visibleMemoryScopes } from "../memory/store";
 import { recordAgentTool, type AgentToolRun } from "./runContext";
-import { beijingDateTime } from "../time";
 import { rankChatSearchRows, searchTerms, type ChatSearchMode } from "../conversation/search";
 import { registerExternalTools } from "./externalTools";
 import { registerPersonalItemTools } from "./personalItemTools";
@@ -15,7 +14,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
     { name: "couplechat-ai-tools", version: "0.1.0" },
     {
       instructions:
-        "先用结构化事实/事件工具。人物查询按 search_facts → search_events → search_chat_messages 回退，facts 为空时不能跳过 events。search_events 返回的是可直接用于回答的事件事实；只有用户明确要求逐字原话，或 facts/events 都为空时，才搜索原始聊天。任何记忆都不能跨越当前频道权限。",
+        "先用结构化事实/事件工具。人物查询按 search_facts → search_events → search_chat_messages 回退，facts 为空时不能跳过 events。结构化记忆命中后直接使用；只有用户明确要求逐字原话，或 facts/events 都为空时，才搜索原始聊天。任何记忆都不能跨越当前频道权限。",
     },
   );
 
@@ -56,7 +55,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "search_events",
     {
-      description: "搜索过去发生的经历和事件事实，适合‘上次、前几天、什么时候、后来怎样’。返回结果可直接用于回答，不需要 evidence；命中后不要调用 get_memory_evidence，也不要继续搜索聊天。只有用户明确要求逐字原话时才调用 search_chat_messages。",
+      description: "搜索过去发生的经历和事件事实，适合‘上次、前几天、什么时候、后来怎样’。命中后直接使用，不要继续搜索聊天；只有用户明确要求逐字原话时才调用 search_chat_messages。",
       inputSchema: z.object({
         query: z.string().min(1).max(300),
         fromDate: z.string().max(30).optional().describe("YYYY-MM-DD"),
@@ -217,26 +216,6 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
       );
       return { found: true, messages: [...before.reverse(), anchor, ...after].map((row) => messageView(row)) };
     })));
-
-  server.registerTool(
-    "get_memory_evidence",
-    {
-      description: "读取在线新增的非事件记忆对应的主人原话证据，用于核实人物身份、敏感健康信息或关系结论。不要对 search_events 的结果或 metadata.evidencePolicy=trusted_legacy_card 的旧迁移记忆调用此工具。",
-      inputSchema: z.object({ memoryId: z.string().min(1).max(100) }),
-      annotations: { readOnlyHint: true, openWorldHint: false },
-    },
-    async (args) => jsonResult(await recordAgentTool(run, "get_memory_evidence", args, async () => ({
-      memoryId: args.memoryId,
-      evidence: (await memoryEvidence(args.memoryId, visibleMemoryScopes(run.identity.storedChannel))).map((row) => ({
-        messageId: row.message_id,
-        sender: row.sender,
-        channel: row.channel,
-        ts: row.message_ts,
-        time: beijingDateTime(row.message_ts),
-        excerpt: row.excerpt,
-        role: row.evidence_role,
-      })),
-    }))));
 
   server.registerTool(
     "search_plans",

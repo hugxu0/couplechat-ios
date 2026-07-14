@@ -424,10 +424,6 @@ export async function recallMessage(user: AuthUser, id: string) {
       "SELECT * FROM uploads WHERE message_id = ? OR (url = ? AND purpose = 'message') FOR UPDATE",
       [id, existing.url ?? ""],
     );
-    const affectedMemories = await db.all<{ memory_id: string }>(
-      "SELECT DISTINCT memory_id FROM ai_memory_evidence WHERE message_id = ?",
-      [id],
-    );
     const replies = await db.all<{ id: string; reply_json: string }>(
       "SELECT id, reply_json FROM messages WHERE reply_json IS NOT NULL FOR UPDATE",
     );
@@ -455,19 +451,6 @@ export async function recallMessage(user: AuthUser, id: string) {
         [`cleanup_${uploadItem.id}`, uploadItem.path, recallRequestedAt],
       );
       await db.run("DELETE FROM uploads WHERE id = ?", [uploadItem.id]);
-    }
-    if (affectedMemories.length) {
-      await db.run(
-        `DELETE FROM ai_memory m
-         WHERE m.id IN (${affectedMemories.map(() => "?").join(",")})
-           AND NOT EXISTS (
-             SELECT 1 FROM ai_memory_evidence e
-             JOIN messages source ON source.id = e.message_id
-             WHERE e.memory_id = m.id AND e.evidence_role = 'support'
-               AND source.kind = 'user' AND source.sender <> 'ai'
-           )`,
-        affectedMemories.map((item) => item.memory_id),
-      );
     }
     await db.run("DELETE FROM ai_runtime_state WHERE key = ?", [`context:${existing.channel}`]);
     if (existing.channel === "couple") {

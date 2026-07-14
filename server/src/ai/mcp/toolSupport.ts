@@ -42,7 +42,7 @@ export function messageView(row: MessageRow, details?: { matchedTerms?: string[]
   };
 }
 
-export function memoryView(item: MemoryItem & { score?: number; lexicalHits?: number; evidenceCount?: number }) {
+export function memoryView(item: MemoryItem & { score?: number; lexicalHits?: number }) {
   return {
     id: item.id,
     layer: item.layer,
@@ -58,6 +58,5 @@ export function memoryView(item: MemoryItem & { score?: number; lexicalHits?: nu
     metadata: item.metadata,
     score: item.score ?? 0,
     lexicalHits: item.lexicalHits ?? 0,
-    evidenceCount: item.evidenceCount ?? 0,
   };
 }

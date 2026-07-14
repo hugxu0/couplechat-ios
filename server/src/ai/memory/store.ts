@@ -4,9 +4,7 @@ import {
   get,
   run,
   transaction,
-  type AiMemoryEvidenceRow,
   type AiMemoryRow,
-  type MessageRow,
 } from "../../db";
 import { embedOne, embeddingEnabled, packVector, similarity, unpackVector } from "../embeddings";
 import { searchTerms } from "../conversation/search";
@@ -54,10 +52,8 @@ export interface MemoryCandidate {
   validFrom?: number | null;
   validUntil?: number | null;
   metadata?: Record<string, unknown>;
-  sourceMessageIds: string[];
   sourceMemoryIds?: string[];
   targetMemoryId?: string;
-  allowWithoutEvidence?: boolean;
 }
 
 export interface MemoryCursor {
@@ -174,17 +170,11 @@ export interface ResolvedMemoryOwner {
   accountId: string | null;
 }
 
-async function resolveMemoryOwner(scope: string, sourceRows: MessageRow[]): Promise<ResolvedMemoryOwner | null> {
+async function resolveMemoryOwner(scope: string): Promise<ResolvedMemoryOwner | null> {
   if (scope === "couple") {
-    const conversationId = sourceRows.find((message) => message.conversation_id)?.conversation_id;
-    const couple = conversationId
-      ? await get<{ couple_id: string }>(
-          "SELECT couple_id FROM conversations WHERE id = ? AND kind = 'couple'",
-          [conversationId],
-        )
-      : await get<{ couple_id: string }>(
-          "SELECT id AS couple_id FROM couples WHERE id = 'cpl_legacy_xusi'",
-        );
+    const couple = await get<{ couple_id: string }>(
+      "SELECT id AS couple_id FROM couples WHERE id = 'cpl_legacy_xusi'",
+    );
     return couple ? { coupleId: couple.couple_id, accountId: null } : null;
   }
   if (scope.startsWith("ai:")) {
@@ -208,22 +198,11 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
   const subjects = normalizedMemorySubjects(candidate.subjects);
   const requestedSourceMemoryIds = [...new Set(candidate.sourceMemoryIds ?? [])];
   if (content.length < 3 || subjects.length !== 1) return null;
-  if (!candidate.allowWithoutEvidence && candidate.sourceMessageIds.length === 0 && requestedSourceMemoryIds.length === 0) return null;
   const memoryKey = normalizedKey(candidate);
   const now = Date.now();
   const confidence = clamp(candidate.confidence, 0, 1, 0.7);
   const importance = Math.round(clamp(candidate.importance, 1, 5, 3));
-  const sourceRows = candidate.sourceMessageIds.length
-    ? await all<MessageRow>(
-        `SELECT * FROM messages
-         WHERE id IN (${candidate.sourceMessageIds.map(() => "?").join(",")})
-           AND kind = 'user' AND sender <> 'ai'
-         ORDER BY ts ASC`,
-        candidate.sourceMessageIds,
-      )
-    : [];
-  if (!candidate.allowWithoutEvidence && sourceRows.length === 0 && requestedSourceMemoryIds.length === 0) return null;
-  const owner = await resolveMemoryOwner(candidate.scope, sourceRows);
+  const owner = await resolveMemoryOwner(candidate.scope);
   if (!owner) return null;
   const ownerSQL = memoryOwnerSQL(owner);
   const sourceMemories = requestedSourceMemoryIds.length
@@ -235,15 +214,14 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
         [...requestedSourceMemoryIds, candidate.scope, ownerSQL.value],
       )
     : [];
-  if (!candidate.allowWithoutEvidence && sourceRows.length === 0 && sourceMemories.length === 0) return null;
+  if ((candidate.layer === "relationship" || candidate.layer === "insight") && sourceMemories.length === 0) return null;
   const excluded = await get<{ found: number }>(
     `SELECT 1 AS found FROM ai_memory_exclusions exclusion
      WHERE ${owner.coupleId ? "exclusion.couple_id = ?" : "exclusion.account_id = ?"}
        AND exclusion.memory_key = ?
-       AND (exclusion.source_message_id IS NULL
-         ${sourceRows.length ? `OR exclusion.source_message_id IN (${sourceRows.map(() => "?").join(",")})` : ""})
+       AND exclusion.source_message_id IS NULL
      LIMIT 1`,
-    [ownerSQL.value, memoryKey, ...sourceRows.map((message) => message.id)],
+    [ownerSQL.value, memoryKey],
   );
   if (excluded) return null;
 
@@ -274,18 +252,14 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
            ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
           [candidate.scope, candidate.layer, finalMemoryKey, ownerSQL.value],
         )
-      : sourceRows.length ? await db.get<AiMemoryRow>(
+      : await db.get<AiMemoryRow>(
           `SELECT m.* FROM ai_memory m
            WHERE m.scope = ? AND m.layer = 'event' AND m.memory_key = ? AND m.content = ?
              AND m.${owner.coupleId ? "couple_id" : "owner_account_id"} = ?
-             AND EXISTS (
-               SELECT 1 FROM ai_memory_evidence e
-               WHERE e.memory_id = m.id
-                 AND e.message_id IN (${sourceRows.map(() => "?").join(",")})
-             )
+             AND m.status = 'active'
            LIMIT 1 FOR UPDATE`,
-          [candidate.scope, finalMemoryKey, content, ownerSQL.value, ...sourceRows.map((message) => message.id)],
-        ) : undefined);
+          [candidate.scope, finalMemoryKey, content, ownerSQL.value],
+        ));
 
     if (existing && parseObject(existing.metadata_json).manuallyEditedAt) {
       return mapItem(existing);
@@ -296,14 +270,6 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
         `UPDATE ai_memory SET confidence = GREATEST(confidence, ?), importance = GREATEST(importance, ?), updated_at = ? WHERE id = ?`,
         [confidence, importance, now, existing.id],
       );
-      for (const message of sourceRows) {
-        await db.run(
-          `INSERT INTO ai_memory_evidence
-           (memory_id, message_id, channel, sender, message_ts, excerpt, evidence_role, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'support', ?) ON CONFLICT(memory_id, message_id) DO NOTHING`,
-          [existing.id, message.id, message.channel, message.sender, message.ts, message.text.slice(0, 600), now],
-        );
-      }
       for (const source of sourceMemories) {
         await db.run(
           `INSERT INTO ai_memory_dependencies (memory_id, source_memory_id, role, created_at)
@@ -349,14 +315,6 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
         owner.accountId,
       ],
     );
-    for (const message of sourceRows) {
-      await db.run(
-        `INSERT INTO ai_memory_evidence
-         (memory_id, message_id, channel, sender, message_ts, excerpt, evidence_role, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'support', ?) ON CONFLICT(memory_id, message_id) DO NOTHING`,
-        [id, message.id, message.channel, message.sender, message.ts, message.text.slice(0, 600), now],
-      );
-    }
     for (const source of sourceMemories) {
       await db.run(
         `INSERT INTO ai_memory_dependencies (memory_id, source_memory_id, role, created_at)
@@ -412,18 +370,8 @@ export async function transitionMemory(input: {
   memoryId: string;
   scope: string;
   status: MemoryTransitionStatus;
-  sourceMessageIds: string[];
   reason?: string;
 }): Promise<boolean> {
-  if (!input.sourceMessageIds.length) return false;
-  const sourceRows = await all<MessageRow>(
-    `SELECT * FROM messages
-     WHERE id IN (${input.sourceMessageIds.map(() => "?").join(",")})
-       AND kind = 'user' AND sender <> 'ai'
-     ORDER BY ts ASC`,
-    input.sourceMessageIds,
-  );
-  if (!sourceRows.length) return false;
   const now = Date.now();
   return transaction(async (db) => {
     const target = await db.get<AiMemoryRow>(
@@ -431,15 +379,6 @@ export async function transitionMemory(input: {
       [input.memoryId, input.scope],
     );
     if (!target) return false;
-    for (const message of sourceRows) {
-      await db.run(
-        `INSERT INTO ai_memory_evidence
-         (memory_id, message_id, channel, sender, message_ts, excerpt, evidence_role, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(memory_id, message_id) DO UPDATE SET evidence_role = EXCLUDED.evidence_role`,
-        [target.id, message.id, message.channel, message.sender, message.ts, message.text.slice(0, 600), input.status, now],
-      );
-    }
     const metadata = { ...parseObject(target.metadata_json), transitionReason: input.reason ?? "", transitionedAt: now };
     await db.run(
       "UPDATE ai_memory SET status = ?, metadata_json = ?, updated_at = ? WHERE id = ?",
@@ -461,20 +400,13 @@ export async function expireMemoryStates(now = Date.now()): Promise<number> {
 export async function reconcileMemoryLifecycle(now = Date.now()): Promise<{ expired: number; retracted: number }> {
   const expired = await expireMemoryStates(now);
   const retracted = await run(
-    `UPDATE ai_memory m SET status = 'retracted', updated_at = ?
-     WHERE m.status = 'active'
-       AND COALESCE(m.metadata_json::jsonb ->> 'legacyReviewed', 'false') <> 'true'
+    `UPDATE ai_memory memory SET status = 'retracted', updated_at = ?
+     WHERE memory.status = 'active' AND memory.layer IN ('relationship', 'insight')
        AND NOT EXISTS (
-       SELECT 1 FROM ai_memory_evidence e
-       JOIN messages msg ON msg.id = e.message_id
-       WHERE e.memory_id = m.id AND e.evidence_role = 'support'
-         AND msg.kind = 'user' AND msg.sender <> 'ai'
-     )
-       AND NOT EXISTS (
-       SELECT 1 FROM ai_memory_dependencies dependency
-       JOIN ai_memory source ON source.id = dependency.source_memory_id
-       WHERE dependency.memory_id = m.id AND source.status <> 'retracted'
-     )`,
+         SELECT 1 FROM ai_memory_dependencies dependency
+         JOIN ai_memory source ON source.id = dependency.source_memory_id
+         WHERE dependency.memory_id = memory.id AND source.status <> 'retracted'
+       )`,
     [now],
   );
   return { expired, retracted };
@@ -490,7 +422,7 @@ export interface SearchMemoryInput {
   limit?: number;
 }
 
-export async function searchMemory(input: SearchMemoryInput): Promise<Array<MemoryItem & { score: number; lexicalHits: number; evidenceCount: number }>> {
+export async function searchMemory(input: SearchMemoryInput): Promise<Array<MemoryItem & { score: number; lexicalHits: number }>> {
   if (!input.layers.length || !input.scopes.length) return [];
   await expireMemoryStates();
   const clauses = [
@@ -509,47 +441,16 @@ export async function searchMemory(input: SearchMemoryInput): Promise<Array<Memo
   const filtered = rows.map(mapItem).filter((item) => subjects.size === 0 || item.subjects.some((subject) => subjects.has(subject)) || item.subjects.includes("both"));
   const vector = input.query.trim() && embeddingEnabled() ? await embedOne(input.query) : null;
   const terms = searchTerms(input.query);
-  const evidenceRows = filtered.length
-    ? await all<{ memory_id: string; count: number }>(
-        `SELECT memory_id, COUNT(*) AS count FROM ai_memory_evidence
-         WHERE evidence_role = 'support'
-           AND memory_id IN (${filtered.map(() => "?").join(",")}) GROUP BY memory_id`,
-        filtered.map((item) => item.id),
-      )
-    : [];
-  const evidenceCounts = new Map(evidenceRows.map((row) => [row.memory_id, row.count]));
   const scored = filtered.map((item) => {
     const lower = item.content.toLowerCase();
     const hits = terms.reduce((count, term) => count + (lower.includes(term) ? 1 : 0), 0);
     const score = vector && item.vector ? similarity(vector, item.vector) : 0;
-    return { ...item, score, lexicalHits: hits, evidenceCount: evidenceCounts.get(item.id) ?? 0 };
+    return { ...item, score, lexicalHits: hits };
   });
   return scored
     .filter((item) => !input.query.trim() || item.lexicalHits > 0 || item.score >= 0.38)
     .sort((a, b) => b.lexicalHits - a.lexicalHits || b.score - a.score || b.importance - a.importance || b.updatedAt - a.updatedAt)
     .slice(0, Math.max(1, Math.min(20, input.limit ?? 8)));
-}
-
-export async function memoryEvidence(
-  memoryId: string,
-  scopes: string[],
-  access: Omit<MemoryControlAccess, "scopes"> = {},
-): Promise<AiMemoryEvidenceRow[]> {
-  if (!scopes.length) return [];
-  const ownership: string[] = [];
-  const ownerParams: string[] = [];
-  if (access.coupleId || access.accountId) {
-    if (access.coupleId) { ownership.push("m.couple_id = ?"); ownerParams.push(access.coupleId); }
-    if (access.accountId) { ownership.push("m.owner_account_id = ?"); ownerParams.push(access.accountId); }
-  }
-  return all<AiMemoryEvidenceRow>(
-    `SELECT e.* FROM ai_memory_evidence e
-     JOIN ai_memory m ON m.id = e.memory_id
-     WHERE e.memory_id = ? AND m.scope IN (${scopes.map(() => "?").join(",")})
-       ${ownership.length ? `AND (${ownership.join(" OR ")})` : ""}
-     ORDER BY e.message_ts ASC LIMIT 30`,
-    [memoryId, ...scopes, ...ownerParams],
-  );
 }
 
 export async function memorySources(
@@ -630,9 +531,10 @@ function addControlOwnership(
   }
 }
 
-function controlItem(row: AiMemoryRow, evidenceCount: number, derivedFromCount = 0): MemoryControlItem {
+function controlItem(row: AiMemoryRow, derivedFromCount = 0): MemoryControlItem {
   const { vector: _vector, ...item } = mapItem(row);
-  return { ...item, evidenceCount, derivedFromCount };
+  // evidenceCount 暂留为兼容旧客户端的恒定字段；新系统不再保存原始消息证据。
+  return { ...item, evidenceCount: 0, derivedFromCount };
 }
 
 export async function listMemoryForControl(input: MemoryControlFilter): Promise<MemoryControlItem[]> {
@@ -669,13 +571,6 @@ export async function listMemoryForControl(input: MemoryControlFilter): Promise<
     params,
   );
   if (!rows.length) return [];
-  const counts = await all<{ memory_id: string; count: number }>(
-    `SELECT memory_id, COUNT(*) AS count FROM ai_memory_evidence
-     WHERE memory_id IN (${rows.map(() => "?").join(",")})
-       AND evidence_role = 'support' GROUP BY memory_id`,
-    rows.map((row) => row.id),
-  );
-  const countById = new Map(counts.map((row) => [row.memory_id, row.count]));
   const dependencyCounts = await all<{ memory_id: string; count: number }>(
     `SELECT memory_id, COUNT(*) AS count FROM ai_memory_dependencies
      WHERE memory_id IN (${rows.map(() => "?").join(",")}) GROUP BY memory_id`,
@@ -684,7 +579,6 @@ export async function listMemoryForControl(input: MemoryControlFilter): Promise<
   const dependencyCountById = new Map(dependencyCounts.map((row) => [row.memory_id, row.count]));
   return rows.map((row) => controlItem(
     row,
-    countById.get(row.id) ?? 0,
     dependencyCountById.get(row.id) ?? 0,
   ));
 }
@@ -702,15 +596,11 @@ export async function getMemoryForControl(
     params,
   );
   if (!row) return null;
-  const evidence = await get<{ count: number }>(
-    "SELECT COUNT(*) AS count FROM ai_memory_evidence WHERE memory_id = ? AND evidence_role = 'support'",
-    [row.id],
-  );
   const dependencies = await get<{ count: number }>(
     "SELECT COUNT(*) AS count FROM ai_memory_dependencies WHERE memory_id = ?",
     [row.id],
   );
-  return controlItem(row, evidence?.count ?? 0, dependencies?.count ?? 0);
+  return controlItem(row, dependencies?.count ?? 0);
 }
 
 export async function memoryStatsForScopes(
@@ -812,10 +702,6 @@ export async function updateMemoryForControl(input: {
     );
     let updated = await db.get<AiMemoryRow>("SELECT * FROM ai_memory WHERE id = ?", [target.id]);
     if (!updated) return null;
-    const evidence = await db.get<{ count: number }>(
-      "SELECT COUNT(*) AS count FROM ai_memory_evidence WHERE memory_id = ? AND evidence_role = 'support'",
-      [target.id],
-    );
     const dependencies = await db.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM ai_memory_dependencies WHERE memory_id = ?",
       [target.id],
@@ -827,7 +713,7 @@ export async function updateMemoryForControl(input: {
         entityType: "memory",
         entityId: target.id,
         operation: "upsert",
-        payload: controlItem(updated, evidence?.count ?? 0, dependencies?.count ?? 0),
+        payload: controlItem(updated, dependencies?.count ?? 0),
         actorAccountId: input.editorAccountId,
         actorDeviceId: input.editorDeviceId,
         createdAt: now,
@@ -836,7 +722,7 @@ export async function updateMemoryForControl(input: {
       updated = await db.get<AiMemoryRow>("SELECT * FROM ai_memory WHERE id = ?", [target.id]);
       if (!updated) return null;
     }
-    return controlItem(updated, evidence?.count ?? 0, dependencies?.count ?? 0);
+    return controlItem(updated, dependencies?.count ?? 0);
   });
 }
 
@@ -858,23 +744,14 @@ export async function deleteMemoryForControl(input: {
       params,
     );
     if (!target) return false;
-    const evidence = await db.all<{ message_id: string }>(
-      "SELECT message_id FROM ai_memory_evidence WHERE memory_id = ? AND evidence_role = 'support'",
-      [target.id],
+    await db.run(
+      `INSERT INTO ai_memory_exclusions
+       (id, couple_id, account_id, memory_key, source_message_id, created_by_account_id, created_at)
+       VALUES (?, ?, ?, ?, NULL, ?, ?)
+       ON CONFLICT DO NOTHING`,
+      [`mex_${nanoid(16)}`, target.couple_id ?? null, target.owner_account_id ?? null,
+        target.memory_key, input.editorAccountId, Date.now()],
     );
-    const sourceIds: Array<string | null> = evidence.length
-      ? evidence.map((item) => item.message_id)
-      : [null];
-    for (const sourceId of sourceIds) {
-      await db.run(
-        `INSERT INTO ai_memory_exclusions
-         (id, couple_id, account_id, memory_key, source_message_id, created_by_account_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT DO NOTHING`,
-        [`mex_${nanoid(16)}`, target.couple_id ?? null, target.owner_account_id ?? null,
-          target.memory_key, sourceId, input.editorAccountId, Date.now()],
-      );
-    }
     await appendSyncEvent(db, {
       coupleId: target.couple_id,
       accountId: target.owner_account_id,
@@ -897,7 +774,7 @@ export interface MemoryDebugFilter {
   limit?: number;
 }
 
-export async function listMemoryForDebug(input: MemoryDebugFilter): Promise<Array<MemoryItem & { evidence: AiMemoryEvidenceRow[] }>> {
+export async function listMemoryForDebug(input: MemoryDebugFilter): Promise<MemoryItem[]> {
   if (!input.scopes.length) return [];
   const clauses = [`scope IN (${input.scopes.map(() => "?").join(",")})`];
   const params: Array<string | number> = [...input.scopes];
@@ -908,14 +785,5 @@ export async function listMemoryForDebug(input: MemoryDebugFilter): Promise<Arra
     `SELECT * FROM ai_memory WHERE ${clauses.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`,
     params,
   );
-  if (!rows.length) return [];
-  const evidence = await all<AiMemoryEvidenceRow>(
-    `SELECT * FROM ai_memory_evidence
-     WHERE memory_id IN (${rows.map(() => "?").join(",")})
-     ORDER BY message_ts ASC`,
-    rows.map((row) => row.id),
-  );
-  const grouped = new Map<string, AiMemoryEvidenceRow[]>();
-  for (const item of evidence) grouped.set(item.memory_id, [...(grouped.get(item.memory_id) ?? []), item]);
-  return rows.map((row) => ({ ...mapItem(row), evidence: grouped.get(row.id) ?? [] }));
+  return rows.map(mapItem);
 }

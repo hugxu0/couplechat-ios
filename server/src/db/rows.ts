@@ -108,17 +108,6 @@ export interface AiMemoryRow {
   version?: number;
 }
 
-export interface AiMemoryEvidenceRow {
-  memory_id: string;
-  message_id: string;
-  channel: string;
-  sender: string;
-  message_ts: number;
-  excerpt: string;
-  evidence_role: string;
-  created_at: number;
-}
-
 export interface AiMemoryDependencyRow {
   memory_id: string;
   source_memory_id: string;

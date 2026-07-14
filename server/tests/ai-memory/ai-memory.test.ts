@@ -18,7 +18,6 @@ test("memory extraction follows hybrid conversation segmentation", async () => {
     MEMORY_QUIET_IDLE_MS,
     MEMORY_SOURCE_BATCH_SIZE,
     memoryExtractionDelay,
-    minimumEvidenceForLayer,
     shouldExtractMemoryBatch,
   } =
     await import("../../src/ai/memory/extractor");
@@ -30,6 +29,4 @@ test("memory extraction follows hybrid conversation segmentation", async () => {
   assert.equal(memoryExtractionDelay(20, now, now, now), MEMORY_BUSY_IDLE_MS);
   assert.equal(memoryExtractionDelay(8, now - MEMORY_MAX_BATCH_AGE_MS, now, now), 0);
   assert.equal(memoryExtractionDelay(MEMORY_SOURCE_BATCH_SIZE, now, now, now), 0);
-  assert.equal(minimumEvidenceForLayer("insight"), 1);
-  assert.equal(minimumEvidenceForLayer("fact"), 1);
 });

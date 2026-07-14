@@ -7,7 +7,6 @@ import {
   deleteMemoryForControl,
   getMemoryForControl,
   listMemoryForControl,
-  memoryEvidence,
   memorySources,
   memoryStatsForScopes,
   updateMemoryForControl,
@@ -101,19 +100,8 @@ export async function registerMemoryRoutes(app: FastifyInstance) {
       if (!request.user) return reply.code(401).send({ error: "unauthorized" });
       const identity = await activeIdentity(request.user);
       if (!identity) return reply.code(401).send({ error: "unauthorized" });
-      const evidence = await memoryEvidence(
-        request.params.id, visibleScopes(request.user.username), identity);
-      return {
-        ok: true,
-        evidence: evidence.map((item) => ({
-          messageId: item.message_id,
-          channel: item.channel,
-          sender: item.sender,
-          messageTs: item.message_ts,
-          excerpt: item.excerpt,
-          role: item.evidence_role,
-        })),
-      };
+      // 兼容尚未升级的旧客户端；新系统不再保存或返回原始消息证据。
+      return { ok: true, evidence: [] };
     },
   );
 

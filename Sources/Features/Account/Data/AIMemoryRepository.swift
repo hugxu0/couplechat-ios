@@ -32,13 +32,6 @@ struct AIMemoryRepository {
             hasMore: response.hasMore ?? false)
     }
 
-    func evidence(for memoryId: String, token: String) async throws -> [AIMemoryEvidence] {
-        let request = try authorizedRequest(
-            path: "api/me/memory/\(memoryId)/evidence", token: token)
-        let response: EvidenceResponse = try await perform(request)
-        return response.evidence
-    }
-
     func sources(for memoryId: String, token: String) async throws -> [AIMemorySource] {
         let request = try authorizedRequest(
             path: "api/me/memory/\(memoryId)/sources", token: token)
@@ -127,7 +120,6 @@ struct AIMemoryRepository {
         let nextCursor: String?
         let hasMore: Bool?
     }
-    private struct EvidenceResponse: Decodable { let evidence: [AIMemoryEvidence] }
     private struct SourcesResponse: Decodable { let sources: [AIMemorySource] }
     private struct ItemResponse: Decodable { let item: AIMemoryItem }
     private struct SuccessResponse: Decodable { let ok: Bool }

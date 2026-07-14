@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { withTestDatabase } from "../support/postgresHarness";
 
-test("recall hard-deletes the message, derivatives and orphan memory", async () => {
+test("recall hard-deletes the message and media but keeps independent memory cards", async () => {
   await withTestDatabase(async () => {
     const { get, run } = await import("../../src/db");
     const now = Date.now();
@@ -48,7 +48,7 @@ test("recall hard-deletes the message, derivatives and orphan memory", async () 
     const { addMemory } = await import("../../src/ai/memory/store");
     const memory = await addMemory({
       layer: "event", scope: "couple", memoryKey: "recalled.photo", subjects: ["xu"],
-      speakers: ["xu"], content: "小旭发过一张照片", sourceMessageIds: ["message-to-recall"],
+      speakers: ["xu"], content: "小旭发过一张照片",
     });
     assert.ok(memory);
 
@@ -79,7 +79,7 @@ test("recall hard-deletes the message, derivatives and orphan memory", async () 
     }
     assert.equal(cleanupCompleted, true);
     assert.equal(await get("SELECT id FROM message_attachments WHERE id = ?", ["attachment-1"]), undefined);
-    assert.equal(await get("SELECT id FROM ai_memory WHERE id = ?", [memory!.id]), undefined);
+    assert.ok(await get("SELECT id FROM ai_memory WHERE id = ?", [memory!.id]));
     assert.ok(await get(
       "SELECT seq FROM sync_events WHERE entity_type = 'message' AND entity_id = ? AND operation = 'delete'",
       ["message-to-recall"],

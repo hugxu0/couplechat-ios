@@ -29,8 +29,6 @@ interface ExtractedMemory {
   category?: string;
   confidence?: number;
   importance?: number;
-  sourceMessageIds?: string[];
-  occurredMessageId?: string;
   validHours?: number;
   metadata?: Record<string, unknown>;
   reason?: string;
@@ -108,14 +106,14 @@ function systemPrompt(includeEngagement: boolean): string {
     "state：近三天的滚动近况，可以事无巨细地记录有用细节，包括上午/下午做了什么、健康与情绪、讨论主题、双方观点和意见不同。每个主体本批最多一张，内容尽量 300~800 字，必须给 validHours，默认 72 小时。",
     "operation：upsert 新增/更新 fact、plan、state；append 追加 event；retract 表示明确否定旧记忆；complete/cancel 只用于计划。",
     "更新、否定、完成或取消已有事实/计划时，使用输入中的 targetMemoryId 并复用 memoryKey；近况由代码按主体维护固定滚动键，不必引用旧近况 id。",
-    "每条变更必须引用本批真实 sourceMessageIds。occurredMessageId 指向最能代表发生时间的消息；不得编造日期。",
+    "根据整段新消息与当前记忆直接生成变更，不要输出或引用原始消息 ID；不得编造日期。",
     "连续的同一次经历合成一张 event；近况中的琐碎活动不要再重复生成 event，除非它具有长期回忆或检索价值。",
     "confidence 0~1，importance 1~5。玩笑、问句、AI 回复、未确认猜测、辱骂中的人格判断均不保存。",
     ...(includeEngagement ? [
       "同时判断公聊 engagement，但不要回复用户：明显冲突才用 conflict；无冲突但确有情侣专属价值可补充时用 interject；普通闲聊用 none。",
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","sourceMessageIds":["msg_x"],"occurredMessageId":"msg_x","validHours":72}],"engagement":{"kind":"none","confidence":0,"reason":""}}',
+      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"engagement":{"kind":"none","confidence":0,"reason":""}}',
     ] : [
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","sourceMessageIds":["msg_x"],"occurredMessageId":"msg_x","validHours":72}]}',
+      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}]}',
     ]),
     "changes 最多 40 条。没有变更时 changes 为空数组。",
   ].join("\n");
@@ -123,15 +121,11 @@ function systemPrompt(includeEngagement: boolean): string {
 
 function messageLine(message: LogMessage): string {
   const body = message.type === "text" ? message.text.replace(/\s+/g, " ").trim() : `[${message.type}]`;
-  return `[${message.id}] [${beijingDateTime(message.ts)}] [${message.sender}/${message.senderName}] ${body.slice(0, 1000)}`;
+  return `[${beijingDateTime(message.ts)}] [${message.sender}/${message.senderName}] ${body.slice(0, 1000)}`;
 }
 
 function memoryContextLine(memory: MemoryItem): string {
   return `[${memory.id}] layer=${memory.layer} key=${memory.memoryKey} subject=${memory.subjects[0] ?? "unknown"} content=${memory.content.slice(0, 700)}`;
-}
-
-export function minimumEvidenceForLayer(_layer: MemoryLayer): number {
-  return 1;
 }
 
 const BASE_MEMORY_LAYERS = new Set<MemoryLayer>(["fact", "event", "plan", "state"]);
@@ -158,7 +152,6 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     }
 
     const nextCursor = { ts: sourceMessages.at(-1)!.ts, id: sourceMessages.at(-1)!.id };
-    const sourceById = new Map(sourceMessages.map((message) => [message.id, message]));
     const activeMemories = (await listActiveMemoryContext(channel, 180))
       .filter((memory) => BASE_MEMORY_LAYERS.has(memory.layer));
     const activeById = new Map(activeMemories.map((memory) => [memory.id, memory]));
@@ -178,8 +171,6 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     let saved = 0;
     const stateSubjects = new Set<string>();
     for (const item of parsed.changes.slice(0, 40)) {
-      const sourceIds = [...new Set(item.sourceMessageIds ?? [])].filter((id) => sourceById.has(id));
-      if (!sourceIds.length) continue;
       const operation = item.operation ?? "upsert";
       const target = item.targetMemoryId ? activeById.get(item.targetMemoryId) : undefined;
       if (["retract", "complete", "cancel"].includes(operation)) {
@@ -190,7 +181,6 @@ async function scanChannel(channel: string, force = false): Promise<void> {
           memoryId: target.id,
           scope: channel,
           status,
-          sourceMessageIds: sourceIds,
           reason: item.reason,
         })) saved += 1;
         continue;
@@ -206,9 +196,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       if (layer !== "state" && !item.memoryKey) continue;
       if (layer === "state") stateSubjects.add(subject);
 
-      const occurredMessage = item.occurredMessageId ? sourceById.get(item.occurredMessageId) : undefined;
-      const lastEvidence = sourceById.get(sourceIds.at(-1)!);
-      const baseTime = occurredMessage?.ts ?? lastEvidence?.ts ?? Date.now();
+      const baseTime = sourceMessages.at(-1)?.ts ?? Date.now();
       const suppliedValidHours = Number(item.validHours);
       const validHours = Number.isFinite(suppliedValidHours) && suppliedValidHours > 0
         ? Math.min(24 * 365, suppliedValidHours)
@@ -221,7 +209,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
           ? `state.${subject}.recent`
           : targetForUpdate?.memoryKey ?? item.memoryKey!,
         subjects,
-        speakers: [...new Set(sourceIds.map((id) => sourceById.get(id)!.sender))],
+        speakers: [],
         content: item.content,
         category: item.category,
         confidence: item.confidence,
@@ -231,8 +219,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         validUntil: validHours && (layer === "state" || layer === "plan")
           ? baseTime + validHours * 60 * 60 * 1000
           : null,
-        metadata: { ...item.metadata, updateReason: item.reason ?? "", extractorVersion: 3 },
-        sourceMessageIds: sourceIds,
+        metadata: { ...item.metadata, updateReason: item.reason ?? "", extractorVersion: 4 },
         targetMemoryId: targetForUpdate?.id,
       };
       const stored = await addMemory(candidate);

@@ -84,14 +84,15 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `GET` | `/api/me/memory?scope=&layer=&q=&limit=&cursor=` | 查询当前用户可见的 Memory、统计和下一页 cursor |
-| `GET` | `/api/me/memory/:id/evidence` | 查询一条 Memory 的原文证据 |
+| `GET` | `/api/me/memory/:id/evidence` | 旧客户端兼容接口，固定返回空数组 |
+| `GET` | `/api/me/memory/:id/sources` | 查询关系/理解卡引用的基础记忆 |
 | `PATCH` | `/api/me/memory/:id` | 手动纠正内容或重要程度 |
-| `DELETE` | `/api/me/memory/:id` | 彻底删除 Memory 及其证据关联 |
+| `DELETE` | `/api/me/memory/:id` | 彻底删除 Memory |
 | `POST` | `/api/me/memory/refresh` | 立即整理共同聊天或当前用户私聊 |
 
 `scope` 为 `all/shared/private`；`layer` 为 `fact/event/plan/state/relationship/insight`；`q` 搜索正文、分类和主体。列表默认只返回 active Memory，响应含 `nextCursor/hasMore`。
 
-共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion }`，importance 范围 `1...5`；版本冲突返回 409 和权威 `item`，客户端会载入它。删除会记录 exclusion，不能被相同证据自动重新生成。`POST refresh` body 为 `{ scope: "shared" | "private" }`。
+共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion }`，importance 范围 `1...5`；版本冲突返回 409 和权威 `item`，客户端会载入它。删除会按卡片 key 记录 exclusion，避免再次自动生成。`POST refresh` body 为 `{ scope: "shared" | "private" }`。
 
 ### 增量同步
 

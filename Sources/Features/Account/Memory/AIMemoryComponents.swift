@@ -139,13 +139,6 @@ struct AIMemoryRow: View {
                 }
                 .font(DS.Typo.micro)
                 .foregroundStyle(DS.Palette.textSecondary)
-                if item.evidenceCount > 0 || (item.derivedFromCount ?? 0) > 0 {
-                    Text(item.evidenceCount > 0
-                         ? "来自 \(item.evidenceCount) 条对话"
-                         : "综合 \(item.derivedFromCount ?? 0) 张基础记忆")
-                        .font(DS.Typo.micro)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                }
             }
         }
         .padding(.vertical, 4)

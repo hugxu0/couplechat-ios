@@ -131,7 +131,6 @@ export async function refreshDerivedMemory(
         importance: parsed.relationship.importance,
         validFrom: now,
         metadata: { derived: true, synthesis: "relationship", sourceWindowDays: 30 },
-        sourceMessageIds: [],
         sourceMemoryIds,
       });
       if (saved) {
@@ -157,7 +156,6 @@ export async function refreshDerivedMemory(
         importance: parsed.insight.importance,
         validFrom: now,
         metadata: { derived: true, synthesis: "interaction", sourceWindowDays: 30 },
-        sourceMessageIds: [],
         sourceMemoryIds,
       });
       if (saved) {
