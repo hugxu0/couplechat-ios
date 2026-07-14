@@ -106,7 +106,7 @@ GitHub Actions 按职责拆成两条互不依赖的流程：
 
 - 新页面观察真正拥有状态的对象：聊天窗口用 `ChatTimelineStore`，共享状态用 `SharedStore`，账号用 `AuthStore`。
 - SQLite 只能通过异步 `ChatPersistenceProtocol` 访问；不得在 MainActor、页面或控制器中调用 `ChatLocalDatabase.shared`。
-- 每日内容、提醒/备忘、统计/存储分别使用对应 Repository，避免继续扩大 `ChatStore`。
+- 提醒/备忘、统计/存储分别使用对应 Repository，避免继续扩大 `ChatStore`。
 - 网络请求通过 `HTTPClient`，Socket payload 通过 `SocketPayloadEncoder`。
 - 新协议先改两端契约，再改调用点，并补契约测试。
 - 新数据库字段在 `server/src/db/migrate.ts` 追加版本化变更；`index.ts` 只做稳定 re-export。

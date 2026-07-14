@@ -21,7 +21,6 @@ import {
   setMemoryEngagementHandler,
   type MemoryEngagementSignal,
 } from "./memory/extractor";
-import { startDailyScheduler, stopDailyScheduler } from "./background/dailyScheduler";
 import { startMemoryMaintenance, stopMemoryMaintenance } from "./memory/maintenance";
 import { subscribeMemoryDomainEvents } from "./memory/events";
 
@@ -44,7 +43,6 @@ export async function initAi(): Promise<void> {
   await initializeMemory();
   if (config.scheduledJobsEnabled) startMemoryMaintenance();
   if (aiEnabled()) {
-    if (config.scheduledJobsEnabled) startDailyScheduler();
     console.log("[ai] 大橘已就位（AI 模型已配置）");
     console.log(`[ai] Agent + MCP ${agentRuntimeEnabled() ? "已就绪" : "不可用，请检查模型兼容性"}`);
   } else {
@@ -53,7 +51,6 @@ export async function initAi(): Promise<void> {
 }
 
 export function shutdownAi(): void {
-  stopDailyScheduler();
   stopMemoryMaintenance();
   stopMemoryEvents?.();
   stopMemoryEvents = null;

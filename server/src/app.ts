@@ -7,7 +7,6 @@ import { config } from "./config";
 import { registerAuthRoutes } from "./auth/routes";
 import { registerDeviceRoutes } from "./auth/deviceRoutes";
 import { registerUploadRoutes } from "./upload/routes";
-import { registerDailyRoutes } from "./daily/routes";
 import { registerPersonalItemRoutes, type PersonalItemRouteEvents } from "./personalItems/routes";
 import { registerSyncRoutes } from "./sync/routes";
 import { registerMediaAccessRoutes } from "./upload/mediaAccess";
@@ -73,7 +72,6 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   await registerDeviceRoutes(app);
   await registerMediaAccessRoutes(app);
   await registerUploadRoutes(app);
-  await registerDailyRoutes(app);
   await registerPersonalItemRoutes(app, dependencies.personalItemEvents);
   await registerSyncRoutes(app);
   await registerSyncV2Routes(app);

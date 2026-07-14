@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-/// 共享状态（纪念日/头像/贴条）+ REST 调用（每日内容/提醒/Bark），从 ChatStore 拆出。
+/// 共享状态（纪念日/头像/贴条）+ REST 调用（提醒/Bark），从 ChatStore 拆出。
 @MainActor
 final class SharedStore: ObservableObject {
     @Published var sharedState: [String: Any] = [:]
@@ -146,7 +146,7 @@ final class SharedStore: ObservableObject {
         sharedState = await persistence.loadSharedState()
     }
 
-    // MARK: - REST（每日内容 / 提醒 / Bark）
+    // MARK: - REST（提醒 / Bark）
 
     private func authorizedRequest(_ path: String, method: String = "GET", token: String) -> URLRequest? {
         let url: URL

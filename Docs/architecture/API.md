@@ -71,14 +71,6 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 
 到期通知由服务端 Bark 调度器负责：`shared` 提醒发送给当前两位账号的全部有效设备 endpoint，`personal` 只发送给 `owner` 的全部有效设备。投递按提醒、到期时间和收件账号持久化记账，服务重启会补扫最近 7 天，成功不重复、失败继续重试。iOS 不再额外安排本地到期通知；旧账号单 Bark key 仍作为兼容 fallback。
 
-### 每日内容
-
-| 方法 | 路径 | 用途 |
-|---|---|---|
-| `GET` | `/api/daily` | 最近 30 天有聊天内容的大橘日记及后台补建状态 |
-
-响应包含 `diaries`、`backfilling` 和 `requestedDays`。首次补历史时不会把已生成的一两篇误当成完整结果；客户端在 `backfilling=true` 时继续轻量轮询，直到最近 30 天扫描结束。日记由大橘第一人称选择有意味的片段，强调观察、感受和小见解，不写标题、日期或逐条聊天流水账；服务端会再次移除模型误生成的开头日期。
-
 ### Memory 控制中心
 
 | 方法 | 路径 | 用途 |

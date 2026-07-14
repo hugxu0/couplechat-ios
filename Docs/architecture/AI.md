@@ -30,7 +30,6 @@
 | `memory/extractor.ts` | 新消息增量整理与强校验 |
 | `memory/maintenance.ts` | 近况/计划过期和向量维护 |
 | `conversation/` | 最近消息、上下文摘要和原文搜索 |
-| `background/` | 大橘日记和周期维护任务 |
 | `debug/` | 本机 Trace 与 Memory 调试页 |
 
 ## Agent 输入
@@ -56,7 +55,7 @@
 - `ai_memory_cursor`：每个 conversation 已整理到的 `(cursor_ts, cursor_id)`，保留 legacy channel 兼容键；
 - `ai_memory_dependencies`：关系与理解卡引用的基础记忆；
 - `ai_memory_exclusions`：用户忘掉后按卡片 key 阻止重新生成；
-- `ai_runtime_state`：摘要和每日内容等可重建状态。
+- `ai_runtime_state`：上下文摘要和派生记忆维护游标等可重建状态。
 
 整理器按游标读取最多 80 条主人消息。达到 80 条立即整理；20 条以上在空闲 15 分钟后整理，20 条以下空闲 60 分钟后整理，最老消息等待满 2 小时也会整理。整理器读取整段聊天作为当次上下文，但卡片落库后不保存原始消息 ID、摘录或引用。无效 JSON 或写入失败不能推进游标。
 

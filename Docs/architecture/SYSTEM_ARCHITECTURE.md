@@ -4,7 +4,7 @@
 
 ```text
 iOS App
-  ├─ REST：登录、启动快照、历史分页、上传、提醒和每日内容
+  ├─ REST：登录、启动快照、历史分页、上传和提醒
   └─ Socket.IO：实时消息、已读、在线状态、共享状态和 AI 状态
         ↓
 日本 RFCHost nginx · https://hoo66.top（TLS 入口与反向代理）
@@ -26,7 +26,7 @@ Fastify + Socket.IO · 127.0.0.1:3000
 
 - `AuthStore`：登录、token、当前用户和另一位用户；
 - `MessageStore`：消息、同步、发送、搜索、撤回、上传和 outbox；
-- `SharedStore`：共享状态、纪念日、提醒和每日内容；
+- `SharedStore`：共享状态、纪念日、提醒和 Bark 配置；
 - `StickerStore`：自定义表情的账号级离线缓存；固定总库、自建分组和排序通过账号专属 shared-state key 同步到同账号所有设备，两个账号互不覆盖；
 - `AIMemoryRepository`：Memory 控制中心的列表、派生来源、纠正、删除和立即整理；
 - `MomentsRepository`：共同相册、聊天媒体入册、注脚与那年今日；
@@ -44,7 +44,7 @@ Fastify + Socket.IO · 127.0.0.1:3000
 - `ChatTimelineStore`：MainActor 上的消息窗口、已读和分页状态事实源；
 - `OutboxProcessor`：串行化 outbox flush，并通过 `clientId` 读写待发项；
 - `MediaUploadService`：multipart 拼装、文件流式上传和上传响应解码；
-- `DailyContentRepository`、`PersonalItemsRepository`、`LocalDataRepository`：每日内容、提醒/备忘、统计/存储各自的领域入口；
+- `PersonalItemsRepository`、`LocalDataRepository`：提醒/备忘、统计/存储各自的领域入口；
 - `HistorySyncCoordinator`：拥有历史与图片全量同步任务；离开存储页面不取消，显式暂停或登出才取消；
 - `SocketContract`：事件名和出站 payload；
 - `RealtimeConnectionCoordinator`：Socket.IO 生命周期、认证握手、重连、健康检查和连接状态；
@@ -131,7 +131,6 @@ ChatHomeView
 | `albums/` | 共同相册、媒体资产、注脚和那年今日 |
 | `calendar/` | 共享/私人日历、时区、完成和版本冲突 |
 | `pet/` | 共同宠物状态衰减、五种互动、冷却与幂等同步 |
-| `daily/` | 最近 30 天大橘日记接口 |
 | `push/` | Bark 推送策略 |
 | `ai/` | Agent、MCP、Memory、上下文和后台任务 |
 | `contracts/` | 实时协议的服务端权威定义 |

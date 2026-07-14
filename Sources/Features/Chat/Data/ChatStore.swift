@@ -24,7 +24,6 @@ final class ChatStore: ObservableObject {
     let messageStore: MessageStore
     let shared: SharedStore
     let localData: LocalDataRepository
-    let dailyContent: DailyContentRepository
     let personalItems: PersonalItemsRepository
     let memoryControl: AIMemoryRepository
     let syncV2: SyncV2Repository
@@ -121,7 +120,6 @@ final class ChatStore: ObservableObject {
         messageStore = MessageStore(httpClient: httpClient, persistence: persistence)
         shared = SharedStore(httpClient: httpClient, persistence: persistence)
         localData = LocalDataRepository(persistence: persistence)
-        dailyContent = DailyContentRepository(httpClient: httpClient)
         personalItems = PersonalItemsRepository(httpClient: httpClient)
         memoryControl = AIMemoryRepository(httpClient: httpClient)
         syncV2 = SyncV2Repository(httpClient: httpClient)
