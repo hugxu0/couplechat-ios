@@ -115,12 +115,16 @@ actor LocalDataRepository {
     }()
     private static let dayFormatter: DateFormatter = {
         let value = DateFormatter()
+        value.calendar = Calendar(identifier: .gregorian)
+        value.locale = Locale(identifier: "en_US_POSIX")
         value.dateFormat = "yyyy-MM-dd"
         value.timeZone = TimeZone(identifier: "Asia/Shanghai")
         return value
     }()
     private static let monthFormatter: DateFormatter = {
         let value = DateFormatter()
+        value.calendar = Calendar(identifier: .gregorian)
+        value.locale = Locale(identifier: "en_US_POSIX")
         value.dateFormat = "yyyy-MM"
         value.timeZone = TimeZone(identifier: "Asia/Shanghai")
         return value

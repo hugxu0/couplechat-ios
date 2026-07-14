@@ -283,7 +283,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         bubbleView.backgroundColor = mediaOnly ? .clear : (isAIActivity
             ? accentColor.withAlphaComponent(usesDarkIncomingBubble ? 0.24 : 0.11)
             : (isInteraction
-            ? (usesDarkIncomingBubble ? UIColor.black.withAlphaComponent(0.58) : UIColor.systemBackground.withAlphaComponent(0.72))
+            ? (usesDarkIncomingBubble
+                ? UIColor(red: 43.0 / 255.0, green: 40.0 / 255.0, blue: 55.0 / 255.0, alpha: 0.98)
+                : UIColor(red: 250.0 / 255.0, green: 244.0 / 255.0, blue: 248.0 / 255.0, alpha: 1))
             : (mine ? accentColor : incomingBubbleColor)))
         bubbleView.layer.borderWidth = isInteraction ? 1 : 0
         bubbleView.layer.borderColor = isInteraction
@@ -312,8 +314,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         interactionFeather.removeFromSuperlayer()
         if isInteraction {
             interactionFeather.colors = [
-                interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.32 : 0.22).cgColor,
-                interactionColor.withAlphaComponent(0.08).cgColor,
+                interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.20 : 0.12).cgColor,
+                interactionColor.withAlphaComponent(0.04).cgColor,
                 UIColor.clear.cgColor
             ]
             interactionFeather.locations = [0, 0.56, 1]

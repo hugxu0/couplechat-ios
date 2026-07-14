@@ -7,7 +7,8 @@ final class HistorySyncCoordinatorTests: XCTestCase {
         let coordinator = makeCoordinator { channel, progress in
             let total = channel == .couple ? 12 : 5
             progress(total, total)
-            return .init(remoteTotal: total, downloaded: channel == .couple ? 3 : 1, error: nil)
+            return .init(localCount: total, remoteTotal: total,
+                         downloaded: channel == .couple ? 3 : 1, completed: true, error: nil)
         }
 
         coordinator.startHistorySync()
@@ -32,8 +33,27 @@ final class HistorySyncCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(calls, 1)
         coordinator.pause()
-        continuation?.resume(returning: .init(remoteTotal: nil, downloaded: 0, error: "同步已暂停"))
+        continuation?.resume(returning: .init(localCount: 0, remoteTotal: nil, downloaded: 0,
+                                              completed: false, error: "同步已暂停"))
         await Task.yield()
+    }
+
+    func testIncompleteCountsNeverReportLatest() async {
+        let coordinator = makeCoordinator { channel, progress in
+            let local = channel == .couple ? 8 : 5
+            let remote = channel == .couple ? 12 : 5
+            progress(local, remote)
+            return .init(localCount: local, remoteTotal: remote, downloaded: 0,
+                         completed: local == remote, error: nil)
+        }
+
+        coordinator.startHistorySync()
+        await waitUntil { !coordinator.operation.isRunning }
+
+        guard case .failed(let message) = coordinator.outcome else {
+            return XCTFail("本地条数未达到云端总数时不能显示已是最新")
+        }
+        XCTAssertTrue(message.contains("同步未完成"))
     }
 
     func testPauseInvalidatesLateWorkerUpdates() async {
@@ -48,7 +68,8 @@ final class HistorySyncCoordinatorTests: XCTestCase {
         await waitUntil { continuation != nil }
         coordinator.pause()
         progress?(999, 1_000)
-        continuation?.resume(returning: .init(remoteTotal: 1_000, downloaded: 999, error: nil))
+        continuation?.resume(returning: .init(localCount: 999, remoteTotal: 1_000, downloaded: 999,
+                                              completed: false, error: nil))
         await Task.yield()
 
         XCTAssertEqual(coordinator.operation, .idle)
@@ -65,7 +86,8 @@ final class HistorySyncCoordinatorTests: XCTestCase {
         coordinator.startHistorySync()
         await waitUntil { continuation != nil }
         coordinator.cancelForLogout()
-        continuation?.resume(returning: .init(remoteTotal: 10, downloaded: 10, error: nil))
+        continuation?.resume(returning: .init(localCount: 10, remoteTotal: 10, downloaded: 10,
+                                              completed: true, error: nil))
         await Task.yield()
 
         XCTAssertEqual(coordinator.operation, .idle)

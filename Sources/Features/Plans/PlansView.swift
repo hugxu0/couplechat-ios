@@ -17,6 +17,7 @@ struct PlansView: View {
                 VStack(alignment: .leading, spacing: DS.Spacing.section) {
                     sectionPicker
                     scopePicker
+                    actionHeader
                     content
                     if let error = model.errorMessage {
                         StatusBanner(text: error, kind: .error)
@@ -81,6 +82,65 @@ struct PlansView: View {
         }
     }
 
+    private var actionHeader: some View {
+        HStack(spacing: DS.Spacing.gap) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(actionTitle)
+                    .font(DS.Typo.cardTitle)
+                    .foregroundStyle(DS.Palette.textPrimary)
+                Text(actionSubtitle)
+                    .font(DS.Typo.caption)
+                    .foregroundStyle(DS.Palette.textSecondary)
+            }
+            Spacer(minLength: 8)
+            Button(action: openCreateEditor) {
+                Label(actionButtonTitle, systemImage: "plus")
+                    .font(DS.Typo.button)
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(section == .calendar ? DS.Palette.purple : theme.accent.color)
+            .buttonBorderShape(.capsule)
+        }
+        .padding(DS.Spacing.gap)
+        .dsCard(radius: DS.Radius.tile)
+    }
+
+    private var actionTitle: String {
+        switch section {
+        case .calendar:
+            return selectedDate.formatted(
+                .dateTime.month(.wide).day().weekday(.wide).locale(Locale(identifier: "zh_CN")))
+        case .reminder: return "提醒"
+        case .memo: return "备忘"
+        }
+    }
+
+    private var actionSubtitle: String {
+        switch section {
+        case .calendar: return scope == "shared" ? "为两个人安排这一天" : "安排自己的这一天"
+        case .reminder: return scope == "shared" ? "双方都会收到共享提醒" : "只提醒自己"
+        case .memo: return scope == "shared" ? "两个人共同整理的备忘" : "只在自己的清单中显示"
+        }
+    }
+
+    private var actionButtonTitle: String {
+        switch section {
+        case .calendar: return "添加日程"
+        case .reminder: return "添加提醒"
+        case .memo: return "写备忘录"
+        }
+    }
+
+    private func openCreateEditor() {
+        Haptics.selection()
+        switch section {
+        case .calendar: eventEditor = .create(selectedDate)
+        case .reminder: itemEditor = .create(.reminder)
+        case .memo: itemEditor = .create(.memo)
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         if section == .calendar {
@@ -89,7 +149,6 @@ struct PlansView: View {
                 monthMode: $monthMode,
                 events: model.events.filter { $0.scope == scope },
                 onMoveMonth: moveMonth,
-                onCreate: { eventEditor = .create(selectedDate) },
                 onEdit: { eventEditor = .edit($0) },
                 onToggle: toggleEvent,
                 onDelete: deleteEvent)
@@ -101,7 +160,6 @@ struct PlansView: View {
                 items: model.visibleItems(kind: kind, scope: scope),
                 allItems: model.items,
                 loading: model.loading,
-                onCreate: { itemEditor = .create(kind) },
                 onEdit: { itemEditor = .edit($0) },
                 onToggle: toggleItem,
                 onDelete: deleteItem)

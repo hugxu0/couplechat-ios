@@ -16,6 +16,12 @@ struct StorageView: View {
     private var remoteCounts: [String: Int] { historySync.remoteCounts }
     private var statusText: String? { historySync.outcome.text }
     private var statusIsError: Bool { historySync.outcome.isError }
+    private var historyIsUpToDate: Bool {
+        guard let breakdown,
+              let coupleRemote = remoteCounts[ChatChannel.couple.rawValue],
+              let aiRemote = remoteCounts[ChatChannel.ai.rawValue] else { return false }
+        return breakdown.coupleMessages >= coupleRemote && breakdown.aiMessages >= aiRemote
+    }
 
     private static let byteFormatter: ByteCountFormatter = {
         let f = ByteCountFormatter()
@@ -144,9 +150,11 @@ struct StorageView: View {
                 }
             } else {
                 Button { runFullSync() } label: {
-                    Label("同步全部聊天记录", systemImage: "arrow.triangle.2.circlepath")
+                    Label(
+                        historyIsUpToDate ? "聊天记录已是最新" : "同步全部聊天记录",
+                        systemImage: historyIsUpToDate ? "checkmark.circle.fill" : "arrow.triangle.2.circlepath")
                 }
-                .disabled(!store.loggedIn)
+                .disabled(!store.loggedIn || historyIsUpToDate)
 
                 Button { runCacheImages() } label: {
                     Label("下载全部聊天图片", systemImage: "icloud.and.arrow.down")

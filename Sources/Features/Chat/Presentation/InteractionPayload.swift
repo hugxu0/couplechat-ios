@@ -142,11 +142,6 @@ struct IncomingInteractionOverlay: View {
             }
             .padding(.horizontal, 34)
             .padding(.vertical, 26)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(.white.opacity(0.72), lineWidth: 1)
-            }
             .scaleEffect(appeared ? 1 : 0.82)
             .opacity(appeared ? 1 : 0)
         }
@@ -194,9 +189,7 @@ struct IncomingInteractionOverlay: View {
     private func noteLayer(in size: CGSize) -> some View {
         let cardWidth = min(270, max(220, size.width - 48))
         return ZStack {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(Color.black.opacity(0.08))
+            Color.clear
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack {

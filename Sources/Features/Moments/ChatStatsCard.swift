@@ -10,6 +10,7 @@ struct ChatStatsCard: View {
     @State private var mode: Mode = .days
     @State private var selectedIndex: Int?
     @State private var buckets = AppLocalStatsBuckets(days: [], months: [])
+    private let repository = MomentsRepository()
 
     private var globalSelectedDayIndex: Int {
         selectedIndex ?? max(0, buckets.days.count - 1)
@@ -36,7 +37,27 @@ struct ChatStatsCard: View {
     }
 
     private func refreshBuckets() async {
-        buckets = await store.localData.stats(for: .couple)
+        let local = await store.localData.stats(for: .couple)
+        guard let token = store.session?.token,
+              let remote = try? await repository.chatStats(token: token) else {
+            buckets = local
+            return
+        }
+        let dayCounts = Dictionary(grouping: remote.days, by: \.bucket)
+        let monthCounts = Dictionary(grouping: remote.months, by: \.bucket)
+        let localMonths = Dictionary(uniqueKeysWithValues: local.months.map { ($0.month, $0) })
+        let monthKeys = Set(localMonths.keys).union(monthCounts.keys).sorted()
+        buckets = AppLocalStatsBuckets(
+            days: local.days.map { day in
+                guard let rows = dayCounts[day.date] else { return day }
+                return DayStat(date: day.date, weekday: day.weekday,
+                               counts: Dictionary(uniqueKeysWithValues: rows.map { ($0.sender, $0.count) }))
+            },
+            months: monthKeys.map { key in
+                guard let rows = monthCounts[key] else { return localMonths[key]! }
+                return MonthStat(month: key,
+                                 counts: Dictionary(uniqueKeysWithValues: rows.map { ($0.sender, $0.count) }))
+            })
     }
 
     private var header: some View {

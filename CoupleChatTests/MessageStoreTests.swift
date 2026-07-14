@@ -10,6 +10,20 @@ private final class DisconnectedSocketProvider: SocketProvider {
 }
 
 @MainActor
+final class MessageStoreReadStateTests: XCTestCase {
+    func testMarkReadOptimisticallyClearsLocalUnreadStateWhileDisconnected() {
+        let provider = DisconnectedSocketProvider()
+        let store = MessageStore()
+        store.socketProvider = provider
+
+        store.markRead(.couple, through: 1_725_000_000_000)
+
+        XCTAssertEqual(store.readState(for: .couple)["xu"], 1_725_000_000_000)
+        XCTAssertEqual(store.pendingReadTimestamp(for: .couple), 1_725_000_000_000)
+    }
+}
+
+@MainActor
 final class MessageStoreParseTests: XCTestCase {
 
     // MARK: - parseMessage

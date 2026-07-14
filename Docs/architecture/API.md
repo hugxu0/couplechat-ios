@@ -27,6 +27,7 @@ Authorization: Bearer <token>
 | `GET` | `/api/me` | 核验 token，返回当前账号 |
 | `GET` | `/api/bootstrap` | 最近消息、账号、已读和共享状态快照 |
 | `GET` | `/api/messages` | 消息分页或增量读取 |
+| `GET` | `/api/v2/chat/stats` | 按上海时区返回近 35 天及全部月份的双方聊天计数 |
 | `GET` | `/api/v2/me/devices` | 查看当前账号的有效设备与 Bark 状态 |
 | `PUT` | `/api/v2/me/devices/current/push/bark` | 绑定/更新当前安装并设置本设备 Bark key |
 | `POST` | `/api/v2/me/devices/current/push/bark/test` | 向当前设备发送一条 Bark 连通性测试 |
@@ -76,7 +77,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 |---|---|---|
 | `GET` | `/api/daily` | 最近 30 天有聊天内容的大橘日记及后台补建状态 |
 
-响应包含 `diaries`、`backfilling` 和 `requestedDays`。首次补历史时不会把已生成的一两篇误当成完整结果；客户端在 `backfilling=true` 时继续轻量轮询，直到最近 30 天扫描结束。
+响应包含 `diaries`、`backfilling` 和 `requestedDays`。首次补历史时不会把已生成的一两篇误当成完整结果；客户端在 `backfilling=true` 时继续轻量轮询，直到最近 30 天扫描结束。日记由大橘第一人称选择有意味的片段，强调观察、感受和小见解，不写标题、日期或逐条聊天流水账；服务端会再次移除模型误生成的开头日期。
 
 ### Memory 控制中心
 

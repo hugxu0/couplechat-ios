@@ -27,8 +27,11 @@ struct MessageHistorySyncService {
         session: Session,
         onProgress: @escaping (_ localCount: Int, _ remoteTotal: Int?) -> Void
     ) async -> MessageHistorySyncResult {
-        var oldest = await persistence.oldestMessageTimestamp(channel: channel.rawValue)
+        // 每次都从云端最新一页向前核对。旧实现从“本地最早消息”继续向前，
+        // 只能补更老的记录，最近缺失或中间断层永远不会被补齐。
+        var cursor: Double?
         var localCount = await persistence.messageCount(channel: channel.rawValue)
+        let initialLocalCount = localCount
         var remoteTotal: Int?
         var downloaded = 0
         var completed = false
@@ -39,7 +42,7 @@ struct MessageHistorySyncService {
         while !Task.isCancelled {
             let page = await remoteDataSource.fetchHistoryPage(
                 channel: channel,
-                before: oldest,
+                before: cursor,
                 limit: pageLimit,
                 session: session)
             if let total = page.total { remoteTotal = total }
@@ -49,7 +52,10 @@ struct MessageHistorySyncService {
                 break
             }
             guard !page.messages.isEmpty else {
-                completed = true
+                completed = remoteTotal.map { localCount >= $0 } ?? true
+                if !completed, let remoteTotal {
+                    lastError = "云端仍有 \(max(0, remoteTotal - localCount)) 条消息未同步，请重试"
+                }
                 break
             }
             let persisted = await persistence.insertMessages(page.messages)
@@ -57,25 +63,27 @@ struct MessageHistorySyncService {
                 lastError = "写入本地数据库失败"
                 break
             }
-            downloaded += page.messages.count
             localCount = await persistence.messageCount(channel: channel.rawValue)
+            downloaded = max(0, localCount - initialLocalCount)
             onProgress(localCount, remoteTotal)
 
             let batchOldest = page.messages.map(\.ts).min()
             if page.messages.count < pageLimit {
-                completed = true
+                completed = remoteTotal.map { localCount >= $0 } ?? true
+                if !completed, let remoteTotal {
+                    lastError = "本地 \(localCount) 条，云端 \(remoteTotal) 条，记录仍未补齐"
+                }
                 break
             }
-            if let batchOldest, let previous = oldest, batchOldest >= previous {
+            if let batchOldest, let previous = cursor, batchOldest >= previous {
                 lastError = "同步游标未继续前进"
                 break
             }
-            oldest = batchOldest
+            cursor = batchOldest
         }
 
         if Task.isCancelled { lastError = "同步已暂停" }
         localCount = await persistence.messageCount(channel: channel.rawValue)
-        if let remoteTotal, localCount >= remoteTotal { completed = true }
         return MessageHistorySyncResult(
             localCount: localCount,
             remoteTotal: remoteTotal,

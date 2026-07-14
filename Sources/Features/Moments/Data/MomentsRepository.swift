@@ -68,6 +68,12 @@ struct MomentsRepository {
         }
     }
 
+    func chatStats(token: String) async throws -> ChatStatsRows {
+        let data = try await request(path: "api/v2/chat/stats", token: token)
+        let payload = try JSONDecoder().decode(ChatStatsEnvelope.self, from: data)
+        return ChatStatsRows(days: payload.days, months: payload.months)
+    }
+
     func createAlbum(title: String, note: String?, token: String) async throws -> MomentAlbum {
         let body = AlbumMutation(title: title, summary: note ?? "")
         let data = try await request(path: "api/v2/albums", method: "POST", body: body, token: token)
@@ -207,6 +213,10 @@ private extension MomentsRepository {
         let nextCursor: String?
         let hasMore: Bool
     }
+    struct ChatStatsEnvelope: Decodable {
+        let days: [ChatStatsRow]
+        let months: [ChatStatsRow]
+    }
     struct AlbumEnvelope: Decodable { let album: MomentAlbum }
     struct AlbumConflictEnvelope: Decodable { let album: MomentAlbum }
     struct AlbumDetailEnvelope: Decodable {
@@ -237,6 +247,17 @@ private extension MomentsRepository {
     struct AddUploadMutation: Encodable { let uploadId: String; let takenAt: Int; let postId: String }
     struct NoteMutation: Encodable { let text: String; let baseVersion: Int? }
     struct VersionMutation: Encodable { let baseVersion: Int }
+}
+
+struct ChatStatsRows: Equatable {
+    let days: [ChatStatsRow]
+    let months: [ChatStatsRow]
+}
+
+struct ChatStatsRow: Decodable, Equatable {
+    let bucket: String
+    let sender: String
+    let count: Int
 }
 
 private extension MomentAsset {

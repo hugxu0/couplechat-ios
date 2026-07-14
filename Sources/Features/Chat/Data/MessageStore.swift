@@ -481,6 +481,23 @@ final class MessageStore: ObservableObject {
             emit: { [weak self] channel, timestamp in
                 self?.emitReadReceipt(channel: channel, timestamp: timestamp) == true
             })
+        // 已展示即已读：先乐观更新当前设备状态，避免用户立即退出聊天时角标等待
+        // WebSocket 回执后才消失。服务端事件仍会用权威时间戳重新确认。
+        if let username = socketProvider?.sessionUsername,
+           timestamp > (readState(for: channel)[username] ?? 0) {
+            var state = readState(for: channel)
+            state[username] = timestamp
+            var next = readStates
+            next[channel.rawValue] = state
+            readStates = next
+            Task {
+                await persistence.saveReadReceipt(
+                    channel: channel.rawValue,
+                    username: username,
+                    ts: timestamp,
+                    updatedAt: Date().timeIntervalSince1970 * 1000)
+            }
+        }
     }
 
     /// 断线期间仍保留各频道最高已展示时间；连接成功后调用本方法重新发送。

@@ -98,7 +98,8 @@ struct DajuModelView: UIViewRepresentable {
             normalize(content)
             // 资源文件的正面轴与 SceneKit 相机相差 90°。只校正外层 yaw，
             // 之后的拖动仍围绕同一身体中心水平旋转。
-            pivot.eulerAngles.y = .pi / 2
+            // GLB 的正面轴在实机上与相机相差 -90°；此前使用 +90° 会让背面对着用户。
+            pivot.eulerAngles.y = -.pi / 2
             pivot.addChildNode(content)
             presentationScene.rootNode.addChildNode(pivot)
             presentationScene.rootNode.addChildNode(cameraNode())

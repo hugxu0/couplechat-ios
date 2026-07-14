@@ -6,8 +6,10 @@ import Foundation
 @MainActor
 final class HistorySyncCoordinator: ObservableObject {
     struct HistoryResult: Equatable {
+        let localCount: Int
         let remoteTotal: Int?
         let downloaded: Int
+        let completed: Bool
         let error: String?
     }
 
@@ -157,6 +159,9 @@ final class HistorySyncCoordinator: ObservableObject {
             if let total = result.remoteTotal { remoteCounts[channel.rawValue] = total }
             if let error = result.error, error != "同步已暂停" {
                 errors.append("\(name)：\(error)")
+            } else if !result.completed {
+                let remote = result.remoteTotal.map(String.init) ?? "未知"
+                errors.append("\(name)：同步未完成（本地 \(result.localCount) / 云端 \(remote)）")
             }
         }
 

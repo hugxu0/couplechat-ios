@@ -157,6 +157,15 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
       process.env.TRANSCRIPTION_API_KEY = "fake-test-key";
       process.env.TRANSCRIPTION_MODEL = "fake-test-model";
 
+      const statsResponse = await app.inject({
+        method: "GET", url: "/api/v2/chat/stats", headers: auth(aliceToken),
+      });
+      assert.equal(statsResponse.statusCode, 200, statsResponse.body);
+      const stats = statsResponse.json() as {
+        days: Array<{ bucket: string; sender: string; count: number }>;
+      };
+      assert.ok(stats.days.some((row) => row.sender === "xu" && row.count >= 1));
+
       assert.equal((await recallMessage(alice!, voice.id))?.deleted, true);
       assert.equal(await get("SELECT 1 AS found FROM message_transcripts WHERE message_id = ?", [voice.id]), undefined);
       assert.equal(await get("SELECT 1 AS found FROM transcript_jobs WHERE message_id = ?", [voice.id]), undefined);

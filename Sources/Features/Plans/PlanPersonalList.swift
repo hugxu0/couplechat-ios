@@ -6,23 +6,12 @@ struct PlanPersonalList: View {
     let items: [PersonalItem]
     let allItems: [PersonalItem]
     let loading: Bool
-    let onCreate: () -> Void
     let onEdit: (PersonalItem) -> Void
     let onToggle: (PersonalItem) -> Void
     let onDelete: (PersonalItem) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.section) {
-            HStack {
-                Text(kind == .reminder ? "提醒" : "备忘")
-                    .font(DS.Typo.cardTitle)
-                    .foregroundStyle(DS.Palette.textPrimary)
-                Spacer()
-                Button(createTitle, systemImage: "plus", action: onCreate)
-                    .font(DS.Typo.button)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-            }
             summary
             if loading && items.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 180)
@@ -74,7 +63,6 @@ struct PlanPersonalList: View {
 
     private var reminders: [PersonalItem] { allItems.filter { $0.kind == .reminder && $0.scope == scope } }
     private var memos: [PersonalItem] { allItems.filter { $0.kind == .memo && $0.scope == scope } }
-    private var createTitle: String { kind == .reminder ? "添加提醒" : "写备忘录" }
     private var emptyTitle: String {
         if scope == "shared" { return kind == .reminder ? "还没有共享提醒" : "还没有共享备忘" }
         return kind == .reminder ? "还没有私人提醒" : "还没有私人备忘"

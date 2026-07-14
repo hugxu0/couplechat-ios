@@ -5,7 +5,6 @@ struct PlanCalendarView: View {
     @Binding var monthMode: Bool
     let events: [CalendarEvent]
     let onMoveMonth: (Int) -> Void
-    let onCreate: () -> Void
     let onEdit: (CalendarEvent) -> Void
     let onToggle: (CalendarEvent) -> Void
     let onDelete: (CalendarEvent) -> Void
@@ -130,17 +129,9 @@ struct PlanCalendarView: View {
 
     private var agendaPanel: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.gap) {
-            HStack {
-                AppSectionHeader(title: selectedDate.agendaTitle, subtitle: "共享日程会同步到两人的设备")
-                Button(action: onCreate) {
-                    Image(systemName: "plus")
-                        .font(DS.Typo.button)
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("在选中日期新建日程")
-            }
+            Text("当天安排")
+                .font(DS.Typo.sectionLabel)
+                .foregroundStyle(DS.Palette.textSecondary)
             if selectedEvents.isEmpty {
                 AppEmptyState("这一天还没有安排", systemImage: "calendar.badge.plus")
                     .frame(maxWidth: .infinity, minHeight: 150)
@@ -213,7 +204,6 @@ private struct CalendarAgendaRow: View {
 private extension Date {
     var monthTitle: String { formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "zh_CN"))) }
     var dayNumber: String { formatted(.dateTime.day()) }
-    var agendaTitle: String { formatted(.dateTime.month(.wide).day().weekday(.wide).locale(Locale(identifier: "zh_CN"))) }
     var accessibleDateLabel: String { formatted(.dateTime.year().month().day().weekday(.wide).locale(Locale(identifier: "zh_CN"))) }
 
     var weekDates: [Date] {

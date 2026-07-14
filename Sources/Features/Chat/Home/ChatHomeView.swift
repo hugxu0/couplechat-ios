@@ -210,15 +210,15 @@ struct ChatHomeView: View {
             if colorScheme == .dark {
                 LinearGradient(
                     colors: [
-                        Color(red: 0.10, green: 0.115, blue: 0.17),
-                        Color(red: 0.065, green: 0.075, blue: 0.12),
-                        Color(red: 0.085, green: 0.07, blue: 0.15),
+                        Color(red: 0.095, green: 0.105, blue: 0.145),
+                        Color(red: 0.07, green: 0.078, blue: 0.11),
+                        Color(red: 0.082, green: 0.075, blue: 0.125),
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
                 RadialGradient(
-                    colors: [theme.accent.color.opacity(0.16), DS.Palette.purple.opacity(0.07), .clear],
+                    colors: [theme.accent.color.opacity(0.075), DS.Palette.purple.opacity(0.03), .clear],
                     center: .top,
                     startRadius: 8,
                     endRadius: 210
@@ -226,16 +226,16 @@ struct ChatHomeView: View {
             } else {
                 LinearGradient(
                     colors: [
-                        Color(red: 1, green: 0.975, blue: 0.985),
-                        theme.accent.color.opacity(0.12),
-                        DS.Palette.pink.opacity(0.09),
-                        Color(red: 0.95, green: 0.93, blue: 0.99),
+                        Color(red: 1, green: 0.99, blue: 0.995),
+                        theme.accent.color.opacity(0.045),
+                        DS.Palette.pink.opacity(0.028),
+                        Color(red: 0.975, green: 0.968, blue: 0.992),
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
                 RadialGradient(
-                    colors: [.white.opacity(0.42), theme.accent.color.opacity(0.06), .clear],
+                    colors: [.white.opacity(0.52), theme.accent.color.opacity(0.025), .clear],
                     center: .top,
                     startRadius: 6,
                     endRadius: 195

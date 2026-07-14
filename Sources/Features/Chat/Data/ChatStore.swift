@@ -38,12 +38,15 @@ final class ChatStore: ObservableObject {
         historyWorker: { [weak self] channel, onProgress in
             guard let self else {
                 return HistorySyncCoordinator.HistoryResult(
-                    remoteTotal: nil, downloaded: 0, error: "同步服务不可用")
+                    localCount: 0, remoteTotal: nil, downloaded: 0,
+                    completed: false, error: "同步服务不可用")
             }
             let result = await self.syncAllHistory(channel, onProgress: onProgress)
             return HistorySyncCoordinator.HistoryResult(
+                localCount: result.localCount,
                 remoteTotal: result.remoteTotal,
                 downloaded: result.downloaded,
+                completed: result.completed,
                 error: result.error)
         },
         imageWorker: { [weak self] onProgress in

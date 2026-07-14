@@ -270,7 +270,10 @@ struct AlbumDetailView: View {
                     .foregroundStyle(DS.Palette.textSecondary)
                     .accessibilityLabel("动态操作")
                 }
+                .contentShape(Rectangle())
+                .zIndex(2)
                 postMediaGrid(post.assets, width: bodyWidth)
+                    .zIndex(0)
             }
             .padding(.vertical, 16)
             .frame(width: bodyWidth, alignment: .leading)
@@ -300,6 +303,7 @@ struct AlbumDetailView: View {
             ZStack {
                 if asset.isVideo, let url = asset.resolvedOriginalURL {
                     VideoThumbnailView(url: url)
+                        .allowsHitTesting(false)
                 } else {
                     CachedImage(url: asset.resolvedURL) {
                         ZStack {
@@ -308,6 +312,7 @@ struct AlbumDetailView: View {
                                 .foregroundStyle(DS.Palette.textTertiary)
                         }
                     }
+                    .allowsHitTesting(false)
                 }
             }
             .frame(width: side, height: side)
@@ -328,6 +333,11 @@ struct AlbumDetailView: View {
             }
         }
         .buttonStyle(.plain)
+        // 细长原图仍以方形缩略图展示，但命中区域必须严格限制在方格内，
+        // 否则图片的原始布局尺寸会越界盖住上方“编辑文案”按钮。
+        .frame(width: side, height: side)
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipped()
         .contextMenu {
             Button("移出相册", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                 Task { await remove(asset) }
