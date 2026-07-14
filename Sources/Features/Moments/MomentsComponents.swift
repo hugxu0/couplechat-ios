@@ -39,8 +39,9 @@ struct MomentAlbumCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.compact) {
-            MomentMosaic(assets: album.previewItems, fallbackURL: album.resolvedCoverURL)
-                .frame(height: 152)
+            MomentAlbumPreview(assets: album.previewItems, fallbackURL: album.resolvedCoverURL)
+                .frame(height: 120)
+                .accessibilityHidden(true)
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(album.title)
@@ -66,6 +67,63 @@ struct MomentAlbumCard: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("相册 \(album.title)，\(album.itemCount)项")
         .accessibilityHint("轻点打开相册")
+    }
+}
+
+private struct MomentAlbumPreview: View {
+    let assets: [MomentAsset]
+    let fallbackURL: URL?
+
+    private var visibleAssets: [MomentAsset] {
+        Array(assets.prefix(2))
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let gap: CGFloat = 4
+            if visibleAssets.count == 2 {
+                let side = max(0, min(proxy.size.height, (proxy.size.width - gap) / 2))
+                HStack(spacing: gap) {
+                    tile(visibleAssets[0])
+                        .frame(width: side, height: side)
+                    tile(visibleAssets[1])
+                        .frame(width: side, height: side)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                tile(visibleAssets.first, fallbackURL: fallbackURL)
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
+    }
+
+    private func tile(_ asset: MomentAsset?, fallbackURL: URL? = nil) -> some View {
+        Group {
+            if let asset, asset.isVideo, let url = asset.resolvedOriginalURL {
+                VideoThumbnailView(url: url, contentMode: .fill)
+            } else {
+                CachedImage(url: asset?.resolvedURL ?? fallbackURL, contentMode: .fill) {
+                    ZStack {
+                        DS.Palette.innerSurface
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.title2)
+                            .foregroundStyle(DS.Palette.textTertiary)
+                    }
+                }
+            }
+        }
+        .clipped()
+        .overlay(alignment: .topTrailing) {
+            if asset?.isVideo == true {
+                Image(systemName: "play.fill")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .background(.black.opacity(0.38), in: Circle())
+                    .padding(7)
+            }
+        }
     }
 }
 
