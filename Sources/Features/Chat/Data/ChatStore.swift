@@ -95,12 +95,7 @@ final class ChatStore: ObservableObject {
         messageStore: messageStore,
         shared: shared,
         setAIActivity: { [weak self] channel, activity in
-            guard let self else { return }
-            if let activity {
-                self.aiActivityByChannel[channel] = activity
-            } else {
-                self.aiActivityByChannel.removeValue(forKey: channel)
-            }
+            self?.setAIActivity(activity, for: channel)
         },
         setPartnerOnline: { [weak self] online in self?.partnerOnline = online },
         setPresenceKnown: { [weak self] known in self?.presenceKnown = known })
@@ -290,9 +285,7 @@ final class ChatStore: ObservableObject {
         realtime.disconnect()
         partnerOnline = false
         presenceKnown = false
-        aiActivityByChannel.removeAll()
-        messageStore.aiTyping = false
-        messageStore.aiReplying = false
+        resetTransientAIState()
         messageStore.resetPendingReadReceipts()
         realtime.setLastError(nil)
         StickerStore.shared.deactivate()
@@ -434,6 +427,21 @@ final class ChatStore: ObservableObject {
         aiActivityByChannel[channel.rawValue]
     }
 
+    func setAIActivity(_ activity: AIActivity?, for channel: String) {
+        if let activity {
+            aiActivityByChannel[channel] = activity
+        } else {
+            aiActivityByChannel.removeValue(forKey: channel)
+        }
+    }
+
+    func resetTransientAIState() {
+        localAIActivityTokens.removeAll()
+        aiActivityByChannel.removeAll()
+        messageStore.aiTyping = false
+        messageStore.aiReplying = false
+    }
+
     func isAIComposing(in channel: ChatChannel) -> Bool {
         let hasActivity = aiActivity(for: channel)?.isVisible == true
         guard channel == .ai else { return hasActivity }
@@ -519,12 +527,20 @@ final class ChatStore: ObservableObject {
     }
 
     func reportAway(_ away: Bool) {
-        if away { wasBackgrounded = true }
+        if away {
+            wasBackgrounded = true
+            // 输入/生成状态只靠实时事件维持；App 挂起后可能错过结束事件，
+            // 因此不能把它跨后台保留成持久状态。
+            resetTransientAIState()
+        }
         realtime.reportAway(away)
         if away { stopPersistentSyncLoop() } else { startPersistentSyncLoop() }
     }
 
     func recoverOnForeground() {
+        // 即使系统没有及时送达 background，回前台也先丢弃旧的瞬时状态。
+        // 最新回复会由 bootstrap/sync 补回，不能继续展示离线前的“正在输入”。
+        resetTransientAIState()
         guard auth.session != nil else { return }
         let needsFreshSocket = wasBackgrounded
         wasBackgrounded = false

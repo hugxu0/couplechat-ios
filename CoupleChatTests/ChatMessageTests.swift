@@ -349,6 +349,32 @@ final class ChatMessageTests: XCTestCase {
         withExtendedLifetime(observation) {}
     }
 
+    @MainActor
+    func testChatStoreClearsTransientAIStateAcrossBackgroundRecovery() {
+        let store = ChatStore()
+        let generating = AIActivity(
+            channel: .couple,
+            requestMessageId: "msg-request",
+            requesterUsername: "xu",
+            phase: "generating")
+
+        store.setAIActivity(generating, for: ChatChannel.couple.rawValue)
+        store.messageStore.aiTyping = true
+        store.messageStore.aiReplying = true
+        XCTAssertTrue(store.isAIComposing(in: .couple))
+        XCTAssertTrue(store.isAIComposing(in: .ai))
+
+        store.reportAway(true)
+        XCTAssertFalse(store.isAIComposing(in: .couple))
+        XCTAssertFalse(store.isAIComposing(in: .ai))
+
+        store.setAIActivity(generating, for: ChatChannel.couple.rawValue)
+        store.messageStore.aiTyping = true
+        store.recoverOnForeground()
+        XCTAssertFalse(store.isAIComposing(in: .couple))
+        XCTAssertFalse(store.isAIComposing(in: .ai))
+    }
+
     func testInteractionMetaTakesPriorityOverLegacyText() {
         let dict: [String: Any] = [
             "id": "msg_fx",
