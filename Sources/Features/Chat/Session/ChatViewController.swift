@@ -382,10 +382,9 @@ final class ChatViewController: UIViewController {
             self.updateJumpToBottomVisibility(animated: true)
             Task {
                 await self.store.restoreLatestMessages(self.channel)
-                self.timelineController.browsingHistoricalWindow = false
-                self.stickToLatestAfterNextReload = true
-                self.reloadTimeline(animated: false)
-                self.timelineController.scrollToBottom(animated: false)
+                self.stickToLatestAfterNextReload = false
+                self.reloadTimeline(animated: false, preservingWindowState: true)
+                self.timelineController.returnToLatest(animated: true)
                 self.updateJumpToBottomVisibility(animated: true)
             }
         }, for: .touchUpInside)

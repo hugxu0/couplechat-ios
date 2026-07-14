@@ -38,10 +38,12 @@ extension ChatViewController {
         reloadTimeline(animated: true)
     }
 
-    func reloadTimeline(animated: Bool) {
+    func reloadTimeline(animated: Bool, preservingWindowState: Bool = false) {
         guard timelineController != nil else { return }
         timelineController.updatePresentation(makeTimelinePresentation())
-        timelineController.browsingHistoricalWindow = !isNearLatestWindow()
+        if !preservingWindowState {
+            timelineController.browsingHistoricalWindow = !isNearLatestWindow()
+        }
         let messages = store.messages(for: channel)
         timelineController.reload(messages: messages, activity: nil, animated: animated)
         lastRenderedMessageID = messages.last?.id

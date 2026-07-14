@@ -199,6 +199,13 @@ final class ChatTimelineController: NSObject {
         scrollState.hasNewMessagesBelow = false
     }
 
+    func returnToLatest(animated: Bool) {
+        stickToLatestAfterNextReload = false
+        browsingHistoricalWindow = false
+        scrollState.hasNewMessagesBelow = false
+        followLatest(animated: animated && !UIAccessibility.isReduceMotionEnabled)
+    }
+
     func setInsets(top: CGFloat, bottom: CGFloat) {
         topInset = top
         bottomInset = bottom
