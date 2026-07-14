@@ -53,7 +53,12 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
         let backdropView = mediaHost?.backdropView
 
         let source = selectedId.flatMap { sourceProvider?($0) }
-        let sourceTransform = transform(from: source, in: container, target: contentView.bounds)
+        let targetCenter = untransformedCenter(of: contentView, in: container)
+        let sourceTransform = transform(
+            from: source,
+            in: container,
+            targetSize: contentView.bounds.size,
+            targetCenter: targetCenter)
         let dismissalTransform = sourceTransform
         if presenting {
             backdropView?.alpha = 0
@@ -97,7 +102,21 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
         completion?()
     }
 
-    private func transform(from source: UIView?, in container: UIView, target: CGRect) -> CGAffineTransform {
+    private func untransformedCenter(of view: UIView, in container: UIView) -> CGPoint {
+        // 纵向退出开始时 view 已经带有手势产生的 transform。直接 convert(view.bounds)
+        // 会把临时位移重复算进终点；center 属于父视图坐标，不受 view 自身 transform 影响。
+        guard let superview = view.superview else {
+            return CGPoint(x: container.bounds.midX, y: container.bounds.midY)
+        }
+        return superview.convert(view.center, to: container)
+    }
+
+    private func transform(
+        from source: UIView?,
+        in container: UIView,
+        targetSize: CGSize,
+        targetCenter: CGPoint
+    ) -> CGAffineTransform {
         guard let source, source.window != nil else {
             return CGAffineTransform(scaleX: 0.94, y: 0.94)
         }
@@ -106,16 +125,21 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
         // 而不是 hosting view 的整屏边界，否则竖图/横图会缩成源缩略图内部的一张小卡片。
         let sourceSize = source.bounds.size
         let fitScale = min(
-            target.width / max(1, sourceSize.width),
-            target.height / max(1, sourceSize.height))
+            targetSize.width / max(1, sourceSize.width),
+            targetSize.height / max(1, sourceSize.height))
         let displayedSize = CGSize(
             width: sourceSize.width * fitScale,
             height: sourceSize.height * fitScale)
         let scale = max(0.12, min(
             frame.width / max(1, displayedSize.width),
             frame.height / max(1, displayedSize.height)))
-        let translation = CGPoint(x: frame.midX - target.midX, y: frame.midY - target.midY)
-        return CGAffineTransform(translationX: translation.x, y: translation.y)
-            .scaledBy(x: scale, y: scale)
+        let translation = CGPoint(
+            x: frame.midX - targetCenter.x,
+            y: frame.midY - targetCenter.y)
+        // 明确写出矩阵，确保缩放不会改变已经算好的中心点平移量。
+        return CGAffineTransform(
+            a: scale, b: 0,
+            c: 0, d: scale,
+            tx: translation.x, ty: translation.y)
     }
 }
