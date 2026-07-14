@@ -261,40 +261,45 @@ struct AlbumDetailView: View {
                         .foregroundStyle(DS.Palette.textTertiary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    if post.caption.isEmpty {
-                        Text("还没有写下这一刻")
-                            .font(DS.Typo.secondary)
-                            .foregroundStyle(DS.Palette.textTertiary)
-                    } else {
-                        Text(post.caption)
-                            .font(DS.Typo.body)
-                            .foregroundStyle(DS.Palette.textPrimary)
-                            .lineSpacing(4)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    Group {
+                        if post.caption.isEmpty {
+                            Text("还没有写下这一刻")
+                                .font(DS.Typo.secondary)
+                                .foregroundStyle(DS.Palette.textTertiary)
+                        } else {
+                            Text(post.caption)
+                                .font(DS.Typo.body)
+                                .foregroundStyle(DS.Palette.textPrimary)
+                                .lineSpacing(4)
+                        }
                     }
-                    Button { captionPost = post } label: {
-                        Image(systemName: "pencil")
-                            .font(.caption.weight(.semibold))
-                            .frame(width: 32, height: 32)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    HStack(spacing: 0) {
+                        Button { captionPost = post } label: {
+                            Image(systemName: "pencil")
+                                .font(.caption.weight(.semibold))
+                                .frame(width: 32, height: 32)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(DS.Palette.accent)
+                        .accessibilityLabel(post.caption.isEmpty ? "添加文案" : "编辑文案")
+
+                        Menu {
+                            Button("编辑文案", systemImage: "pencil") { captionPost = post }
+                            Button("删除动态", systemImage: "trash", role: .destructive) { deletingPost = post }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.caption.weight(.semibold))
+                                .frame(width: 32, height: 32)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(DS.Palette.textSecondary)
+                        .accessibilityLabel("动态操作")
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(DS.Palette.accent)
-                    .accessibilityLabel(post.caption.isEmpty ? "添加文案" : "编辑文案")
-                    Menu {
-                        Button("编辑文案", systemImage: "pencil") { captionPost = post }
-                        Button("删除动态", systemImage: "trash", role: .destructive) { deletingPost = post }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.caption.weight(.semibold))
-                            .frame(width: 32, height: 32)
-                    }
-                    .foregroundStyle(DS.Palette.textSecondary)
-                    .accessibilityLabel("动态操作")
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                .contentShape(Rectangle())
-                .zIndex(2)
                 postMediaGrid(post.assets, width: bodyWidth)
-                    .zIndex(0)
             }
             .padding(.vertical, 16)
             .frame(width: bodyWidth, alignment: .leading)
@@ -323,7 +328,6 @@ struct AlbumDetailView: View {
             ZStack {
                 if asset.isVideo, let url = asset.resolvedOriginalURL {
                     VideoThumbnailView(url: url)
-                        .allowsHitTesting(false)
                 } else {
                     CachedImage(url: asset.resolvedURL) {
                         ZStack {
@@ -332,12 +336,16 @@ struct AlbumDetailView: View {
                                 .foregroundStyle(DS.Palette.textTertiary)
                         }
                     }
-                    .allowsHitTesting(false)
                 }
             }
             .frame(width: side, height: side)
             .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                AlbumMediaSourceAnchor(id: asset.id, registry: mediaSourceRegistry)
+                    .allowsHitTesting(false)
+            }
             .overlay(alignment: .topTrailing) {
                 if asset.isVideo {
                     Image(systemName: "play.fill")
@@ -350,10 +358,6 @@ struct AlbumDetailView: View {
             }
         }
         .buttonStyle(.plain)
-        .background {
-            AlbumMediaSourceAnchor(id: asset.id, registry: mediaSourceRegistry)
-                .allowsHitTesting(false)
-        }
         .contextMenu {
             Button("移出相册", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                 Task { await remove(asset) }
