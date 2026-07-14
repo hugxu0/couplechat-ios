@@ -132,6 +132,24 @@ final class MediaViewerHostController: UIViewController {
         ])
     }
 
+    func transitionTargetView(for identifier: String) -> UIView? {
+        findTransitionTarget(in: transitionContentView, identifier: identifier)
+    }
+
+    private func findTransitionTarget(in root: UIView, identifier: String) -> UIView? {
+        if let target = root as? MediaViewerTransitionTargetView,
+           target.mediaIdentifier == identifier,
+           target.window != nil {
+            return target
+        }
+        for subview in root.subviews {
+            if let target = findTransitionTarget(in: subview, identifier: identifier) {
+                return target
+            }
+        }
+        return nil
+    }
+
     func updateInteractiveDismissal(translationY: CGFloat) {
         let progress = MediaViewerTransitionMetrics.progress(
             translationY: translationY,

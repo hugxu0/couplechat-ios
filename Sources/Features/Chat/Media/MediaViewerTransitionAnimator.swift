@@ -53,12 +53,17 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
         let backdropView = mediaHost?.backdropView
 
         let source = selectedId.flatMap { sourceProvider?($0) }
-        let targetCenter = untransformedCenter(of: contentView, in: container)
+        let targetView = selectedId.flatMap { mediaHost?.transitionTargetView(for: $0) }
+        let targetGeometry = transitionGeometry(
+            targetView: targetView,
+            contentView: contentView,
+            container: container)
         let sourceTransform = transform(
             from: source,
             in: container,
-            targetSize: contentView.bounds.size,
-            targetCenter: targetCenter)
+            targetSize: targetGeometry.size,
+            targetCenter: targetGeometry.center,
+            transformCenter: targetGeometry.transformCenter)
         let dismissalTransform = sourceTransform
         if presenting {
             backdropView?.alpha = 0
@@ -102,20 +107,49 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
         completion?()
     }
 
-    private func untransformedCenter(of view: UIView, in container: UIView) -> CGPoint {
-        // 纵向退出开始时 view 已经带有手势产生的 transform。直接 convert(view.bounds)
-        // 会把临时位移重复算进终点；center 属于父视图坐标，不受 view 自身 transform 影响。
-        guard let superview = view.superview else {
-            return CGPoint(x: container.bounds.midX, y: container.bounds.midY)
+    private func transitionGeometry(
+        targetView: UIView?,
+        contentView: UIView,
+        container: UIView
+    ) -> (size: CGSize, center: CGPoint, transformCenter: CGPoint) {
+        let targetFrameInContent: CGRect
+        if let targetView, targetView.bounds.width > 0, targetView.bounds.height > 0 {
+            // 转到 contentView 自身坐标时，不会包含 contentView 上的交互式退出 transform。
+            targetFrameInContent = targetView.convert(targetView.bounds, to: contentView)
+        } else {
+            targetFrameInContent = contentView.bounds
         }
-        return superview.convert(view.center, to: container)
+        let centerInContent = CGPoint(
+            x: targetFrameInContent.midX,
+            y: targetFrameInContent.midY)
+        return (
+            targetFrameInContent.size,
+            untransformedPoint(centerInContent, in: contentView, container: container),
+            untransformedPoint(
+                CGPoint(x: contentView.bounds.midX, y: contentView.bounds.midY),
+                in: contentView,
+                container: container))
+    }
+
+    private func untransformedPoint(
+        _ point: CGPoint,
+        in view: UIView,
+        container: UIView
+    ) -> CGPoint {
+        guard let superview = view.superview else { return point }
+        let boundsCenter = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        let pointInSuperview = CGPoint(
+            x: view.center.x + point.x - boundsCenter.x,
+            y: view.center.y + point.y - boundsCenter.y)
+        return superview.convert(pointInSuperview, to: container)
     }
 
     private func transform(
         from source: UIView?,
         in container: UIView,
         targetSize: CGSize,
-        targetCenter: CGPoint
+        targetCenter: CGPoint,
+        transformCenter: CGPoint
     ) -> CGAffineTransform {
         guard let source, source.window != nil else {
             return CGAffineTransform(scaleX: 0.94, y: 0.94)
@@ -133,9 +167,14 @@ final class MediaViewerTransitionAnimator: NSObject, UIViewControllerAnimatedTra
         let scale = max(0.12, min(
             frame.width / max(1, displayedSize.width),
             frame.height / max(1, displayedSize.height)))
+        // UIView 的 transform 围绕 contentView 的中心缩放。媒体页中心若不在该点，
+        // 它与缩放中心之间的距离也会乘以 scale，平移必须把这部分一起纳入。
+        let scaledTargetCenter = CGPoint(
+            x: transformCenter.x + (targetCenter.x - transformCenter.x) * scale,
+            y: transformCenter.y + (targetCenter.y - transformCenter.y) * scale)
         let translation = CGPoint(
-            x: frame.midX - targetCenter.x,
-            y: frame.midY - targetCenter.y)
+            x: frame.midX - scaledTargetCenter.x,
+            y: frame.midY - scaledTargetCenter.y)
         // 明确写出矩阵，确保缩放不会改变已经算好的中心点平移量。
         return CGAffineTransform(
             a: scale, b: 0,

@@ -183,6 +183,7 @@ private struct MediaPage: View {
 
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .background(MediaViewerTransitionTarget(identifier: item.id))
             .contentShape(Rectangle())
             // 使用真实媒体作为系统上下文预览；UIKit 负责长按时的缩放和菜单转场。
             .contextMenu(menuItems: {
@@ -230,6 +231,25 @@ private struct MediaPage: View {
                 .font(.system(size: 14, weight: .semibold))
         }
         .foregroundStyle(.white.opacity(0.72))
+    }
+}
+
+final class MediaViewerTransitionTargetView: UIView {
+    var mediaIdentifier = ""
+}
+
+private struct MediaViewerTransitionTarget: UIViewRepresentable {
+    let identifier: String
+
+    func makeUIView(context: Context) -> MediaViewerTransitionTargetView {
+        let view = MediaViewerTransitionTargetView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: MediaViewerTransitionTargetView, context: Context) {
+        view.mediaIdentifier = identifier
     }
 }
 
