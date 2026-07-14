@@ -9,46 +9,53 @@ import { registerExternalTools } from "./externalTools";
 import { registerPersonalItemTools } from "./personalItemTools";
 import { allowedChannels, jsonResult, memoryView, messageView, parseTime, safeLimit } from "./toolSupport";
 
+function resolveSubject(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return accounts().find((account) => account.username === value || account.name === value)?.username ?? value;
+}
+
+function memoryResult(key: string, rows: Awaited<ReturnType<typeof searchMemory>>) {
+  return {
+    source: "memory",
+    hasRelevantCandidates: rows.length > 0,
+    returnedCount: rows.length,
+    [key]: rows.map(memoryView),
+  };
+}
+
 export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   const server = new McpServer(
     { name: "couplechat-ai-tools", version: "0.1.0" },
     {
       instructions:
-        "先用结构化事实/事件工具。人物查询按 search_facts → search_events → search_chat_messages 回退，facts 为空时不能跳过 events。结构化记忆命中后直接使用；只有用户明确要求逐字原话，或 facts/events 都为空时，才搜索原始聊天。任何记忆都不能跨越当前频道权限。",
+        "按问题类型选择六层结构化记忆：事实 search_facts、经历 search_events、计划 search_plans、近况 get_current_states、近期关系 get_relationship_context、互动理解 get_current_insight。人物查询按 search_facts → search_events → search_chat_messages 回退，facts 为空时不能跳过 events。结构化记忆命中后直接使用；只有用户明确要求逐字原话，或 facts/events 都为空时，才搜索原始聊天。任何记忆都不能跨越当前频道权限。",
     },
   );
 
   server.registerTool(
     "search_facts",
     {
-      description: "搜索稳定事实、喜好、健康、习惯、身份和重要人物。人物查询没有命中或没有回答身份/关系时，下一步必须用同一个名字调用 search_events，不能直接跳到 search_chat_messages。",
+      description: "搜索稳定事实、喜好、习惯、身份、重要人物以及长期健康禁忌。临时生病或近期身体状态应调用 get_current_states。人物查询没有命中或没有回答身份/关系时，下一步必须用同一个名字调用 search_events，不能直接跳到 search_chat_messages。",
       inputSchema: z.object({
         query: z.string().min(1).max(300),
         subject: z.string().max(40).optional().describe("username、主人昵称、both 或留空"),
-        categories: z.array(z.string()).max(8).optional(),
         limit: z.number().int().min(1).max(8).optional(),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (args) => jsonResult(await recordAgentTool(run, "search_facts", args, async () => {
-      const wantedSubject = args.subject
-        ? accounts().find((a) => a.username === args.subject || a.name === args.subject)?.username ?? args.subject
-        : "";
-      const categories = new Set(args.categories ?? []);
-      const rows = (await searchMemory({
+      const wantedSubject = resolveSubject(args.subject);
+      const rows = await searchMemory({
         query: args.query,
         layers: ["fact"],
         scopes: visibleMemoryScopes(run.identity.storedChannel),
         subjects: wantedSubject ? [wantedSubject] : undefined,
-        limit: 20,
-      }))
-        .filter((item) => categories.size === 0 || categories.has(item.category))
-        .slice(0, safeLimit(args.limit, 5, 8));
+        limit: safeLimit(args.limit, 5, 8),
+      });
       return {
         query: args.query,
-        hasRelevantCandidates: rows.length > 0,
-        source: "memory",
-        facts: rows.map(memoryView),
+        subject: wantedSubject ?? null,
+        ...memoryResult("facts", rows),
       };
     })));
 
@@ -58,6 +65,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
       description: "搜索过去发生的经历和事件事实，适合‘上次、前几天、什么时候、后来怎样’。命中后直接使用，不要继续搜索聊天；只有用户明确要求逐字原话时才调用 search_chat_messages。",
       inputSchema: z.object({
         query: z.string().min(1).max(300),
+        subject: z.string().max(40).optional().describe("username、主人昵称、both 或留空"),
         fromDate: z.string().max(30).optional().describe("YYYY-MM-DD"),
         toDate: z.string().max(30).optional().describe("YYYY-MM-DD"),
         limit: z.number().int().min(1).max(10).optional(),
@@ -68,19 +76,20 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
       const from = parseTime(args.fromDate);
       const toBase = parseTime(args.toDate);
       const to = toBase && /^\d{4}-\d{2}-\d{2}$/.test(args.toDate ?? "") ? toBase + 24 * 60 * 60 * 1000 - 1 : toBase;
+      const wantedSubject = resolveSubject(args.subject);
       const rows = await searchMemory({
         query: args.query,
         layers: ["event"],
         scopes: visibleMemoryScopes(run.identity.storedChannel),
+        subjects: wantedSubject ? [wantedSubject] : undefined,
         from: from ?? undefined,
         to: to ?? undefined,
         limit: safeLimit(args.limit, 6, 10),
       });
       return {
         query: args.query,
-        hasRelevantCandidates: rows.length > 0,
-        source: "memory",
-        events: rows.map(memoryView),
+        subject: wantedSubject ?? null,
+        ...memoryResult("events", rows),
       };
     })));
 
@@ -220,101 +229,134 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "search_plans",
     {
-      description: "搜索从聊天提取出的未来计划、承诺和安排。正式提醒/备忘仍以 list_personal_items 为准。",
+      description: "搜索从聊天提取出的当前计划、承诺和安排，可按人物筛选。返回的 memoryValidUntil 是卡片继续有效的时间，不是计划的执行时间或截止时间；正式提醒/备忘仍以 list_personal_items 为准。",
       inputSchema: z.object({
         query: z.string().min(1).max(300),
+        subject: z.string().max(40).optional().describe("username、主人昵称、both 或留空"),
         limit: z.number().int().min(1).max(10).optional(),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async (args) => jsonResult(await recordAgentTool(run, "search_plans", args, async () => ({
-      source: "memory",
-      plans: (await searchMemory({
+    async (args) => jsonResult(await recordAgentTool(run, "search_plans", args, async () => {
+      const wantedSubject = resolveSubject(args.subject);
+      const rows = await searchMemory({
         query: args.query,
         layers: ["plan"],
         scopes: visibleMemoryScopes(run.identity.storedChannel),
+        subjects: wantedSubject ? [wantedSubject] : undefined,
         limit: safeLimit(args.limit, 6, 10),
-      })).map(memoryView),
-    }))));
+      });
+      return { query: args.query, subject: wantedSubject ?? null, ...memoryResult("plans", rows) };
+    })));
 
   server.registerTool(
     "get_people_context",
     {
-      description: "读取人物档案卡。只在理解人物身份和长期背景确实需要时调用。",
+      description: "读取两位主人的核心人物事实，并把小旭、小偲和两个人共同的事实分开返回。只在理解人物身份和长期背景确实需要时调用。",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (args) => jsonResult(await recordAgentTool(run, "get_people_context", args, async () => {
-      const visibleAccounts = run.identity.storedChannel === "couple" ? accounts() : accounts();
-      const facts = await searchMemory({
-        query: "",
-        layers: ["fact"],
-        scopes: visibleMemoryScopes(run.identity.storedChannel),
-        subjects: visibleAccounts.map((account) => account.username),
-        limit: 20,
-      });
+      const visibleAccounts = accounts();
+      const scopes = visibleMemoryScopes(run.identity.storedChannel);
+      const [peopleFacts, sharedFacts] = await Promise.all([
+        Promise.all(visibleAccounts.map((account) => searchMemory({
+          query: "",
+          layers: ["fact"],
+          scopes,
+          subjects: [account.username],
+          subjectMode: "exact",
+          sort: "importance",
+          limit: 12,
+        }))),
+        searchMemory({
+          query: "",
+          layers: ["fact"],
+          scopes,
+          subjects: ["both"],
+          subjectMode: "exact",
+          sort: "importance",
+          limit: 12,
+        }),
+      ]);
       return {
         source: "memory",
-        people: visibleAccounts.map((account) => ({
+        people: visibleAccounts.map((account, index) => ({
           username: account.username,
           name: account.name,
-          facts: facts.filter((fact) => fact.subjects.includes(account.username)).map(memoryView),
+          returnedCount: peopleFacts[index].length,
+          facts: peopleFacts[index].map(memoryView),
         })),
+        sharedFacts: sharedFacts.map(memoryView),
+        sharedReturnedCount: sharedFacts.length,
       };
     })));
 
   server.registerTool(
     "get_current_states",
     {
-      description: "读取当前短期状态和今日心情，例如最近生病、忙碌、旅行或近期整体背景。这些是会变化的状态，不是永久事实。",
-      inputSchema: z.object({}),
+      description: "读取最近几天的滚动近况，例如生病、忙碌、活动、情绪和双方近期讨论。可按人物筛选；每个主体只返回最新一张当前卡。",
+      inputSchema: z.object({
+        subject: z.string().max(40).optional().describe("username、主人昵称、both 或留空"),
+      }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async (args) => jsonResult(await recordAgentTool(run, "get_current_states", args, async () => ({
-      source: "memory",
-      states: (await searchMemory({
+    async (args) => jsonResult(await recordAgentTool(run, "get_current_states", args, async () => {
+      const wantedSubject = resolveSubject(args.subject);
+      const rows = await searchMemory({
         query: "",
         layers: ["state"],
         scopes: visibleMemoryScopes(run.identity.storedChannel),
-        limit: 12,
-      })).map(memoryView),
-    }))));
+        subjects: wantedSubject ? [wantedSubject] : undefined,
+        sort: "recent",
+        limit: 20,
+      });
+      const latestBySubject = new Map<string, typeof rows[number]>();
+      for (const row of rows) {
+        const subject = row.subjects[0] ?? "both";
+        if (!latestBySubject.has(subject)) latestBySubject.set(subject, row);
+      }
+      const states = [...latestBySubject.values()];
+      return { subject: wantedSubject ?? null, ...memoryResult("states", states) };
+    })));
 
   server.registerTool(
     "get_relationship_context",
     {
-      description: "读取两位主人共同的关系卡和明确关系约定。它是长期背景，不是对某一次争执的裁决。",
+      description: "读取两位主人最新的近期关系滚动总结，包括亲密、疏离、争执原因和见面后的变化。它不是长期约定清单，也不是对某一次争执的裁决。",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async (args) => jsonResult(await recordAgentTool(run, "get_relationship_context", args, async () => ({
-      source: "memory",
-      relationships: (await searchMemory({
+    async (args) => jsonResult(await recordAgentTool(run, "get_relationship_context", args, async () => {
+      const rows = await searchMemory({
         query: "",
         layers: ["relationship"],
         scopes: visibleMemoryScopes(run.identity.storedChannel),
-        limit: 12,
-      })).map(memoryView),
-    }))));
+        sort: "recent",
+        limit: 1,
+      });
+      return memoryResult("relationships", rows);
+    })));
 
   server.registerTool(
-    "search_insights",
+    "get_current_insight",
     {
-      description: "搜索大橘过去形成的观察或关系模式。仅在用户要求分析、复盘或调解时使用；结果是可能出错的假设，必须以谨慎语气表达。",
-      inputSchema: z.object({
-        query: z.string().min(1).max(300),
-        limit: z.number().int().min(1).max(10).optional(),
-      }),
+      description: "读取大橘当前的互动方式理解。仅在用户要求分析、复盘或调解时使用；它是根据多张基础记忆生成的滚动假设，可能出错，必须以谨慎语气表达。",
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async (args) => jsonResult(await recordAgentTool(run, "search_insights", args, async () => {
-      const insights = await searchMemory({
-        query: args.query,
+    async (args) => jsonResult(await recordAgentTool(run, "get_current_insight", args, async () => {
+      const rows = await searchMemory({
+        query: "",
         layers: ["insight"],
         scopes: visibleMemoryScopes(run.identity.storedChannel),
-        limit: safeLimit(args.limit, 5, 10),
+        sort: "recent",
+        limit: 1,
       });
-      return { source: "memory", warning: "这些是观察性假设，不是确定事实", insights: insights.map(memoryView) };
+      return {
+        warning: "这是观察性假设，不是确定事实",
+        ...memoryResult("insights", rows),
+      };
     })));
 
   registerPersonalItemTools(server, run);

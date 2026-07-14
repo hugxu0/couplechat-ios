@@ -118,6 +118,15 @@ function normalizedKey(candidate: MemoryCandidate): string {
   return `${candidate.layer}:${candidate.subjects.sort().join("+")}:${candidate.category ?? "general"}:${candidate.content.slice(0, 50)}`;
 }
 
+function embeddingText(input: {
+  layer: MemoryLayer;
+  category?: string | null;
+  subjects: string[];
+  content: string;
+}): string {
+  return `${input.layer} ${input.category ?? ""} ${input.subjects.join(" ")} ${input.content}`;
+}
+
 const LOGICAL_MEMORY_SUBJECTS = new Set(["xu", "si", "both"]);
 
 export function normalizedMemorySubjects(values: string[]): string[] {
@@ -227,11 +236,19 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
 
   let embedding: Uint8Array | null = null;
   if (embeddingEnabled()) {
-    const vector = await embedOne(`${candidate.layer} ${candidate.category ?? ""} ${subjects.join(" ")} ${content}`);
+    const vector = await embedOne(embeddingText({
+      layer: candidate.layer,
+      category: candidate.category,
+      subjects,
+      content,
+    }));
     if (vector) embedding = packVector(vector);
   }
 
   const versioned = candidate.layer !== "event";
+  const rolling = candidate.layer === "state"
+    || candidate.layer === "relationship"
+    || candidate.layer === "insight";
   return transaction(async (db) => {
     const target = candidate.targetMemoryId && versioned
       ? await db.get<AiMemoryRow>(
@@ -243,32 +260,46 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
         )
       : undefined;
     if (candidate.targetMemoryId && versioned && !target) return null;
-    const finalMemoryKey = target?.memory_key ?? memoryKey;
     const existing = target ?? (versioned
-      ? await db.get<AiMemoryRow>(
-          `SELECT * FROM ai_memory
-           WHERE scope = ? AND layer = ? AND memory_key = ? AND status = 'active'
-             AND ${ownerSQL.clause}
-           ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
-          [candidate.scope, candidate.layer, finalMemoryKey, ownerSQL.value],
-        )
+      ? rolling
+        ? await db.get<AiMemoryRow>(
+            `SELECT * FROM ai_memory
+             WHERE scope = ? AND layer = ? AND status = 'active'
+               AND ${ownerSQL.clause}
+               ${candidate.layer === "state" ? "AND subjects_json::jsonb = CAST(? AS jsonb)" : ""}
+             ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1 FOR UPDATE`,
+            [candidate.scope, candidate.layer, ownerSQL.value,
+              ...(candidate.layer === "state" ? [JSON.stringify(subjects)] : [])],
+          )
+        : await db.get<AiMemoryRow>(
+            `SELECT * FROM ai_memory
+             WHERE scope = ? AND layer = ? AND memory_key = ? AND status = 'active'
+               AND ${ownerSQL.clause}
+             ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
+            [candidate.scope, candidate.layer, memoryKey, ownerSQL.value],
+          )
       : await db.get<AiMemoryRow>(
           `SELECT m.* FROM ai_memory m
            WHERE m.scope = ? AND m.layer = 'event' AND m.memory_key = ? AND m.content = ?
              AND m.${owner.coupleId ? "couple_id" : "owner_account_id"} = ?
              AND m.status = 'active'
            LIMIT 1 FOR UPDATE`,
-          [candidate.scope, finalMemoryKey, content, ownerSQL.value],
+          [candidate.scope, memoryKey, content, ownerSQL.value],
         ));
-
-    if (existing && parseObject(existing.metadata_json).manuallyEditedAt) {
-      return mapItem(existing);
-    }
+    const finalMemoryKey = target?.memory_key ?? (rolling ? memoryKey : existing?.memory_key ?? memoryKey);
 
     if (existing && existing.content === content) {
+      const refreshedValidFrom = candidate.validFrom ?? existing.valid_from;
+      const refreshedValidUntil = candidate.validUntil === undefined || candidate.validUntil === null
+        ? existing.valid_until
+        : existing.valid_until === null
+          ? candidate.validUntil
+          : Math.max(existing.valid_until, candidate.validUntil);
       await db.run(
-        `UPDATE ai_memory SET confidence = GREATEST(confidence, ?), importance = GREATEST(importance, ?), updated_at = ? WHERE id = ?`,
-        [confidence, importance, now, existing.id],
+        `UPDATE ai_memory SET confidence = GREATEST(confidence, ?),
+         importance = GREATEST(importance, ?), valid_from = ?, valid_until = ?, updated_at = ?
+         WHERE id = ?`,
+        [confidence, importance, refreshedValidFrom, refreshedValidUntil, now, existing.id],
       );
       for (const source of sourceMemories) {
         await db.run(
@@ -277,7 +308,14 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
           [existing.id, source.id, now],
         );
       }
-      return mapItem({ ...existing, confidence: Math.max(existing.confidence, confidence), importance: Math.max(existing.importance, importance), updated_at: now });
+      return mapItem({
+        ...existing,
+        confidence: Math.max(existing.confidence, confidence),
+        importance: Math.max(existing.importance, importance),
+        valid_from: refreshedValidFrom,
+        valid_until: refreshedValidUntil,
+        updated_at: now,
+      });
     }
 
     const id = `mem_${nanoid(16)}`;
@@ -356,11 +394,11 @@ export async function repairMissingMemoryEmbeddings(limit = 25): Promise<number>
   let repaired = 0;
   for (const row of rows) {
     const item = mapItem(row);
-    const vector = await embedOne(`${item.layer} ${item.category} ${item.subjects.join(" ")} ${item.content}`);
+    const vector = await embedOne(embeddingText(item));
     if (!vector) continue;
     repaired += await run(
-      "UPDATE ai_memory SET embedding = ?, updated_at = ? WHERE id = ? AND embedding IS NULL",
-      [packVector(vector), Date.now(), item.id],
+      "UPDATE ai_memory SET embedding = ? WHERE id = ? AND embedding IS NULL",
+      [packVector(vector), item.id],
     );
   }
   return repaired;
@@ -412,14 +450,18 @@ export async function reconcileMemoryLifecycle(now = Date.now()): Promise<{ expi
   return { expired, retracted };
 }
 
+export type MemorySearchSort = "relevance" | "importance" | "recent";
+
 export interface SearchMemoryInput {
   query: string;
   layers: MemoryLayer[];
   scopes: string[];
   subjects?: string[];
+  subjectMode?: "related" | "exact";
   from?: number;
   to?: number;
   limit?: number;
+  sort?: MemorySearchSort;
 }
 
 export async function searchMemory(input: SearchMemoryInput): Promise<Array<MemoryItem & { score: number; lexicalHits: number }>> {
@@ -431,14 +473,18 @@ export async function searchMemory(input: SearchMemoryInput): Promise<Array<Memo
     "status = 'active'",
   ];
   const params: Array<string | number> = [...input.layers, ...input.scopes];
-  if (input.from) { clauses.push("COALESCE(occurred_at, valid_from, created_at) >= ?"); params.push(input.from); }
-  if (input.to) { clauses.push("COALESCE(occurred_at, valid_from, created_at) <= ?"); params.push(input.to); }
+  const eventOnly = input.layers.length === 1 && input.layers[0] === "event";
+  const timeColumn = eventOnly ? "occurred_at" : "COALESCE(occurred_at, valid_from, created_at)";
+  if (input.from) { clauses.push(`${timeColumn} >= ?`); params.push(input.from); }
+  if (input.to) { clauses.push(`${timeColumn} <= ?`); params.push(input.to); }
   const rows = await all<AiMemoryRow>(
     `SELECT * FROM ai_memory WHERE ${clauses.join(" AND ")} ORDER BY updated_at DESC LIMIT 10000`,
     params,
   );
   const subjects = new Set(input.subjects ?? []);
-  const filtered = rows.map(mapItem).filter((item) => subjects.size === 0 || item.subjects.some((subject) => subjects.has(subject)) || item.subjects.includes("both"));
+  const filtered = rows.map(mapItem).filter((item) => subjects.size === 0
+    || item.subjects.some((subject) => subjects.has(subject))
+    || (input.subjectMode !== "exact" && item.subjects.includes("both")));
   const vector = input.query.trim() && embeddingEnabled() ? await embedOne(input.query) : null;
   const terms = searchTerms(input.query);
   const scored = filtered.map((item) => {
@@ -447,9 +493,15 @@ export async function searchMemory(input: SearchMemoryInput): Promise<Array<Memo
     const score = vector && item.vector ? similarity(vector, item.vector) : 0;
     return { ...item, score, lexicalHits: hits };
   });
+  const sort = input.sort ?? (input.query.trim() ? "relevance" : "importance");
   return scored
     .filter((item) => !input.query.trim() || item.lexicalHits > 0 || item.score >= 0.38)
-    .sort((a, b) => b.lexicalHits - a.lexicalHits || b.score - a.score || b.importance - a.importance || b.updatedAt - a.updatedAt)
+    .sort((a, b) => sort === "recent"
+      ? b.updatedAt - a.updatedAt || b.importance - a.importance
+      : sort === "importance"
+        ? b.importance - a.importance || b.updatedAt - a.updatedAt
+        : b.lexicalHits - a.lexicalHits || b.score - a.score
+          || b.importance - a.importance || b.updatedAt - a.updatedAt)
     .slice(0, Math.max(1, Math.min(20, input.limit ?? 8)));
 }
 
@@ -653,8 +705,7 @@ export async function archiveSiblingMemories(
     `UPDATE ai_memory SET status = 'superseded', updated_at = ?
      WHERE id <> ? AND layer = ? AND scope = ? AND status = 'active'
        AND ${ownerColumn} = ?
-       ${sameSubject ? "AND subjects_json::jsonb = CAST(? AS jsonb)" : ""}
-       AND COALESCE(metadata_json::jsonb ->> 'manuallyEditedAt', '') = ''`,
+       ${sameSubject ? "AND subjects_json::jsonb = CAST(? AS jsonb)" : ""}`,
     [now, keep.id, keep.layer, keep.scope, ownerValue,
       ...(sameSubject ? [JSON.stringify(normalizedMemorySubjects(parseArray(keep.subjects_json)))] : [])],
   );
@@ -674,6 +725,20 @@ export async function updateMemoryForControl(input: {
 }): Promise<MemoryControlItem | null> {
   const content = input.content.replace(/\s+/g, " ").trim().slice(0, 1200);
   if (content.length < 3 || !input.scopes.length) return null;
+  const lookupClauses = ["id = ?", `scope IN (${input.scopes.map(() => "?").join(",")})`];
+  const lookupParams: Array<string | number> = [input.memoryId, ...input.scopes];
+  addControlOwnership(input, lookupClauses, lookupParams);
+  const embeddingTarget = await get<AiMemoryRow>(
+    `SELECT * FROM ai_memory WHERE ${lookupClauses.join(" AND ")}`,
+    lookupParams,
+  );
+  if (!embeddingTarget) return null;
+  let embedding: Uint8Array | null = null;
+  if (embeddingEnabled()) {
+    const item = mapItem(embeddingTarget);
+    const vector = await embedOne(embeddingText({ ...item, content }));
+    if (vector) embedding = packVector(vector);
+  }
   return transaction(async (db) => {
     const clauses = ["id = ?", `scope IN (${input.scopes.map(() => "?").join(",")})`];
     const params: Array<string | number> = [input.memoryId, ...input.scopes];
@@ -697,8 +762,8 @@ export async function updateMemoryForControl(input: {
     };
     await db.run(
       `UPDATE ai_memory SET content = ?, importance = ?, metadata_json = ?,
-       embedding = NULL, updated_at = ? WHERE id = ?`,
-      [content, importance, JSON.stringify(metadata), now, target.id],
+       embedding = ?, updated_at = ? WHERE id = ?`,
+      [content, importance, JSON.stringify(metadata), embedding, now, target.id],
     );
     let updated = await db.get<AiMemoryRow>("SELECT * FROM ai_memory WHERE id = ?", [target.id]);
     if (!updated) return null;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import { schemaMigrations } from "../../src/db/migrate";
+import { withTestDatabase } from "../support/postgresHarness";
 
 const publishedMigrations = [
   [1, "initial_schema", "f807e14075a84885"],
@@ -45,5 +46,54 @@ test("candidate migrations remain ordered after the published boundary", () => {
     [25, "album_timeline_posts"],
     [26, "memory_derivation_dependencies"],
     [27, "retire_memory_message_evidence"],
+    [28, "enforce_single_active_rolling_memory"],
   ]);
+});
+
+test("v28 keeps only the newest active rolling card and enforces the invariant", async () => {
+  await withTestDatabase(async () => {
+    const db = await import("../../src/db");
+    const now = Date.now();
+    await db.run(
+      `INSERT INTO accounts
+       (id, username, display_name, password_hash, avatar, status, version, created_at, updated_at)
+       VALUES ('acc_test_xu', 'xu', '小旭', 'unused', '', 'active', 0, ?, ?),
+              ('acc_test_si', 'si', '小偲', 'unused', '', 'active', 0, ?, ?)`,
+      [now, now, now, now],
+    );
+    const { ensureFixedCouple } = await import("../../src/auth/accounts");
+    await ensureFixedCouple();
+    await db.run(
+      `INSERT INTO ai_memory
+       (id, layer, scope, memory_key, subjects_json, speakers_json, content, category,
+        confidence, importance, occurred_at, occurred_end_at, valid_from, valid_until,
+        status, supersedes_id, metadata_json, embedding, created_at, updated_at,
+        couple_id, owner_account_id, version)
+       VALUES
+       ('mem_state_old', 'state', 'couple', 'state.si.old', '["si"]', '[]', '旧近况', '',
+        0.8, 3, NULL, NULL, ?, ?, 'active', NULL, '{}', NULL, ?, ?,
+        'cpl_legacy_xusi', NULL, 0),
+       ('mem_state_new', 'state', 'couple', 'state.si.new', '["si"]', '[]', '新近况', '',
+        0.8, 3, NULL, NULL, ?, ?, 'active', NULL, '{}', NULL, ?, ?,
+        'cpl_legacy_xusi', NULL, 0)`,
+      [now, now + 60_000, now, now, now + 1, now + 120_000, now + 1, now + 1],
+    );
+
+    await db.migrate(db.databasePool(), 28);
+    const rows = await db.all<{ id: string; status: string }>(
+      "SELECT id, status FROM ai_memory WHERE id IN ('mem_state_old','mem_state_new') ORDER BY id",
+    );
+    assert.deepEqual(rows, [
+      { id: "mem_state_new", status: "active" },
+      { id: "mem_state_old", status: "superseded" },
+    ]);
+    await assert.rejects(() => db.run(
+      `INSERT INTO ai_memory
+       (id, layer, scope, memory_key, subjects_json, speakers_json, content, category,
+        confidence, importance, status, metadata_json, created_at, updated_at, couple_id, version)
+       VALUES ('mem_state_duplicate', 'state', 'couple', 'state.si.duplicate', '["si"]', '[]',
+               '重复近况', '', 0.8, 3, 'active', '{}', ?, ?, 'cpl_legacy_xusi', 0)`,
+      [now + 2, now + 2],
+    ));
+  }, { migrateThrough: 27 });
 });

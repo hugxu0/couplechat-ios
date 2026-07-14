@@ -106,6 +106,7 @@ async function main() {
       [25, "album_timeline_posts"],
       [26, "memory_derivation_dependencies"],
       [27, "retire_memory_message_evidence"],
+      [28, "enforce_single_active_rolling_memory"],
     ] as const;
     assertOk(
       "数据库结构版本完整",

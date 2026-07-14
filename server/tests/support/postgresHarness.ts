@@ -19,9 +19,12 @@ async function availablePort(): Promise<number> {
 
 export async function withTestDatabase<T>(
   work: () => Promise<T>,
-  options: { migrateThrough?: number } = {},
+  options: { migrateThrough?: number; environment?: Record<string, string> } = {},
 ): Promise<T> {
   installSafeTestEnvironment();
+  for (const [key, value] of Object.entries(options.environment ?? {})) {
+    process.env[key] = value;
+  }
   const port = await availablePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "couplechat-test-pg-"));
   const postgres = new EmbeddedPostgres({

@@ -1202,6 +1202,35 @@ export const schemaMigrations: readonly SchemaMigration[] = [
     DELETE FROM ai_memory_evidence;
     `,
   },
+  {
+    version: 28,
+    name: "enforce_single_active_rolling_memory",
+    sql: `
+    WITH ranked AS (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               PARTITION BY COALESCE(couple_id, ''), COALESCE(owner_account_id, ''),
+                            scope, layer,
+                            CASE WHEN layer = 'state' THEN subjects_json ELSE '["both"]' END
+               ORDER BY updated_at DESC, created_at DESC, id DESC
+             ) AS row_number
+        FROM ai_memory
+       WHERE status = 'active' AND layer IN ('state', 'relationship', 'insight')
+    )
+    UPDATE ai_memory memory
+       SET status = 'superseded',
+           updated_at = (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT
+      FROM ranked
+     WHERE memory.id = ranked.id AND ranked.row_number > 1;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS ai_memory_one_active_rolling_idx
+      ON ai_memory (
+        COALESCE(couple_id, ''), COALESCE(owner_account_id, ''), scope, layer,
+        (CASE WHEN layer = 'state' THEN subjects_json ELSE '["both"]' END)
+      )
+      WHERE status = 'active' AND layer IN ('state', 'relationship', 'insight');
+    `,
+  },
 ];
 
 export async function migrate(
