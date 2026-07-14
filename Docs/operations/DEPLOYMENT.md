@@ -69,7 +69,7 @@ cd ..
 $Release = (git rev-parse HEAD).Trim()
 $Short = $Release.Substring(0, 7)
 New-Item -ItemType Directory -Force build-artifacts | Out-Null
-git archive --format=tar.gz `
+git -c core.autocrlf=false archive --format=tar.gz `
   --output="build-artifacts/server-$Short.tar.gz" HEAD:server
 Get-FileHash "build-artifacts/server-$Short.tar.gz" -Algorithm SHA256
 ```
