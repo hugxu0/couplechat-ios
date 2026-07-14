@@ -45,6 +45,7 @@ final class AIMemoryRepositoryTests: XCTestCase {
             subject: "both", status: .all, token: "token")
 
         XCTAssertEqual(snapshot.items.first?.content, "一起去了海边")
+        XCTAssertEqual(snapshot.items.first?.eventTimeTitle, "时间未记录")
         XCTAssertEqual(snapshot.stats.shared, 1)
         XCTAssertEqual(snapshot.items.first?.version, 7)
         XCTAssertTrue(snapshot.hasMore)

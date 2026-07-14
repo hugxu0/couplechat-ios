@@ -118,7 +118,11 @@ struct AIMemoryDetailView: View {
             LabeledContent("可见范围", value: item.visibilityTitle)
             LabeledContent("分类", value: item.layer.title)
             LabeledContent("状态", value: item.statusTitle)
-            LabeledContent("最近更新", value: sourceDate(item.updatedAt))
+            if item.layer == .event {
+                LabeledContent("经历时间", value: item.eventTimeTitle)
+            } else {
+                LabeledContent("最近更新", value: sourceDate(item.updatedAt))
+            }
         }
     }
 

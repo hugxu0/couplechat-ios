@@ -131,6 +131,11 @@ struct AIMemoryRow: View {
                     .font(DS.Typo.body)
                     .foregroundStyle(DS.Palette.textPrimary)
                     .lineLimit(3)
+                if item.layer == .event {
+                    Label(item.eventTimeTitle, systemImage: "clock")
+                        .font(DS.Typo.micro.monospacedDigit())
+                        .foregroundStyle(DS.Palette.textSecondary)
+                }
                 HStack(spacing: 7) {
                     Label(item.subjectTitle, systemImage: item.logicalSubject == "both" ? "person.2.fill" : "person.fill")
                     Text(item.visibilityTitle)

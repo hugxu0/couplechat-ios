@@ -121,6 +121,18 @@ struct AIMemoryItem: Codable, Identifiable, Equatable {
         default: return status
         }
     }
+
+    var eventTimeTitle: String {
+        guard let occurredAt else { return "时间未记录" }
+        let start = memoryDateTime(occurredAt)
+        guard let occurredEndAt, occurredEndAt > occurredAt else { return start }
+        return "\(start) 至 \(memoryDateTime(occurredEndAt))"
+    }
+
+    private func memoryDateTime(_ milliseconds: Int) -> String {
+        Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+            .formatted(date: .abbreviated, time: .shortened)
+    }
 }
 
 struct AIMemorySource: Codable, Identifiable, Equatable {
