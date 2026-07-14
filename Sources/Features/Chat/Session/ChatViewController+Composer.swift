@@ -144,7 +144,10 @@ extension ChatViewController {
             withDuration: duration,
             delay: 0,
             options: [curve, .beginFromCurrentState, .allowUserInteraction],
-            animations: updates)
+            animations: updates,
+            completion: { [weak self] _ in
+                self?.timelineController.settleFollowingLatestIfNeeded()
+            })
     }
 
     func setReplyTarget(_ message: ChatMessage) {

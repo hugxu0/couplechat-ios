@@ -373,6 +373,8 @@ final class ChatViewController: UIViewController {
         view.addSubview(bottomRefreshIndicator)
         jumpToBottomButton.backgroundColor = .clear
         jumpToBottomButton.translatesAutoresizingMaskIntoConstraints = false
+        jumpToBottomButton.titleLabel?.numberOfLines = 1
+        jumpToBottomButton.titleLabel?.lineBreakMode = .byClipping
         jumpToBottomWidthConstraint = jumpToBottomBackground.widthAnchor.constraint(equalToConstant: 42)
         jumpToBottomButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }

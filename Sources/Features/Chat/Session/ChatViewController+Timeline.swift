@@ -99,25 +99,26 @@ extension ChatViewController {
         var configuration = UIButton.Configuration.plain()
         configuration.image = UIImage(systemName: "chevron.down")
         configuration.imagePlacement = .trailing
-        configuration.imagePadding = showsNewMessageStatus ? 7 : 0
+        configuration.imagePadding = showsNewMessageStatus ? 6 : 0
+        configuration.titleLineBreakMode = .byClipping
         configuration.baseForegroundColor = theme.accent.uiColor
         configuration.contentInsets = NSDirectionalEdgeInsets(
             top: 0,
-            leading: showsNewMessageStatus ? 14 : 0,
+            leading: showsNewMessageStatus ? 13 : 0,
             bottom: 0,
-            trailing: showsNewMessageStatus ? 13 : 0)
+            trailing: showsNewMessageStatus ? 12 : 0)
         var targetWidth: CGFloat = 42
         if showsNewMessageStatus {
             let titleFont = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
-                for: .systemFont(ofSize: 14, weight: .semibold))
-            var title = AttributedString("下方有新消息")
+                for: .systemFont(ofSize: 14, weight: .semibold),
+                maximumPointSize: 16)
+            var title = AttributedString("有新消息")
             title.font = titleFont
             configuration.attributedTitle = title
-            let titleWidth = ("下方有新消息" as NSString).size(withAttributes: [.font: titleFont]).width
-            targetWidth = min(max(136, ceil(titleWidth) + 46), max(136, view.bounds.width - 32))
+            targetWidth = 112
         }
         jumpToBottomButton.configuration = configuration
-        jumpToBottomButton.accessibilityLabel = showsNewMessageStatus ? "下方有新消息" : "回到最新消息"
+        jumpToBottomButton.accessibilityLabel = showsNewMessageStatus ? "有新消息" : "回到最新消息"
         jumpToBottomButton.accessibilityHint = showsNewMessageStatus ? "轻点查看最新消息" : nil
         jumpToBottomWidthConstraint.constant = targetWidth
         let changes = {

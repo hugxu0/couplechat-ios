@@ -51,6 +51,8 @@ final class ChatTimelineController: NSObject {
     var scrollState = ChatScrollState()
     private var suppressesJumpToLatest = false
     private var followLatestGeneration = 0
+    private var followLatestAnimator: UIViewPropertyAnimator?
+    private var settlingFollowLatestGeneration: Int?
     var topInset: CGFloat = 96
     var bottomInset: CGFloat = 0
     private var lastMeasuredWidth: CGFloat = 0
@@ -342,13 +344,57 @@ final class ChatTimelineController: NSObject {
     private func followLatest(animated: Bool) {
         followLatestGeneration += 1
         let generation = followLatestGeneration
+        followLatestAnimator?.stopAnimation(true)
+        followLatestAnimator = nil
+        settlingFollowLatestGeneration = nil
         suppressesJumpToLatest = true
-        scrollToBottom(animated: animated)
-        guard !animated else { return }
-        DispatchQueue.main.async { [weak self] in
+        collectionView.layoutIfNeeded()
+
+        guard animated else {
+            scrollToBottom(animated: false)
+            settleFollowingLatest(generation: generation)
+            return
+        }
+
+        let animator = UIViewPropertyAnimator(duration: 0.22, curve: .easeOut) { [weak self] in
             guard let self, self.followLatestGeneration == generation else { return }
+            self.scrollToBottom(animated: false)
+        }
+        animator.addCompletion { [weak self] _ in
+            self?.settleFollowingLatest(generation: generation)
+        }
+        followLatestAnimator = animator
+        animator.startAnimation()
+
+        // reloadData、键盘或输入栏布局都可能中断 UIKit 动画。watchdog 只负责
+        // 最终位置校正；用户主动开始拖动会递增 generation，因此不会被拉回底部。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.settleFollowingLatest(generation: generation)
+        }
+    }
+
+    func settleFollowingLatestIfNeeded() {
+        guard suppressesJumpToLatest else { return }
+        followLatestAnimator?.stopAnimation(true)
+        followLatestAnimator = nil
+        settleFollowingLatest(generation: followLatestGeneration)
+    }
+
+    private func settleFollowingLatest(generation: Int) {
+        guard suppressesJumpToLatest,
+              followLatestGeneration == generation,
+              settlingFollowLatestGeneration != generation else { return }
+        settlingFollowLatestGeneration = generation
+        followLatestAnimator = nil
+        collectionView.layoutIfNeeded()
+        scrollToBottom(animated: false)
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.followLatestGeneration == generation,
+                  self.settlingFollowLatestGeneration == generation else { return }
             self.collectionView.layoutIfNeeded()
             self.scrollToBottom(animated: false)
+            self.settlingFollowLatestGeneration = nil
             self.suppressesJumpToLatest = false
             self.delegate?.timelineDidScroll()
         }
@@ -357,6 +403,9 @@ final class ChatTimelineController: NSObject {
     func completeFollowingLatest() {
         guard suppressesJumpToLatest else { return }
         followLatestGeneration += 1
+        followLatestAnimator?.stopAnimation(true)
+        followLatestAnimator = nil
+        settlingFollowLatestGeneration = nil
         suppressesJumpToLatest = false
         delegate?.timelineDidScroll()
     }
