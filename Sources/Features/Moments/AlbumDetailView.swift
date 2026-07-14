@@ -338,9 +338,6 @@ struct AlbumDetailView: View {
             .frame(width: side, height: side)
             .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(AlbumMediaSourceAnchor(
-                id: asset.id,
-                registry: mediaSourceRegistry))
             .overlay(alignment: .topTrailing) {
                 if asset.isVideo {
                     Image(systemName: "play.fill")
@@ -358,6 +355,10 @@ struct AlbumDetailView: View {
         .frame(width: side, height: side)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .clipped()
+        .background {
+            AlbumMediaSourceAnchor(id: asset.id, registry: mediaSourceRegistry)
+                .allowsHitTesting(false)
+        }
         .contextMenu {
             Button("移出相册", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                 Task { await remove(asset) }

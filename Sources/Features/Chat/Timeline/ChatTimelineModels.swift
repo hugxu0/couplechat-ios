@@ -205,12 +205,13 @@ enum ChatTimelineMetrics {
     static func mediaBubbleWidth(
         for type: String,
         containerWidth: CGFloat,
-        transcriptExpanded: Bool = false
+        transcriptExpanded _: Bool = false
     ) -> CGFloat {
         switch type {
         case "sticker": return stickerSize.width
         case "file": return min(containerWidth * bubbleMaxWidthRatio, 250)
-        case "voice": return min(containerWidth * bubbleMaxWidthRatio, transcriptExpanded ? 276 : 218)
+        // 转写只向下展开；气泡宽度始终与未展开的语音保持一致。
+        case "voice": return min(containerWidth * bubbleMaxWidthRatio, 218)
         default: return mediaSize.width
         }
     }

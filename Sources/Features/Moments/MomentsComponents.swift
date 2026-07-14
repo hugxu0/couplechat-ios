@@ -98,15 +98,7 @@ struct MomentMosaic: View {
     }
 
     private func tile(_ asset: MomentAsset?, fallbackURL: URL? = nil, width: CGFloat) -> some View {
-        ZStack {
-            DS.Palette.innerSurface
-            media(asset, fallbackURL: fallbackURL, contentMode: .fill)
-                .scaleEffect(1.08)
-                .blur(radius: 12)
-                .opacity(0.26)
-            media(asset, fallbackURL: fallbackURL, contentMode: .fit)
-                .padding(4)
-        }
+        media(asset, fallbackURL: fallbackURL, contentMode: .fill)
         .frame(width: width)
         .frame(maxHeight: .infinity)
         .clipped()
