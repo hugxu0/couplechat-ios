@@ -350,11 +350,6 @@ struct AlbumDetailView: View {
             }
         }
         .buttonStyle(.plain)
-        // 细长原图仍以方形缩略图展示，但命中区域必须严格限制在方格内，
-        // 否则图片的原始布局尺寸会越界盖住上方“编辑文案”按钮。
-        .frame(width: side, height: side)
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .clipped()
         .background {
             AlbumMediaSourceAnchor(id: asset.id, registry: mediaSourceRegistry)
                 .allowsHitTesting(false)
