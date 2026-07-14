@@ -1157,6 +1157,15 @@ export const schemaMigrations: readonly SchemaMigration[] = [
     DROP TABLE IF EXISTS couple_invites;
     `,
   },
+  {
+    version: 25,
+    name: "album_timeline_posts",
+    sql: `
+    ALTER TABLE album_items ADD COLUMN IF NOT EXISTS post_id TEXT;
+    CREATE INDEX IF NOT EXISTS album_items_post_idx
+      ON album_items(album_id, post_id, sort_order DESC);
+    `,
+  },
 ];
 
 export async function migrate(

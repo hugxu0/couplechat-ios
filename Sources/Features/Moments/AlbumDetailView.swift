@@ -8,8 +8,11 @@ struct AlbumDetailView: View {
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model: AlbumDetailViewModel
-    @State private var selectedAsset: MomentAsset?
-    @State private var captionAsset: MomentAsset?
+    @State private var selectedMediaID: String?
+    @State private var previewItems: [MediaBrowserItem] = []
+    @State private var captionPost: AlbumTimelinePost?
+    @State private var deletingPost: AlbumTimelinePost?
+    @State private var mediaSourceRegistry = AlbumMediaSourceRegistry()
     @State private var showingSettings = false
     @State private var confirmingDelete = false
     @State private var showingMediaPicker = false
@@ -65,16 +68,15 @@ struct AlbumDetailView: View {
             }
         }
         .task { await load() }
-        .refreshable { await reloadUnavailableCache() }
         .onReceive(NotificationCenter.default.publisher(for: .persistentSyncChanged)) { note in
             guard note.persistentSyncIncludes(["album", "album_item", "media_note", "media_asset"]) else {
                 return
             }
             Task { await reloadUnavailableCache() }
         }
-        .sheet(item: $captionAsset) { asset in
-            CaptionEditorSheet(asset: asset) { caption in
-                await updateCaption(asset, caption: caption)
+        .sheet(item: $captionPost) { post in
+            PostCaptionEditorSheet(caption: post.caption) { caption in
+                await updateCaption(post, caption: caption)
             }
         }
         .sheet(isPresented: $showingSettings) {
@@ -111,9 +113,26 @@ struct AlbumDetailView: View {
         } message: {
             Text("只会删除相册整理关系，不会删除原聊天消息。")
         }
-        .fullScreenCover(item: $selectedAsset) { asset in
-            MomentAssetViewer(asset: asset) { captionAsset = asset }
+        .confirmationDialog(
+            "删除这条共同动态？",
+            isPresented: Binding(
+                get: { deletingPost != nil },
+                set: { if !$0 { deletingPost = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("从相册中删除", role: .destructive) {
+                guard let post = deletingPost else { return }
+                deletingPost = nil
+                Task { await remove(post) }
+            }
+            Button("取消", role: .cancel) { deletingPost = nil }
+        } message: {
+            Text("会移除这一条动态中的照片和视频，不会删除聊天原件。")
         }
+        .background(MediaViewerPresenter(
+            items: previewItems,
+            selectedId: $selectedMediaID,
+            sourceProvider: { mediaSourceRegistry.view(for: $0) }))
     }
 
     private var albumHeader: some View {
@@ -220,12 +239,36 @@ struct AlbumDetailView: View {
                         .font(DS.Typo.micro.monospacedDigit())
                         .foregroundStyle(DS.Palette.textTertiary)
                 }
-                if !post.caption.isEmpty {
-                    Text(post.caption)
-                        .font(DS.Typo.body)
-                        .foregroundStyle(DS.Palette.textPrimary)
-                        .lineSpacing(4)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if post.caption.isEmpty {
+                        Text("还没有写下这一刻")
+                            .font(DS.Typo.secondary)
+                            .foregroundStyle(DS.Palette.textTertiary)
+                    } else {
+                        Text(post.caption)
+                            .font(DS.Typo.body)
+                            .foregroundStyle(DS.Palette.textPrimary)
+                            .lineSpacing(4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Button { captionPost = post } label: {
+                        Image(systemName: "pencil")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DS.Palette.accent)
+                    .accessibilityLabel(post.caption.isEmpty ? "添加文案" : "编辑文案")
+                    Menu {
+                        Button("编辑文案", systemImage: "pencil") { captionPost = post }
+                        Button("删除动态", systemImage: "trash", role: .destructive) { deletingPost = post }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 32, height: 32)
+                    }
+                    .foregroundStyle(DS.Palette.textSecondary)
+                    .accessibilityLabel("动态操作")
                 }
                 postMediaGrid(post.assets, width: bodyWidth)
             }
@@ -243,25 +286,20 @@ struct AlbumDetailView: View {
         let tileWidth = max(1, (width - gap * CGFloat(count - 1)) / CGFloat(count))
         let columns = Array(repeating: GridItem(.fixed(tileWidth), spacing: gap), count: count)
         return LazyVGrid(columns: columns, spacing: 4) {
-            ForEach(assets) { asset in assetTile(asset, side: tileWidth) }
+            ForEach(assets) { asset in assetTile(asset, postAssets: assets, side: tileWidth) }
         }
         .frame(width: width, alignment: .leading)
         .clipped()
     }
 
-    private func assetTile(_ asset: MomentAsset, side: CGFloat) -> some View {
-        Button { selectedAsset = asset } label: {
+    private func assetTile(_ asset: MomentAsset, postAssets: [MomentAsset], side: CGFloat) -> some View {
+        Button {
+            previewItems = postAssets.map(\.mediaBrowserItem)
+            selectedMediaID = asset.id
+        } label: {
             ZStack {
-                if asset.isVideo {
-                    ZStack {
-                        LinearGradient(
-                            colors: [DS.Palette.purple.opacity(0.28), DS.Palette.blue.opacity(0.18)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing)
-                        Image(systemName: "play.rectangle.fill")
-                            .font(.system(size: 34, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.9))
-                    }
+                if asset.isVideo, let url = asset.resolvedOriginalURL {
+                    VideoThumbnailView(url: url)
                 } else {
                     CachedImage(url: asset.resolvedURL) {
                         ZStack {
@@ -275,6 +313,9 @@ struct AlbumDetailView: View {
             .frame(width: side, height: side)
             .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(AlbumMediaSourceAnchor(
+                id: asset.id,
+                registry: mediaSourceRegistry))
             .overlay(alignment: .topTrailing) {
                 if asset.isVideo {
                     Image(systemName: "play.fill")
@@ -288,13 +329,12 @@ struct AlbumDetailView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("编辑文案", systemImage: "pencil") { captionAsset = asset }
             Button("移出相册", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                 Task { await remove(asset) }
             }
         }
         .accessibilityLabel(asset.caption?.isEmpty == false ? asset.caption! : (asset.isVideo ? "视频" : "照片"))
-        .accessibilityHint("轻点查看，长按编辑文案")
+        .accessibilityHint("轻点全屏查看，左右滑动查看这条动态中的媒体")
     }
 
     private func load() async {
@@ -307,9 +347,9 @@ struct AlbumDetailView: View {
         await model.loadMoreIfNeeded(asset: asset, token: token)
     }
 
-    private func updateCaption(_ asset: MomentAsset, caption: String?) async -> Bool {
+    private func updateCaption(_ post: AlbumTimelinePost, caption: String?) async -> Bool {
         guard let token = store.session?.token else { return false }
-        return await model.updateCaption(asset: asset, caption: caption, token: token)
+        return await model.updateCaption(assets: post.assets, caption: caption, token: token)
     }
 
     private func updateAlbum(title: String, summary: String) async -> Bool {
@@ -320,6 +360,11 @@ struct AlbumDetailView: View {
     private func remove(_ asset: MomentAsset) async {
         guard let token = store.session?.token else { return }
         await model.remove(asset, token: token)
+    }
+
+    private func remove(_ post: AlbumTimelinePost) async {
+        guard let token = store.session?.token else { return }
+        await model.remove(assets: post.assets, token: token)
     }
 
     private func deleteAlbum() async {
@@ -334,6 +379,7 @@ struct AlbumDetailView: View {
 
     private func upload(_ items: [AlbumPickedMedia], caption: String) {
         guard !items.isEmpty, let session = store.session else { return }
+        let postId = "post_\(UUID().uuidString.lowercased())"
         uploadProgress = (0, items.count)
         Task {
             let uploader = MediaUploadService()
@@ -353,6 +399,7 @@ struct AlbumDetailView: View {
                     let added = await model.addUpload(
                         uploadId: uploaded.id,
                         takenAt: item.takenAt,
+                        postId: postId,
                         token: session.token)
                     if !caption.isEmpty {
                         for asset in added {
@@ -400,6 +447,7 @@ private struct AlbumTimelinePost: Identifiable {
 
     static func group(_ assets: [MomentAsset]) -> [AlbumTimelinePost] {
         let grouped = Dictionary(grouping: assets) { asset in
+            if let postId = asset.postId, !postId.isEmpty { return postId }
             let minute = asset.takenAt / 60_000
             let caption = asset.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return "\(minute)|\(caption)"
@@ -589,17 +637,15 @@ private struct AlbumMediaPicker: UIViewControllerRepresentable {
     }
 }
 
-private struct CaptionEditorSheet: View {
+private struct PostCaptionEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
-    let asset: MomentAsset
     let onSave: (String?) async -> Bool
     @State private var caption: String
     @State private var saving = false
 
-    init(asset: MomentAsset, onSave: @escaping (String?) async -> Bool) {
-        self.asset = asset
+    init(caption: String, onSave: @escaping (String?) async -> Bool) {
         self.onSave = onSave
-        _caption = State(initialValue: asset.caption ?? "")
+        _caption = State(initialValue: caption)
     }
 
     var body: some View {
@@ -628,70 +674,43 @@ private struct CaptionEditorSheet: View {
     }
 }
 
-private struct MomentAssetViewer: View {
-    @Environment(\.dismiss) private var dismiss
-    let asset: MomentAsset
-    let editCaption: () -> Void
+@MainActor
+private final class AlbumMediaSourceRegistry {
+    private let views = NSMapTable<NSString, UIView>(
+        keyOptions: .strongMemory,
+        valueOptions: .weakMemory)
 
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
-                MomentMediaContent(asset: asset)
-                    .accessibilityLabel(asset.caption ?? (asset.isVideo ? "视频预览" : "照片预览"))
-            }
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }.tint(.white)
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button("文案", systemImage: "pencil") {
-                        dismiss()
-                        editCaption()
-                    }
-                    .tint(.white)
-                }
-            }
-            .safeAreaInset(edge: .bottom) {
-                if let caption = asset.caption, !caption.isEmpty {
-                    Text(caption)
-                        .font(DS.Typo.body)
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .background(.black.opacity(0.72))
-                }
-            }
-        }
+    func register(_ view: UIView, id: String) {
+        views.setObject(view, forKey: id as NSString)
+    }
+
+    func remove(id: String, view: UIView) {
+        guard views.object(forKey: id as NSString) === view else { return }
+        views.removeObject(forKey: id as NSString)
+    }
+
+    func view(for id: String) -> UIView? {
+        views.object(forKey: id as NSString)
     }
 }
 
-private struct MomentMediaContent: View {
-    let asset: MomentAsset
-    @State private var player: AVPlayer?
+private struct AlbumMediaSourceAnchor: UIViewRepresentable {
+    let id: String
+    let registry: AlbumMediaSourceRegistry
 
-    var body: some View {
-        Group {
-            if asset.isVideo, let player {
-                VideoPlayer(player: player)
-            } else {
-                CachedImage(url: ServerConfig.resolveMediaURL(asset.url)) {
-                    ProgressView().tint(.white)
-                }
-                .scaledToFit()
-            }
-        }
-        .task(id: asset.id) {
-            guard asset.isVideo,
-                  let url = ServerConfig.resolveMediaURL(asset.url) else { return }
-            let newPlayer = AVPlayer(url: url)
-            player = newPlayer
-            newPlayer.play()
-        }
-        .onDisappear {
-            player?.pause()
-            player = nil
-        }
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        registry.register(view, id: id)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        registry.register(uiView, id: id)
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Void) {
+        // Registry uses weak values; recycled timeline cells disappear automatically.
     }
 }

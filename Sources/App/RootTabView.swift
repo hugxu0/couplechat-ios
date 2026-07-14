@@ -23,6 +23,8 @@ enum MainTab: String, CaseIterable {
 
 struct RootTabView: View {
     @State private var tab: MainTab = .chat
+    @StateObject private var badges = AppBadgeState.shared
+    @StateObject private var deepLinks = AppDeepLinkRouter.shared
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var timelineStore: ChatTimelineStore
     // 订阅主题变化：主题色一改，标签栏和全部子页立即重绘
@@ -43,6 +45,7 @@ struct RootTabView: View {
             TabView(selection: $tab) {
                 ChatHomeView()
                     .tabItem { Label(MainTab.chat.rawValue, systemImage: MainTab.chat.icon) }
+                    .badge(unreadChatCount)
                     .tag(MainTab.chat)
                 MomentsView()
                     .tabItem { Label(MainTab.records.rawValue, systemImage: MainTab.records.icon) }
@@ -52,6 +55,7 @@ struct RootTabView: View {
                     .tag(MainTab.pet)
                 PlansView()
                     .tabItem { Label(MainTab.reminders.rawValue, systemImage: MainTab.reminders.icon) }
+                    .badge(badges.reminderCount)
                     .tag(MainTab.reminders)
                 AccountView()
                     .tabItem { Label(MainTab.profile.rawValue, systemImage: MainTab.profile.icon) }
@@ -76,6 +80,7 @@ struct RootTabView: View {
         .onAppear {
             lastSeenEffectMessageId = coupleMessages.last?.id
             handleIncomingNote()
+            handleDeepLink(deepLinks.destination)
         }
         .onChange(of: coupleMessages.last?.id) {
             handleIncomingInteraction()
@@ -86,6 +91,20 @@ struct RootTabView: View {
         }
         .onChange(of: screenNoteId) {
             handleIncomingNote()
+        }
+        .task(id: store.session?.token) {
+            guard let token = store.session?.token else {
+                badges.reset()
+                return
+            }
+            await badges.refreshReminders(token: token)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: PersonalItemsRepository.changedNotification)) { _ in
+            guard let token = store.session?.token else { return }
+            Task { await badges.refreshReminders(token: token) }
+        }
+        .onChange(of: deepLinks.destination) { _, destination in
+            handleDeepLink(destination)
         }
     }
 
@@ -106,6 +125,39 @@ struct RootTabView: View {
 
     private var coupleMessages: [ChatMessage] {
         timelineStore.messages(for: .couple)
+    }
+
+    private func handleDeepLink(_ destination: AppDeepLink?) {
+        guard let destination else { return }
+        let notification: Notification.Name
+        switch destination {
+        case .coupleChat:
+            tab = .chat
+            notification = .openCoupleChatDeepLink
+        case .dajuChat:
+            tab = .pet
+            notification = .openDajuChatDeepLink
+        case .reminders:
+            tab = .reminders
+            notification = .openRemindersDeepLink
+        }
+        deepLinks.consume()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: notification, object: nil)
+        }
+    }
+
+    private var unreadChatCount: Int {
+        guard let username = store.session?.username else { return 0 }
+        return [ChatChannel.couple, .ai].reduce(0) { total, channel in
+            let readAt = timelineStore.readStates[channel.rawValue]?[username] ?? 0
+            return total + timelineStore.messages(for: channel).filter { message in
+                message.sender != username
+                    && message.kind != "system"
+                    && !message.pending
+                    && message.ts > readAt
+            }.count
+        }
     }
 
     private func handleIncomingNote() {

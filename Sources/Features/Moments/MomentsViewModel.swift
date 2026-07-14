@@ -143,10 +143,23 @@ final class AlbumDetailViewModel: ObservableObject {
         }
     }
 
-    func addUpload(uploadId: String, takenAt: Int, token: String) async -> [MomentAsset] {
+    func updateCaption(assets postAssets: [MomentAsset], caption: String?, token: String) async -> Bool {
+        var succeeded = true
+        for asset in postAssets {
+            if !(await updateCaption(asset: asset, caption: caption, token: token)) {
+                succeeded = false
+                break
+            }
+        }
+        if !succeeded { await load(token: token, force: true) }
+        return succeeded
+    }
+
+    func addUpload(uploadId: String, takenAt: Int, postId: String, token: String) async -> [MomentAsset] {
         do {
             let added = try await repository.addUpload(
-                albumId: album.id, uploadId: uploadId, takenAt: takenAt, token: token)
+                albumId: album.id, uploadId: uploadId, takenAt: takenAt,
+                postId: postId, token: token)
             for asset in added.reversed() where !assets.contains(where: { $0.id == asset.id }) {
                 assets.insert(asset, at: 0)
                 album.itemCount += 1
@@ -193,6 +206,10 @@ final class AlbumDetailViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func remove(assets postAssets: [MomentAsset], token: String) async {
+        for asset in postAssets { await remove(asset, token: token) }
     }
 
     func deleteAlbum(token: String) async -> Bool {

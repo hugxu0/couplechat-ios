@@ -11,6 +11,24 @@ struct MediaBrowserItem: Identifiable, Codable, Equatable {
     let sentAt: Double
     let channel: String
 
+    init(
+        id: String,
+        type: String,
+        url: String,
+        text: String = "",
+        senderName: String = "",
+        sentAt: Double,
+        channel: String
+    ) {
+        self.id = id
+        self.type = type
+        self.url = url
+        self.text = text
+        self.senderName = senderName
+        self.sentAt = sentAt
+        self.channel = channel
+    }
+
     init?(message: ChatMessage) {
         guard let url = message.url, !url.isEmpty else { return nil }
         id = message.id

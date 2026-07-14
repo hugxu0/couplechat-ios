@@ -7,7 +7,10 @@ struct BarkSettingsSheet: View {
     @State private var enabled = false
     @State private var keyInput = ""
     @State private var busy = false
+    @State private var testing = false
     @State private var errorText: String?
+    @State private var statusText: String?
+    @State private var savedKey = ""
     @State private var saveTask: Task<Void, Never>?
 
     private struct SaveSnapshot {
@@ -32,6 +35,25 @@ struct BarkSettingsSheet: View {
                     if let errorText {
                         Text(errorText).font(DS.Typo.caption).foregroundStyle(DS.Palette.red)
                     }
+                    if let statusText {
+                        Label(statusText, systemImage: "checkmark.circle.fill")
+                            .font(DS.Typo.caption)
+                            .foregroundStyle(DS.Palette.green)
+                    }
+                }
+                Section {
+                    Button {
+                        testConnection()
+                    } label: {
+                        HStack {
+                            Label("发送测试通知", systemImage: "paperplane.fill")
+                            Spacer()
+                            if testing { ProgressView().controlSize(.small) }
+                        }
+                    }
+                    .disabled(!enabled || testing || busy || savedKey.isEmpty || savedKey != trimmedKey)
+                } footer: {
+                    Text(savedKey == trimmedKey ? "测试通知只发送到这台设备。" : "先保存当前 Key，再发送测试通知。")
                 }
             }
             .disabled(busy)
@@ -76,6 +98,7 @@ struct BarkSettingsSheet: View {
         }
         busy = true
         errorText = nil
+        statusText = nil
         saveTask = Task { @MainActor in
             let ok = await store.shared.saveBarkKey(
                 snapshot.enabled ? snapshot.key : nil,
@@ -114,8 +137,9 @@ struct BarkSettingsSheet: View {
             removeLegacySecrets(for: snapshot.username, defaults: defaults)
             busy = false
             saveTask = nil
+            savedKey = snapshot.enabled ? snapshot.key : ""
+            statusText = snapshot.enabled ? "已保存，可以发送测试通知" : "已关闭这台设备的通知"
             Haptics.medium()
-            dismiss()
         }
     }
 
@@ -124,14 +148,17 @@ struct BarkSettingsSheet: View {
         let defaults = UserDefaults.standard
         if let saved = Keychain.loadBarkKey(for: username) {
             keyInput = saved
+            savedKey = saved
             removeLegacySecrets(for: username, defaults: defaults)
         } else if let legacy = legacySecret(for: username, defaults: defaults),
                   !legacy.isEmpty,
                   Keychain.saveBarkKey(legacy, for: username) {
             keyInput = legacy
+            savedKey = legacy
             removeLegacySecrets(for: username, defaults: defaults)
         } else {
             keyInput = ""
+            savedKey = ""
         }
         let accountEnabledKey = enabledStorageKey(username)
         if defaults.object(forKey: accountEnabledKey) != nil {
@@ -142,6 +169,27 @@ struct BarkSettingsSheet: View {
             defaults.removeObject(forKey: "bark.enabled")
         } else {
             enabled = false
+        }
+    }
+
+    private var trimmedKey: String {
+        keyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func testConnection() {
+        guard !testing, let token = store.auth.session?.token else { return }
+        testing = true
+        errorText = nil
+        statusText = nil
+        Task { @MainActor in
+            let ok = await store.shared.testBark(token: token)
+            testing = false
+            if ok {
+                statusText = "测试通知已发送"
+                Haptics.medium()
+            } else {
+                errorText = "测试发送失败，请检查 Bark Key"
+            }
         }
     }
 

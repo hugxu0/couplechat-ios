@@ -10,6 +10,7 @@ const PORT = 5544;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "couplechat-pg-"));
 
 async function main() {
+  let failureCount = 0;
   const pg = new EmbeddedPostgres({
     databaseDir: dataDir,
     user: "couplechat",
@@ -71,7 +72,7 @@ async function main() {
     console.log("[4/5] 服务层冒烟…");
     const assertOk = (label: string, cond: boolean) => {
       console.log(`  ${cond ? "✓" : "✗"} ${label}`);
-      if (!cond) process.exitCode = 1;
+      if (!cond) failureCount += 1;
     };
 
     const migrations = await db.all<{ version: number; name: string }>(
@@ -102,6 +103,7 @@ async function main() {
       [22, "shared_pet"],
       [23, "pet_care_state"],
       [24, "remove_public_registration_invites"],
+      [25, "album_timeline_posts"],
     ] as const;
     assertOk(
       "数据库结构版本完整",
@@ -238,7 +240,11 @@ async function main() {
     }
     assertOk("同一 upload 不能绑定两条消息", duplicateAttachmentRejected);
     const recalledMedia = await recallMessage(user, media.id);
-    const recalledUpload = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", [uploadId]);
+    let recalledUpload = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", [uploadId]);
+    for (let attempt = 0; attempt < 50 && (recalledUpload || fs.existsSync(mediaPath)); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      recalledUpload = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", [uploadId]);
+    }
     assertOk(
       "撤回媒体消息同时删除附件",
       recalledMedia?.id === media.id && !recalledUpload && !fs.existsSync(mediaPath),
@@ -275,9 +281,19 @@ async function main() {
         albumBindings.length === 2 && albumBindings.every((row) => row.message_id === album.id),
     );
     await recallMessage(user, album.id);
-    const remainingAlbumUploads = await db.all<{ id: string }>(
+    let remainingAlbumUploads = await db.all<{ id: string }>(
       "SELECT id FROM uploads WHERE id IN (?, ?)", [albumPhotoId, albumMotionId],
     );
+    for (
+      let attempt = 0;
+      attempt < 50 && (remainingAlbumUploads.length > 0 || fs.existsSync(albumPhotoPath) || fs.existsSync(albumMotionPath));
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      remainingAlbumUploads = await db.all<{ id: string }>(
+        "SELECT id FROM uploads WHERE id IN (?, ?)", [albumPhotoId, albumMotionId],
+      );
+    }
     assertOk(
       "撤回相册消息清理整组附件",
       remainingAlbumUploads.length === 0 && !fs.existsSync(albumPhotoPath) && !fs.existsSync(albumMotionPath),
@@ -546,7 +562,8 @@ async function main() {
     await pg.stop();
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
-  console.log(process.exitCode ? "冒烟测试有失败项 ✗" : "冒烟测试全部通过 ✓");
+  console.log(failureCount > 0 ? `冒烟测试有 ${failureCount} 个失败项 ✗` : "冒烟测试全部通过 ✓");
+  if (failureCount > 0) throw new Error(`冒烟测试有 ${failureCount} 个失败项`);
 }
 
 main().catch((error) => {

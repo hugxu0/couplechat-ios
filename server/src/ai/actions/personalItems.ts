@@ -6,11 +6,11 @@ import { all, get, run, type AccountRow, type MessageRow } from "../../db";
 import {
   createPersonalItem,
   deletePersonalItem,
+  getPersonalItem,
   updatePersonalItem,
   type PersonalItem,
   type PersonalItemScope,
 } from "../../personalItems/itemService";
-import { accounts } from "../accounts";
 import { activeIdentity } from "../../auth/identity";
 import type { AuthUser } from "../../types";
 
@@ -19,13 +19,17 @@ export interface AiAction {
     | "add_reminder"
     | "add_memo"
     | "complete_reminder"
+    | "edit_reminder"
     | "delete_reminder"
-    | "edit_memo";
+    | "edit_memo"
+    | "delete_memo";
   title?: string;
   text?: string;
   time?: string;
   id?: string;
   newText?: string;
+  newTitle?: string;
+  newTime?: string;
   ownerName?: string;
   scope?: "personal" | "shared";
 }
@@ -55,34 +59,24 @@ function parseReminderTime(time: string | undefined): number | null {
 
   const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T]+(\d{1,2}):(\d{1,2})/);
   if (m) {
-    const dt = new Date(
-      Number(m[1]),
-      Number(m[2]) - 1,
-      Number(m[3]),
-      Number(m[4]),
-      Number(m[5]),
+    const timestamp = Date.parse(
+      `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}T${m[4].padStart(2, "0")}:${m[5].padStart(2, "0")}:00+08:00`,
     );
-    // Date 使用服务器本地时区构造，因此显式换算为北京时间时间戳。
-    return dt.getTime() - 8 * 60 * 60 * 1000;
+    return Number.isFinite(timestamp) ? timestamp : null;
   }
 
   const hm = s.match(/^(\d{1,2}):(\d{1,2})$/);
   if (hm) {
-    const now = new Date();
-    const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(hm[1]), Number(hm[2]));
-    return dt.getTime() - 8 * 60 * 60 * 1000;
+    const now = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    const date = now.toISOString().slice(0, 10);
+    const timestamp = Date.parse(`${date}T${hm[1].padStart(2, "0")}:${hm[2].padStart(2, "0")}:00+08:00`);
+    return Number.isFinite(timestamp) ? timestamp : null;
   }
 
   const num = Number(s);
   if (Number.isFinite(num) && num > 0) return num;
 
   return null;
-}
-
-function resolveOwnerName(name: string | undefined, fallbackUsername: string): string {
-  if (!name) return fallbackUsername;
-  const match = accounts().find((a) => a.name === name || a.username === name);
-  return match ? match.username : fallbackUsername;
 }
 
 function resolveScope(scope: "personal" | "shared" | undefined): PersonalItemScope {
@@ -158,6 +152,10 @@ export function describeAction(action: AiAction): string | null {
       const target = action.id ? `#${action.id}` : String(action.text ?? "").slice(0, 60);
       return `完成提醒：${target}`;
     }
+    case "edit_reminder": {
+      const target = action.id ? `#${action.id}` : String(action.text ?? "").slice(0, 60);
+      return `修改提醒：${target}`;
+    }
     case "delete_reminder": {
       const target = action.id ? `#${action.id}` : String(action.text ?? "").slice(0, 60);
       return `删除提醒：${target}`;
@@ -165,6 +163,10 @@ export function describeAction(action: AiAction): string | null {
     case "edit_memo": {
       const target = action.id ? `#${action.id}` : String(action.text ?? "").slice(0, 60);
       return `修改备忘：${target}`;
+    }
+    case "delete_memo": {
+      const target = action.id ? `#${action.id}` : String(action.text ?? "").slice(0, 60);
+      return `删除备忘：${target}`;
     }
     default:
       return null;
@@ -176,14 +178,17 @@ export async function applyAction(
   action: AiAction,
   context: { requesterUsername: string },
 ): Promise<{ ok: boolean; label: string }> {
-  const fakeUser = { username: resolveOwnerName(action.ownerName, context.requesterUsername), name: action.ownerName ?? context.requesterUsername };
   const scope = resolveScope(action.scope);
+  // 工具动作始终以当前登录账号授权。模型输出的 ownerName 只能用于确认卡文案，
+  // 不能伪装成另一位账号去读写对方的私人事项。
+  const fakeUser = { username: context.requesterUsername, name: context.requesterUsername };
 
   switch (action.type) {
     case "add_reminder": {
       const title = String(action.title ?? "").trim();
       if (!title) return { ok: false, label: "（无效提醒）" };
       const dueAt = parseReminderTime(action.time);
+      if (action.time && dueAt === null) return { ok: false, label: "（提醒时间格式无效）" };
       const created = await createPersonalItem(fakeUser, {
         kind: "reminder",
         scope,
@@ -221,6 +226,28 @@ export async function applyAction(
       }
       return { ok: false, label: "（没找到这条提醒）" };
     }
+    case "edit_reminder": {
+      const patch: { title?: string; dueAt?: number | null } = {};
+      const newTitle = String(action.newTitle ?? "").trim();
+      if (newTitle) patch.title = newTitle;
+      if (action.newTime !== undefined) {
+        const rawTime = String(action.newTime).trim();
+        const parsedTime = rawTime ? parseReminderTime(rawTime) : null;
+        if (rawTime && parsedTime === null) return { ok: false, label: "（新的提醒时间格式无效）" };
+        patch.dueAt = parsedTime;
+      }
+      if (!Object.keys(patch).length) return { ok: false, label: "（没有提供新的提醒内容）" };
+      let target = action.id ? await getPersonalItem(fakeUser, action.id) : undefined;
+      if (!target) {
+        const keyword = String(action.text ?? "").trim();
+        if (keyword) target = await findReminderByText(fakeUser.username, keyword);
+      }
+      if (!target || target.kind !== "reminder") return { ok: false, label: "（没找到这条提醒）" };
+      const updated = await updatePersonalItem(fakeUser, target.id, patch);
+      return updated
+        ? { ok: true, label: describeAction(action) ?? "提醒已修改" }
+        : { ok: false, label: "（提醒修改失败）" };
+    }
     case "delete_reminder": {
       if (action.id) {
         const ok = await deletePersonalItem(fakeUser, action.id);
@@ -237,27 +264,34 @@ export async function applyAction(
       return { ok: false, label: "（没找到这条提醒）" };
     }
     case "edit_memo": {
-      const newText = String(action.newText ?? "").trim();
-      if (!newText) return { ok: false, label: "（修改后的备忘内容为空）" };
-      if (action.id) {
-        const r = await updatePersonalItem(fakeUser, action.id, {
-          title: newText.slice(0, 120),
-          bodyMarkdown: newText,
-        });
-        if (r) return { ok: true, label: describeAction(action) ?? "已修改" };
+      const newText = action.newText === undefined ? undefined : String(action.newText).trim();
+      const newTitle = String(action.newTitle ?? "").trim();
+      if (newText === undefined && !newTitle) return { ok: false, label: "（没有提供新的备忘内容）" };
+      let target = action.id ? await getPersonalItem(fakeUser, action.id) : undefined;
+      if (!target) {
+        const keyword = String(action.text ?? "").trim();
+        if (keyword) target = await findMemoByText(fakeUser.username, keyword);
       }
-      const keyword = String(action.text ?? "").trim();
-      if (keyword) {
-        const target = await findMemoByText(fakeUser.username, keyword);
-        if (target) {
-          await updatePersonalItem(fakeUser, target.id, {
-            title: newText.slice(0, 120),
-            bodyMarkdown: newText,
-          });
-          return { ok: true, label: describeAction(action) ?? "已修改" };
-        }
+      if (!target || target.kind !== "memo") return { ok: false, label: "（没找到这条备忘）" };
+      const updated = await updatePersonalItem(fakeUser, target.id, {
+        title: newTitle || target.title,
+        bodyMarkdown: newText ?? target.bodyMarkdown,
+      });
+      return updated
+        ? { ok: true, label: describeAction(action) ?? "已修改" }
+        : { ok: false, label: "（备忘修改失败）" };
+    }
+    case "delete_memo": {
+      let target = action.id ? await getPersonalItem(fakeUser, action.id) : undefined;
+      if (!target) {
+        const keyword = String(action.text ?? "").trim();
+        if (keyword) target = await findMemoByText(fakeUser.username, keyword);
       }
-      return { ok: false, label: "（没找到这条备忘）" };
+      if (!target || target.kind !== "memo") return { ok: false, label: "（没找到这条备忘）" };
+      const deleted = await deletePersonalItem(fakeUser, target.id);
+      return deleted
+        ? { ok: true, label: describeAction(action) ?? "备忘已删除" }
+        : { ok: false, label: "（备忘删除失败）" };
     }
     default:
       return { ok: false, label: "（不认识的 action）" };
@@ -359,7 +393,7 @@ export async function confirmAction(
     }
     try {
       const scope = resolveScope(item.action.scope);
-      const owner = resolveOwnerName(item.action.ownerName, meta.confirm.requesterUsername);
+      const owner = meta.confirm.requesterUsername;
       const ownerAccount = scope === "personal"
         ? await get<{ id: string }>("SELECT id FROM accounts WHERE username = ? AND status = 'active'", [owner])
         : null;

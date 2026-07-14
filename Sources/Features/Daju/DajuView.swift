@@ -40,6 +40,9 @@ struct DajuView: View {
                 guard note.persistentSyncIncludes(["pet"]) else { return }
                 Task { await refreshIfPossible() }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .openDajuChatDeepLink)) { _ in
+                showAIChat = true
+            }
         }
     }
 

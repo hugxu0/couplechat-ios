@@ -91,10 +91,12 @@ export async function recordAgentTool<T>(
     get_memory_evidence: 2,
     web_search: 2,
     inspect_recent_image: 1,
+    list_personal_items: 2,
+    draft_personal_item_action: 6,
   };
   const totalCalls = Object.values(run.toolCounts).reduce((sum, count) => sum + count, 0);
   const limit = perToolLimits[name] ?? 2;
-  if (nextCount > limit || totalCalls > 8) {
+  if (nextCount > limit || totalCalls > 12) {
     throw new Error("本轮检索预算已用完。请停止调用工具，根据已有可靠证据回答；证据不足就明确说无法确认。 ");
   }
   const startedAt = Date.now();

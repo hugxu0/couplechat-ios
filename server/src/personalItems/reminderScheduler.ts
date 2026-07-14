@@ -1,5 +1,5 @@
 import { all, get, run, type PersonalItemRow } from "../db";
-import { sendBarkPush } from "../push/bark";
+import { sendBarkPush, type BarkPushOptions } from "../push/bark";
 import { listBarkRecipients, listCoupleBarkRecipients, type BarkRecipient } from "../push/recipients";
 import { nanoid } from "nanoid";
 
@@ -27,7 +27,7 @@ export interface ReminderSchedulerDependencies {
     now: number,
     error?: string,
   ): Promise<void>;
-  push(key: string, title: string, body: string): Promise<void>;
+  push(key: string, title: string, body: string, options?: BarkPushOptions): Promise<void>;
   now(): number;
   intervalMs: number;
 }
@@ -149,7 +149,12 @@ export function createReminderScheduler(
           })))).filter((item): item is { recipient: BarkRecipient; token: string } => Boolean(item.token));
           if (claims.length === 0) return;
           try {
-            await dependencies.push(endpoint.barkKey, "大橘提醒你", body);
+            await dependencies.push(endpoint.barkKey, "大橘提醒你", body, {
+              group: reminder.scope === "shared" ? "CoupleChat · 共享提醒" : "CoupleChat · 私人提醒",
+              badge: 1,
+              url: "couplechat://plans/reminders",
+              level: "timeSensitive",
+            });
             await Promise.all(claims.map(({ recipient, token }) => dependencies.finishDelivery(
               reminder.id, reminder.due_at!, recipient.username, recipient.endpointKey,
               token, true, dependencies.now(),

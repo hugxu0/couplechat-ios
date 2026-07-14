@@ -51,6 +51,8 @@ COUPLECHAT_ACCOUNTS=xu|小旭|<password>|🐶;si|小偲|<password>|🐰
 
 Web 容器不能自动跑 migration。发布必须按“备份 → 构建候选 → 单独 migrator → 启动 → 验证”执行。
 
+当前代码要求 schema v25。v25 只给 `album_items` 追加可空 `post_id` 与索引，不改写旧相册项目；发布时仍必须先备份，再停旧 Web、运行一次独立 migrator，确认迁移记录写入后才启动新镜像。
+
 ## 日常发布
 
 ### 1. 本地验证并生成发布包
@@ -124,7 +126,7 @@ cd server
 npm run healthcheck -- https://hoo66.top
 ```
 
-还应在真机验证登录、Socket 重连、文字收发、图片/视频/表情上传、Range 媒体播放、共同相册、计划、大橘和 AI 私聊。
+还应在真机验证登录、Socket 重连、文字收发、图片/视频/表情上传、Range 媒体播放、多相册动态与全屏预览、计划、大橘和 AI 私聊。Bark 设置页可直接发送测试通知；通知入口应分别落到公聊、大橘私聊和提醒页面，URL scheme 为 `couplechat://`。
 
 ## 日本入口维护
 

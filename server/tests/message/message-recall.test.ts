@@ -67,8 +67,17 @@ test("recall hard-deletes the message, derivatives and orphan memory", async () 
     assert.equal(await get("SELECT id FROM messages WHERE id = ?", ["message-to-recall"]), undefined);
     assert.equal(await get("SELECT id FROM uploads WHERE id = ?", ["upload-1"]), undefined);
     assert.ok(await get(
-      "SELECT id FROM file_cleanup_queue WHERE id = 'cleanup_upload-1' AND completed_at IS NOT NULL",
+      "SELECT id FROM file_cleanup_queue WHERE id = 'cleanup_upload-1'",
     ));
+    // 文件 I/O 不阻塞撤回响应；队列记录必须先持久化，后台随后完成物理删除。
+    let cleanupCompleted = false;
+    for (let attempt = 0; attempt < 20 && !cleanupCompleted; attempt += 1) {
+      cleanupCompleted = Boolean(await get(
+        "SELECT id FROM file_cleanup_queue WHERE id = 'cleanup_upload-1' AND completed_at IS NOT NULL",
+      ));
+      if (!cleanupCompleted) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(cleanupCompleted, true);
     assert.equal(await get("SELECT id FROM message_attachments WHERE id = ?", ["attachment-1"]), undefined);
     assert.equal(await get("SELECT id FROM ai_memory WHERE id = ?", [memory!.id]), undefined);
     assert.ok(await get(

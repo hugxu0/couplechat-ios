@@ -189,11 +189,16 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
         method: "POST",
         url: `/api/v2/albums/${albumId}/items/from-upload`,
         headers: auth(aliceToken),
-        payload: { uploadId: "up_album_direct_0004", takenAt: Date.parse("2025-07-12T08:00:00Z") },
+        payload: {
+          uploadId: "up_album_direct_0004",
+          takenAt: Date.parse("2025-07-12T08:00:00Z"),
+          postId: "post-summer-trip",
+        },
       });
       assert.equal(directAdd.statusCode, 201, directAdd.body);
       assert.equal(directAdd.json().added[0].asset.kind, "video");
       assert.equal(directAdd.json().added[0].asset.sourceMessageId, undefined);
+      assert.equal(directAdd.json().added[0].postId, "post-summer-trip");
       const albumList = await app.inject({ method: "GET", url: "/api/v2/albums", headers: auth(bobToken) });
       assert.equal(albumList.json().albums[0].coverURL, `http://example.test/media/up_album_photo_0003`);
       const note = await app.inject({
@@ -217,6 +222,7 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
       });
       assert.equal(emptiedAlbum.statusCode, 200, emptiedAlbum.body);
       assert.equal(emptiedAlbum.json().items.length, 1, "direct uploads survive recalling an unrelated chat message");
+      assert.equal(emptiedAlbum.json().items[0].postId, "post-summer-trip");
       assert.equal(emptiedAlbum.json().album.coverURL, undefined);
       const deletedAlbum = await app.inject({
         method: "DELETE", url: `/api/v2/albums/${albumId}`, headers: auth(aliceToken),

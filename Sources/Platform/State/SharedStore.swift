@@ -185,6 +185,13 @@ final class SharedStore: ObservableObject {
         return true
     }
 
+    func testBark(token: String) async -> Bool {
+        guard let req = authorizedRequest(
+            "api/v2/me/devices/current/push/bark/test", method: "POST", token: token),
+              let (_, resp) = try? await httpClient.data(for: req) else { return false }
+        return (resp as? HTTPURLResponse)?.statusCode == 200
+    }
+
     // MARK: - 私有辅助
 
     /// `try?` 不能捕获 Foundation 的 Objective-C NSException。先验证顶层 JSON

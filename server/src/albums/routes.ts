@@ -110,6 +110,7 @@ export async function registerAlbumRoutes(app: FastifyInstance) {
     const body = z.object({
       uploadId: z.string().min(1).max(128),
       takenAt: z.number().int().positive().optional(),
+      postId: z.string().trim().min(1).max(128).optional(),
     }).safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_request" });
     const result = await addUploadedMedia(
@@ -117,6 +118,7 @@ export async function registerAlbumRoutes(app: FastifyInstance) {
       params.data.albumId,
       body.data.uploadId,
       body.data.takenAt ?? Date.now(),
+      body.data.postId,
     );
     if (!result) return reply.code(404).send({ error: "not_found" });
     if (result.uploadMissing) return reply.code(404).send({ error: "upload_not_found" });

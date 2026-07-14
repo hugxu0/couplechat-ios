@@ -27,7 +27,7 @@ struct MomentsView: View {
             .toolbar(.hidden, for: .navigationBar)
             .task { await reload() }
             .task(id: "diary-history.\(store.session?.username ?? "none")") {
-                await loadDiaryHistoryUntilAvailable()
+                await keepDiaryHistoryInSync()
             }
             .onReceive(NotificationCenter.default.publisher(for: MomentsViewModel.albumsChanged)) { _ in
                 Task { await reload(force: true) }
@@ -72,7 +72,20 @@ struct MomentsView: View {
 
     private var albumSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.gap) {
-            AppSectionHeader(title: "共同相册", subtitle: "长按聊天媒体即可收藏进来")
+            HStack(alignment: .center, spacing: DS.Spacing.gap) {
+                AppSectionHeader(title: "共同相册", subtitle: "不同相簿，收好不同阶段的我们")
+                Spacer(minLength: 8)
+                Button {
+                    showingCreateAlbum = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                        .background(DS.Palette.accent.opacity(0.12), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("新建共同相册")
+            }
             if model.loading && model.albums.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             } else if model.albums.isEmpty {
@@ -87,10 +100,8 @@ struct MomentsView: View {
                 }
                 .padding(.vertical, DS.Spacing.gap)
             } else {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 210, maximum: 340), spacing: DS.Spacing.gap)],
-                    spacing: DS.Spacing.gap
-                ) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: DS.Spacing.gap) {
                     ForEach(model.albums) { album in
                         NavigationLink {
                             AlbumDetailView(album: album).appSubpageChrome()
@@ -98,7 +109,22 @@ struct MomentsView: View {
                             MomentAlbumCard(album: album)
                         }
                         .buttonStyle(PressableStyle())
+                        .frame(width: 260)
                         .task { await loadMore(album) }
+                    }
+                    Button {
+                        showingCreateAlbum = true
+                    } label: {
+                        VStack(spacing: 10) {
+                            Image(systemName: "plus.circle.fill").font(.system(size: 34))
+                            Text("再建一本").font(DS.Typo.button)
+                        }
+                        .foregroundStyle(DS.Palette.accent)
+                        .frame(width: 150, height: 220)
+                        .background(DS.Palette.innerSurface, in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
+                    }
+                    .buttonStyle(PressableStyle())
+                    .accessibilityLabel("新建共同相册")
                     }
                 }
                 if model.loadingMore {
@@ -203,6 +229,16 @@ struct MomentsView: View {
                         .foregroundStyle(DS.Palette.textTertiary)
                 }
 
+                if daily?.backfilling == true {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("大橘仍在整理最近 30 天，日记会陆续补齐")
+                            .font(DS.Typo.caption)
+                            .foregroundStyle(DS.Palette.textSecondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+
                 if diaryEntries.isEmpty {
                     ContentUnavailableView(
                         "还没有日记",
@@ -211,13 +247,13 @@ struct MomentsView: View {
                         .frame(maxWidth: .infinity, minHeight: 280)
                 } else {
                     ScrollView(.vertical) {
-                        LazyVStack(spacing: DS.Spacing.compact) {
+                        VStack(spacing: DS.Spacing.compact) {
                             ForEach(diaryEntries, id: \.date) { diary in
                                 VStack(alignment: .leading, spacing: 9) {
                                     Text(diary.date)
                                         .font(DS.Typo.caption.weight(.semibold))
                                         .foregroundStyle(DS.Palette.orange)
-                                    Text(diary.text)
+                                    diaryText(diary.text)
                                         .font(DS.Typo.body)
                                         .foregroundStyle(DS.Palette.textPrimary)
                                         .lineSpacing(5)
@@ -235,7 +271,7 @@ struct MomentsView: View {
                             }
                         }
                     }
-                    .frame(minHeight: 320, maxHeight: 460)
+                    .frame(minHeight: 390, maxHeight: 560)
                     .scrollIndicators(.hidden)
                 }
             }
@@ -269,14 +305,20 @@ struct MomentsView: View {
         if let fetchedDaily { daily = fetchedDaily }
     }
 
-    private func loadDiaryHistoryUntilAvailable() async {
+    private func keepDiaryHistoryInSync() async {
         guard let token = store.session?.token else { return }
-        for _ in 0..<4 {
-            if !(daily?.diaries.isEmpty ?? true) { return }
-            try? await Task.sleep(nanoseconds: 15_000_000_000)
+        while !Task.isCancelled && (daily == nil || daily?.backfilling == true) {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard !Task.isCancelled else { return }
             if let fetched = await store.dailyContent.fetch(token: token) { daily = fetched }
         }
+    }
+
+    private func diaryText(_ markdown: String) -> Text {
+        if let attributed = try? AttributedString(markdown: markdown) {
+            return Text(attributed)
+        }
+        return Text(markdown)
     }
 
     private func loadMore(_ album: MomentAlbum) async {

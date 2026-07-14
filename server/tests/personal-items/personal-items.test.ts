@@ -182,8 +182,8 @@ test("reminder delivery retries only the failed endpoint of one account", async 
 
 async function verifyAIConfirmationFlow() {
     const { get, run } = await import("../../src/db");
-    const { confirmAction } = await import("../../src/ai/actions/personalItems");
-    const { listPersonalItems } = await import("../../src/personalItems/itemService");
+    const { applyAction, confirmAction } = await import("../../src/ai/actions/personalItems");
+    const { createPersonalItem, getPersonalItem, listPersonalItems } = await import("../../src/personalItems/itemService");
     const confirm = {
       status: "pending",
       items: [{
@@ -237,6 +237,41 @@ async function verifyAIConfirmationFlow() {
         && entry.event === "message:update"
         && payload.meta?.confirm?.status === "confirmed";
     }));
+
+    const reminder = await createPersonalItem(
+      { username: "xu", name: "小旭" },
+      { kind: "reminder", scope: "personal", title: "旧提醒", dueAt: null },
+    );
+    assert.ok(reminder);
+    assert.equal((await applyAction({
+      type: "edit_reminder",
+      id: reminder!.id,
+      newTitle: "新的提醒",
+      newTime: "2026-07-15 08:30",
+      scope: "personal",
+    }, { requesterUsername: "xu" })).ok, true);
+    const editedReminder = await getPersonalItem({ username: "xu", name: "小旭" }, reminder!.id);
+    assert.equal(editedReminder?.title, "新的提醒");
+    assert.equal(editedReminder?.dueAt, Date.parse("2026-07-15T08:30:00+08:00"));
+
+    const removableMemo = await createPersonalItem(
+      { username: "xu", name: "小旭" },
+      { kind: "memo", scope: "personal", title: "稍后删除" },
+    );
+    assert.ok(removableMemo);
+    assert.equal((await applyAction({
+      type: "delete_memo", id: removableMemo!.id, scope: "personal",
+    }, { requesterUsername: "xu" })).ok, true);
+    assert.equal(await getPersonalItem({ username: "xu", name: "小旭" }, removableMemo!.id), null);
+
+    const partnersPrivateMemo = await createPersonalItem(
+      { username: "si", name: "小偲" },
+      { kind: "memo", scope: "personal", title: "对方私密备忘" },
+    );
+    assert.ok(partnersPrivateMemo);
+    assert.equal((await applyAction({
+      type: "delete_memo", id: partnersPrivateMemo!.id, ownerName: "小偲", scope: "personal",
+    }, { requesterUsername: "xu" })).ok, false);
 
     const rejectedConfirm = {
       ...confirm,

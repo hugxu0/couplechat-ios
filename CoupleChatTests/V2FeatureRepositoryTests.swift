@@ -46,7 +46,7 @@ final class V2FeatureRepositoryTests: XCTestCase {
     func testAlbumItemsDecodeItemAndAssetIdentifiers() async throws {
         let client = V2FeatureHTTPClient(#"""
         {"album":{"id":"a1","title":"海边","summary":"旅行","itemCount":1,
-        "createdAt":1,"updatedAt":2,"version":4},"items":[{"id":"item1","addedAt":5,
+        "createdAt":1,"updatedAt":2,"version":4},"items":[{"id":"item1","postId":"post-trip","addedAt":5,
         "asset":{"id":"med1","sourceMessageId":"m1","kind":"image","mimeType":"image/jpeg",
         "url":"/p.jpg","size":10,"takenAt":900,"createdAt":901,"version":2,
         "note":{"id":"n1","text":"海风很大","version":6}}}],"hasMore":false}
@@ -55,11 +55,29 @@ final class V2FeatureRepositoryTests: XCTestCase {
 
         XCTAssertEqual(result.1.values.first?.id, "med1")
         XCTAssertEqual(result.1.values.first?.albumItemId, "item1")
+        XCTAssertEqual(result.1.values.first?.postId, "post-trip")
         XCTAssertEqual(result.1.values.first?.messageId, "m1")
         XCTAssertEqual(result.1.values.first?.caption, "海风很大")
         XCTAssertEqual(result.1.values.first?.noteVersion, 6)
         let request = await client.request
         XCTAssertEqual(request?.url?.path, "/api/v2/albums/a1/items")
+    }
+
+    func testDirectUploadPreservesTimelinePostIdentifier() async throws {
+        let client = V2FeatureHTTPClient(#"""
+        {"added":[{"itemId":"item1","postId":"post-trip","asset":{"id":"med1",
+        "kind":"image","url":"/p.jpg","takenAt":900,"createdAt":901,"version":0}}]}
+        """#)
+        let added = try await MomentsRepository(httpClient: client).addUpload(
+            albumId: "a1", uploadId: "up1", takenAt: 900,
+            postId: "post-trip", token: "token")
+
+        XCTAssertEqual(added.first?.postId, "post-trip")
+        let request = await client.request
+        XCTAssertEqual(request?.url?.path, "/api/v2/albums/a1/items/from-upload")
+        let body = try XCTUnwrap(request?.httpBody)
+        let payload = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        XCTAssertEqual(payload?["postId"] as? String, "post-trip")
     }
 
     func testCalendarDecodesAliasesAndSendsSharedScope() async throws {

@@ -298,13 +298,15 @@ enum ChatTimelineMetrics {
 
     private static func measureTextWidth(_ text: String, font: UIFont, maxWidth: CGFloat) -> CGFloat {
         guard !text.isEmpty else { return 0 }
-        let rect = (text as NSString).boundingRect(
-            with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: font],
-            context: nil
-        )
-        return min(maxWidth, ceil(rect.width))
+        // UIKit 会把包含空行的多段文本 boundingRect 宽度扩到约束上限，导致
+        // 大橘和对方新发的分段消息都像一整块横向卡片。气泡宽度只应取最长
+        // 逻辑行；真正过长的行仍由 maxWidth 负责换行。
+        let widestLine = text
+            .components(separatedBy: .newlines)
+            .filter { !$0.isEmpty }
+            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        return min(maxWidth, ceil(widestLine))
     }
 }
 

@@ -109,15 +109,19 @@ struct DajuSceneView: View {
     }
 
     private var growthRow: some View {
-        HStack(spacing: 10) {
-            Label("Lv.\(pet.level)", systemImage: "sparkles")
-            ProgressView(value: Double(pet.experience % 100), total: 100)
-                .tint(DS.Palette.orange)
+        HStack(spacing: 12) {
+            Text("Lv.\(pet.level)")
+                .font(DS.Typo.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(DS.Palette.orange)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(DS.Palette.orange.opacity(isNight ? 0.18 : 0.12), in: Capsule())
+            petProgress(value: pet.experience % 100, color: DS.Palette.orange)
                 .accessibilityLabel("成长进度")
                 .accessibilityValue("百分之\(pet.experience % 100)")
             Text("经验 \(pet.experience % 100)%")
+                .font(DS.Typo.micro.weight(.semibold).monospacedDigit())
         }
-        .font(DS.Typo.caption.weight(.semibold))
         .foregroundStyle(isNight ? Color.white.opacity(0.78) : DS.Palette.textSecondary)
         .padding(.horizontal, 4)
     }
@@ -130,9 +134,9 @@ struct DajuSceneView: View {
             needRow("精力", symbol: "bolt.fill", value: pet.energy, color: DS.Palette.green)
         }
         .padding(14)
-        .background(DS.Palette.cardSurface.opacity(isNight ? 0.32 : 0.76), in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
+        .background(DS.Palette.cardSurface.opacity(isNight ? 0.32 : 0.76), in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+            RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
                 .stroke(.white.opacity(isNight ? 0.12 : 0.32), lineWidth: 0.7)
         }
     }
@@ -146,8 +150,7 @@ struct DajuSceneView: View {
                 .font(DS.Typo.caption.weight(.medium))
                 .foregroundStyle(isNight ? Color.white.opacity(0.8) : DS.Palette.textSecondary)
                 .frame(width: 38, alignment: .leading)
-            ProgressView(value: Double(value), total: 100)
-                .tint(color)
+            petProgress(value: value, color: color)
             Text("\(value)")
                 .font(DS.Typo.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(isNight ? Color.white.opacity(0.9) : DS.Palette.textPrimary)
@@ -155,6 +158,21 @@ struct DajuSceneView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title) \(value)")
+    }
+
+    private func petProgress(value: Int, color: Color) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(isNight ? Color.white.opacity(0.1) : DS.Palette.textTertiary.opacity(0.12))
+                Capsule()
+                    .fill(LinearGradient(
+                        colors: [color.opacity(0.72), color],
+                        startPoint: .leading,
+                        endPoint: .trailing))
+                    .frame(width: proxy.size.width * CGFloat(max(0, min(100, value))) / 100)
+            }
+        }
+        .frame(height: 8)
     }
 
     private var interactionBar: some View {
@@ -169,11 +187,14 @@ struct DajuSceneView: View {
 
     private func interactionButton(_ kind: PetInteractionKind, now: Date) -> some View {
         let remaining = cooldownRemaining(kind, now: now)
+        let color = interactionColor(kind)
         return Button { perform(kind) } label: {
             VStack(spacing: 6) {
                 Image(systemName: kind.systemImage)
-                    .font(.title3.weight(.semibold))
-                    .frame(height: 24)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 38, height: 38)
+                    .background(color.opacity(isNight ? 0.2 : 0.12), in: Circle())
                 Text(kind.title)
                     .font(DS.Typo.sectionLabel)
                     .lineLimit(1)
@@ -184,11 +205,11 @@ struct DajuSceneView: View {
                     .minimumScaleFactor(0.65)
             }
             .foregroundStyle(isNight ? Color.white.opacity(0.9) : DS.Palette.textPrimary)
-            .frame(maxWidth: .infinity, minHeight: 86)
-            .background(DS.Palette.cardSurface.opacity(isNight ? 0.34 : 0.8), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .frame(maxWidth: .infinity, minHeight: 94)
+            .background(DS.Palette.cardSurface.opacity(isNight ? 0.34 : 0.8), in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(.white.opacity(isNight ? 0.11 : 0.3), lineWidth: 0.7)
+                RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
+                    .stroke(remaining > 0 ? .white.opacity(isNight ? 0.09 : 0.24) : color.opacity(0.2), lineWidth: 0.8)
             }
         }
         .buttonStyle(PressableStyle())
@@ -199,28 +220,45 @@ struct DajuSceneView: View {
 
     private var chatEntrance: some View {
         Button(action: onChat) {
-            HStack(spacing: 10) {
+            HStack(spacing: 13) {
                 Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(LinearGradient(
+                        colors: [DS.Palette.orange, DS.Palette.pink],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
                     Text("和大橘聊聊").font(DS.Typo.button)
-                    Text("去它的私聊房间").font(DS.Typo.micro).opacity(0.78)
+                    Text("它会记得只属于你的悄悄话").font(DS.Typo.micro).foregroundStyle(DS.Palette.textSecondary)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
+                    .foregroundStyle(DS.Palette.textSecondary)
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity, minHeight: 58)
-            .background(
-                LinearGradient(
-                    colors: [DS.Palette.orange, DS.Palette.pink.opacity(0.88)],
-                    startPoint: .leading,
-                    endPoint: .trailing),
-                in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
+            .foregroundStyle(isNight ? Color.white.opacity(0.92) : DS.Palette.textPrimary)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 68)
+            .background(DS.Palette.cardSurface.opacity(isNight ? 0.36 : 0.84), in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
+                    .stroke(.white.opacity(isNight ? 0.11 : 0.32), lineWidth: 0.8)
+            }
         }
         .buttonStyle(PressableStyle())
         .accessibilityHint("打开和大橘的私聊")
+    }
+
+    private func interactionColor(_ kind: PetInteractionKind) -> Color {
+        switch kind {
+        case .feed: return DS.Palette.orange
+        case .bathe: return DS.Palette.blue
+        case .play: return DS.Palette.purple
+        case .stroke: return DS.Palette.pink
+        case .sleep: return Color.indigo
+        }
     }
 
     private func cooldownRemaining(_ kind: PetInteractionKind, now: Date) -> TimeInterval {

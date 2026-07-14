@@ -69,6 +69,7 @@ struct MomentAlbum: Identifiable, Decodable, Equatable, Hashable {
 struct MomentAsset: Identifiable, Decodable, Equatable, Hashable {
     let id: String
     let albumItemId: String?
+    let postId: String?
     let messageId: String?
     let attachmentId: String?
     let mediaType: String
@@ -81,7 +82,7 @@ struct MomentAsset: Identifiable, Decodable, Equatable, Hashable {
     let version: Int
 
     private enum CodingKeys: String, CodingKey {
-        case id, asset, addedAt, messageId, sourceMessageId, attachmentId, mediaType, type, kind, url
+        case id, asset, postId, addedAt, messageId, sourceMessageId, attachmentId, mediaType, type, kind, url
         case thumbnailURL, thumbnailUrl, thumbnail, caption, note, addedBy, takenAt, createdAt, version
     }
 
@@ -89,6 +90,7 @@ struct MomentAsset: Identifiable, Decodable, Equatable, Hashable {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         if let nested = try box.decodeIfPresent(MomentAsset.self, forKey: .asset) {
             albumItemId = try box.decodeIfPresent(String.self, forKey: .id)
+            postId = try box.decodeIfPresent(String.self, forKey: .postId) ?? nested.postId
             id = nested.id
             messageId = nested.messageId
             attachmentId = nested.attachmentId
@@ -104,6 +106,7 @@ struct MomentAsset: Identifiable, Decodable, Equatable, Hashable {
         }
         id = try box.decode(String.self, forKey: .id)
         albumItemId = nil
+        postId = try box.decodeIfPresent(String.self, forKey: .postId)
         messageId = try box.decodeIfPresent(String.self, forKey: .messageId)
             ?? (try box.decodeIfPresent(String.self, forKey: .sourceMessageId))
         attachmentId = try box.decodeIfPresent(String.self, forKey: .attachmentId)
@@ -127,6 +130,7 @@ struct MomentAsset: Identifiable, Decodable, Equatable, Hashable {
     init(
         id: String,
         albumItemId: String? = nil,
+        postId: String? = nil,
         messageId: String? = nil,
         attachmentId: String? = nil,
         mediaType: String = "image",
@@ -140,6 +144,7 @@ struct MomentAsset: Identifiable, Decodable, Equatable, Hashable {
     ) {
         self.id = id
         self.albumItemId = albumItemId
+        self.postId = postId
         self.messageId = messageId
         self.attachmentId = attachmentId
         self.mediaType = mediaType
@@ -153,7 +158,18 @@ struct MomentAsset: Identifiable, Decodable, Equatable, Hashable {
     }
 
     var resolvedURL: URL? { ServerConfig.resolveMediaURL(thumbnailURL ?? url) }
+    var resolvedOriginalURL: URL? { ServerConfig.resolveMediaURL(url) }
     var isVideo: Bool { mediaType == "video" }
+
+    var mediaBrowserItem: MediaBrowserItem {
+        MediaBrowserItem(
+            id: id,
+            type: isVideo ? "video" : "image",
+            url: url,
+            text: caption ?? "",
+            sentAt: Double(takenAt),
+            channel: "album")
+    }
 }
 
 struct OnThisDayMoment: Identifiable, Decodable, Equatable {

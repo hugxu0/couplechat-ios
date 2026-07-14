@@ -244,7 +244,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     console.log(`[memory] ${channel} 处理 ${sourceMessages.length} 条消息，写入/更新 ${saved} 条记忆`);
   } finally {
     running.delete(channel);
-    if (batchCompleted && batchWasFull) scheduleMemoryScan(channel, 0);
+    if (batchCompleted && batchWasFull) scheduleMemoryScan(channel, 0, true);
   }
 }
 
@@ -258,14 +258,16 @@ export async function initializeMemory(): Promise<void> {
 }
 
 export function onMemoryMessage(channel: string): void {
-  scheduleMemoryScan(channel, 8_000);
+  // 8 秒内的连续聊天合成一批，但不再等到凑满 30 条才提取。这样私聊事实、
+  // 共同事件和状态能及时进入记忆中心；30 仍只是单次批量上限。
+  scheduleMemoryScan(channel, 8_000, true);
 }
 
-function scheduleMemoryScan(channel: string, delayMs: number): void {
+function scheduleMemoryScan(channel: string, delayMs: number, force = false): void {
   if (timers.has(channel)) return;
   timers.set(channel, setTimeout(() => {
     timers.delete(channel);
-    void scanChannel(channel)
+    void scanChannel(channel, force)
       .then(() => retryAttempts.delete(channel))
       .catch((error) => {
         const attempt = (retryAttempts.get(channel) ?? 0) + 1;
@@ -275,7 +277,7 @@ function scheduleMemoryScan(channel: string, delayMs: number): void {
           `[memory] ${channel} 提取失败，${Math.round(retryDelay / 1000)}s 后重试:`,
           error instanceof Error ? error.message : error,
         );
-        scheduleMemoryScan(channel, retryDelay);
+        scheduleMemoryScan(channel, retryDelay, force);
       });
   }, delayMs));
 }

@@ -98,9 +98,10 @@ struct MomentsRepository {
         albumId: String,
         uploadId: String,
         takenAt: Int,
+        postId: String,
         token: String
     ) async throws -> [MomentAsset] {
-        let body = AddUploadMutation(uploadId: uploadId, takenAt: takenAt)
+        let body = AddUploadMutation(uploadId: uploadId, takenAt: takenAt, postId: postId)
         let data = try await request(
             path: "api/v2/albums/\(albumId)/items/from-upload",
             method: "POST",
@@ -217,10 +218,12 @@ private extension MomentsRepository {
     struct AddedEnvelope: Decodable { let added: [AddedItem] }
     struct AddedItem: Decodable {
         let itemId: String
+        let postId: String?
         let asset: MomentAsset
         var displayAsset: MomentAsset {
             MomentAsset(
-                id: asset.id, albumItemId: itemId, messageId: asset.messageId,
+                id: asset.id, albumItemId: itemId, postId: postId ?? asset.postId,
+                messageId: asset.messageId,
                 attachmentId: asset.attachmentId, mediaType: asset.mediaType,
                 url: asset.url, thumbnailURL: asset.thumbnailURL, caption: asset.caption,
                 noteVersion: asset.noteVersion, addedBy: asset.addedBy,
@@ -231,7 +234,7 @@ private extension MomentsRepository {
     struct AlbumMutation: Encodable { let title: String; let summary: String }
     struct AlbumPatch: Encodable { let title: String; let summary: String; let baseVersion: Int }
     struct AddMessageMutation: Encodable { let messageId: String }
-    struct AddUploadMutation: Encodable { let uploadId: String; let takenAt: Int }
+    struct AddUploadMutation: Encodable { let uploadId: String; let takenAt: Int; let postId: String }
     struct NoteMutation: Encodable { let text: String; let baseVersion: Int? }
     struct VersionMutation: Encodable { let baseVersion: Int }
 }

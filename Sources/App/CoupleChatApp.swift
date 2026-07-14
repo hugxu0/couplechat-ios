@@ -7,6 +7,7 @@ struct CoupleChatApp: App {
     @StateObject private var store = ChatStore()
     @StateObject private var theme = ThemeManager.shared
     @StateObject private var mediaFavorites = MediaFavoriteStore.shared
+    @StateObject private var deepLinks = AppDeepLinkRouter.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var bootstrapped = false
 
@@ -37,6 +38,7 @@ struct CoupleChatApp: App {
         .environmentObject(mediaFavorites)
         .preferredColorScheme(theme.appearance.colorScheme)
         .tint(theme.accent.color)
+        .onOpenURL { deepLinks.handle($0) }
         .task {
             guard !bootstrapped else { return }
             await store.bootstrap()

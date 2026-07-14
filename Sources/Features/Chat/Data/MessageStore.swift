@@ -551,6 +551,7 @@ final class MessageStore: ObservableObject {
     }
 
     private var recallDrafts: [String: RecallDraft] = [:]
+    private var optimisticRecalls: [String: (message: ChatMessage, channel: ChatChannel)] = [:]
 
     func hasRecallDraft(messageId: String) -> Bool {
         recallDrafts[messageId] != nil
@@ -562,24 +563,40 @@ final class MessageStore: ObservableObject {
 
     func recallMessage(_ message: ChatMessage, channel: ChatChannel) {
         guard let s = socketProvider?.socket, socketProvider?.isConnected == true else { return }
+        guard optimisticRecalls[message.id] == nil else { return }
         let editable = message.type == "text"
             ? message.text.trimmingCharacters(in: .whitespacesAndNewlines)
             : ""
         if !editable.isEmpty { recallDrafts[message.id] = RecallDraft(text: message.text) }
+        // 先只从当前时间线隐藏，数据库、引用和媒体缓存等不可逆清理由服务端成功事件完成。
+        // 这样长按菜单关闭后立即看到结果，网络失败时还能完整恢复原消息。
+        optimisticRecalls[message.id] = (message, channel)
+        updateMessages(channel) { list in
+            list.removeAll { $0.id == message.id }
+        }
         s.emitWithAck(
             SocketEvent.messageRecall.rawValue,
             SocketPayloadEncoder.encode(MessageRecallRequest(id: message.id))).timingOut(after: 9) { [weak self] response in
                 let ok = (response.first as? [String: Any])?["ok"] as? Bool == true
-                guard !ok else { return }
                 Task { @MainActor in
                     guard let self else { return }
+                    if ok {
+                        self.applyRecall(id: message.id, channel: channel)
+                        return
+                    }
                     self.recallDrafts.removeValue(forKey: message.id)
+                    if let snapshot = self.optimisticRecalls.removeValue(forKey: message.id) {
+                        self.updateMessages(snapshot.channel) { list in
+                            ChatMessageCollection.upsert(snapshot.message, into: &list)
+                        }
+                    }
                     NotificationCenter.default.post(name: Self.recallFailedNotification, object: nil)
                 }
             }
     }
 
     func applyRecall(id: String, channel: ChatChannel?) {
+        optimisticRecalls.removeValue(forKey: id)
         let channels = channel.map { [$0] } ?? ChatChannel.allCases
         var repairedReplies: [ChatMessage] = []
         var mediaURLs: Set<URL> = []

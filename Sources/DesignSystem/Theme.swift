@@ -275,12 +275,32 @@ struct WallpaperPreviewSurface: View {
     var body: some View {
         ZStack {
             choice.previewGradient
-            choice.patternOverlay
+            previewPattern
                 .allowsHitTesting(false)
         }
         .frame(maxWidth: .infinity)
         .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var previewPattern: some View {
+        if choice == .night {
+            // 全尺寸壁纸需要足够的星点密度；缩略卡片若照搬 88 个图案会被
+            // 压成一堆气泡。预览只保留能表达“星夜”的少量亮星。
+            GeometryReader { proxy in
+                ForEach(0..<16, id: \.self) { index in
+                    Image(systemName: index.isMultiple(of: 5) ? "sparkles" : "star.fill")
+                        .font(.system(size: index.isMultiple(of: 5) ? 9 : 3.5))
+                        .foregroundStyle(.white.opacity(index.isMultiple(of: 5) ? 0.48 : 0.28))
+                        .position(
+                            x: CGFloat((index * 43 + 17) % 100) / 100 * proxy.size.width,
+                            y: CGFloat((index * 67 + 11) % 100) / 100 * proxy.size.height)
+                }
+            }
+        } else {
+            choice.patternOverlay
+        }
     }
 }
 

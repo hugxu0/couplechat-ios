@@ -36,6 +36,7 @@ interface ItemRow extends AssetRow {
   item_id: string;
   added_at: number;
   sort_order: number;
+  post_id: string | null;
 }
 
 function mapAlbum(row: AlbumRow) {
@@ -50,6 +51,20 @@ function mapAlbum(row: AlbumRow) {
     updatedAt: row.updated_at,
     version: row.version,
   };
+}
+
+async function albumPreviewItems(albumId: string, limit = 3) {
+  const rows = await all<ItemRow>(
+    `SELECT item.id AS item_id, item.added_at, item.sort_order, item.post_id, asset.*,
+            note.id AS note_id, note.text AS note_text, note.version AS note_version
+       FROM album_items item
+       JOIN media_assets asset ON asset.id = item.asset_id
+       LEFT JOIN media_notes note ON note.asset_id = asset.id
+      WHERE item.album_id = ?
+      ORDER BY item.sort_order DESC, item.id DESC LIMIT ?`,
+    [albumId, limit],
+  );
+  return rows.map((row) => ({ ...mapAsset(row), postId: row.post_id ?? undefined }));
 }
 
 function mapAsset(row: AssetRow) {
@@ -95,8 +110,12 @@ export async function listAlbums(user: AuthUser, cursor?: string, limit = 30) {
     [identity.coupleId, decoded?.[0] ?? null, decoded?.[0] ?? 0, decoded?.[1] ?? "", limit + 1],
   );
   const page = rows.slice(0, limit);
+  const albums = await Promise.all(page.map(async (row) => ({
+    ...mapAlbum(row),
+    previewItems: await albumPreviewItems(row.id),
+  })));
   return {
-    albums: page.map(mapAlbum),
+    albums,
     nextCursor: rows.length > limit && page.length
       ? encodeCursor([page.at(-1)!.updated_at, page.at(-1)!.id]) : undefined,
     hasMore: rows.length > limit,
@@ -218,7 +237,7 @@ export async function listAlbumItems(user: AuthUser, albumId: string, cursor: st
   if (!album) return null;
   const decoded = decodeCursor(cursor, isNumberStringCursor);
   const rows = await all<ItemRow>(
-    `SELECT item.id AS item_id, item.added_at, item.sort_order, asset.*,
+    `SELECT item.id AS item_id, item.added_at, item.sort_order, item.post_id, asset.*,
             note.id AS note_id, note.text AS note_text, note.version AS note_version
        FROM album_items item
        JOIN media_assets asset ON asset.id = item.asset_id
@@ -231,7 +250,12 @@ export async function listAlbumItems(user: AuthUser, albumId: string, cursor: st
   const page = rows.slice(0, limit);
   return {
     album: mapAlbum(album),
-    items: page.map((row) => ({ id: row.item_id, addedAt: row.added_at, asset: mapAsset(row) })),
+    items: page.map((row) => ({
+      id: row.item_id,
+      postId: row.post_id ?? undefined,
+      addedAt: row.added_at,
+      asset: mapAsset(row),
+    })),
     nextCursor: rows.length > limit && page.length
       ? encodeCursor([page.at(-1)!.sort_order, page.at(-1)!.item_id]) : undefined,
     hasMore: rows.length > limit,
@@ -267,7 +291,7 @@ export async function addMessageMedia(user: AuthUser, albumId: string, messageId
     const supported = uploads.filter((upload) => mediaKind(upload.mime_type));
     if (!supported.length) return { noMedia: true as const };
     const now = Date.now();
-    const added: Array<{ itemId: string; asset: ReturnType<typeof mapAsset> }> = [];
+    const added: Array<{ itemId: string; postId?: string; asset: ReturnType<typeof mapAsset> }> = [];
     for (const [index, upload] of supported.entries()) {
       let asset = await db.get<AssetRow>(
         "SELECT * FROM media_assets WHERE couple_id = ? AND source_upload_id = ?",
@@ -292,11 +316,12 @@ export async function addMessageMedia(user: AuthUser, albumId: string, messageId
       if (!asset) continue;
       const itemId = `albi_${nanoid(16)}`;
       const inserted = await db.run(
-        `INSERT INTO album_items (id, album_id, asset_id, added_by_account_id, added_at, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(album_id, asset_id) DO NOTHING`,
-        [itemId, albumId, asset.id, identity.accountId, now, now * 100 + index],
+        `INSERT INTO album_items
+         (id, album_id, asset_id, added_by_account_id, added_at, sort_order, post_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(album_id, asset_id) DO NOTHING`,
+        [itemId, albumId, asset.id, identity.accountId, now, now * 100 + index, `message:${messageId}`],
       );
-      if (inserted) added.push({ itemId, asset: mapAsset(asset) });
+      if (inserted) added.push({ itemId, postId: `message:${messageId}`, asset: mapAsset(asset) });
     }
     if (added.length) {
       const cover = album.cover_asset_id ?? added[0].asset.id;
@@ -325,6 +350,7 @@ export async function addUploadedMedia(
   albumId: string,
   uploadId: string,
   takenAt: number,
+  postId?: string,
 ) {
   return transaction(async (db) => {
     const identity = await activeIdentityIn(db, user);
@@ -373,9 +399,10 @@ export async function addUploadedMedia(
     if (!item) {
       item = { id: `albi_${nanoid(16)}` };
       inserted = Boolean(await db.run(
-        `INSERT INTO album_items (id, album_id, asset_id, added_by_account_id, added_at, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(album_id, asset_id) DO NOTHING`,
-        [item.id, albumId, asset.id, identity.accountId, now, now * 100],
+        `INSERT INTO album_items
+         (id, album_id, asset_id, added_by_account_id, added_at, sort_order, post_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(album_id, asset_id) DO NOTHING`,
+        [item.id, albumId, asset.id, identity.accountId, now, now * 100, postId ?? null],
       ));
       if (!inserted) {
         item = await db.get<{ id: string }>(
@@ -385,7 +412,10 @@ export async function addUploadedMedia(
       }
     }
     if (!item) return { uploadMissing: true as const };
-    const added = [{ itemId: item.id, asset: mapAsset(asset) }];
+    if (postId) {
+      await db.run("UPDATE album_items SET post_id = COALESCE(post_id, ?) WHERE id = ?", [postId, item.id]);
+    }
+    const added = [{ itemId: item.id, postId, asset: mapAsset(asset) }];
     if (inserted) {
       const cover = album.cover_asset_id ?? asset.id;
       await db.run(
@@ -421,10 +451,15 @@ export async function removeAlbumItem(user: AuthUser, albumId: string, itemId: s
     if (!item) return null;
     const now = Date.now();
     await db.run("DELETE FROM album_items WHERE id = ?", [itemId]);
+    const replacement = await db.get<{ asset_id: string }>(
+      `SELECT asset_id FROM album_items WHERE album_id = ?
+       ORDER BY sort_order DESC, id DESC LIMIT 1`,
+      [albumId],
+    );
     await db.run(
-      `UPDATE albums SET cover_asset_id = CASE WHEN cover_asset_id = ? THEN NULL ELSE cover_asset_id END,
+      `UPDATE albums SET cover_asset_id = CASE WHEN cover_asset_id = ? THEN ? ELSE cover_asset_id END,
        updated_at = ?, version = version + 1 WHERE id = ?`,
-      [item.asset_id, now, albumId],
+      [item.asset_id, replacement?.asset_id ?? null, now, albumId],
     );
     await appendSyncEvent(db, {
       coupleId: identity.coupleId,

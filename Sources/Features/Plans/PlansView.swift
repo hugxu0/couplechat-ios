@@ -37,6 +37,9 @@ struct PlansView: View {
                 guard note.persistentSyncIncludes(["calendar_event", "personalItem"]) else { return }
                 Task { await reload() }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .openRemindersDeepLink)) { _ in
+                section = .reminder
+            }
             .sheet(item: $itemEditor) { mode in
                 PersonalItemEditor(mode: mode, scope: scope) { title, markdown, dueAt in
                     Task { await saveItem(mode, title: title, markdown: markdown, dueAt: dueAt) }
@@ -114,6 +117,7 @@ struct PlansView: View {
     private func reload() async {
         guard let token = store.session?.token else { return }
         await model.load(scope: scope, around: selectedDate, token: token)
+        await AppBadgeState.shared.refreshReminders(token: token)
     }
 
     private func saveItem(_ mode: PlanEditorMode, title: String, markdown: String, dueAt: Int?) async {

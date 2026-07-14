@@ -27,6 +27,10 @@ export async function generateDiary(date: string): Promise<void> {
 
 let diaryHistoryBackfilling = false;
 
+export function isDiaryHistoryBackfilling(): boolean {
+  return diaryHistoryBackfilling;
+}
+
 export async function backfillDiaryHistory(days = 30): Promise<void> {
   if (diaryHistoryBackfilling || !aiEnabled()) return;
   diaryHistoryBackfilling = true;
@@ -50,5 +54,5 @@ export async function dailyContent() {
     const text = await readRuntimeState(`diary:${date}`);
     if (text) diaries.push({ date, text });
   }
-  return { diaries };
+  return { diaries, backfilling: diaryHistoryBackfilling, requestedDays: 30 };
 }

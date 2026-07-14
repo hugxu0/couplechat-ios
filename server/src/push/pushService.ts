@@ -2,7 +2,7 @@ import type { ClientMessage } from "../types";
 import { isAvailable } from "../socket/presence";
 import { sendBarkPush } from "./bark";
 import { config } from "../config";
-import { listCoupleBarkRecipients } from "./recipients";
+import { listBarkRecipients, listCoupleBarkRecipients } from "./recipients";
 
 export async function pushCoupleMessageToUnavailableRecipients(message: ClientMessage, coupleId?: string) {
   if (!config.pushEnabled) return;
@@ -19,7 +19,29 @@ export async function pushCoupleMessageToUnavailableRecipients(message: ClientMe
         return true;
       })
       .map((recipient) =>
-        sendBarkPush(recipient.barkKey, message.senderName, "收到一条新的悄悄话"),
+        sendBarkPush(recipient.barkKey, message.senderName, "收到一条新的悄悄话", {
+          group: "CoupleChat · 公聊",
+          badge: 1,
+          url: `${config.appDeepLinkScheme}chat/couple`,
+        }),
       ),
   );
+}
+
+export async function pushPrivateAiMessageToUnavailableRecipient(
+  message: ClientMessage,
+  username?: string,
+) {
+  if (!config.pushEnabled || !username || isAvailable(username)) return;
+  const recipients = await listBarkRecipients([username]);
+  await Promise.allSettled(recipients.map((recipient) => sendBarkPush(
+    recipient.barkKey,
+    "大橘回你啦",
+    message.text.slice(0, 160) || "收到一条新的私聊回复",
+    {
+      group: "CoupleChat · 大橘私聊",
+      badge: 1,
+      url: `${config.appDeepLinkScheme}chat/ai`,
+    },
+  )));
 }

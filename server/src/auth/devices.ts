@@ -159,6 +159,18 @@ export async function saveCurrentDeviceBark(user: AuthUser, input: CurrentDevice
   });
 }
 
+export async function currentDeviceBarkKey(user: AuthUser): Promise<string | null> {
+  if (!user.deviceId || !user.accountId) return null;
+  const endpoint = await get<{ secret_value: string }>(
+    `SELECT endpoint.secret_value FROM device_push_endpoints endpoint
+     JOIN devices device ON device.id = endpoint.device_id
+     WHERE device.id = ? AND device.account_id = ? AND device.revoked_at IS NULL
+       AND endpoint.provider = 'bark' AND endpoint.enabled = TRUE`,
+    [user.deviceId, user.accountId],
+  );
+  return endpoint?.secret_value ?? null;
+}
+
 export async function listDevices(user: AuthUser) {
   const accountId = user.accountId ?? (await get<{ id: string }>(
     "SELECT id FROM accounts WHERE username = ? AND status = 'active'", [user.username],

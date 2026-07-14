@@ -141,11 +141,11 @@ server/src/db/
   client.ts        PostgreSQL pool、查询与连接生命周期
   transaction.ts   事务边界
   rows.ts          数据库行类型
-  migrate.ts       v1-v24 版本化 migration 与受控执行器（仅追加，历史版本保持不变）
+  migrate.ts       v1-v25 版本化 migration 与受控执行器（仅追加，历史版本保持不变）
   index.ts         稳定 re-export，不承载实现
 ```
 
-业务模块通过接口注入 Socket、push、repository 和调度器依赖。消息撤回在事务内硬删除消息、附件关系、引用预览、Memory 证据和孤立 Memory，再用领域事件清理历史孤儿；Socket 路由只解析契约、调用 use case 并 emit/ack。Bark 提醒用 `reminder_bark_deliveries` 持久化投递结果。关闭顺序由 `lifecycle/shutdown.ts` 统一管理。
+业务模块通过接口注入 Socket、push、repository 和调度器依赖。消息撤回先在客户端时间线乐观隐藏；服务端事务内硬删除消息、附件关系、引用预览、Memory 证据和孤立 Memory，提交后立即确认，物理文件与 Trace 脱敏在持久化清理队列中后台完成。Socket 路由只解析契约、调用 use case 并 emit/ack。Bark 提醒用 `reminder_bark_deliveries` 持久化投递结果。关闭顺序由 `lifecycle/shutdown.ts` 统一管理。
 
 ## 数据与同步
 

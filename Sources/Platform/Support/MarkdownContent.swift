@@ -12,7 +12,7 @@ enum MarkdownBlock: Equatable {
     case rule
 
     static func parse(_ markdown: String) -> [MarkdownBlock] {
-        let lines = markdown
+        let lines = normalized(markdown)
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: "\n")
@@ -33,6 +33,17 @@ enum MarkdownBlock: Equatable {
             }
         }
         return result
+    }
+
+    private static func normalized(_ markdown: String) -> String {
+        markdown
+            .replacingOccurrences(of: "｜", with: "|")
+            .replacingOccurrences(of: "—", with: "-")
+            .replacingOccurrences(of: "–", with: "-")
+            .replacingOccurrences(
+                of: #"(?m)^\s*[•·]\s+"#,
+                with: "- ",
+                options: .regularExpression)
     }
 
     private static func fencedBlock(_ lines: [String], index: inout Int) -> MarkdownBlock? {
@@ -197,7 +208,9 @@ enum MarkdownBlock: Equatable {
         guard let cells = tableRow(line), !cells.isEmpty else { return false }
         return cells.allSatisfy { cell in
             let value = cell.trimmingCharacters(in: .whitespaces)
-            return value.filter { $0 == "-" }.count >= 3
+            // Markdown 标准要求至少三条横线；旧 AI 偶尔只给两条。客户端
+            // 容错渲染，但保存内容仍保持原文。
+            return value.filter { $0 == "-" }.count >= 2
                 && value.allSatisfy { $0 == "-" || $0 == ":" }
         }
     }

@@ -89,25 +89,42 @@ struct PlanCalendarView: View {
 
     private func dateButton(_ date: Date, dimsOtherMonth: Bool) -> some View {
         let selected = Calendar.current.isDate(date, inSameDayAs: selectedDate)
-        let hasEvent = events.contains { Calendar.current.isDate($0.startDate, inSameDayAs: date) }
+        let today = Calendar.current.isDateInToday(date)
+        let dateEvents = events
+            .filter { Calendar.current.isDate($0.startDate, inSameDayAs: date) }
+            .sorted { $0.startAt < $1.startAt }
+        let hasEvent = !dateEvents.isEmpty
+        let annotation = today
+            ? (dateEvents.first.map { "今天 · \($0.title)" } ?? "今天")
+            : (dateEvents.first?.title ?? " ")
         return Button {
             selectedDate = date
             Haptics.selection()
         } label: {
-            VStack(spacing: 3) {
+            VStack(spacing: 2) {
                 Text(date.dayNumber)
                     .font(DS.Typo.secondary.monospacedDigit().weight(selected ? .bold : .medium))
-                Circle()
-                    .fill(hasEvent ? (selected ? Color.white : DS.Palette.purple) : .clear)
-                    .frame(width: 4, height: 4)
+                Text(annotation)
+                    .font(DS.Typo.micro.weight(today ? .semibold : .regular))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.68)
+                    .foregroundStyle(selected
+                        ? Color.white.opacity(0.9)
+                        : (today ? DS.Palette.purple : (hasEvent ? DS.Palette.textSecondary : .clear)))
             }
             .foregroundStyle(selected ? .white : DS.Palette.textPrimary.opacity(dimsOtherMonth ? 0.34 : 1))
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(maxWidth: .infinity, minHeight: 56)
             .background(selected ? DS.Palette.purple : .clear, in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                if today && !selected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(DS.Palette.purple.opacity(0.48), lineWidth: 1.2)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(date.accessibleDateLabel + (hasEvent ? "，有日程" : ""))
+        .accessibilityLabel(date.accessibleDateLabel + (today ? "，今天" : "") + (hasEvent ? "，日程：\(dateEvents[0].title)" : ""))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 

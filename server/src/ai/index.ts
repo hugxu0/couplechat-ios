@@ -6,7 +6,10 @@ import { socketEvents } from "../contracts/realtime";
 import type { AuthUser, ClientMessage } from "../types";
 import { toStoredChannel, type StoredChannel } from "../types";
 import { createAiMessage } from "../chat/messageService";
-import { pushCoupleMessageToUnavailableRecipients } from "../push/pushService";
+import {
+  pushCoupleMessageToUnavailableRecipients,
+  pushPrivateAiMessageToUnavailableRecipient,
+} from "../push/pushService";
 import { config } from "../config";
 import { aiEnabled } from "./provider";
 import { loadAccounts } from "./accounts";
@@ -96,6 +99,7 @@ function makeSink(io: Server, user?: AuthUser): ReplySink {
       const message = await createAiMessage(storedChannel as StoredChannel, text, meta, user);
       if (storedChannel.startsWith("ai:")) {
         io.to(accountRoom).emit(socketEvents.messageNew, message);
+        if (isFirst) void pushPrivateAiMessageToUnavailableRecipient(message, user?.username);
       } else {
         io.to(coupleRoom).emit(socketEvents.messageNew, message);
         // couple 里大橘的发言也推给不在线的一方（只推第一条，不轰炸）。

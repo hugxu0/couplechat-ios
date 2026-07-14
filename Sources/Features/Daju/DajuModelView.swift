@@ -96,6 +96,9 @@ struct DajuModelView: UIViewRepresentable {
             // 模型内容只负责缩放与居中，外层 pivot 只负责水平旋转。
             // 两者分开后旋转轴会稳定穿过身体中心，不再绕偏移后的节点公转。
             normalize(content)
+            // 资源文件的正面轴与 SceneKit 相机相差 90°。只校正外层 yaw，
+            // 之后的拖动仍围绕同一身体中心水平旋转。
+            pivot.eulerAngles.y = .pi / 2
             pivot.addChildNode(content)
             presentationScene.rootNode.addChildNode(pivot)
             presentationScene.rootNode.addChildNode(cameraNode())

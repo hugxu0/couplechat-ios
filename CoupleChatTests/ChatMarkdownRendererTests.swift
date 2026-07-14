@@ -2,6 +2,19 @@ import XCTest
 @testable import CoupleChat
 
 final class ChatMarkdownRendererTests: XCTestCase {
+    func testMultilineBubbleUsesWidestLogicalLineInsteadOfConstraintWidth() {
+        let compact = try! XCTUnwrap(ChatMessage(dict: [
+            "id": "ai-multiline", "channel": "ai", "sender": "ai", "senderName": "大橘",
+            "kind": "ai", "type": "text", "text": "喵，早上好。\n\n今天有什么安排吗？", "ts": 1,
+        ]))
+        let longSingleLine = try! XCTUnwrap(ChatMessage(dict: [
+            "id": "ai-long", "channel": "ai", "sender": "ai", "senderName": "大橘",
+            "kind": "ai", "type": "text", "text": String(repeating: "很长的一句话", count: 20), "ts": 2,
+        ]))
+
+        XCTAssertLessThan(ChatTimelineMetrics.textBubbleWidth(for: compact, containerWidth: 390), 250)
+        XCTAssertGreaterThan(ChatTimelineMetrics.textBubbleWidth(for: longSingleLine, containerWidth: 390), 270)
+    }
     func testRendererRemovesMarkdownMarkersAndPreservesContent() {
         let rendered = ChatMarkdownRenderer.attributedString(
             from: "## 标题\n- **重要**事项\n> 引用\n`code`")

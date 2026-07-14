@@ -68,14 +68,16 @@ export function registerPersonalItemTools(server: McpServer, run: AgentToolRun):
   server.registerTool(
     "draft_personal_item_action",
     {
-      description: "生成需要主人确认的提醒/备忘操作草案，不会直接写数据库。scope 必须区分 personal（当前主人私人）与 shared（两人共享）；add_memo 的 title 是列表标题，text 是不重复标题的 Markdown 正文。",
+      description: "生成需要主人确认的提醒/备忘完整增删改操作草案，不会直接写数据库。scope 必须区分 personal（当前主人私人）与 shared（两人共享）；add_memo 的 title 是列表标题，text 是不重复标题的 Markdown 正文。修改或删除前应先 list_personal_items 取得准确 id。",
       inputSchema: z.object({
-        type: z.enum(["add_reminder", "add_memo", "complete_reminder", "delete_reminder", "edit_memo"]),
+        type: z.enum(["add_reminder", "add_memo", "complete_reminder", "edit_reminder", "delete_reminder", "edit_memo", "delete_memo"]),
         title: z.string().max(300).optional(),
         text: z.string().max(4000).optional(),
         time: z.string().max(40).optional().describe("新增提醒必须是北京时间 YYYY-MM-DD HH:mm"),
         id: z.string().max(100).optional(),
         newText: z.string().max(4000).optional(),
+        newTitle: z.string().max(300).optional(),
+        newTime: z.string().max(40).optional().describe("修改提醒时间时使用北京时间 YYYY-MM-DD HH:mm"),
         ownerName: z.string().max(40).optional(),
         scope: z.enum(["personal", "shared"]).optional(),
       }),

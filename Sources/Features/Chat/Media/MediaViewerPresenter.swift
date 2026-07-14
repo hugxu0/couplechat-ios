@@ -4,6 +4,7 @@ import UIKit
 struct MediaViewerPresenter: UIViewControllerRepresentable {
     let items: [MediaBrowserItem]
     @Binding var selectedId: String?
+    var sourceProvider: ((String) -> UIView?)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(selectedId: $selectedId)
@@ -17,6 +18,7 @@ struct MediaViewerPresenter: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: UIViewController, context: Context) {
         context.coordinator.selectedId = $selectedId
+        context.coordinator.sourceProvider = sourceProvider
         guard let selectedId, !context.coordinator.viewer.isPresented else { return }
         DispatchQueue.main.async {
             guard controller.view.window != nil else { return }
@@ -24,7 +26,8 @@ struct MediaViewerPresenter: UIViewControllerRepresentable {
             context.coordinator.viewer.present(
                 from: presenter,
                 items: items,
-                selectedId: selectedId)
+                selectedId: selectedId,
+                sourceProvider: context.coordinator.sourceProvider)
         }
     }
 
@@ -32,9 +35,11 @@ struct MediaViewerPresenter: UIViewControllerRepresentable {
     final class Coordinator {
         let viewer = ChatMediaViewerCoordinator()
         var selectedId: Binding<String?>
+        var sourceProvider: ((String) -> UIView?)?
 
         init(selectedId: Binding<String?>) {
             self.selectedId = selectedId
+            sourceProvider = nil
             viewer.onDismiss = { [weak self] in self?.selectedId.wrappedValue = nil }
         }
 

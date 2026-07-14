@@ -84,6 +84,9 @@ struct ChatHomeView: View {
             .navigationDestination(isPresented: $showChat) {
                 ChatView().appSubpageChrome()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .openCoupleChatDeepLink)) { _ in
+                showChat = true
+            }
             .alert(editingStatusID == nil ? "添加状态" : "编辑状态", isPresented: $showCustomStatusPrompt) {
                 TextField("比如：想被抱抱", text: $customStatusText)
                 Button(editingStatusID == nil ? "添加并使用" : "保存") { saveStatusEditor() }

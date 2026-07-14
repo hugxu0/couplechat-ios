@@ -547,20 +547,28 @@ export async function recallMessage(user: AuthUser, id: string) {
     };
   });
   if (!result) return null;
-  await domainEvents.publish("message.recalled", { messageId: id });
-  await redactTraceForMessage(id);
-  for (const item of result.uploadCleanup) {
-    try {
-      await fs.rm(item.path, { force: true });
-      await run(
-        `UPDATE file_cleanup_queue SET completed_at = ?, attempt_count = attempt_count + 1,
-         last_error = NULL WHERE id = ? AND completed_at IS NULL`,
-        [Date.now(), item.id],
-      );
-    } catch (error) {
-      console.warn(`[upload] 撤回消息后删除文件失败 id=${id}: ${error instanceof Error ? error.message : String(error)}`);
+  // 数据库事务已完成后，客户端就可以立即移除消息。事件发布、追踪脱敏和
+  // 磁盘回收都不是撤回确认的前置条件，放到后台避免长按撤回后继续等 I/O。
+  void (async () => {
+    try { await domainEvents.publish("message.recalled", { messageId: id }); } catch (error) {
+      console.warn(`[recall] domain event failed id=${id}: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
+    try { await redactTraceForMessage(id); } catch (error) {
+      console.warn(`[recall] trace redaction failed id=${id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    for (const item of result.uploadCleanup) {
+      try {
+        await fs.rm(item.path, { force: true });
+        await run(
+          `UPDATE file_cleanup_queue SET completed_at = ?, attempt_count = attempt_count + 1,
+           last_error = NULL WHERE id = ? AND completed_at IS NULL`,
+          [Date.now(), item.id],
+        );
+      } catch (error) {
+        console.warn(`[upload] 撤回消息后删除文件失败 id=${id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  })();
   return result.recalled;
 }
 
