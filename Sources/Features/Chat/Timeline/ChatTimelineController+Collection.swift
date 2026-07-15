@@ -142,12 +142,13 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
             minOffset,
             scrollView.contentSize.height - scrollView.bounds.height
                 + scrollView.adjustedContentInset.bottom)
-        let lowerBound = minOffset - Self.maximumTopRubberBandDistance
         let upperBound = maxOffset + Self.maximumBottomRubberBandDistance
         let y = scrollView.contentOffset.y
-        guard y < lowerBound || y > upperBound else { return }
+        // 顶部的越界由 UIRefreshControl 处理；这里若设置 contentOffset，
+        // 会打断它的拖动进度，表现为只转半圈且不触发 valueChanged。
+        guard y > upperBound else { return }
         scrollView.setContentOffset(
-            CGPoint(x: scrollView.contentOffset.x, y: min(max(y, lowerBound), upperBound)),
+            CGPoint(x: scrollView.contentOffset.x, y: upperBound),
             animated: false)
     }
 
