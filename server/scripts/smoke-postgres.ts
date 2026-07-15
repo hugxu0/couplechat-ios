@@ -109,6 +109,7 @@ async function main() {
       [28, "enforce_single_active_rolling_memory"],
       [29, "daily_recommendations"],
       [30, "daju_memory_perspective"],
+      [31, "recommendation_open_category"],
     ] as const;
     assertOk(
       "数据库结构版本完整",
