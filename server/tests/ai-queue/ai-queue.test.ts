@@ -28,6 +28,12 @@ test("AI timeout emits one fallback and clears typing", async () => {
   assert.equal(typing.at(-1), false);
 });
 
+test("Responses reasoning explicitly requests a compatible summary shape", async () => {
+  const { responsesReasoningSettings } = await import("../../src/ai/settings");
+  assert.deepEqual(responsesReasoningSettings("high"), { effort: "high", summary: "auto" });
+  assert.deepEqual(responsesReasoningSettings(undefined), undefined);
+});
+
 test("AI queue coalesces overload to the newest request", async () => {
   const { ReplyQueue } = await import("../../src/ai/agent/replyQueue");
   const started: string[] = [];

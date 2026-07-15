@@ -10,7 +10,7 @@ import { config } from "../../config";
 import { buildConversationContext, conversationContextText } from "../conversation/context";
 import { beginAgentToolRun, endAgentToolRun } from "../mcp/runContext";
 import { accounts } from "../accounts";
-import { GEN } from "../settings";
+import { GEN, responsesReasoningSettings } from "../settings";
 import { personaCore } from "../persona";
 import { extractJson, extractReplyText, type Citation } from "../provider";
 import { beijingDateTime } from "../time";
@@ -228,9 +228,6 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
     temperature: GEN.reply.temperature,
     maxTokens: GEN.reply.maxTokens,
     parallelToolCalls: false,
-    reasoning: providerSettings.reasoningEffort
-      ? { effort: providerSettings.reasoningEffort }
-      : undefined,
   } as const;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90_000);
@@ -239,6 +236,11 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
     const runWithMode = async (useResponses: boolean) => {
       const modelSettings = {
         ...baseModelSettings,
+        reasoning: useResponses
+          ? responsesReasoningSettings(providerSettings.reasoningEffort)
+          : providerSettings.reasoningEffort
+            ? { effort: providerSettings.reasoningEffort }
+            : undefined,
         store: false,
       } as const;
       const provider = new OpenAIProvider({

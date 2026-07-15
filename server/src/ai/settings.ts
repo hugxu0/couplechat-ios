@@ -1,5 +1,7 @@
 // Agent、工具和后台任务共享的生成参数与节奏配置。
 
+import type { AiProvider } from "../config";
+
 export interface GenProfile {
   maxTokens: number;
   temperature: number;
@@ -17,6 +19,15 @@ export const GEN = {
   interject: { maxTokens: 900, temperature: 0.8, timeoutMs: 20_000 },
   dailyRecommendation: { maxTokens: 500, temperature: 0.75, timeoutMs: 30_000 },
 } satisfies Record<string, GenProfile>;
+
+/**
+ * Responses 兼容网关在未声明 summary 时，可能把空 summary 序列化成对象；
+ * Agents SDK 期望这里始终是数组并会直接调用 .map()。显式声明 auto
+ * 保持原生 Responses/联网能力，同时让网关返回合法的 reasoning item。
+ */
+export function responsesReasoningSettings(effort: AiProvider["reasoningEffort"]) {
+  return effort ? { effort, summary: "auto" as const } : undefined;
+}
 
 export const CONTEXT = {
   lineMax: 180,

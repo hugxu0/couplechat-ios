@@ -2,7 +2,7 @@
 // 失败/未配置一律返回 null，调用方自行兜底——用户永远不该看到堆栈。
 
 import { config, type AiProvider } from "../config";
-import type { GenProfile } from "./settings";
+import { responsesReasoningSettings, type GenProfile } from "./settings";
 
 export type ChatProfile = "chat" | "task";
 
@@ -132,7 +132,7 @@ async function chatOpenAiResponses(p: AiProvider, args: ChatArgs, signal: AbortS
       input: args.user,
       max_output_tokens: args.gen.maxTokens,
       temperature: args.gen.temperature,
-      reasoning: p.reasoningEffort ? { effort: p.reasoningEffort } : undefined,
+      reasoning: responsesReasoningSettings(p.reasoningEffort),
       store: false,
     }),
     signal,
@@ -199,7 +199,7 @@ export async function describeImages(
           }],
           max_output_tokens: gen.maxTokens,
           temperature: gen.temperature,
-          reasoning: p.reasoningEffort ? { effort: p.reasoningEffort } : undefined,
+          reasoning: responsesReasoningSettings(p.reasoningEffort),
           store: false,
         }),
         signal: controller.signal,
