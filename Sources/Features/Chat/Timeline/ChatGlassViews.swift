@@ -1,5 +1,60 @@
 import UIKit
 
+/// 输入区背后的渐变材质。顶部逐渐透明，底部保持足够的模糊和对比度，
+/// 让输入胶囊、附件和表情按钮共享同一块视觉表面。
+final class ChatBottomGradientBlurView: UIView {
+    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+    private let tintView = UIView()
+    private let maskLayer = CAGradientLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        isOpaque = false
+        backgroundColor = .clear
+
+        blurView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(blurView)
+        tintView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tintView)
+        NSLayoutConstraint.activate([
+            blurView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            blurView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            blurView.topAnchor.constraint(equalTo: topAnchor),
+            blurView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            tintView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tintView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tintView.topAnchor.constraint(equalTo: topAnchor),
+            tintView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        maskLayer.colors = [
+            UIColor.clear.cgColor,
+            UIColor.black.withAlphaComponent(0.58).cgColor,
+            UIColor.black.cgColor,
+        ]
+        maskLayer.locations = [0, 0.34, 1]
+        maskLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        maskLayer.endPoint = CGPoint(x: 0.5, y: 1)
+        layer.mask = maskLayer
+        applyTone(usesLightContent: false)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func applyTone(usesLightContent: Bool) {
+        tintView.backgroundColor = (usesLightContent ? UIColor.black : UIColor.white)
+            .withAlphaComponent(usesLightContent ? 0.09 : 0.12)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        maskLayer.frame = bounds
+    }
+}
+
 final class ChatGlassView: UIView {
     private let blurView: UIVisualEffectView
     private let tintView = UIView()

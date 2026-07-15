@@ -57,10 +57,8 @@ struct RootTabView: View {
     @EnvironmentObject private var timelineStore: ChatTimelineStore
     // 订阅主题变化：主题色一改，标签栏和全部子页立即重绘
     @EnvironmentObject private var theme: ThemeManager
-    @State private var lastSeenEffectMessageId: String?
     @State private var lastSeenNoteId: String?
     @State private var activePresentation: InteractionPresentation?
-    @State private var effectQueue: [InteractionPresentation] = []
     @AppStorage("screen_note.dismissed_id") private var dismissedNoteId = ""
 
     private var screenNoteId: String? {
@@ -108,16 +106,12 @@ struct RootTabView: View {
         }
         .onChange(of: tab) { Haptics.selection() }
         .onAppear {
-            lastSeenEffectMessageId = coupleMessages.last?.id
+            presentNextInteractionIfPossible()
             handleIncomingNote()
             handleDeepLink(deepLinks.destination)
         }
-        .onChange(of: coupleMessages.last?.id) {
-            handleIncomingInteraction()
-        }
-        .onChange(of: store.localInteractionPresentation?.id) {
-            guard let presentation = store.localInteractionPresentation else { return }
-            enqueueEffect(presentation)
+        .onChange(of: store.interactionPresentationQueue.first?.id) {
+            presentNextInteractionIfPossible()
         }
         .onChange(of: screenNoteId) {
             handleIncomingNote()
@@ -147,21 +141,6 @@ struct RootTabView: View {
             handleDeepLink(destination)
         }
         .environmentObject(chrome)
-    }
-
-    private func handleIncomingInteraction() {
-        guard let message = coupleMessages.last else { return }
-        guard message.id != lastSeenEffectMessageId else { return }
-        lastSeenEffectMessageId = message.id
-        guard message.channel == ChatChannel.couple.rawValue,
-              message.sender != store.session?.username,
-              Date().timeIntervalSince1970 * 1000 - message.ts < 20_000,
-              let payload = message.interactionPayload,
-              payload.kind != .note else { return }
-        enqueueEffect(InteractionPresentation(
-            payload: payload,
-            senderName: message.senderName.isEmpty ? "TA" : message.senderName,
-            duration: payload.kind == .note ? 2.8 : 2.1))
     }
 
     private var coupleMessages: [ChatMessage] {
@@ -216,7 +195,7 @@ struct RootTabView: View {
         guard value["from"] as? String != store.session?.username,
               let text = value["text"] as? String else { return }
         lastSeenNoteId = id
-        enqueueEffect(InteractionPresentation(
+        store.queueInteractionPresentation(InteractionPresentation(
             payload: InteractionPayload(id: id, kind: .note, text: text),
             senderName: value["fromName"] as? String ?? "TA",
             duration: 2.8))
@@ -230,26 +209,18 @@ struct RootTabView: View {
         finishActiveEffect()
     }
 
-    private func enqueueEffect(_ presentation: InteractionPresentation) {
-        guard activePresentation?.id != presentation.id,
-              !effectQueue.contains(where: { $0.id == presentation.id }) else { return }
-        guard activePresentation != nil else {
-            DS.Anim.withMotion(DS.Anim.spring) {
-                activePresentation = presentation
-            }
-            return
-        }
-        effectQueue.append(presentation)
-    }
-
     private func finishActiveEffect() {
         DS.Anim.withMotion(DS.Anim.ease) { activePresentation = nil }
-        guard !effectQueue.isEmpty else { return }
-        let next = effectQueue.removeFirst()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            DS.Anim.withMotion(DS.Anim.spring) {
-                activePresentation = next
-            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            presentNextInteractionIfPossible()
+        }
+    }
+
+    private func presentNextInteractionIfPossible() {
+        guard activePresentation == nil,
+              let next = store.takeNextInteractionPresentation() else { return }
+        DS.Anim.withMotion(DS.Anim.spring) {
+            activePresentation = next
         }
     }
 

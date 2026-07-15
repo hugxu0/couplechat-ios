@@ -50,10 +50,17 @@ struct ChatSessionScreen: View {
         channel == .ai ? store.avatarURL(for: "ai") : store.avatarURL(for: store.partner?.username)
     }
 
+    private var wallpaperAppearance: WallpaperAppearance {
+        WallpaperAppearance(colorScheme: colorScheme)
+    }
+
     /// 顶栏和输入栏是两块独立的“表面”：它们应该由实际壁纸采样决定，
     /// 而不是受系统深浅模式或同一段渐变的偶然观感影响。
     private var composerSurfaceLuminance: CGFloat {
-        if let luminance = theme.customWallpaperLuminance(for: channel, region: .composerCenter) {
+        if let luminance = theme.customWallpaperLuminance(
+            for: channel,
+            appearance: wallpaperAppearance,
+            region: .composerCenter) {
             return luminance
         }
         return displayedWallpaper == .night ? 0.18 : 0.82
@@ -64,19 +71,18 @@ struct ChatSessionScreen: View {
     }
 
     private var timelineUsesLightContent: Bool {
-        if let luminance = theme.customWallpaperLuminance(for: channel, region: .timelineCenter) {
+        if let luminance = theme.customWallpaperLuminance(
+            for: channel,
+            appearance: wallpaperAppearance,
+            region: .timelineCenter) {
             return ChatSurfaceTone(luminance: luminance).usesLightContent
         }
         return displayedWallpaper == .night
     }
 
     private var usesDarkChatSurface: Bool {
-        if theme.hasCustomWallpaper(for: channel) {
-            let top = theme.customWallpaperLuminance(for: channel, region: .topCenter) ?? 0.5
-            let composer = theme.customWallpaperLuminance(for: channel, region: .composerCenter) ?? 0.5
-            return (top + composer) / 2 < 0.47
-        }
-        return displayedWallpaper == .night
+        // 接收气泡只由消息区本身决定，不能再混用顶栏和输入栏的采样值。
+        timelineUsesLightContent
     }
 
     private var headerModel: ChatHeaderModel {
@@ -87,8 +93,14 @@ struct ChatSessionScreen: View {
             connection = .connecting
         } else if store.connectionState.isUnavailable {
             connection = .failed
+        } else if channel == .couple {
+            if !store.presenceKnown {
+                connection = .connecting
+            } else {
+                connection = store.partnerOnline ? .online : .offline
+            }
         } else {
-            connection = .online
+            connection = .offline
         }
         return ChatHeaderModel(
             title: title,
@@ -119,7 +131,10 @@ struct ChatSessionScreen: View {
                     channel: channel,
                     topOverlayInset: topOverlayInset,
                     composerUsesLightContent: composerChromeTone.usesLightContent,
-                    dynamicallySamplesComposerTone: theme.hasCustomWallpaper(for: channel),
+                    wallpaperAppearance: wallpaperAppearance,
+                    dynamicallySamplesComposerTone: theme.hasCustomWallpaper(
+                        for: channel,
+                        appearance: wallpaperAppearance),
                     usesDarkChatSurface: usesDarkChatSurface,
                     timelineUsesLightContent: timelineUsesLightContent,
                     jumpCommand: $jumpCommand
@@ -171,7 +186,7 @@ struct ChatSessionScreen: View {
         let wallpaper = displayedWallpaper
         ZStack {
             wallpaper.gradient(dark: colorScheme == .dark)
-            if let img = theme.customWallpaperImage(for: channel) {
+            if let img = theme.customWallpaperImage(for: channel, appearance: wallpaperAppearance) {
                 Image(uiImage: img)
                     .resizable()
                     .scaledToFill()
@@ -182,10 +197,7 @@ struct ChatSessionScreen: View {
     }
 
     private var displayedWallpaper: WallpaperChoice {
-        if colorScheme == .dark && !theme.hasCustomWallpaper(for: channel) {
-            return .night
-        }
-        return theme.wallpaper(for: channel)
+        theme.wallpaper(for: channel, appearance: wallpaperAppearance)
     }
 
 }
@@ -218,6 +230,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
     let channel: ChatChannel
     let topOverlayInset: CGFloat
     let composerUsesLightContent: Bool
+    let wallpaperAppearance: WallpaperAppearance
     let dynamicallySamplesComposerTone: Bool
     let usesDarkChatSurface: Bool
     let timelineUsesLightContent: Bool
@@ -232,6 +245,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             store: store,
             theme: theme,
             composerUsesLightContent: composerUsesLightContent,
+            wallpaperAppearance: wallpaperAppearance,
             dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
             timelineUsesLightContent: timelineUsesLightContent
@@ -246,6 +260,7 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             theme: theme,
             topOverlayInset: topOverlayInset,
             composerUsesLightContent: composerUsesLightContent,
+            wallpaperAppearance: wallpaperAppearance,
             dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
             timelineUsesLightContent: timelineUsesLightContent

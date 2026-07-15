@@ -1,6 +1,6 @@
 # 悄悄话
 
-只服务 `xu` 与 `si` 两位固定用户、支持 iPhone/iPad 多设备同步的情侣 App。客户端使用 SwiftUI + UIKit，服务端使用 Fastify、Socket.IO、PostgreSQL，并集成“大橘”AI。
+只服务 `xu` 与 `si` 两位固定用户、支持 iPhone/iPad 多设备同步的情侣 App。客户端目标为 iOS/iPadOS 26，使用 SwiftUI + UIKit；服务端使用 Node.js 22、Fastify、Socket.IO、PostgreSQL，并集成“大橘”AI。
 
 生产服务：`https://hoo66.top`
 
@@ -8,8 +8,9 @@
 
 - 固定双账号登录、设备会话、实时在线、严格已读、撤回、引用、搜索和离线历史。
 - 文字、原图、视频、语音、文件与贴纸消息；语音异步转写；Live Photo 当前按静态图处理。
-- 纪念日、聊天统计、共同相册、那年今日、共享/私人日历、提醒与备忘。
-- 服务端持久化的大橘状态、互动与 AI 私聊，以及可管理的结构化 Memory。
+- 纪念日、服务端统计优先且本地缓存兜底的聊天统计、共同相册、那年今日、共享/私人日历、提醒与备忘。
+- 大橘每日内容推荐、双方互荐、未读提示与推荐历史。
+- 服务端持久化的大橘状态、互动与 AI 私聊，以及可管理的结构化 Memory；本地存在 `cute_cat.glb` 时显示 3D 模型，否则使用占位界面。
 - SQLite 本地缓存、可靠发送队列、媒体缓存、Socket.IO 实时同步和 Bark 多设备通知。
 
 公开注册、邀请码、创建或加入其他情侣空间均已删除。
@@ -44,6 +45,8 @@ server/
 project.yml            XcodeGen 工程定义
 ```
 
+当前客户端版本为 `0.2.0 (7)`，部署目标、Bundle ID、依赖和生产基地址以 `project.yml` 为准。`Sources/Resources/cute_cat.glb` 是不入库的本地资源，缺失不影响编译。
+
 ## 常用验证
 
 ```powershell
@@ -58,7 +61,7 @@ iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLin
 ## 不可破坏的边界
 
 - 生产数据库与媒体目录是事实源；调试不得直接改写生产聊天或 Memory。
-- 数据库迁移 v1–v27 已上线，旧迁移不可删除或改写；新变化只能追加版本。
+- 当前代码要求数据库 schema v31；v1–v31 迁移不可删除或改写，新变化只能追加版本。
 - 现有数据库主键包含 `legacy` 字样，它们属于线上数据身份，不代表仍支持旧产品流程。
 - Socket 字段变化必须同步修改 `server/src/contracts/realtime.ts`、`Sources/Platform/Networking/SocketContract.swift` 和测试。
 - `.env`、`server/.data/`、`server/uploads/`、数据库备份与构建产物不得提交。

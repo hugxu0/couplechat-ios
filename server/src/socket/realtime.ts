@@ -134,19 +134,23 @@ export function registerRealtime(io: Server) {
       }, ack),
     );
 
-    socket.on(socketEvents.read, (payload: unknown) => {
-      const parsed = readReceiptSchema.safeParse(payload ?? {});
-      if (!parsed.success) return;
-      void upsertReadReceipt(user, parsed.data.channel, parsed.data.ts).then((effectiveTs) => {
-        io.to(roomFor(parsed.data.channel, user)).emit(socketEvents.readUpdate, {
-          channel: parsed.data.channel,
+    socket.on(socketEvents.read, (payload: unknown, ack?: Ack) =>
+      safeAck(async () => {
+        const input = readReceiptSchema.parse(payload ?? {});
+        const effectiveTs = await upsertReadReceipt(user, input.channel, input.ts);
+        io.to(roomFor(input.channel, user)).emit(socketEvents.readUpdate, {
+          channel: input.channel,
           user: user.username,
           ts: effectiveTs,
         });
-      }).catch((error) => {
-        console.warn(`[read] 回执写入失败 user=${user.username}: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    });
+        return {
+          ok: true,
+          channel: input.channel,
+          user: user.username,
+          ts: effectiveTs,
+        };
+      }, ack),
+    );
 
     socket.on(socketEvents.sharedSet, (payload: unknown, ack?: Ack) =>
       safeAck(async () => {

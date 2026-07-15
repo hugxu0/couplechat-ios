@@ -327,6 +327,28 @@ enum ChatSurfaceTone: Equatable {
     var usesLightContent: Bool { self == .lightContent }
 }
 
+enum WallpaperAppearance: String, CaseIterable, Identifiable {
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    init(colorScheme: ColorScheme) {
+        self = colorScheme == .dark ? .dark : .light
+    }
+}
+
+struct CustomWallpaperAsset: Identifiable, Equatable {
+    let id: String
+}
+
 final class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
 
@@ -345,10 +367,12 @@ final class ThemeManager: ObservableObject {
     @Published private var wallpapers: [String: String] {
         didSet { UserDefaults.standard.set(wallpapers, forKey: "\(storagePrefix).wallpapers") }
     }
-    @Published private var customWallpaperKeys: Set<String> {
-        didSet {
-            UserDefaults.standard.set(Array(customWallpaperKeys), forKey: "\(storagePrefix).customWallpapers")
-        }
+    /// 每个频道分别维护浅色、深色两套图库；选择内置壁纸时不会删除图库。
+    @Published private var customWallpaperLibraries: [String: [String]] {
+        didSet { UserDefaults.standard.set(customWallpaperLibraries, forKey: "\(storagePrefix).customWallpaperLibraries") }
+    }
+    @Published private var selectedCustomWallpapers: [String: String] {
+        didSet { UserDefaults.standard.set(selectedCustomWallpapers, forKey: "\(storagePrefix).selectedCustomWallpapers") }
     }
 
     private let customDir: URL = {
@@ -367,7 +391,8 @@ final class ThemeManager: ObservableObject {
         accent = AccentChoice(rawValue: UserDefaults.standard.string(forKey: "theme.accent") ?? "") ?? .sakura
         appearance = AppearanceChoice(rawValue: UserDefaults.standard.string(forKey: "theme.appearance") ?? "") ?? .system
         wallpapers = UserDefaults.standard.dictionary(forKey: "theme.wallpapers") as? [String: String] ?? [:]
-        customWallpaperKeys = Set(UserDefaults.standard.stringArray(forKey: "theme.customWallpapers") ?? [])
+        customWallpaperLibraries = UserDefaults.standard.dictionary(forKey: "theme.customWallpaperLibraries") as? [String: [String]] ?? [:]
+        selectedCustomWallpapers = UserDefaults.standard.dictionary(forKey: "theme.selectedCustomWallpapers") as? [String: String] ?? [:]
     }
 
     func activateAccount(_ username: String?) {
@@ -386,8 +411,9 @@ final class ThemeManager: ObservableObject {
             defaults.set(accent.rawValue, forKey: "\(prefix).accent")
             defaults.set(appearance.rawValue, forKey: "\(prefix).appearance")
             defaults.set(wallpapers, forKey: "\(prefix).wallpapers")
-            defaults.set(Array(customWallpaperKeys), forKey: "\(prefix).customWallpapers")
-            for channel in customWallpaperKeys {
+            let legacyKeys = defaults.stringArray(forKey: "theme.customWallpapers") ?? []
+            defaults.set(legacyKeys, forKey: "\(prefix).customWallpapers")
+            for channel in legacyKeys {
                 let oldURL = customDir.appendingPathComponent("\(channel).jpg")
                 let newURL = customDir.appendingPathComponent("\(account).\(channel).jpg")
                 if FileManager.default.fileExists(atPath: oldURL.path),
@@ -398,80 +424,203 @@ final class ThemeManager: ObservableObject {
             defaults.set(true, forKey: initializedKey)
         }
 
+        migrateLegacyCustomWallpapers(account: account, prefix: prefix, defaults: defaults)
+
         activeAccount = account
         accent = AccentChoice(rawValue: defaults.string(forKey: "\(prefix).accent") ?? "") ?? .sakura
         appearance = AppearanceChoice(rawValue: defaults.string(forKey: "\(prefix).appearance") ?? "") ?? .system
         wallpapers = defaults.dictionary(forKey: "\(prefix).wallpapers") as? [String: String] ?? [:]
-        customWallpaperKeys = Set(defaults.stringArray(forKey: "\(prefix).customWallpapers") ?? [])
+        customWallpaperLibraries = defaults.dictionary(forKey: "\(prefix).customWallpaperLibraries") as? [String: [String]] ?? [:]
+        selectedCustomWallpapers = defaults.dictionary(forKey: "\(prefix).selectedCustomWallpapers") as? [String: String] ?? [:]
         customWallpaperImageCache.removeAll()
         customWallpaperLuminanceCache.removeAll()
     }
 
-    func wallpaper(for channel: ChatChannel) -> WallpaperChoice {
-        WallpaperChoice(rawValue: wallpapers[channel.rawValue] ?? "") ?? .aurora
+    func wallpaper(for channel: ChatChannel, appearance: WallpaperAppearance) -> WallpaperChoice {
+        let scoped = wallpapers[wallpaperScopeKey(channel, appearance: appearance)]
+        let legacyLight = appearance == .light ? wallpapers[channel.rawValue] : nil
+        return WallpaperChoice(rawValue: scoped ?? legacyLight ?? "")
+            ?? (appearance == .dark ? .night : .aurora)
     }
 
-    func setWallpaper(_ choice: WallpaperChoice, for channel: ChatChannel) {
-        wallpapers[channel.rawValue] = choice.rawValue
+    func setWallpaper(
+        _ choice: WallpaperChoice,
+        for channel: ChatChannel,
+        appearance: WallpaperAppearance
+    ) {
+        wallpapers[wallpaperScopeKey(channel, appearance: appearance)] = choice.rawValue
     }
 
-    func hasCustomWallpaper(for channel: ChatChannel) -> Bool {
-        customWallpaperKeys.contains(channel.rawValue)
+    func customWallpapers(for channel: ChatChannel, appearance: WallpaperAppearance) -> [CustomWallpaperAsset] {
+        customWallpaperLibraries[wallpaperScopeKey(channel, appearance: appearance), default: []]
+            .map { CustomWallpaperAsset(id: $0) }
     }
 
-    func customWallpaperImage(for channel: ChatChannel) -> UIImage? {
-        if let image = customWallpaperImageCache[channel.rawValue] {
+    func hasCustomWallpaper(for channel: ChatChannel, appearance: WallpaperAppearance) -> Bool {
+        selectedCustomWallpapers[wallpaperScopeKey(channel, appearance: appearance)] != nil
+    }
+
+    func selectedCustomWallpaperID(for channel: ChatChannel, appearance: WallpaperAppearance) -> String? {
+        selectedCustomWallpapers[wallpaperScopeKey(channel, appearance: appearance)]
+    }
+
+    func customWallpaperImage(
+        for channel: ChatChannel,
+        appearance: WallpaperAppearance
+    ) -> UIImage? {
+        guard let id = selectedCustomWallpaperID(for: channel, appearance: appearance) else { return nil }
+        return customWallpaperImage(id: id, for: channel, appearance: appearance)
+    }
+
+    func customWallpaperImage(
+        id: String,
+        for channel: ChatChannel,
+        appearance: WallpaperAppearance
+    ) -> UIImage? {
+        let key = wallpaperAssetKey(id: id, channel: channel, appearance: appearance)
+        if let image = customWallpaperImageCache[key] {
             return image
         }
-        let url = customWallpaperURL(for: channel)
+        let url = customWallpaperURL(id: id, for: channel, appearance: appearance)
         guard let data = try? Data(contentsOf: url) else { return nil }
         guard let image = UIImage(data: data) else { return nil }
-        customWallpaperImageCache[channel.rawValue] = image
+        customWallpaperImageCache[key] = image
         return image
     }
 
-    func customWallpaperLuminance(for channel: ChatChannel, region: WallpaperSurfaceRegion) -> CGFloat? {
-        let key = channel.rawValue
+    func customWallpaperLuminance(
+        for channel: ChatChannel,
+        appearance: WallpaperAppearance,
+        region: WallpaperSurfaceRegion
+    ) -> CGFloat? {
+        guard let id = selectedCustomWallpaperID(for: channel, appearance: appearance) else { return nil }
+        let key = wallpaperAssetKey(id: id, channel: channel, appearance: appearance)
         if let cached = customWallpaperLuminanceCache[key]?[region] {
             return cached
         }
-        guard let image = customWallpaperImage(for: channel) else { return nil }
+        guard let image = customWallpaperImage(id: id, for: channel, appearance: appearance) else { return nil }
         let value = Self.regionLuminance(of: image, region: region)
         customWallpaperLuminanceCache[key, default: [:]][region] = value
         return value
     }
 
-    /// 输入栏会跟随键盘上下移动，因此不能一直采样壁纸底部；由 UIKit 传入它当前
-    /// 胶囊在整屏中的位置，取样结果再驱动玻璃和文字的同一套互斥状态。
-    func customWallpaperLuminance(for channel: ChatChannel, normalizedRect: CGRect) -> CGFloat? {
-        guard let image = customWallpaperImage(for: channel) else { return nil }
+    /// 输入区会跟随键盘上下移动，因此不能一直采样壁纸底部；由 UIKit 传入整块
+    /// 底部 dock 在屏幕中的位置，统一驱动输入框、按钮、面板和渐变材质。
+    func customWallpaperLuminance(
+        for channel: ChatChannel,
+        appearance: WallpaperAppearance,
+        normalizedRect: CGRect
+    ) -> CGFloat? {
+        guard let image = customWallpaperImage(for: channel, appearance: appearance) else { return nil }
         return Self.regionLuminance(of: image, normalizedRect: normalizedRect)
     }
 
-    func setCustomWallpaper(imageData: Data, for channel: ChatChannel) {
-        let url = customWallpaperURL(for: channel)
-        try? imageData.write(to: url, options: .atomic)
-        if let image = UIImage(data: imageData) {
-            customWallpaperImageCache[channel.rawValue] = image
-        } else {
-            customWallpaperImageCache[channel.rawValue] = nil
+    @discardableResult
+    func addCustomWallpaper(
+        imageData: Data,
+        for channel: ChatChannel,
+        appearance: WallpaperAppearance
+    ) -> String? {
+        guard UIImage(data: imageData) != nil else { return nil }
+        let id = UUID().uuidString.lowercased()
+        let url = customWallpaperURL(id: id, for: channel, appearance: appearance)
+        do {
+            try imageData.write(to: url, options: .atomic)
+        } catch {
+            return nil
         }
-        customWallpaperLuminanceCache[channel.rawValue] = nil
-        customWallpaperKeys.insert(channel.rawValue)
+        let scope = wallpaperScopeKey(channel, appearance: appearance)
+        var ids = customWallpaperLibraries[scope, default: []]
+        ids.append(id)
+        customWallpaperLibraries[scope] = ids
+        selectedCustomWallpapers[scope] = id
+        if let image = UIImage(data: imageData) {
+            customWallpaperImageCache[wallpaperAssetKey(id: id, channel: channel, appearance: appearance)] = image
+        }
+        return id
     }
 
-    func removeCustomWallpaper(for channel: ChatChannel) {
-        let url = customWallpaperURL(for: channel)
+    func selectCustomWallpaper(
+        id: String,
+        for channel: ChatChannel,
+        appearance: WallpaperAppearance
+    ) {
+        let scope = wallpaperScopeKey(channel, appearance: appearance)
+        guard customWallpaperLibraries[scope, default: []].contains(id) else { return }
+        selectedCustomWallpapers[scope] = id
+    }
+
+    func clearCustomWallpaperSelection(for channel: ChatChannel, appearance: WallpaperAppearance) {
+        selectedCustomWallpapers.removeValue(forKey: wallpaperScopeKey(channel, appearance: appearance))
+    }
+
+    func removeCustomWallpaper(
+        id: String,
+        for channel: ChatChannel,
+        appearance: WallpaperAppearance
+    ) {
+        let url = customWallpaperURL(id: id, for: channel, appearance: appearance)
         try? FileManager.default.removeItem(at: url)
-        customWallpaperImageCache[channel.rawValue] = nil
-        customWallpaperLuminanceCache[channel.rawValue] = nil
-        customWallpaperKeys.remove(channel.rawValue)
+        let assetKey = wallpaperAssetKey(id: id, channel: channel, appearance: appearance)
+        customWallpaperImageCache[assetKey] = nil
+        customWallpaperLuminanceCache[assetKey] = nil
+        let scope = wallpaperScopeKey(channel, appearance: appearance)
+        customWallpaperLibraries[scope]?.removeAll { $0 == id }
+        if customWallpaperLibraries[scope]?.isEmpty == true {
+            customWallpaperLibraries.removeValue(forKey: scope)
+        }
+        if selectedCustomWallpapers[scope] == id {
+            selectedCustomWallpapers.removeValue(forKey: scope)
+        }
     }
 
-    private func customWallpaperURL(for channel: ChatChannel) -> URL {
-        let filename = activeAccount.map { "\($0).\(channel.rawValue).jpg" }
-            ?? "\(channel.rawValue).jpg"
+    private func wallpaperScopeKey(_ channel: ChatChannel, appearance: WallpaperAppearance) -> String {
+        "\(channel.rawValue).\(appearance.rawValue)"
+    }
+
+    private func wallpaperAssetKey(id: String, channel: ChatChannel, appearance: WallpaperAppearance) -> String {
+        "\(wallpaperScopeKey(channel, appearance: appearance)).\(id)"
+    }
+
+    private func customWallpaperURL(
+        id: String,
+        for channel: ChatChannel,
+        appearance: WallpaperAppearance,
+        account: String? = nil
+    ) -> URL {
+        let owner = account ?? activeAccount ?? "default"
+        let filename = "\(owner).\(channel.rawValue).\(appearance.rawValue).\(id).jpg"
         return customDir.appendingPathComponent(filename)
+    }
+
+    private func migrateLegacyCustomWallpapers(account: String, prefix: String, defaults: UserDefaults) {
+        let migrationKey = "\(prefix).customWallpaperLibraryMigrated"
+        guard !defaults.bool(forKey: migrationKey) else { return }
+        var libraries = defaults.dictionary(forKey: "\(prefix).customWallpaperLibraries") as? [String: [String]] ?? [:]
+        var selected = defaults.dictionary(forKey: "\(prefix).selectedCustomWallpapers") as? [String: String] ?? [:]
+        let legacyChannels = defaults.stringArray(forKey: "\(prefix).customWallpapers") ?? []
+        for rawChannel in legacyChannels {
+            guard let channel = ChatChannel(rawValue: rawChannel) else { continue }
+            let oldURL = customDir.appendingPathComponent("\(account).\(rawChannel).jpg")
+            guard FileManager.default.fileExists(atPath: oldURL.path) else { continue }
+            for appearance in WallpaperAppearance.allCases {
+                let id = "legacy"
+                let scope = "\(rawChannel).\(appearance.rawValue)"
+                let newURL = customWallpaperURL(
+                    id: id,
+                    for: channel,
+                    appearance: appearance,
+                    account: account)
+                if !FileManager.default.fileExists(atPath: newURL.path) {
+                    try? FileManager.default.copyItem(at: oldURL, to: newURL)
+                }
+                libraries[scope] = [id]
+                selected[scope] = id
+            }
+        }
+        defaults.set(libraries, forKey: "\(prefix).customWallpaperLibraries")
+        defaults.set(selected, forKey: "\(prefix).selectedCustomWallpapers")
+        defaults.set(true, forKey: migrationKey)
     }
 
     private static func regionLuminance(of image: UIImage, region: WallpaperSurfaceRegion) -> CGFloat {

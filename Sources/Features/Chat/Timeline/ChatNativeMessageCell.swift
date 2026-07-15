@@ -332,11 +332,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         replyLabel.textColor = mine ? UIColor.white.withAlphaComponent(0.86) : incomingSecondaryColor
 
         retryButton.isHidden = !message.failed
-        statusLabel.text = statusText(message: message, read: read)
-        statusLabel.isHidden = !mine || message.failed
-        statusLabel.textColor = read ? .white : accentColor
-        statusLabel.backgroundColor = read ? accentColor.withAlphaComponent(0.92) : .clear
-        statusLabel.layer.borderColor = accentColor.withAlphaComponent(0.85).cgColor
+        updateReadStatus(read)
 
         highlightView.layer.borderWidth = highlighted ? 2 : 0
         highlightView.layer.borderColor = accentColor.withAlphaComponent(0.85).cgColor
@@ -345,6 +341,15 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         installContent(for: message, counterpartName: counterpartName)
         setAIActivityAnimating(isAIActivity)
         setNeedsLayout()
+    }
+
+    func updateReadStatus(_ read: Bool) {
+        guard let message else { return }
+        statusLabel.text = statusText(message: message, read: read)
+        statusLabel.isHidden = !mine || message.failed
+        statusLabel.textColor = read ? .white : accentColor
+        statusLabel.backgroundColor = read ? accentColor.withAlphaComponent(0.92) : .clear
+        statusLabel.layer.borderColor = accentColor.withAlphaComponent(0.85).cgColor
     }
 
     override func layoutSubviews() {

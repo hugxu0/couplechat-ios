@@ -22,6 +22,7 @@ final class ChatViewController: UIViewController {
     var timelineController: ChatTimelineController!
     var collectionView: UICollectionView!
     let bottomStack = UIStackView()
+    let bottomBackdrop = ChatBottomGradientBlurView()
     let panelContainer = UIView()
     let jumpToBottomBackground = ChatGlassView(style: .systemThinMaterial, cornerRadius: 21)
     let jumpToBottomButton = UIButton(type: .system)
@@ -43,6 +44,7 @@ final class ChatViewController: UIViewController {
     var bottomDockUsesScreenBottom = false
     var topOverlayInset: CGFloat = 96
     var composerUsesLightContent = false
+    var wallpaperAppearance: WallpaperAppearance
     var dynamicallySamplesComposerTone = false
     var lastComposerSampleFrame: CGRect = .null
     var usesDarkChatSurface = false
@@ -92,6 +94,7 @@ final class ChatViewController: UIViewController {
         store: ChatStore,
         theme: ThemeManager,
         composerUsesLightContent: Bool,
+        wallpaperAppearance: WallpaperAppearance,
         dynamicallySamplesComposerTone: Bool,
         usesDarkChatSurface: Bool,
         timelineUsesLightContent: Bool
@@ -100,6 +103,7 @@ final class ChatViewController: UIViewController {
         self.store = store
         self.theme = theme
         self.composerUsesLightContent = composerUsesLightContent
+        self.wallpaperAppearance = wallpaperAppearance
         self.dynamicallySamplesComposerTone = dynamicallySamplesComposerTone
         self.usesDarkChatSurface = usesDarkChatSurface
         self.timelineUsesLightContent = timelineUsesLightContent
@@ -133,6 +137,7 @@ final class ChatViewController: UIViewController {
         bindStore()
         composer.delegate = self
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
+        bottomBackdrop.applyTone(usesLightContent: composerUsesLightContent)
         applyAccentColor()
         installStickerPanel()
         NotificationCenter.default.addObserver(
@@ -182,6 +187,7 @@ final class ChatViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         isChatVisible = true
+        store.setChatVisible(channel, visible: true)
         applyInputLayout(duration: 0, curve: .curveEaseOut)
         timelineController.scheduleInitialPositioning()
         DispatchQueue.main.async { [weak self] in self?.reportDisplayedMessagesAsRead() }
@@ -190,6 +196,7 @@ final class ChatViewController: UIViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         isChatVisible = false
+        store.setChatVisible(channel, visible: false)
         cancelRecordingForInterruption()
     }
 
@@ -241,12 +248,14 @@ final class ChatViewController: UIViewController {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
-        if !theme.hasCustomWallpaper(for: channel) {
+        wallpaperAppearance = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        if !theme.hasCustomWallpaper(for: channel, appearance: wallpaperAppearance) {
             let dark = traitCollection.userInterfaceStyle == .dark
             usesDarkChatSurface = dark
             timelineUsesLightContent = dark
         }
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
+        bottomBackdrop.applyTone(usesLightContent: composerUsesLightContent)
         stickerPanel?.applyTheme(
             accentColor: theme.accent.uiColor,
             usesLightContent: composerUsesLightContent)
@@ -260,6 +269,7 @@ final class ChatViewController: UIViewController {
         theme: ThemeManager,
         topOverlayInset: CGFloat,
         composerUsesLightContent: Bool,
+        wallpaperAppearance: WallpaperAppearance,
         dynamicallySamplesComposerTone: Bool,
         usesDarkChatSurface: Bool,
         timelineUsesLightContent: Bool
@@ -268,18 +278,21 @@ final class ChatViewController: UIViewController {
         let themeChanged = self.theme !== theme
         let composerToneChanged = self.composerUsesLightContent != composerUsesLightContent
         let dynamicToneChanged = self.dynamicallySamplesComposerTone != dynamicallySamplesComposerTone
+        let wallpaperAppearanceChanged = self.wallpaperAppearance != wallpaperAppearance
         let surfaceChanged = self.usesDarkChatSurface != usesDarkChatSurface
         let timelineChanged = self.timelineUsesLightContent != timelineUsesLightContent
         self.store = store
         self.theme = theme
+        self.wallpaperAppearance = wallpaperAppearance
         self.dynamicallySamplesComposerTone = dynamicallySamplesComposerTone
         if !dynamicallySamplesComposerTone || dynamicToneChanged {
             self.composerUsesLightContent = composerUsesLightContent
         }
         self.usesDarkChatSurface = usesDarkChatSurface
         self.timelineUsesLightContent = timelineUsesLightContent
-        if themeChanged || composerToneChanged || dynamicToneChanged || appliedAccent != theme.accent {
+        if themeChanged || composerToneChanged || dynamicToneChanged || wallpaperAppearanceChanged || appliedAccent != theme.accent {
             composer.applyTheme(theme, usesLightContent: self.composerUsesLightContent)
+            bottomBackdrop.applyTone(usesLightContent: self.composerUsesLightContent)
             stickerPanel?.applyTheme(
                 accentColor: theme.accent.uiColor,
                 usesLightContent: self.composerUsesLightContent)
@@ -361,6 +374,11 @@ final class ChatViewController: UIViewController {
             applyInputLayout(duration: 0, curve: .curveEaseOut, forceBottom: true)
 
             hasCompletedEntryBootstrap = true
+            if isChatVisible {
+                // 冷启动时最新窗口可能在 viewDidAppear 之后才恢复完成；再扫描一次
+                // 未读互动，保证离开聊天期间收到的最后一个效果不会漏掉。
+                store.setChatVisible(channel, visible: true)
+            }
             timelineController.scheduleInitialPositioning()
             timelineController.scrollToBottom(animated: false)
             timelineController.clearNewMessagesBelow()
@@ -381,6 +399,8 @@ final class ChatViewController: UIViewController {
     }
 
     func buildBottomDock() {
+        bottomBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(bottomBackdrop)
         bottomStack.axis = .vertical
         bottomStack.spacing = 0
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
@@ -416,6 +436,10 @@ final class ChatViewController: UIViewController {
             bottomStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomConstraint,
+            bottomBackdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomBackdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomBackdrop.topAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -28),
+            bottomBackdrop.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
         ])
     }
 

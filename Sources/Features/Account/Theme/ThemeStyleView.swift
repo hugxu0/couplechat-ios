@@ -6,8 +6,10 @@ import SwiftUI
 
 struct ThemeStyleView: View {
     @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var wallpaperChannel: ChatChannel = .couple
+    @State private var wallpaperAppearance: WallpaperAppearance = .light
     @State private var customPickerItem: PhotosPickerItem?
 
     private let wallpaperColumns = [GridItem(.adaptive(minimum: 96), spacing: 14)]
@@ -31,6 +33,9 @@ struct ThemeStyleView: View {
             guard let item = customPickerItem else { return }
             loadCustomImage(item)
         }
+        .onAppear {
+            wallpaperAppearance = WallpaperAppearance(colorScheme: colorScheme)
+        }
     }
 
     // MARK: - 实时预览（一张小聊天示意，改什么立刻能看见）
@@ -41,8 +46,9 @@ struct ThemeStyleView: View {
                 .foregroundStyle(DS.Palette.textSecondary)
 
             ZStack {
-                if theme.hasCustomWallpaper(for: wallpaperChannel),
-                   let image = theme.customWallpaperImage(for: wallpaperChannel) {
+                if let image = theme.customWallpaperImage(
+                    for: wallpaperChannel,
+                    appearance: wallpaperAppearance) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -81,7 +87,7 @@ struct ThemeStyleView: View {
     }
 
     private var previewWallpaper: WallpaperChoice {
-        theme.wallpaper(for: wallpaperChannel)
+        theme.wallpaper(for: wallpaperChannel, appearance: wallpaperAppearance)
     }
 
     // MARK: - 主题色
@@ -184,11 +190,21 @@ struct ThemeStyleView: View {
                 }
             }
 
+            Picker("显示模式", selection: $wallpaperAppearance) {
+                ForEach(WallpaperAppearance.allCases) { appearance in
+                    Text(appearance.name).tag(appearance)
+                }
+            }
+            .pickerStyle(.segmented)
+
             LazyVGrid(columns: wallpaperColumns, spacing: 16) {
                 ForEach(WallpaperChoice.allCases) { choice in
                     wallpaperTile(choice)
                 }
-                customTile
+                ForEach(theme.customWallpapers(for: wallpaperChannel, appearance: wallpaperAppearance)) { asset in
+                    customWallpaperTile(asset)
+                }
+                addCustomTile
             }
         }
         .padding(DS.Spacing.card)
@@ -197,13 +213,14 @@ struct ThemeStyleView: View {
     }
 
     private func wallpaperTile(_ choice: WallpaperChoice) -> some View {
-        let hasCustom = theme.hasCustomWallpaper(for: wallpaperChannel)
-        let selected = !hasCustom && theme.wallpaper(for: wallpaperChannel) == choice
+        let hasCustom = theme.hasCustomWallpaper(for: wallpaperChannel, appearance: wallpaperAppearance)
+        let selected = !hasCustom
+            && theme.wallpaper(for: wallpaperChannel, appearance: wallpaperAppearance) == choice
         return Button {
             Haptics.selection()
-            theme.removeCustomWallpaper(for: wallpaperChannel)
+            theme.clearCustomWallpaperSelection(for: wallpaperChannel, appearance: wallpaperAppearance)
             withAnimation(DS.Anim.spring) {
-                theme.setWallpaper(choice, for: wallpaperChannel)
+                theme.setWallpaper(choice, for: wallpaperChannel, appearance: wallpaperAppearance)
             }
         } label: {
             VStack(spacing: 8) {
@@ -227,53 +244,77 @@ struct ThemeStyleView: View {
         .buttonStyle(PressableStyle())
     }
 
-    private var customTile: some View {
-        let isCustom = theme.hasCustomWallpaper(for: wallpaperChannel)
+    private func customWallpaperTile(_ asset: CustomWallpaperAsset) -> some View {
+        let selected = theme.selectedCustomWallpaperID(
+            for: wallpaperChannel,
+            appearance: wallpaperAppearance) == asset.id
+        return Button {
+            Haptics.selection()
+            withAnimation(DS.Anim.spring) {
+                theme.selectCustomWallpaper(
+                    id: asset.id,
+                    for: wallpaperChannel,
+                    appearance: wallpaperAppearance)
+            }
+        } label: {
+            VStack(spacing: 8) {
+                Group {
+                    if let image = theme.customWallpaperImage(
+                        id: asset.id,
+                        for: wallpaperChannel,
+                        appearance: wallpaperAppearance) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Color.gray.opacity(0.1)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 110)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous)
+                        .stroke(selected ? DS.Palette.accent : .clear, lineWidth: 3)
+                )
+                Label(selected ? "使用中" : "已保存", systemImage: selected ? "checkmark.circle.fill" : "photo")
+                    .font(selected ? DS.Typo.sectionLabel : DS.Typo.caption)
+                    .foregroundStyle(selected ? DS.Palette.accent : DS.Palette.textSecondary)
+            }
+        }
+        .buttonStyle(PressableStyle())
+        .contextMenu {
+            Button(role: .destructive) {
+                theme.removeCustomWallpaper(
+                    id: asset.id,
+                    for: wallpaperChannel,
+                    appearance: wallpaperAppearance)
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+        }
+    }
+
+    private var addCustomTile: some View {
         return PhotosPicker(selection: $customPickerItem, matching: .images) {
             VStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous)
-                    .fill(isCustom ? AnyShapeStyle(DS.Palette.accent.opacity(0.12)) : AnyShapeStyle(Color.gray.opacity(0.1)))
+                    .fill(Color.gray.opacity(0.1))
                     .frame(height: 110)
                     .overlay {
-                        if isCustom, let img = theme.customWallpaperImage(for: wallpaperChannel) {
-                            Image(uiImage: img)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(maxWidth: .infinity, maxHeight: 110)
-                                .clipped()
-                        } else {
-                            VStack(spacing: 6) {
-                                Image(systemName: "photo.badge.plus")
-                                    .font(DS.Typo.pageTitle)
-                                Text("从相册选")
-                                    .font(DS.Typo.micro)
-                            }
-                            .foregroundStyle(DS.Palette.textSecondary)
+                        VStack(spacing: 6) {
+                            Image(systemName: "photo.badge.plus")
+                                .font(DS.Typo.pageTitle)
+                            Text("从相册添加")
+                                .font(DS.Typo.micro)
                         }
+                        .foregroundStyle(DS.Palette.textSecondary)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.Radius.bubble - 2, style: .continuous)
-                            .stroke(isCustom ? DS.Palette.accent : .clear, lineWidth: 3)
-                    )
-                HStack(spacing: 4) {
-                    if isCustom {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(DS.Typo.caption)
-                            .foregroundStyle(DS.Palette.accent)
-                    }
-                    Text(isCustom ? "已自定义" : "自定义")
-                        .font(isCustom ? DS.Typo.sectionLabel : DS.Typo.caption)
-                        .foregroundStyle(isCustom ? DS.Palette.accent : DS.Palette.textSecondary)
-                }
-                if isCustom {
-                    Button(role: .destructive) {
-                        theme.removeCustomWallpaper(for: wallpaperChannel)
-                    } label: {
-                        Text("移除")
-                            .font(DS.Typo.micro)
-                    }
-                }
+                Text("添加到\(wallpaperAppearance.name)图库")
+                    .font(DS.Typo.caption)
+                    .foregroundStyle(DS.Palette.textSecondary)
             }
         }
         .buttonStyle(PressableStyle())
@@ -285,7 +326,10 @@ struct ThemeStyleView: View {
                   let image = UIImage(data: data),
                   let jpeg = image.jpegData(compressionQuality: 0.9) else { return }
             await MainActor.run {
-                theme.setCustomWallpaper(imageData: jpeg, for: wallpaperChannel)
+                theme.addCustomWallpaper(
+                    imageData: jpeg,
+                    for: wallpaperChannel,
+                    appearance: wallpaperAppearance)
                 customPickerItem = nil
             }
         }

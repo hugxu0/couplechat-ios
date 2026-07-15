@@ -11,6 +11,18 @@ extension ChatViewController {
             .sink { [weak self] _ in self?.handleStoreChange() }
             .store(in: &cancellables)
 
+        // 已读状态与消息数组是两条独立的发布链。过去这里只监听消息，导致
+        // read:update 已经到达内存后，屏幕上的“未读”仍要等下一条消息才刷新。
+        messageStore.timelineStore.$readStates
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, self.timelineController != nil else { return }
+                self.timelineController.updatePresentation(self.makeTimelinePresentation())
+                self.timelineController.invalidateReadReceiptAppearance()
+            }
+            .store(in: &cancellables)
+
         store.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -71,6 +83,11 @@ extension ChatViewController {
         if !hasCompletedEntryBootstrap { collectionView.alpha = 0 }
         lastRenderedMessageID = messages.last?.id
         updateJumpToBottomVisibility(animated: animated)
+        // diff/reload 时 UIKit 不保证仍在屏幕内的 cell 再次触发 willDisplay。
+        // 下一轮布局完成后按真实可见区域补报，避免聊天页已展示消息却漏发回执。
+        DispatchQueue.main.async { [weak self] in
+            self?.reportDisplayedMessagesAsRead()
+        }
     }
 
     func isNearLatestWindow() -> Bool {

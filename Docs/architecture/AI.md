@@ -1,6 +1,6 @@
 # 大橘 AI 系统
 
-> 当前生产只服务 `xu/si`。两位用户使用完整 Agent、MCP、历史检索与自动 Memory，数据通过 conversation/account/couple ownership 约束；Memory 还区分“关于主人”和“大橘自己”的动态记忆。
+> 系统只服务 `xu/si`。配置兼容的非 Claude 对话模型时，两位用户使用 OpenAI Agents SDK、MCP、历史检索与自动 Memory；直接生成任务同时支持 Responses、Chat Completions 和 Anthropic Messages。数据通过 conversation/account/couple ownership 约束，Memory 还区分“关于主人”和“大橘自己”的动态记忆。
 
 ## 回答链路
 
@@ -10,13 +10,15 @@
   ├─ 更新窗口外对话摘要
   └─ 需要回复时
        → ReplyQueue
-       → OpenAI Agents SDK
+       → OpenAI Agents SDK（兼容的非 Claude 对话模型）
        → MCP 工具（按需）
        → 1～3 条回复 / 确认卡 / 来源卡片
        → 消息入库并广播
 ```
 
 `couple` 频道仅在出现 `AI_TRIGGER_ALIASES` 时直接回答；个人 `ai` 频道每条文字或图片都进入回答链路。每个频道串行执行，超时会释放队列并提供可见反馈，积压时保留最新请求。
+
+未配置任何 `AI_*` provider 时，公聊被明确召唤和 AI 私聊仍会返回内置兜底文本；配置了 provider 但 Agent 不兼容或单轮失败时，会写入可见的失败/重试提示。Memory 提取、摘要、推荐等直接生成任务通过 `provider.ts` 执行，不依赖 Agent runtime。
 
 ## 代码位置
 
@@ -34,7 +36,7 @@
 
 ## Agent 输入
 
-完整 Agent 每轮初始输入包含北京时间、说话人、频道权限、窗口外摘要、最近 14 条聊天和当前问题。工具结果由 Agent 在同一轮继续处理，不重复塞进初始输入。
+完整 Agent 每轮初始输入包含北京时间、说话人、频道权限、窗口外摘要、最多 50 条原文和当前问题。其中最后 8 条是重点上下文，更早的最多 42 条只作低优先级辅助；私聊累计到 50 条后把滚出重点窗口的内容写入摘要，公聊则在每次大橘会话完成后更新会话摘要。工具结果由 Agent 在同一轮继续处理，不重复塞进初始输入。
 
 窗口外摘要保存在 `ai_runtime_state`，它是可重建的短期上下文，不是长期事实。
 
@@ -95,6 +97,15 @@ Memory 本地离线缓存尚未完成；runtime/tool 以 `conversation_id/couple
 工具不提供任意 SQL、任意数据库 CRUD 或跨用户私聊读取。
 事项动作始终以当前登录账号授权，模型给出的 `ownerName` 不能变成另一账号身份；shared 变更同步双方，personal 只作用于当前账号。结构化回答会主动使用合法 Markdown 标题、列表或表格，普通闲聊保持自然文本。
 
+## 今日推荐
+
+推荐生成不走对话 Agent，而是 `server/src/daily/recommendationService.ts` 调用 task provider：
+
+- 作息日按北京时间 06:00 切换；调度器启动后立即检查，此后每 15 分钟幂等执行，`today` API 也会懒生成。
+- 优先读取昨天共同 `event`，再用近况 `state`、有效 `plan` 和 `fact` 补充，不读取私人 Memory、`relationship` 或 `insight`。
+- 模型必须返回 `{ category, content }`；解析失败或模型不可用时按作息日确定性选择内置推荐。
+- 每日大橘推荐双方相同；双方互荐、已读和历史隐藏使用账号级状态，并通过 Sync V2 刷新。
+
 ## 配置
 
 配置值保存在环境变量中，不写入仓库：
@@ -103,34 +114,49 @@ Memory 本地离线缓存尚未完成；runtime/tool 以 `conversation_id/couple
 AI_BASE_URL=
 AI_API_KEY=
 AI_MODEL=
+AI_API_MODE=responses
+AI_REASONING_EFFORT=high
 
 AI_CHAT_BASE_URL=
 AI_CHAT_API_KEY=
 AI_CHAT_MODEL=
+AI_CHAT_API_MODE=
+AI_CHAT_REASONING_EFFORT=
 
 AI_TASK_BASE_URL=
 AI_TASK_API_KEY=
 AI_TASK_MODEL=
+AI_TASK_API_MODE=
+AI_TASK_REASONING_EFFORT=
 
 AI_VISION_BASE_URL=
 AI_VISION_API_KEY=
 AI_VISION_MODEL=
+AI_VISION_API_MODE=
 
 AI_MCP_URL=http://127.0.0.1:8080/api/ai-mcp
 AI_TRIGGER_ALIASES=@大橘
 
+TAVILY_MCP_URL=
+TAVILY_API_KEY=
+
 EMBEDDING_VOYAGE_PROVIDER=
 EMBEDDING_VOYAGE_BASE_URL=
 EMBEDDING_VOYAGE_API_KEYS=
+EMBEDDING_MONGODB_PROVIDER=
+EMBEDDING_MONGODB_BASE_URL=
+EMBEDDING_MONGODB_API_KEYS=
 EMBEDDING_MODEL=voyage-4
 EMBEDDING_DIM=1024
 ```
 
-`AI_CHAT_*` 用于直接回复，`AI_TASK_*` 用于整理、摘要和后台内容；未单独配置时回退到 `AI_*`。向量服务不可用时仍可做字面、时间和主体检索。
+`AI_CHAT_*` 用于直接回复，`AI_TASK_*` 用于整理、摘要和后台内容；未单独配置时回退到 `AI_*`。`*_API_MODE` 支持 `responses/chat_completions/anthropic`，未声明时 Claude 模型自动走 Anthropic，其余默认 Chat Completions；Responses 调用失败会在未超时的情况下回退 Chat Completions。`*_REASONING_EFFORT` 支持 `none/minimal/low/medium/high/xhigh`。
+
+当前图片可一次把最多 9 张送入模型。联网优先使用 Responses 原生 `web_search`；MCP fallback 可按国内/国际/交叉核实路由，并可配置 Tavily 做全球搜索和指定网页提取。向量检索支持 Voyage、MongoDB 两个多 key 池顺序 failover，也兼容旧的 `EMBEDDING_BASE_URL/API_KEY` 单 key 配置；向量服务不可用时仍可做字面、时间、主体与高重要度兜底检索。完整生产示例以 `server/.env.production.example` 为准。
 
 ## 本机调试
 
-仅在迁移到 v27 的隔离恢复库运行调试服务后打开 `http://127.0.0.1:8080/ai-debug`。不得用 `npm run dev:cloud-db` 直接写生产库。调试页支持：
+仅在迁移到当前 schema v31 的隔离恢复库运行调试服务后打开 `http://127.0.0.1:8080/ai-debug`。不得用 `npm run dev:cloud-db` 直接写生产库。调试页支持：
 
 - 两位账号与公聊/私聊切换；
 - 查看 Agent instructions、输入、工具调用、输出和耗时；

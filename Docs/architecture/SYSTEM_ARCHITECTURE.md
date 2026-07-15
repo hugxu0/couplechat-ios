@@ -15,6 +15,7 @@ Fastify + Socket.IO · 127.0.0.1:3000
   ├─ PostgreSQL：账号、消息、状态、提醒、AI Memory
   ├─ uploads/：媒体文件
   ├─ AI Agent + MCP
+  ├─ Memory / 转写 / 今日推荐后台调度器
   └─ Bark：离线推送
 ```
 
@@ -22,19 +23,22 @@ Fastify + Socket.IO · 127.0.0.1:3000
 
 ## iOS 客户端
 
-`Sources/App` 负责启动、通知代理和主导航。根导航使用系统 `sidebarAdaptable` Tab：iPhone 显示底栏，iPad 按可用宽度转为侧栏。`ChatStore` 是页面使用的协调入口，内部组合主要状态对象和 Repository：
+`Sources/App` 负责启动、通知代理和主导航。根导航使用系统 `sidebarAdaptable` Tab：iPhone 显示底栏，iPad 按可用宽度转为侧栏。当前 Tab 顺序是聊天、时光、大橘、计划、我的。`ChatStore` 是页面使用的协调入口，内部组合主要状态对象和 Repository：
 
 - `AuthStore`：登录、token、当前用户和另一位用户；
 - `MessageStore`：消息、同步、发送、搜索、撤回、上传和 outbox；
-- `SharedStore`：共享状态、纪念日、提醒和 Bark 配置；
+- `SharedStore`：共享 JSON 状态、纪念日、头像和当前设备 Bark 配置；
 - `StickerStore`：自定义表情的账号级离线缓存；固定总库、自建分组和排序通过账号专属 shared-state key 同步到同账号所有设备，两个账号互不覆盖；
 - `AIMemoryRepository`：Memory 控制中心的列表、派生来源、纠正、删除和立即整理；
 - `MomentsRepository`：共同相册、聊天媒体入册、注脚与那年今日；
+- `RecommendationRepository`：今日推荐、双方互荐、未读数和 cursor 历史；
+- `PersonalItemsRepository`：共享/私人提醒与备忘；
 - `CalendarRepository`：共享/私人日历、版本冲突与完成状态；
 - `CouplePetRepository`：服务端宠物快照和幂等互动；
 - `VoiceTranscriptRepository`：转写查询与失败重试；
 - `SyncV2Repository`：持久化变更 cursor、ack 和离线删除恢复；
 - `DeviceSessionRepository`：多设备登录、列表和撤销；
+- `AppBadgeState`：提醒数量与推荐未读状态；
 - `ChatStore`：持有 Socket，分发事件并为 View 暴露统一接口。
 
 `Sources/Platform` 与 `Features/*/Data` 承载运行时实现：
@@ -44,7 +48,7 @@ Fastify + Socket.IO · 127.0.0.1:3000
 - `ChatTimelineStore`：MainActor 上的消息窗口、已读和分页状态事实源；
 - `OutboxProcessor`：串行化 outbox flush，并通过 `clientId` 读写待发项；
 - `MediaUploadService`：multipart 拼装、文件流式上传和上传响应解码；
-- `PersonalItemsRepository`、`LocalDataRepository`：提醒/备忘、统计/存储各自的领域入口；
+- `PersonalItemsRepository`、`LocalDataRepository`：提醒/备忘与本地统计/存储各自的领域入口；聊天统计页面优先合并 `MomentsRepository` 的服务端统计，失败时保留本地结果；
 - `HistorySyncCoordinator`：拥有历史与图片全量同步任务；离开存储页面不取消，显式暂停或登出才取消；
 - `SocketContract`：事件名和出站 payload；
 - `RealtimeConnectionCoordinator`：Socket.IO 生命周期、认证握手、重连、健康检查和连接状态；
@@ -80,7 +84,7 @@ Sources/
       Settings/              会话详情设置
       Presentation/          互动特效与聊天呈现模型
     Moments/
-      Data/                  共同相册、那年今日、统计数据源
+      Data/                  共同相册、那年今日、聊天统计与推荐数据源
     Plans/
       Data/                  日历、提醒与备忘数据源
     Account/
@@ -93,6 +97,8 @@ Sources/
       Data/                  共同宠物数据源
                             共同宠物、互动、模型和大橘私聊入口
 ```
+
+`Sources/Resources/cute_cat.glb` 被 Git 忽略，本机存在时由 GLTFKit2 转为 SceneKit 场景；缺失或加载失败时 `DajuModelView` 保留可编译、可运行的占位界面。
 
 `MessageStore` 与 `ChatStore` 为兼容现有页面保留 facade，但不再拥有全部底层实现。新增功能应优先进入已有的 Repository、Coordinator 或专用 Store；只有跨模块装配和向后兼容转发可以留在 facade，避免重新形成单体状态对象。
 
@@ -127,11 +133,12 @@ ChatHomeView
 | `upload/` | 上传校验、签名媒体访问和清理 |
 | `personalItems/` | 提醒、备忘和到期扫描 |
 | `shared/` | 双方共享状态 |
-| `transcription/` | OpenAI-compatible 转写 provider、job lease 与 worker |
+| `transcription/` | OpenAI-compatible 或 DashScope Qwen 转写 provider、job lease 与 worker |
 | `albums/` | 共同相册、媒体资产、注脚和那年今日 |
 | `calendar/` | 共享/私人日历、时区、完成和版本冲突 |
 | `pet/` | 共同宠物状态衰减、五种互动、冷却与幂等同步 |
 | `push/` | Bark 推送策略 |
+| `daily/` | 今日推荐生成、双方互荐、未读/历史与 15 分钟幂等调度 |
 | `ai/` | Agent、MCP、Memory、上下文和后台任务 |
 | `contracts/` | 实时协议的服务端权威定义 |
 
@@ -142,7 +149,7 @@ server/src/db/
   client.ts        PostgreSQL pool、查询与连接生命周期
   transaction.ts   事务边界
   rows.ts          数据库行类型
-  migrate.ts       v1-v27 版本化 migration 与受控执行器（仅追加，历史版本保持不变）
+  migrate.ts       v1-v31 版本化 migration 与受控执行器（仅追加，历史版本保持不变）
   index.ts         稳定 re-export，不承载实现
 ```
 
@@ -152,8 +159,8 @@ server/src/db/
 
 服务端 PostgreSQL 是业务事实源，iOS SQLite 是设备缓存。启动流程：
 
-1. 从 Keychain 恢复 token，并通过 `ChatPersistence` actor 读取 SQLite 快照快速出首屏。
-2. 请求 `/api/bootstrap` 获取账号、最近消息、已读和共享状态。
+1. 从 Keychain 恢复 token；并行启动 `/api/bootstrap` 请求与账号专属 SQLite 打开/快照恢复，避免离线启动等待网络。
+2. 本地快照可先提供有界历史；bootstrap 成功后合并账号、每频道最近 40 条消息、已读和共享状态。
 3. 建立 Socket.IO 连接，接收后续实时增量。
 4. 通过 `/api/messages` 分页补齐历史或按时间增量同步。
 5. 通过 `/api/v2/sync` 在启动、重连、回前台和前台轮询时恢复持久化变更与删除 tombstone。
@@ -164,6 +171,12 @@ server/src/db/
 2. 媒体消息先上传，服务端返回 `uploadId` 和签名 URL。
 3. 客户端发送 `message:send`；服务端在事务中绑定上传记录并写消息。
 4. ack 或 `message:new` 将 pending 消息替换为服务端消息并清除 outbox。
+
+今日推荐流程：
+
+1. `RecommendationScheduler` 启动后立即执行，之后每 15 分钟幂等检查当前作息日；`GET /api/v2/recommendations/today` 也会按需补建。
+2. 作息日按北京时间 06:00 切换。生成器优先读取昨天共同 `event`，并用共同 `state/plan/fact` 补充；模型不可用或输出无效时使用确定性的内置推荐。
+3. 每日推荐对双方相同；手动互荐只有收件方产生未读。读取/隐藏写入账号级状态，推荐及状态变化进入 Sync V2。
 
 ## 频道与权限
 

@@ -3,13 +3,16 @@ import UIKit
 extension ChatViewController {
     func refreshComposerSurfaceTone(force: Bool = false) {
         guard dynamicallySamplesComposerTone,
+              force || !keyboardLayoutAnimationActive,
               view.bounds.width > 0,
               view.bounds.height > 0 else { return }
-        let capsuleFrame = composer.inputCapsuleFrame(in: view).integral
-        guard !capsuleFrame.isEmpty, !capsuleFrame.isNull else { return }
-        guard force || !capsuleFrame.equalTo(lastComposerSampleFrame) else { return }
-        lastComposerSampleFrame = capsuleFrame
-        let samplingFrame = capsuleFrame.insetBy(dx: 12, dy: 6)
+        // 输入框、左右按钮、面板和底部渐变必须共用同一个取色区域。
+        // 只采输入胶囊会让同一排控件在横向明暗变化的壁纸上各自“翻色”。
+        let dockFrame = bottomStack.convert(bottomStack.bounds, to: view).integral
+        guard !dockFrame.isEmpty, !dockFrame.isNull else { return }
+        guard force || !dockFrame.equalTo(lastComposerSampleFrame) else { return }
+        lastComposerSampleFrame = dockFrame
+        let samplingFrame = dockFrame.insetBy(dx: 8, dy: -6)
         let normalizedFrame = CGRect(
             x: samplingFrame.minX / view.bounds.width,
             y: samplingFrame.minY / view.bounds.height,
@@ -17,11 +20,13 @@ extension ChatViewController {
             height: samplingFrame.height / view.bounds.height)
         guard let luminance = theme.customWallpaperLuminance(
             for: channel,
+            appearance: wallpaperAppearance,
             normalizedRect: normalizedFrame) else { return }
         let usesLightContent = ChatSurfaceTone(luminance: luminance).usesLightContent
         guard composerUsesLightContent != usesLightContent else { return }
         composerUsesLightContent = usesLightContent
         composer.applyTheme(theme, usesLightContent: usesLightContent)
+        bottomBackdrop.applyTone(usesLightContent: usesLightContent)
         stickerPanel?.applyTheme(
             accentColor: theme.accent.uiColor,
             usesLightContent: usesLightContent)
@@ -177,6 +182,7 @@ extension ChatViewController {
                     self.keyboardTransitionMaintainsLatest = nil
                     self.keyboardLayoutAnimationActive = false
                 }
+                self.refreshComposerSurfaceTone(force: true)
             })
     }
 

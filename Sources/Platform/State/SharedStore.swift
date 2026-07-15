@@ -10,31 +10,61 @@ final class SharedStore: ObservableObject {
 
     private let httpClient: any HTTPClient
     private let persistence: any ChatPersistenceProtocol
+    private let defaults: UserDefaults
+    private var activeUsername: String?
+    private var pendingWrites: [String: [String: Any]] = [:]
+    private var pendingWriteTokens: [String: UUID] = [:]
 
     init(
         httpClient: any HTTPClient = URLSessionHTTPClient(),
-        persistence: any ChatPersistenceProtocol = ChatPersistence.shared
+        persistence: any ChatPersistenceProtocol = ChatPersistence.shared,
+        defaults: UserDefaults = .standard
     ) {
         self.httpClient = httpClient
         self.persistence = persistence
+        self.defaults = defaults
     }
 
     weak var socketProvider: SocketProvider?
 
     // MARK: - 共享状态读写
 
+    func activate(username: String) {
+        guard activeUsername != username else { return }
+        activeUsername = username
+        pendingWriteTokens.removeAll()
+        pendingWrites = loadPendingWrites(username: username)
+        overlayPendingWrites()
+    }
+
+    func deactivate() {
+        activeUsername = nil
+        pendingWrites.removeAll()
+        pendingWriteTokens.removeAll()
+    }
+
     func setShared(_ key: String, value: [String: Any], session: Session?) {
+        guard let session else { return }
+        if activeUsername != session.username { activate(username: session.username) }
         sharedState[key] = ["key": key, "value": value]
+        pendingWrites[key] = value
+        persistPendingWrites()
         if let valueJson = jsonObjectString(value) {
             Task {
                 await persistence.saveSharedState(
                     key: key, valueJson: valueJson,
-                    updatedBy: session?.username ?? "",
+                    updatedBy: session.username,
                     updatedAt: Date().timeIntervalSince1970 * 1000)
             }
         }
-        guard let s = socketProvider?.socket, socketProvider?.isConnected == true else { return }
-        s.emit(SocketEvent.sharedSet.rawValue, ["key": key, "value": value])
+        emitPendingWrite(key: key)
+    }
+
+    /// 断线期间的最后一次本地意图会持久化；重连后逐项带 ACK 重发。
+    func flushPendingWrites() {
+        for key in pendingWrites.keys.sorted() {
+            emitPendingWrite(key: key)
+        }
     }
 
     func sharedValue(_ key: String) -> [String: Any]? {
@@ -118,6 +148,7 @@ final class SharedStore: ObservableObject {
             }
         }
         sharedState = sanitizedState
+        overlayPendingWrites()
         Task {
             for row in persisted {
                 await persistence.saveSharedState(
@@ -130,6 +161,17 @@ final class SharedStore: ObservableObject {
         guard let key = update["key"] as? String else { return }
         if let value = update["value"],
            let valueJson = jsonObjectString(value) {
+            if let pending = pendingWrites[key] {
+                let updatedBy = update["updatedBy"] as? String
+                if updatedBy == activeUsername, Self.jsonObjectsEqual(pending, value) {
+                    pendingWrites.removeValue(forKey: key)
+                    pendingWriteTokens.removeValue(forKey: key)
+                    persistPendingWrites()
+                } else {
+                    // 本地还有更新未被服务端确认时，不能让较早的广播覆盖界面。
+                    return
+                }
+            }
             sharedState[key] = update
             let updatedBy = update["updatedBy"] as? String ?? ""
             let updatedAt = (update["updatedAt"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
@@ -144,6 +186,7 @@ final class SharedStore: ObservableObject {
 
     func restoreCachedSharedState() async {
         sharedState = await persistence.loadSharedState()
+        overlayPendingWrites()
     }
 
     // MARK: - REST（提醒 / Bark）
@@ -193,6 +236,82 @@ final class SharedStore: ObservableObject {
     }
 
     // MARK: - 私有辅助
+
+    private func emitPendingWrite(key: String) {
+        guard let value = pendingWrites[key],
+              let socket = socketProvider?.socket,
+              socketProvider?.isConnected == true else { return }
+        let token = UUID()
+        pendingWriteTokens[key] = token
+        socket.emitWithAck(SocketEvent.sharedSet.rawValue, ["key": key, "value": value])
+            .timingOut(after: 9) { [weak self] response in
+                Task { @MainActor in
+                    guard let self,
+                          self.pendingWriteTokens[key] == token,
+                          let ack = response.first as? [String: Any],
+                          ack["ok"] as? Bool == true else { return }
+                    self.pendingWriteTokens.removeValue(forKey: key)
+                    self.pendingWrites.removeValue(forKey: key)
+                    self.persistPendingWrites()
+                    if let update = ack["update"] as? [String: Any] {
+                        self.applySharedUpdate(update)
+                    }
+                }
+            }
+    }
+
+    private func overlayPendingWrites() {
+        guard let username = activeUsername else { return }
+        var next = sharedState
+        for (key, value) in pendingWrites {
+            next[key] = [
+                "key": key,
+                "value": value,
+                "updatedBy": username,
+                "updatedAt": Date().timeIntervalSince1970 * 1_000,
+            ]
+        }
+        sharedState = next
+    }
+
+    private func pendingStorageKey(username: String) -> String {
+        let safe = username.lowercased().map {
+            $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "_"
+        }
+        return "shared.pending.\(String(safe))"
+    }
+
+    private func loadPendingWrites(username: String) -> [String: [String: Any]] {
+        guard let data = defaults.data(forKey: pendingStorageKey(username: username)),
+              let decoded = try? JSONSerialization.jsonObject(with: data),
+              let object = decoded as? [String: Any] else {
+            return [:]
+        }
+        return object.reduce(into: [:]) { result, item in
+            if let value = item.value as? [String: Any] { result[item.key] = value }
+        }
+    }
+
+    private func persistPendingWrites() {
+        guard let username = activeUsername else { return }
+        let key = pendingStorageKey(username: username)
+        guard !pendingWrites.isEmpty else {
+            defaults.removeObject(forKey: key)
+            return
+        }
+        guard JSONSerialization.isValidJSONObject(pendingWrites),
+              let data = try? JSONSerialization.data(withJSONObject: pendingWrites) else { return }
+        defaults.set(data, forKey: key)
+    }
+
+    private static func jsonObjectsEqual(_ lhs: Any, _ rhs: Any) -> Bool {
+        guard JSONSerialization.isValidJSONObject(lhs), JSONSerialization.isValidJSONObject(rhs),
+              let left = try? JSONSerialization.data(withJSONObject: lhs, options: [.sortedKeys]),
+              let right = try? JSONSerialization.data(withJSONObject: rhs, options: [.sortedKeys]) else {
+            return false
+        }
+        return left == right
+    }
 
     /// `try?` 不能捕获 Foundation 的 Objective-C NSException。先验证顶层 JSON
     /// 对象，确保历史异常值不会在登录阶段造成 abort。

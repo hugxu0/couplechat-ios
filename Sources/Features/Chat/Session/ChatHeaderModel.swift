@@ -3,6 +3,7 @@ import Foundation
 struct ChatHeaderModel: Equatable {
     enum Connection: String, Equatable {
         case online
+        case offline
         case connecting
         case failed
         case aiComposing

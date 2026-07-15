@@ -19,7 +19,8 @@ struct ChatNativeHeaderTitle: View {
         switch model.connection {
         case .failed: return .red
         case .connecting, .aiComposing: return .orange
-        case .online: return .secondary
+        case .online: return .green
+        case .offline: return .secondary
         }
     }
 }

@@ -265,6 +265,18 @@ final class ChatTimelineController: NSObject {
         }
     }
 
+    /// 已读只影响发送方气泡底部的小状态，不需要 reload cell 或重算布局。
+    /// 直接更新可见 cell，避免触发 willDisplay 后产生无意义的回执回环。
+    func invalidateReadReceiptAppearance() {
+        for path in collectionView.indexPathsForVisibleItems {
+            guard path.item < items.count,
+                  case .message(let id) = items[path.item],
+                  let message = messagesById[id],
+                  let cell = collectionView.cellForItem(at: path) as? ChatNativeMessageCell else { continue }
+            cell.updateReadStatus(presentation.partnerHasRead(message))
+        }
+    }
+
     func scheduleInitialPositioning() {
         guard !scrollState.didInitialPosition,
               !items.isEmpty,

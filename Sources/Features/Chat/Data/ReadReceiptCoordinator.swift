@@ -21,7 +21,8 @@ final class ReadReceiptCoordinator {
         guard isConnected else { return }
         flushTask?.cancel()
         flushTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            // 一帧左右合并同批 willDisplay 回调，避免逐条发包；用户侧仍近乎即时。
+            try? await Task.sleep(nanoseconds: 40_000_000)
             guard !Task.isCancelled, let self else { return }
             self.flushTask = nil
             self.emitPending(using: emit)
@@ -41,6 +42,40 @@ final class ReadReceiptCoordinator {
         guard let pendingTimestamp = pending[key], timestamp >= pendingTimestamp else { return }
         pending.removeValue(forKey: key)
         lastEmitted.removeValue(forKey: key)
+    }
+
+    /// 服务端已经持久化本次请求。即使服务端因消息撤回把 effectiveTs 向前截断，
+    /// 也应按请求时间结束本次发送，避免同一个无效时间戳无限重试。
+    func acknowledge(_ channel: ChatChannel, requestTimestamp: Double) {
+        let key = channel.rawValue
+        if let pendingTimestamp = pending[key], pendingTimestamp <= requestTimestamp {
+            pending.removeValue(forKey: key)
+        }
+        if let emittedTimestamp = lastEmitted[key], emittedTimestamp <= requestTimestamp {
+            lastEmitted.removeValue(forKey: key)
+        }
+    }
+
+    /// ACK 超时或服务端拒绝时允许同一最高时间戳再次发送。重试仍经过 pending
+    /// 合并，因此滚动期间不会倒退，也不会为每个 cell 建立独立重试循环。
+    func retry(
+        _ channel: ChatChannel,
+        requestTimestamp: Double,
+        isConnected: Bool,
+        emit: @escaping Emitter
+    ) {
+        let key = channel.rawValue
+        guard pending[key] != nil else { return }
+        if lastEmitted[key] == requestTimestamp {
+            lastEmitted.removeValue(forKey: key)
+        }
+        guard isConnected, flushTask == nil else { return }
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.flushTask = nil
+            self.emitPending(using: emit)
+        }
     }
 
     func pendingTimestamp(for channel: ChatChannel) -> Double? {

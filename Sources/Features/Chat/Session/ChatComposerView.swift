@@ -182,11 +182,6 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         emojiButton.accessibilityLabel = visible ? "切换到键盘" : "打开表情面板"
     }
 
-    /// 当前输入胶囊在控制器坐标系内的精确位置，用于从壁纸同一位置采样明暗。
-    func inputCapsuleFrame(in container: UIView) -> CGRect {
-        inputCapsule.convert(inputCapsule.bounds, to: container)
-    }
-
     func setRecording(elapsed: TimeInterval, cancelled: Bool, level: CGFloat = 0.35) {
         isRecording = true
         recordingCancelled = cancelled

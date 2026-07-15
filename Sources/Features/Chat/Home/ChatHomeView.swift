@@ -419,6 +419,7 @@ struct ChatHomeView: View {
                 ChatHomeActionButton(
                     action: action,
                     sent: sentAction == action.id,
+                    disabled: sentAction != nil,
                     onTap: { send(action) }
                 )
             }
@@ -499,13 +500,16 @@ struct ChatHomeView: View {
     }
 
     private func send(_ action: ChatHomeQuickAction) {
-        Haptics.medium()
         if action.kind == .note {
+            Haptics.medium()
             noteText = ""
             showNotePrompt = true
             return
         }
-        store.sendInteraction(kind: action.kind, text: action.message, channel: .couple)
+        guard store.sendInteraction(kind: action.kind, text: action.message, channel: .couple) else {
+            return
+        }
+        Haptics.medium()
         DS.Anim.withMotion(DS.Anim.springFast) { sentAction = action.id }
         Task {
             try? await Task.sleep(nanoseconds: 1_300_000_000)

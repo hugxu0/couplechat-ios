@@ -14,7 +14,7 @@
 - API、Socket、数据库、命令或部署流程变化时，在同一提交更新对应现行文档。
 - 未实现能力只在“当前限制”中简要记录，不创建长期路线图。
 - 发布结果由 CI、Git 提交与生产健康检查证明，不另写发布报告。
-- 代码与文档冲突时，以 `project.yml`、`server/package.json`、`server/src/app.ts`、两端 Socket 契约、数据库迁移和生产 Compose 为准，并立即修正文档。
+- 代码与文档冲突时，以 `project.yml`、`server/package.json`、`server/src/app.ts` 与各领域 `routes.ts`、两端 Socket 契约、`server/src/db/migrate.ts`、CI workflow、生产 Compose/nginx 和运维脚本为准，并立即修正文档。
 
 ## 当前结构
 

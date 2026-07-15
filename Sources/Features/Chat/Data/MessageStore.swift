@@ -520,6 +520,11 @@ final class MessageStore: ObservableObject {
     // MARK: - 已读
 
     func markRead(_ channel: ChatChannel, through timestamp: Double) {
+        if let username = socketProvider?.sessionUsername,
+           timestamp <= (readState(for: channel)[username] ?? 0),
+           readReceiptCoordinator.pendingTimestamp(for: channel) == nil {
+            return
+        }
         readReceiptCoordinator.mark(
             channel,
             through: timestamp,
@@ -566,9 +571,32 @@ final class MessageStore: ObservableObject {
     private func emitReadReceipt(channel: ChatChannel, timestamp: Double) -> Bool {
         guard let socket = socketProvider?.socket,
               socketProvider?.isConnected == true else { return false }
-        socket.emit(
+        socket.emitWithAck(
             SocketEvent.read.rawValue,
             SocketPayloadEncoder.encode(ReadReceiptRequest(channel: channel, ts: timestamp)))
+            .timingOut(after: 3) { [weak self] response in
+                Task { @MainActor in
+                    guard let self else { return }
+                    guard let ack = response.first as? [String: Any],
+                          ack["ok"] as? Bool == true,
+                          let effectiveTimestamp = (ack["ts"] as? NSNumber)?.doubleValue else {
+                        self.readReceiptCoordinator.retry(
+                            channel,
+                            requestTimestamp: timestamp,
+                            isConnected: self.socketProvider?.isConnected == true,
+                            emit: { [weak self] channel, timestamp in
+                                self?.emitReadReceipt(channel: channel, timestamp: timestamp) == true
+                            })
+                        return
+                    }
+                    self.readReceiptCoordinator.acknowledge(
+                        channel,
+                        requestTimestamp: timestamp)
+                    if let username = self.socketProvider?.sessionUsername {
+                        self.setReadState(channel, user: username, ts: effectiveTimestamp)
+                    }
+                }
+            }
         return true
     }
 
@@ -603,7 +631,13 @@ final class MessageStore: ObservableObject {
 
     func setReadState(_ channel: ChatChannel, user: String, ts: Double) {
         var state = readState(for: channel)
-        if ts > (state[user] ?? 0) { state[user] = ts }
+        guard ts > (state[user] ?? 0) else {
+            if user == socketProvider?.sessionUsername {
+                readReceiptCoordinator.confirm(channel, through: ts)
+            }
+            return
+        }
+        state[user] = ts
         setReadState(channel, state: state)
     }
 

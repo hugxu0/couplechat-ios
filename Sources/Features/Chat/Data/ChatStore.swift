@@ -62,7 +62,8 @@ final class ChatStore: ObservableObject {
     @Published var partnerOnline = false
     @Published private(set) var presenceKnown = false
     @Published private(set) var aiActivityByChannel: [String: AIActivity] = [:]
-    @Published private(set) var localInteractionPresentation: InteractionPresentation?
+    @Published private(set) var interactionPresentationQueue: [InteractionPresentation] = []
+    @Published private(set) var visibleChatChannel: ChatChannel?
     @Published private(set) var localCacheAvailable = true
 
     // 便捷访问（保持向后兼容）
@@ -85,6 +86,7 @@ final class ChatStore: ObservableObject {
             guard let self, let session = self.auth.session else { return }
             self.messageStore.flushPendingReadReceipts()
             self.messageStore.flushOutbox(session: session)
+            self.shared.flushPendingWrites()
             self.startPersistentSyncLoop()
             Task { await self.recoverSyncV2() }
         },
@@ -97,7 +99,10 @@ final class ChatStore: ObservableObject {
             self?.setAIActivity(activity, for: channel)
         },
         setPartnerOnline: { [weak self] online in self?.partnerOnline = online },
-        setPresenceKnown: { [weak self] known in self?.presenceKnown = known })
+        setPresenceKnown: { [weak self] known in self?.presenceKnown = known },
+        onIncomingInteraction: { [weak self] message in
+            self?.receiveIncomingInteraction(message)
+        })
     private let httpClient: any HTTPClient
     private let persistence: any ChatPersistenceProtocol
     private var childStateCancellables = Set<AnyCancellable>()
@@ -105,6 +110,9 @@ final class ChatStore: ObservableObject {
     private var wasBackgrounded = false
     private var syncingV2 = false
     private var persistentSyncTask: Task<Void, Never>?
+    private var deferredIncomingInteractions: [String: InteractionPresentation] = [:]
+    private var knownInteractionPresentationIDs = Set<String>()
+    private var lastInteractionSentAt = Date.distantPast
 
     // MARK: - 统计/存储
 
@@ -173,6 +181,7 @@ final class ChatStore: ObservableObject {
 
     func bootstrap() async {
         guard let session = auth.savedSession() else { return }
+        shared.activate(username: session.username)
         let snapshotTask = Task { try await fetchBootstrap(session: session) }
         localCacheAvailable = await openLocalDatabase(username: session.username)
         if localCacheAvailable {
@@ -204,6 +213,7 @@ final class ChatStore: ObservableObject {
 
     func login(username: String, password: String) async throws {
         let session = try await auth.authenticate(username: username, password: password)
+        shared.activate(username: session.username)
         let snapshotTask = Task { try await fetchBootstrap(session: session) }
         localCacheAvailable = await openLocalDatabase(username: session.username)
         if localCacheAvailable {
@@ -284,10 +294,12 @@ final class ChatStore: ObservableObject {
         partnerOnline = false
         presenceKnown = false
         resetTransientAIState()
+        resetInteractionState()
         messageStore.resetPendingReadReceipts()
         realtime.setLastError(nil)
         StickerStore.shared.deactivate()
         MediaFavoriteStore.shared.deactivate()
+        shared.deactivate()
         auth.logout()
         if let sessionToRevoke {
             Task { await auth.revokeCurrentDevice(sessionToRevoke) }
@@ -386,8 +398,14 @@ final class ChatStore: ObservableObject {
         await uploadAvatar(image, for: auth.session?.username)
     }
 
-    func sendInteraction(kind: InteractionEffectKind, text: String, channel: ChatChannel = .couple) {
-        guard let session = auth.session else { return }
+    @discardableResult
+    func sendInteraction(kind: InteractionEffectKind, text: String, channel: ChatChannel = .couple) -> Bool {
+        guard let session = auth.session else { return false }
+        let now = Date()
+        if kind != .note, now.timeIntervalSince(lastInteractionSentAt) < 0.75 {
+            return false
+        }
+        if kind != .note { lastInteractionSentAt = now }
         let id = UUID().uuidString
         Task {
             await messageStore.sendInteraction(
@@ -403,11 +421,74 @@ final class ChatStore: ObservableObject {
                 "dismissed": false,
             ], session: session)
         } else {
-            localInteractionPresentation = InteractionPresentation(
+            queueInteractionPresentation(InteractionPresentation(
                 payload: InteractionPayload(id: id, kind: kind, text: text),
                 senderName: "已送达",
-                duration: 1.15)
+                duration: 1.15))
         }
+        return true
+    }
+
+    func setChatVisible(_ channel: ChatChannel, visible: Bool) {
+        if visible {
+            visibleChatChannel = channel
+            if let deferred = deferredIncomingInteractions.removeValue(forKey: channel.rawValue) {
+                queueInteractionPresentation(deferred)
+                return
+            }
+            guard let username = session?.username else { return }
+            let readAt = messageStore.readState(for: channel)[username] ?? 0
+            if let message = messageStore.messages(for: channel).reversed().first(where: {
+                $0.sender != username
+                    && $0.ts > readAt
+                    && $0.interactionPayload?.kind != .note
+                    && $0.interactionPayload != nil
+            }) {
+                receiveIncomingInteraction(message)
+            }
+        } else if visibleChatChannel == channel {
+            visibleChatChannel = nil
+        }
+    }
+
+    func takeNextInteractionPresentation() -> InteractionPresentation? {
+        guard !interactionPresentationQueue.isEmpty else { return nil }
+        return interactionPresentationQueue.removeFirst()
+    }
+
+    private func receiveIncomingInteraction(_ message: ChatMessage) {
+        guard let username = session?.username,
+              message.channel == ChatChannel.couple.rawValue,
+              message.sender != username,
+              let payload = message.interactionPayload,
+              payload.kind != .note else { return }
+        let presentation = InteractionPresentation(
+            payload: payload,
+            senderName: message.senderName.isEmpty ? "TA" : message.senderName,
+            duration: 2.1)
+        guard !knownInteractionPresentationIDs.contains(presentation.id) else { return }
+        if visibleChatChannel == .couple {
+            queueInteractionPresentation(presentation)
+        } else {
+            // 离开聊天页时只保留最后一个，下一次进入直接展示。
+            deferredIncomingInteractions[ChatChannel.couple.rawValue] = presentation
+        }
+    }
+
+    func queueInteractionPresentation(_ presentation: InteractionPresentation) {
+        guard knownInteractionPresentationIDs.insert(presentation.id).inserted else { return }
+        if interactionPresentationQueue.count >= 6 {
+            interactionPresentationQueue.removeFirst()
+        }
+        interactionPresentationQueue.append(presentation)
+    }
+
+    private func resetInteractionState() {
+        interactionPresentationQueue.removeAll()
+        deferredIncomingInteractions.removeAll()
+        knownInteractionPresentationIDs.removeAll()
+        visibleChatChannel = nil
+        lastInteractionSentAt = .distantPast
     }
 
     func dismissScreenNote(id: String) {

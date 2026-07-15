@@ -24,6 +24,7 @@ struct ChatHomeActionButton: View {
     @Environment(\.colorScheme) private var colorScheme
     let action: ChatHomeQuickAction
     let sent: Bool
+    let disabled: Bool
     let onTap: () -> Void
 
     var body: some View {
@@ -61,7 +62,8 @@ struct ChatHomeActionButton: View {
             )
         }
         .buttonStyle(PressableStyle())
-        .disabled(sent)
+        .disabled(disabled)
+        .opacity(disabled && !sent ? 0.62 : 1)
         .accessibilityLabel(action.title)
     }
 }
