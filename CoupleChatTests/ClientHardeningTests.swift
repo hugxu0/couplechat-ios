@@ -1,4 +1,5 @@
 import SocketIO
+import UIKit
 import XCTest
 @testable import CoupleChat
 
@@ -101,6 +102,22 @@ final class ClientHardeningTests: XCTestCase {
         ).usesLightContent)
     }
 
+    func testIncomingBubblePalettesKeepReadableContrast() {
+        let lightPalette = ChatIncomingBubblePalette(darkSurface: false)
+        let darkPalette = ChatIncomingBubblePalette(darkSurface: true)
+
+        XCTAssertGreaterThan(
+            contrastRatio(lightPalette.backgroundColor, lightPalette.primaryTextColor),
+            7)
+        XCTAssertGreaterThan(
+            contrastRatio(darkPalette.backgroundColor, darkPalette.primaryTextColor),
+            7)
+
+        let darkTrait = UITraitCollection(userInterfaceStyle: .dark)
+        XCTAssertFalse(lightPalette.primaryTextColor.isEqual(
+            UIColor.label.resolvedColor(with: darkTrait)))
+    }
+
     private func message(
         id: String,
         text: String = "媒体",
@@ -122,5 +139,25 @@ final class ClientHardeningTests: XCTestCase {
         dictionary["replyTo"] = replyTo
         dictionary["replyPreview"] = replyPreview
         return ChatMessage(dict: dictionary)!
+    }
+
+    private func contrastRatio(_ first: UIColor, _ second: UIColor) -> CGFloat {
+        let firstLuminance = relativeLuminance(first)
+        let secondLuminance = relativeLuminance(second)
+        return (max(firstLuminance, secondLuminance) + 0.05)
+            / (min(firstLuminance, secondLuminance) + 0.05)
+    }
+
+    private func relativeLuminance(_ color: UIColor) -> CGFloat {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return 0 }
+        func linear(_ component: CGFloat) -> CGFloat {
+            guard component > 0.03928 else { return component / 12.92 }
+            return CGFloat(pow(Double((component + 0.055) / 1.055), 2.4))
+        }
+        return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
     }
 }

@@ -49,6 +49,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     private var voiceTranscript: VoiceTranscript?
     private var voiceTranscriptExpanded = false
     private var usesDarkIncomingBubble = false
+    private var incomingBubblePalette: ChatIncomingBubblePalette {
+        ChatIncomingBubblePalette(darkSurface: usesDarkIncomingBubble)
+    }
     private var voiceWaveBars: [UIView] = []
     private var albumPhotos: [ChatAttachment] = []
     private var albumPairedIDs = Set<String>()
@@ -266,15 +269,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         avatarView.isHidden = false
 
         let mediaOnly = Self.isStandaloneMedia(message)
-        // Context-menu 预览可能在不同 trait 环境中重绘动态系统色，造成气泡翻色。
-        // 这里在配置时固化当前外观下的颜色，让长按仅表现为系统的轻微抬起效果。
-        // 接收气泡保留稳定的阅读底色，但避免在柔和壁纸上出现生硬的纯白/纯黑块。
-        // 浅色使用轻微薰衣草灰，深色使用偏蓝紫的石墨色。
-        let incomingBubbleColor = usesDarkIncomingBubble
-            ? UIColor(red: 39.0 / 255.0, green: 38.0 / 255.0, blue: 52.0 / 255.0, alpha: 0.94)
-            : UIColor(red: 244.0 / 255.0, green: 242.0 / 255.0, blue: 248.0 / 255.0, alpha: 0.94)
-        let incomingTextColor = usesDarkIncomingBubble ? UIColor.white : UIColor.label.resolvedColor(with: traitCollection)
-        let incomingSecondaryColor = usesDarkIncomingBubble ? UIColor.white.withAlphaComponent(0.72) : UIColor.secondaryLabel.resolvedColor(with: traitCollection)
+        // 气泡底色和文字色必须成组固定，避免系统深色模式把亮气泡的文字单独翻成白色。
+        let incomingPalette = incomingBubblePalette
+        let incomingBubbleColor = incomingPalette.backgroundColor
+        let incomingTextColor = incomingPalette.primaryTextColor
+        let incomingSecondaryColor = incomingPalette.secondaryTextColor
         let isInteraction = message.interactionPayload != nil
         let interactionColor: UIColor = {
             guard let kind = message.interactionPayload?.kind else { return .systemPink }
@@ -308,10 +307,10 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         confirmButton.backgroundColor = mine ? UIColor.white : accentColor
         interactionTitleLabel.textColor = mine || usesDarkIncomingBubble
             ? .white
-            : UIColor.label.resolvedColor(with: traitCollection)
+            : incomingTextColor
         interactionSubtitleLabel.textColor = mine || usesDarkIncomingBubble
             ? UIColor.white.withAlphaComponent(0.68)
-            : UIColor.secondaryLabel.resolvedColor(with: traitCollection)
+            : incomingSecondaryColor
         interactionIconBackground.backgroundColor = mine
             ? UIColor.white.withAlphaComponent(0.15)
             : interactionColor.withAlphaComponent(usesDarkIncomingBubble ? 0.20 : 0.10)
@@ -453,7 +452,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             if let caption = ChatTimelineMetrics.mediaCaption(for: message) {
                 bodyLabel.text = caption
                 bodyLabel.font = .systemFont(ofSize: 15)
-                bodyLabel.textColor = mine ? .white : (usesDarkIncomingBubble ? .white : UIColor.label.resolvedColor(with: traitCollection))
+                bodyLabel.textColor = mine ? .white : incomingBubblePalette.primaryTextColor
                 bubbleView.addSubview(bodyLabel)
             } else {
                 bodyLabel.font = .systemFont(ofSize: 17)
@@ -647,7 +646,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         }
         mediaIconView.image = UIImage(systemName: iconName)
         mediaIconView.isHidden = false
-        let foreground = mine ? UIColor.white : (usesDarkIncomingBubble ? .white : accentColor)
+        let foreground = mine ? UIColor.white : incomingBubblePalette.primaryTextColor
         mediaIconView.tintColor = foreground
         switch message.type {
         case "voice":
@@ -665,7 +664,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     }
 
     private func configureTranscript(_ transcript: VoiceTranscript?) {
-        let foreground = mine ? UIColor.white : (usesDarkIncomingBubble ? .white : accentColor)
+        let foreground = mine ? UIColor.white : incomingBubblePalette.primaryTextColor
         let title: String
         let icon: String
         let enabled: Bool
@@ -714,7 +713,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             ? "语音转写失败，重试"
             : title
         transcriptLabel.text = transcript?.text
-        transcriptLabel.textColor = mine ? .white : (usesDarkIncomingBubble ? .white : UIColor.label)
+        transcriptLabel.textColor = mine ? .white : incomingBubblePalette.primaryTextColor
     }
 
     private func layoutBubbleContent(_ message: ChatMessage) {

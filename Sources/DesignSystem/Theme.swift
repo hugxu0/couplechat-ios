@@ -333,6 +333,38 @@ enum ChatSurfaceTone: Equatable {
     var usesLightContent: Bool { self == .lightContent }
 }
 
+/// 接收气泡的底色和前景色必须作为一组解析，不能让系统 `label` 在深色模式下
+/// 单独把亮气泡的文字翻成白色。壁纸采样只负责选择亮/暗气泡方案。
+struct ChatIncomingBubblePalette {
+    let backgroundColor: UIColor
+    let primaryTextColor: UIColor
+    let secondaryTextColor: UIColor
+
+    init(darkSurface: Bool) {
+        if darkSurface {
+            backgroundColor = UIColor(
+                red: 39.0 / 255.0,
+                green: 38.0 / 255.0,
+                blue: 52.0 / 255.0,
+                alpha: 0.94)
+            primaryTextColor = .white
+            secondaryTextColor = UIColor.white.withAlphaComponent(0.72)
+        } else {
+            backgroundColor = UIColor(
+                red: 244.0 / 255.0,
+                green: 242.0 / 255.0,
+                blue: 248.0 / 255.0,
+                alpha: 0.94)
+            primaryTextColor = UIColor(
+                red: 34.0 / 255.0,
+                green: 32.0 / 255.0,
+                blue: 43.0 / 255.0,
+                alpha: 1)
+            secondaryTextColor = primaryTextColor.withAlphaComponent(0.68)
+        }
+    }
+}
+
 enum WallpaperAppearance: String, CaseIterable, Identifiable {
     case light
     case dark
