@@ -28,28 +28,10 @@ struct ChatHomeActionButton: View {
 
     var body: some View {
         Button(action: onTap) {
-            VStack(spacing: DS.Spacing.tight) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: colorScheme == .dark
-                                    ? [action.background.opacity(0.34), action.background.opacity(0.16)]
-                                    : [action.background.opacity(0.82), action.background.opacity(0.42)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay {
-                            RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
-                                .stroke(DS.Palette.textTertiary.opacity(0.15), lineWidth: 1)
-                        }
-                        .frame(height: 56)
-                    Text(sent ? "✓" : action.emoji)
-                        .font(.system(size: 29))
-                        .contentTransition(.numericText())
-                }
-                .frame(maxWidth: .infinity)
+            VStack(spacing: 7) {
+                Text(sent ? "✓" : action.emoji)
+                    .font(.system(size: 30))
+                    .contentTransition(.numericText())
                 Text(action.title)
                     .font(DS.Typo.micro.weight(.bold))
                     .foregroundStyle(DS.Palette.textPrimary)
@@ -57,6 +39,26 @@ struct ChatHomeActionButton: View {
                     .minimumScaleFactor(0.72)
             }
             .frame(maxWidth: .infinity)
+            .frame(height: 84)
+            .background(
+                LinearGradient(
+                    colors: colorScheme == .dark
+                        ? [action.background.opacity(0.32), action.background.opacity(0.16)]
+                        : [action.background.opacity(0.86), action.background.opacity(0.50)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
+                    .stroke(DS.Palette.hairline, lineWidth: 0.8)
+            )
+            .shadow(
+                color: colorScheme == .dark ? .black.opacity(0.20) : .black.opacity(0.035),
+                radius: 8,
+                y: 3
+            )
         }
         .buttonStyle(PressableStyle())
         .disabled(sent)
@@ -92,7 +94,7 @@ struct ChatHomeLatestRow: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.Radius.bubble, style: .continuous)
-                        .stroke(mine ? accent.opacity(0.12) : DS.Palette.textTertiary.opacity(0.14), lineWidth: 1)
+                        .stroke(DS.Palette.hairline, lineWidth: 0.8)
                 )
 
             if mine {

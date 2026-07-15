@@ -102,7 +102,6 @@ struct ChatHomeView: View {
                 handleConnectionStateChange(from: oldState, to: newState)
             }
         }
-        .toolbar(.visible, for: .tabBar)
     }
 
     private var mainPanel: some View {
@@ -136,7 +135,15 @@ struct ChatHomeView: View {
         .frame(minHeight: 0, alignment: .top)
         .background(homeCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .shadow(color: theme.accent.color.opacity(0.08), radius: 16, y: 6)
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                .stroke(DS.Palette.hairline, lineWidth: 0.8)
+        )
+        .shadow(
+            color: colorScheme == .dark ? .black.opacity(0.34) : .black.opacity(0.08),
+            radius: 18,
+            y: 7
+        )
     }
 
     private var brandHeader: some View {
@@ -183,37 +190,25 @@ struct ChatHomeView: View {
     private var homeCardBackground: some View {
         ZStack(alignment: .top) {
             if colorScheme == .dark {
-                // 有色深表面：保留主题氛围，但避免把页面背景直接透进卡片。
                 LinearGradient(
                     colors: [
-                        Color(red: 0.145, green: 0.125, blue: 0.18),
-                        Color(red: 0.105, green: 0.11, blue: 0.16),
-                        Color(red: 0.16, green: 0.12, blue: 0.17),
+                        Color(red: 0.145, green: 0.14, blue: 0.17),
+                        Color(red: 0.105, green: 0.105, blue: 0.13),
                     ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
                 LinearGradient(
-                    colors: [theme.accent.color.opacity(0.14), .clear, theme.accent.color.opacity(0.05)],
+                    colors: [theme.accent.color.opacity(0.035), .clear],
                     startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                    endPoint: .center
                 )
-                .blendMode(.screen)
             } else {
-                // 不是纯白卡片：以暖粉灰为底，再用主题色轻轻染色。
+                Color(red: 0.992, green: 0.988, blue: 0.99)
                 LinearGradient(
-                    colors: [
-                        Color(red: 0.965, green: 0.925, blue: 0.95),
-                        Color(red: 0.94, green: 0.925, blue: 0.97),
-                        Color(red: 0.965, green: 0.94, blue: 0.90),
-                    ],
+                    colors: [theme.accent.color.opacity(0.025), .clear],
                     startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                LinearGradient(
-                    colors: [theme.accent.color.opacity(0.11), .clear, theme.accent.color.opacity(0.04)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                    endPoint: .center
                 )
             }
 
@@ -396,29 +391,24 @@ struct ChatHomeView: View {
 
     private var conversationWindowBackground: some View {
         ZStack(alignment: .bottomTrailing) {
-            if colorScheme == .dark {
-                Color(red: 0.115, green: 0.16, blue: 0.16)
-                LinearGradient(
-                    colors: [theme.accent.color.opacity(0.18), .clear, theme.accent.color.opacity(0.08)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            } else {
-                Color(red: 0.93, green: 0.97, blue: 0.945)
-                LinearGradient(
-                    colors: [theme.accent.color.opacity(0.18), .clear, theme.accent.color.opacity(0.08)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
+            DS.Palette.bgGradient
+            LinearGradient(
+                colors: [
+                    theme.accent.color.opacity(colorScheme == .dark ? 0.08 : 0.05),
+                    .clear,
+                    theme.accent.color.opacity(colorScheme == .dark ? 0.03 : 0.025),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
             Image(systemName: "sparkles")
                 .font(.system(size: 56, weight: .thin))
-                .foregroundStyle(theme.accent.color.opacity(colorScheme == .dark ? 0.14 : 0.11))
+                .foregroundStyle(theme.accent.color.opacity(colorScheme == .dark ? 0.12 : 0.08))
                 .rotationEffect(.degrees(-14))
                 .offset(x: 13, y: 15)
             Image(systemName: "heart.fill")
                 .font(.system(size: 17))
-                .foregroundStyle(theme.accent.color.opacity(colorScheme == .dark ? 0.16 : 0.14))
+                .foregroundStyle(theme.accent.color.opacity(colorScheme == .dark ? 0.14 : 0.10))
                 .offset(x: -40, y: -16)
         }
     }
@@ -433,16 +423,6 @@ struct ChatHomeView: View {
                 )
             }
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                .fill(theme.accent.color.opacity(colorScheme == .dark ? 0.12 : 0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                .stroke(theme.accent.color.opacity(colorScheme == .dark ? 0.22 : 0.13), lineWidth: 0.8)
-        )
     }
 
     private var latestMessages: some View {
@@ -458,7 +438,7 @@ struct ChatHomeView: View {
                         .foregroundStyle(DS.Palette.textSecondary)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background(theme.accent.color.opacity(colorScheme == .dark ? 0.16 : 0.10), in: Capsule())
+                        .background(DS.Palette.innerSurface, in: Capsule())
                 }
             }
 
@@ -492,7 +472,7 @@ struct ChatHomeView: View {
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                .stroke(theme.accent.color.opacity(colorScheme == .dark ? 0.22 : 0.16), lineWidth: 1)
+                .stroke(DS.Palette.hairline, lineWidth: 0.8)
         )
     }
 
