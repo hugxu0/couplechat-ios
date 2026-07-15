@@ -49,6 +49,7 @@ test("candidate migrations remain ordered after the published boundary", () => {
     [28, "enforce_single_active_rolling_memory"],
     [29, "daily_recommendations"],
     [30, "daju_memory_perspective"],
+    [31, "recommendation_open_category"],
   ]);
 });
 

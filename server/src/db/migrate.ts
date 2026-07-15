@@ -1303,6 +1303,13 @@ export const schemaMigrations: readonly SchemaMigration[] = [
       WHERE status = 'active' AND layer IN ('state', 'relationship', 'insight');
     `,
   },
+  {
+    version: 31,
+    name: "recommendation_open_category",
+    sql: `
+    ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS category TEXT;
+    `,
+  },
 ];
 
 export async function migrate(

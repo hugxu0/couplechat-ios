@@ -10,8 +10,21 @@ test("daily recommendations use shared experience cards and keep deletable per-u
     const { createToken } = await import("../../src/auth/token");
     const { addMemory } = await import("../../src/ai/memory/store");
     const { addDays, cycleBounds, cycleDate } = await import("../../src/ai/time");
-    const { recommendationMemoryIds } = await import("../../src/daily/recommendationService");
+    const {
+      parseGeneratedRecommendation,
+      recommendationMemoryIds,
+    } = await import("../../src/daily/recommendationService");
     const now = Date.now();
+    assert.deepEqual(
+      parseGeneratedRecommendation(
+        '{"category":"城市漫游","content":"推荐沿着一条旧街区路线慢慢走，挑一家顺眼的小店坐下来。"}',
+      ),
+      {
+        category: "城市漫游",
+        content: "推荐沿着一条旧街区路线慢慢走，挑一家顺眼的小店坐下来。",
+      },
+      "category labels are open text rather than a fixed enum",
+    );
     await run(
       `INSERT INTO accounts
        (id, username, display_name, password_hash, avatar, status, version, created_at, updated_at)
@@ -50,16 +63,35 @@ test("daily recommendations use shared experience cards and keep deletable per-u
     });
     assert.equal(xuToday.statusCode, 200, xuToday.body);
     assert.equal(xuToday.json().daju.sourceKind, "daju");
+    assert.ok(typeof xuToday.json().daju.category === "string");
+    assert.ok(xuToday.json().daju.category.length > 0, "Daju picks an open category label");
+    assert.doesNotMatch(
+      xuToday.json().daju.content,
+      /提醒|待办|列成一页|整理照片/,
+      "Daju recommends a concrete thing instead of repackaging chores",
+    );
     const dailyId = xuToday.json().daju.id as string;
     const memoryIds = await recommendationMemoryIds(dailyId);
     assert.ok(memoryIds.includes(experience.id));
     assert.ok(memoryIds.includes(fact.id));
     assert.ok(!memoryIds.includes(relationship.id), "relationship and insight layers are never recommendation inputs");
 
+    await run(
+      "UPDATE recommendations SET category = NULL, content = '整理提醒和待办事项' WHERE id = ?",
+      [dailyId],
+    );
+    const upgradedToday = await app.inject({
+      method: "GET", url: "/api/v2/recommendations/today", headers: auth(xuToken),
+    });
+    assert.equal(upgradedToday.json().daju.id, dailyId, "legacy daily rows upgrade in place");
+    assert.ok(upgradedToday.json().daju.category);
+    assert.doesNotMatch(upgradedToday.json().daju.content, /整理|提醒|待办/);
+
     const siToday = await app.inject({
       method: "GET", url: "/api/v2/recommendations/today", headers: auth(siToken),
     });
     assert.equal(siToday.json().daju.id, dailyId, "both people share the same Daju recommendation");
+    assert.equal(siToday.json().daju.content, upgradedToday.json().daju.content);
 
     const first = await app.inject({
       method: "POST", url: "/api/v2/recommendations", headers: auth(xuToken),

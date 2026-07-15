@@ -11,6 +11,7 @@ struct RecommendationItem: Codable, Identifiable, Equatable {
     let sourceUsername: String?
     let sourceName: String
     let recipientUsername: String?
+    let category: String?
     let content: String
     let cycleDate: String
     let generationKind: String

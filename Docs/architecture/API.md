@@ -86,6 +86,20 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 
 共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion }`，importance 范围 `1...5`；版本冲突返回 409 和权威 `item`，客户端会载入它。删除会按卡片 key 记录 exclusion，避免后台再次自动生成；主人之后明确重新下达同主题指令时可以恢复。`POST refresh` body 为 `{ scope: "shared" | "private" }`。
 
+### 今日推荐
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/api/v2/recommendations/today` | 获取双方相同的大橘推荐、对方最新推荐和未读状态 |
+| `POST` | `/api/v2/recommendations/refresh` | 重新生成一条大橘推荐 |
+| `POST` | `/api/v2/recommendations` | 用 `{ content }` 给对方发送纯文字推荐 |
+| `GET` | `/api/v2/recommendations/unread-count` | 获取对方推荐未读数 |
+| `GET` | `/api/v2/recommendations/history?cursor=&limit=` | 分页读取大橘和双方推荐历史 |
+| `POST` | `/api/v2/recommendations/:id/read` | 收下推荐并将此前待收推荐标为已读 |
+| `DELETE` | `/api/v2/recommendations/:id` | 只从当前账号的历史中隐藏该推荐 |
+
+大橘推荐会返回自由文本 `category` 和纯文字 `content`。分类不使用固定枚举；生成目标是一个具体的作品、食物、地点或体验，而不是待办、提醒或日程建议。大橘主要以昨天双方可见的 `event` 经历卡作为口味线索，并用共同 `state/plan/fact` 补充；不会读取私密记忆，也不直接使用 `relationship/insight`。刷新后的推荐仍对双方完全相同。
+
 ### 增量同步
 
 | 方法 | 路径 | 用途 |
@@ -93,7 +107,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | `GET` | `/api/v2/sync?cursor=&limit=` | 按 account/couple 拉取持久化变更与 tombstone |
 | `POST` | `/api/v2/sync/ack` | 保存当前设备已应用的最大 cursor |
 
-iOS 在前台约每 10 秒补拉一次，并在 Socket 重连、启动和回前台时立即补拉。撤回删除、Memory、提醒、相册、日历、转写和宠物变更都进入事件日志；普通消息仍由 Socket + 消息分页负责。
+iOS 在前台约每 10 秒补拉一次，并在 Socket 重连、启动和回前台时立即补拉。撤回删除、Memory、推荐、提醒、相册、日历、转写和宠物变更都进入事件日志；普通消息仍由 Socket + 消息分页负责。
 
 ### 语音转写
 

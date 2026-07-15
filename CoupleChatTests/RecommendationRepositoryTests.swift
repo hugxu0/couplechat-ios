@@ -26,7 +26,7 @@ final class RecommendationRepositoryTests: XCTestCase {
     func testTodayDecodesSharedDajuAndLatestUnreadRecommendation() async throws {
         let client = RecommendationHTTPClient(#"""
         {"cycleDate":"2026-07-15","daju":{"id":"r1","sourceKind":"daju",
-        "sourceName":"大橘","content":"今晚一起散散步吧。","cycleDate":"2026-07-15",
+        "sourceName":"大橘","category":"电影","content":"今晚一起看《海街日记》吧。","cycleDate":"2026-07-15",
         "generationKind":"daily","createdAt":1000,"isRead":true,"isMine":false},
         "partner":{"id":"r2","sourceKind":"member","sourceUsername":"si","sourceName":"小偲",
         "recipientUsername":"xu","content":"回家买草莓。","cycleDate":"2026-07-15",
@@ -38,7 +38,8 @@ final class RecommendationRepositoryTests: XCTestCase {
 
         let snapshot = try await RecommendationRepository(httpClient: client).today(token: "token")
 
-        XCTAssertEqual(snapshot.daju.content, "今晚一起散散步吧。")
+        XCTAssertEqual(snapshot.daju.category, "电影")
+        XCTAssertEqual(snapshot.daju.content, "今晚一起看《海街日记》吧。")
         XCTAssertEqual(snapshot.partner?.sourceName, "小偲")
         XCTAssertEqual(snapshot.latestUnread?.id, "r2")
         XCTAssertEqual(snapshot.unreadCount, 2)

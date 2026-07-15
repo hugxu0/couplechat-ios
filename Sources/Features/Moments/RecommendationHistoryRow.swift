@@ -15,6 +15,14 @@ struct RecommendationHistoryRow: View {
                     Text(sourceTitle)
                         .font(DS.Typo.sectionLabel)
                         .foregroundStyle(DS.Palette.textPrimary)
+                    if item.isFromDaju, let category = item.category, !category.isEmpty {
+                        Text(category)
+                            .font(DS.Typo.micro)
+                            .foregroundStyle(DS.Palette.accent)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(DS.Palette.accent.opacity(0.10), in: Capsule())
+                    }
                     Spacer(minLength: 8)
                     Text(timestamp)
                         .font(DS.Typo.micro)

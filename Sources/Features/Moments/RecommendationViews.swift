@@ -14,26 +14,16 @@ struct TodayRecommendationCard: View {
             if loading && snapshot == nil {
                 HStack(spacing: DS.Spacing.gap) {
                     ProgressView()
-                    Text("大橘正在翻昨天的经历…")
+                    Text("大橘正在为你们挑今天的推荐…")
                         .font(DS.Typo.secondary)
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
             } else if let snapshot {
-                recommendationBlock(
-                    source: "大橘",
-                    icon: AccountPresentation.dajuIconName,
-                    content: snapshot.daju.content,
-                    tint: DS.Palette.orange,
-                    refreshing: refreshing,
-                    onRefresh: onRefresh)
+                dajuRecommendation(snapshot.daju)
 
                 if let partner = snapshot.partner {
-                    recommendationBlock(
-                        source: "\(partner.sourceName) 给你的",
-                        icon: "gift.fill",
-                        content: partner.content,
-                        tint: DS.Palette.pink)
+                    partnerRecommendation(partner)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             } else {
@@ -88,60 +78,159 @@ struct TodayRecommendationCard: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
-    private func recommendationBlock(
-        source: String,
-        icon: String,
-        content: String,
-        tint: Color,
-        refreshing: Bool = false,
-        onRefresh: (() -> Void)? = nil
-    ) -> some View {
-        HStack(alignment: .top, spacing: DS.Spacing.gap) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(tint)
-                .frame(width: 4)
-            VStack(alignment: .leading, spacing: 8) {
-                Label(source, systemImage: icon)
-                    .font(DS.Typo.sectionLabel)
-                    .foregroundStyle(tint)
-                Text(content)
-                    .font(.system(.body, design: .rounded).weight(.medium))
-                    .foregroundStyle(DS.Palette.textPrimary)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if let onRefresh {
-                Button {
-                    Haptics.selection()
-                    onRefresh()
-                } label: {
-                    Group {
-                        if refreshing {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                    }
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+    private func dajuRecommendation(_ item: RecommendationItem) -> some View {
+        let category = normalizedCategory(item.category)
+        let symbol = recommendationSymbol(for: category)
+
+        return VStack(alignment: .leading, spacing: 14) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: DS.Spacing.compact) {
+                    categoryBadge(category, symbol: symbol)
+                    Spacer(minLength: DS.Spacing.compact)
+                    refreshButton
                 }
-                .buttonStyle(.plain)
-                .disabled(refreshing)
-                .accessibilityLabel("重新生成今天的推荐")
+                VStack(alignment: .leading, spacing: DS.Spacing.tight) {
+                    categoryBadge(category, symbol: symbol)
+                    refreshButton
+                }
             }
+
+            Text(item.content)
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .foregroundStyle(DS.Palette.textPrimary)
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+
+            Label("大橘根据你们昨天的共同经历挑选", systemImage: AccountPresentation.dajuIconName)
+                .font(DS.Typo.caption)
+                .foregroundStyle(DS.Palette.textSecondary)
+        }
+        .padding(16)
+        .background {
+            ZStack(alignment: .bottomTrailing) {
+                LinearGradient(
+                    colors: [DS.Palette.accent.opacity(0.10), DS.Palette.innerSurface],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing)
+                Image(systemName: symbol)
+                    .font(.system(size: 78, weight: .regular))
+                    .foregroundStyle(DS.Palette.accent.opacity(0.055))
+                    .offset(x: 13, y: 13)
+                    .accessibilityHidden(true)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
+                .stroke(DS.Palette.accent.opacity(0.10), lineWidth: 0.75)
+        }
+    }
+
+    private func categoryBadge(_ category: String, symbol: String) -> some View {
+        Label(category, systemImage: symbol)
+            .font(DS.Typo.sectionLabel)
+            .foregroundStyle(DS.Palette.accent)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(DS.Palette.accent.opacity(0.11), in: Capsule())
+            .lineLimit(1)
+            .accessibilityLabel("推荐分类：\(category)")
+    }
+
+    private var refreshButton: some View {
+        Button {
+            Haptics.selection()
+            onRefresh()
+        } label: {
+            HStack(spacing: 6) {
+                if refreshing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+                Text(refreshing ? "在挑选" : "换一个")
+            }
+            .font(DS.Typo.caption.weight(.semibold))
+            .foregroundStyle(DS.Palette.accent)
+            .padding(.horizontal, 11)
+            .frame(minHeight: 44)
+            .background(DS.Palette.cardSurface, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(refreshing)
+        .accessibilityLabel(refreshing ? "正在重新挑选" : "换一个推荐")
+    }
+
+    private func partnerRecommendation(_ item: RecommendationItem) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label("\(item.sourceName) 推荐给你", systemImage: "gift.fill")
+                .font(DS.Typo.sectionLabel)
+                .foregroundStyle(DS.Palette.pink)
+            Text(item.content)
+                .font(.system(.body, design: .rounded).weight(.medium))
+                .foregroundStyle(DS.Palette.textPrimary)
+                .lineSpacing(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
         .padding(14)
-        .background(DS.Palette.innerSurface, in: RoundedRectangle(
+        .background(DS.Palette.pink.opacity(0.055), in: RoundedRectangle(
             cornerRadius: DS.Radius.tile, style: .continuous))
-        .overlay(alignment: .bottomTrailing) {
-            Image(systemName: "sparkles")
-                .font(.caption2)
-                .foregroundStyle(tint.opacity(0.22))
-                .padding(10)
-                .allowsHitTesting(false)
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
+                .stroke(DS.Palette.pink.opacity(0.10), lineWidth: 0.75)
         }
+    }
+
+    private func normalizedCategory(_ value: String?) -> String {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return "大橘推荐" }
+        return value
+    }
+
+    private func recommendationSymbol(for category: String) -> String {
+        let value = category.lowercased()
+        if ["电视剧", "剧集", "综艺", "动画", "动漫"].contains(where: { value.contains($0) }) {
+            return "tv"
+        }
+        if ["电影", "影视", "纪录片", "短片"].contains(where: { value.contains($0) }) {
+            return "film.stack"
+        }
+        if ["音乐", "歌曲", "专辑", "歌单"].contains(where: { value.contains($0) }) {
+            return "music.note.list"
+        }
+        if ["播客", "音频", "电台"].contains(where: { value.contains($0) }) {
+            return "headphones"
+        }
+        if ["书", "阅读", "小说", "漫画", "杂志"].contains(where: { value.contains($0) }) {
+            return "book.closed"
+        }
+        if ["美食", "餐厅", "小吃", "甜品", "饮品", "咖啡", "料理"].contains(where: { value.contains($0) }) {
+            return "fork.knife"
+        }
+        if ["旅行", "目的地", "路线", "景点", "散步"].contains(where: { value.contains($0) }) {
+            return "map"
+        }
+        if ["游戏", "桌游"].contains(where: { value.contains($0) }) {
+            return "gamecontroller"
+        }
+        if ["展览", "博物馆", "美术馆"].contains(where: { value.contains($0) }) {
+            return "building.columns"
+        }
+        if ["演出", "演唱会", "音乐节", "戏剧", "活动"].contains(where: { value.contains($0) }) {
+            return "ticket"
+        }
+        if ["运动", "户外", "健身"].contains(where: { value.contains($0) }) {
+            return "figure.run"
+        }
+        if ["应用", "软件", "工具"].contains(where: { value.contains($0) }) {
+            return "apps.iphone"
+        }
+        return "sparkles"
     }
 }
 
@@ -164,7 +253,7 @@ struct RecommendationComposerSheet: View {
             VStack(spacing: DS.Spacing.section) {
                 ZStack(alignment: .topLeading) {
                     if content.isEmpty {
-                        Text("想给 \(partnerName) 推荐什么？")
+                        Text("写下你想推荐给 \(partnerName) 的东西…")
                             .font(DS.Typo.body)
                             .foregroundStyle(DS.Palette.textTertiary)
                             .padding(.horizontal, 17)

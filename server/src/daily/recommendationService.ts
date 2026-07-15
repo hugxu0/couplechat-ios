@@ -18,6 +18,7 @@ interface RecommendationRow {
   source_account_id: string | null;
   recipient_account_id: string | null;
   cycle_date: string;
+  category: string | null;
   content: string;
   generation_kind: RecommendationGenerationKind;
   source_memory_ids_json: string;
@@ -44,6 +45,7 @@ export interface RecommendationItem {
   sourceUsername?: string;
   sourceName: string;
   recipientUsername?: string;
+  category?: string;
   content: string;
   cycleDate: string;
   generationKind: RecommendationGenerationKind;
@@ -85,6 +87,7 @@ function mapRecommendation(row: RecommendationRow, viewerAccountId: string): Rec
     sourceUsername: row.source_username ?? undefined,
     sourceName: row.source_kind === "daju" ? "大橘" : row.source_name ?? "TA",
     recipientUsername: row.recipient_username ?? undefined,
+    category: row.category ?? undefined,
     content: row.content,
     cycleDate: row.cycle_date,
     generationKind: row.generation_kind,
@@ -143,6 +146,7 @@ async function insertRecommendation(
     recipientAccountId: string | null;
     generationKind: RecommendationGenerationKind;
     cycleDate: string;
+    category?: string;
     content: string;
     sourceMemoryIds?: string[];
   },
@@ -156,13 +160,14 @@ async function insertRecommendation(
     const inserted = await db.run(
       `INSERT INTO recommendations
        (id, couple_id, source_kind, source_account_id, recipient_account_id,
-        cycle_date, content, generation_kind, source_memory_ids_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cycle_date, category, content, generation_kind, source_memory_ids_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ${input.sourceKind === "daju" && input.generationKind === "daily"
         ? "ON CONFLICT (couple_id, cycle_date) WHERE source_kind = 'daju' AND generation_kind = 'daily' DO NOTHING"
         : ""}`,
       [id, coupleId, input.sourceKind, input.sourceAccountId,
-        input.recipientAccountId, input.cycleDate, input.content, input.generationKind,
+        input.recipientAccountId, input.cycleDate, input.category ?? null,
+        input.content, input.generationKind,
         JSON.stringify(input.sourceMemoryIds ?? []), now],
     );
     if (inserted === 0) {
@@ -191,7 +196,10 @@ async function insertRecommendation(
       entityType: "recommendation",
       entityId: id,
       operation: "upsert",
-      payload: { id, cycleDate: input.cycleDate, sourceKind: input.sourceKind },
+      payload: {
+        id, cycleDate: input.cycleDate, sourceKind: input.sourceKind,
+        category: input.category,
+      },
       actorAccountId: identity.accountId,
       actorDeviceId: user.deviceId,
       createdAt: now,
@@ -256,31 +264,78 @@ function recommendationPrompt(memories: RecommendationMemoryRow[], currentCycleD
   ].join("\n\n");
 }
 
-async function generateRecommendationText(
+export interface GeneratedRecommendation {
+  category: string;
+  content: string;
+}
+
+const fallbackRecommendations: readonly GeneratedRecommendation[] = [
+  { category: "电影", content: "一起看《海街日记》吧，四姐妹在镰仓生活的细碎日常，很适合两个人安静地看完。" },
+  { category: "音乐", content: "一起听陈绮贞的《旅行的意义》吧，轻轻的吉他和夏夜很搭，听完可以交换最想重游的地方。" },
+  { category: "阅读", content: "推荐《山茶文具店》，它写信也写人与人之间没说出口的心意，适合轮流读几页。" },
+  { category: "美食", content: "今晚可以试试番茄肥牛锅，酸甜热乎又不复杂，配一份喜欢的主食就很满足。" },
+  { category: "游戏", content: "推荐双人游戏《双人成行》，每一关都要互相配合，很适合两个人一起慢慢通关。" },
+  { category: "纪录片", content: "一起看《地球脉动 II》吧，画面足够震撼，也很适合窝在一起边看边聊喜欢的动物。" },
+  { category: "播客", content: "推荐播客《日谈公园》，挑一个你们都好奇的话题，从一段轻松聊天开始今晚的共同时间。" },
+  { category: "旅行", content: "推荐苏州平江路作为一次慢旅行目的地，沿河走走、找间茶馆坐下，比匆忙赶景点更适合两个人。" },
+  { category: "电视剧", content: "一起重温《请回答1988》吧，它不靠大起大落，却把家人、朋友和喜欢一个人的心情写得很暖。" },
+  { category: "桌游", content: "推荐双人桌游《拼布艺术》，一局不长、规则也轻巧，很适合饭后坐下来慢慢拼一张被子。" },
+] as const;
+
+export function parseGeneratedRecommendation(value: string | null): GeneratedRecommendation | null {
+  if (!value) return null;
+  const unfenced = value.trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  const firstBrace = unfenced.indexOf("{");
+  const lastBrace = unfenced.lastIndexOf("}");
+  if (firstBrace < 0 || lastBrace <= firstBrace) return null;
+  try {
+    const parsed = JSON.parse(unfenced.slice(firstBrace, lastBrace + 1)) as {
+      category?: unknown;
+      content?: unknown;
+    };
+    if (typeof parsed.category !== "string" || typeof parsed.content !== "string") return null;
+    const category = parsed.category
+      .replace(/[\r\n\t【】\[\]#*]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 12);
+    const content = cleanContent(parsed.content, 240)
+      .replace(/^[-–—•*#\s]+/, "")
+      .replace(/^[“\"]|[”\"]$/g, "");
+    if (!category || content.length < 8) return null;
+    return { category, content };
+  } catch {
+    return null;
+  }
+}
+
+function fallbackRecommendation(currentCycleDate: string): GeneratedRecommendation {
+  const seed = [...currentCycleDate].reduce((sum, character) => sum + character.charCodeAt(0), 0);
+  return fallbackRecommendations[seed % fallbackRecommendations.length];
+}
+
+async function generateRecommendation(
   memories: RecommendationMemoryRow[],
   currentCycleDate: string,
-): Promise<string> {
+): Promise<GeneratedRecommendation> {
   const generated = await chat({
     profile: "task",
     gen: GEN.dailyRecommendation,
     system: [
-      "你是悄悄话里的大橘，要给小旭和小偲写一条今天可以实际采纳的共同推荐。",
-      "昨天的 event 经历卡片是首要依据；state、plan、fact 只能帮助理解背景。",
+      "你是悄悄话里的大橘，要给小旭和小偲挑一个今天值得一起体验的具体东西。",
+      "这是内容与体验推荐，不是日程规划、效率建议或待办整理。必须点名一个明确对象，不能只说‘散散步’‘聊聊天’‘整理照片’之类的泛泛行动。",
+      "推荐范围完全开放，包括但不限于电影、电视剧、纪录片、动画、音乐、专辑、播客、书、漫画、游戏、桌游、美食、饮品、店、旅行目的地、路线、展览、演出、活动、运动、应用或新鲜体验；这些只是例子，不是固定分类表。",
+      "昨天的 event 经历卡片是首要口味线索；state、plan、fact 只能帮助理解背景。用记忆判断他们可能喜欢什么，不要把记忆里的任务重新包装成推荐。",
       "不要使用 relationship 或 insight 层，不做心理分析，不暴露记忆系统、卡片名称或私人聊天。",
-      "有经历卡片时，推荐要与其中一件真实经历自然相连；没有经历时才可依据共同计划或稳定偏好。",
-      "只输出一段 25～120 个中文字符的纯文字，不要标题、列表、链接、引号或 Markdown。",
-      "语气温暖具体，不说教，不替两个人下结论，也不要编造输入中没有的人物、地点或安排。",
+      "优先推荐长期有效、确实存在的作品、食物或体验；不确定实时营业、上架或展期时不要编造。不要假定他们所在的城市。",
+      "只输出一个 JSON 对象：category 是你自由概括的 2～8 字分类；content 是 30～110 个中文字符的推荐正文，要包含具体名称和一句贴合两个人的理由。",
+      "格式示例仅说明结构：{\"category\":\"电影\",\"content\":\"一起看《海街日记》吧……\"}。不要输出 Markdown、链接、列表或额外解释。",
     ].join("\n"),
     user: recommendationPrompt(memories, currentCycleDate),
   });
-  const content = cleanContent(generated ?? "", 240)
-    .replace(/^[-–—•*#\s]+/, "")
-    .replace(/^[“\"]|[”\"]$/g, "");
-  if (content) return content;
-  const hasExperience = memories.some((memory) => memory.layer === "event");
-  return hasExperience
-    ? "把昨天那段让你们觉得舒服的相处再续一点吧，今天留十分钟，一起做件不赶时间的小事。"
-    : "今天给彼此留十分钟，交换一件昨天没来得及说的小事吧。";
+  return parseGeneratedRecommendation(generated) ?? fallbackRecommendation(currentCycleDate);
 }
 
 async function createDajuRecommendation(
@@ -291,16 +346,52 @@ async function createDajuRecommendation(
   if (!identity?.coupleId) return null;
   const date = cycleDate();
   const memories = await recommendationMemories(identity.coupleId, date);
-  const content = await generateRecommendationText(memories, date);
+  const recommendation = await generateRecommendation(memories, date);
   return insertRecommendation(user, {
     sourceKind: "daju",
     sourceAccountId: null,
     recipientAccountId: null,
     generationKind,
     cycleDate: date,
-    content,
+    category: recommendation.category,
+    content: recommendation.content,
     sourceMemoryIds: memories.map((memory) => memory.id),
   });
+}
+
+async function upgradeLegacyDajuRecommendation(
+  user: AuthUser,
+  recommendationId: string,
+): Promise<RecommendationItem | null> {
+  const identity = await activeIdentity(user);
+  if (!identity?.coupleId) return null;
+  const date = cycleDate();
+  const memories = await recommendationMemories(identity.coupleId, date);
+  const recommendation = await generateRecommendation(memories, date);
+  await transaction(async (db) => {
+    const now = Date.now();
+    const updated = await db.run(
+      `UPDATE recommendations
+          SET category = ?, content = ?, source_memory_ids_json = ?
+        WHERE id = ? AND couple_id = ? AND source_kind = 'daju'
+          AND (category IS NULL OR BTRIM(category) = '')`,
+      [recommendation.category, recommendation.content,
+        JSON.stringify(memories.map((memory) => memory.id)),
+        recommendationId, identity.coupleId],
+    );
+    if (updated === 0) return;
+    await appendSyncEvent(db, {
+      coupleId: identity.coupleId,
+      entityType: "recommendation",
+      entityId: recommendationId,
+      operation: "upsert",
+      payload: { id: recommendationId, cycleDate: date, sourceKind: "daju", category: recommendation.category },
+      actorAccountId: identity.accountId,
+      actorDeviceId: user.deviceId,
+      createdAt: now,
+    });
+  });
+  return recommendationById(identity.accountId, identity.coupleId, recommendationId);
 }
 
 async function latestDajuRecommendation(
@@ -344,11 +435,13 @@ export async function ensureTodayRecommendation(
   if (!identity?.coupleId) return null;
   const date = cycleDate();
   const existing = await latestDajuRecommendation(identity.accountId, identity.coupleId, date);
-  if (existing) return existing;
+  if (existing?.category) return existing;
+  if (existing) return upgradeLegacyDajuRecommendation(user, existing.id);
   if (prepareMemories) {
     await prepareMemories();
     const afterPreparation = await latestDajuRecommendation(identity.accountId, identity.coupleId, date);
-    if (afterPreparation) return afterPreparation;
+    if (afterPreparation?.category) return afterPreparation;
+    if (afterPreparation) return upgradeLegacyDajuRecommendation(user, afterPreparation.id);
   }
   return createDajuRecommendation(user, "daily");
 }
