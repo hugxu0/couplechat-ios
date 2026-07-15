@@ -21,7 +21,6 @@ final class ChatViewController: UIViewController {
     let voiceTranscriptRepository = VoiceTranscriptRepository()
     var timelineController: ChatTimelineController!
     var collectionView: UICollectionView!
-    let bottomDockBackground = ChatGlassView(style: .systemUltraThinMaterial, cornerRadius: 0)
     let bottomStack = UIStackView()
     let panelContainer = UIView()
     let jumpToBottomBackground = ChatGlassView(style: .systemThinMaterial, cornerRadius: 21)
@@ -36,8 +35,8 @@ final class ChatViewController: UIViewController {
     let inputDockSpacing: CGFloat = 8
     var keyboardOverlap: CGFloat = 0
     var lastVisibleKeyboardOverlap: CGFloat = 300
-    /// keyboardLayoutGuide 会在键盘动画中逐帧改变时间线高度。动画期间需要
-    /// 固定变化开始前的“是否贴底”意图，避免首帧几何变化把它误判为已离底。
+    /// 键盘动画会逐帧改变时间线可视高度。动画期间需要固定变化开始前的
+    /// “是否贴底”意图，避免首帧几何变化把它误判为已离底。
     var keyboardTransitionMaintainsLatest: Bool?
     var keyboardTransitionGeneration = 0
     var keyboardLayoutAnimationActive = false
@@ -385,14 +384,8 @@ final class ChatViewController: UIViewController {
         bottomStack.axis = .vertical
         bottomStack.spacing = 0
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
-        bottomDockBackground.translatesAutoresizingMaskIntoConstraints = false
-        bottomDockBackground.isUserInteractionEnabled = false
-        bottomDockBackground.update(cornerRadius: 0, tintAlpha: 0.06, borderAlpha: 0)
-        bottomDockBackground.setGlassTone(
-            dark: composerUsesLightContent,
-            tintAlpha: composerUsesLightContent ? 0.08 : 0.06,
-            borderAlpha: 0)
-        view.addSubview(bottomDockBackground)
+        bottomStack.backgroundColor = .clear
+        bottomStack.isOpaque = false
         view.addSubview(bottomStack)
         composer.translatesAutoresizingMaskIntoConstraints = false
         panelContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -415,18 +408,11 @@ final class ChatViewController: UIViewController {
             equalTo: view.bottomAnchor,
             constant: -(inputDockSpacing + max(view.safeAreaInsets.bottom, keyboardOverlap)))
         NSLayoutConstraint.activate([
-            bottomDockBackground.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bottomDockBackground.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomDockBackground.topAnchor.constraint(equalTo: bottomStack.topAnchor),
-            bottomDockBackground.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            // 时间线视口在结构上就截止于输入栏上方；不再依赖全屏列表叠加
-            // 一个估算 bottomInset，任何安全区/键盘/面板高度都不会盖住最后一条。
-            collectionView.bottomAnchor.constraint(
-                equalTo: bottomStack.topAnchor,
-                constant: -inputDockSpacing),
+            // 时间线铺满屏幕，输入栏只是透明叠加层；消息可以在它后面滚过。
+            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             bottomStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomConstraint,

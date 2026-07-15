@@ -21,10 +21,6 @@ extension ChatViewController {
         let usesLightContent = ChatSurfaceTone(luminance: luminance).usesLightContent
         guard composerUsesLightContent != usesLightContent else { return }
         composerUsesLightContent = usesLightContent
-        bottomDockBackground.setGlassTone(
-            dark: usesLightContent,
-            tintAlpha: usesLightContent ? 0.08 : 0.06,
-            borderAlpha: 0)
         composer.applyTheme(theme, usesLightContent: usesLightContent)
         stickerPanel?.applyTheme(
             accentColor: theme.accent.uiColor,
@@ -93,8 +89,8 @@ extension ChatViewController {
             return
         }
         if keyboardTransitionMaintainsLatest == nil {
-            // 编辑开始时本来就会回到最新；即使 keyboardLayoutGuide 已抢先改变了
-            // 一帧几何，也不能因此丢掉贴底意图。收起键盘时则尊重用户是否已上滑。
+            // 编辑开始时本来就会回到最新；即使系统已经开始改变视口几何，
+            // 也不能因此丢掉贴底意图。收起键盘时则尊重用户是否已上滑。
             keyboardTransitionMaintainsLatest = !timelineController.browsingHistoricalWindow
                 && (timelineController.maintainsLatestPosition
                     || (keyboardIsAppearing && composer.textView.isFirstResponder))
@@ -136,6 +132,13 @@ extension ChatViewController {
         let anchor = shouldMaintainLatest || shouldForceLatest
             ? nil
             : timelineController.visibleAnchor()
+        let panelHeight = panelContainer.isHidden ? 0 : panelHeightConstraint.constant
+        let dockHeight = composerHeightConstraint.constant + panelHeight
+        let coveredBottom = bottomDockUsesScreenBottom
+            ? 0
+            : max(keyboardOverlap, view.safeAreaInsets.bottom)
+        let bottomInset = dockHeight + coveredBottom
+            + (bottomDockUsesScreenBottom ? 0 : inputDockSpacing)
 
         let updates = {
             if !self.bottomDockUsesScreenBottom {
@@ -143,7 +146,7 @@ extension ChatViewController {
                     self.inputDockSpacing + max(self.keyboardOverlap, self.view.safeAreaInsets.bottom))
             }
             self.view.layoutIfNeeded()
-            self.timelineController.setInsets(top: self.topOverlayInset, bottom: 0)
+            self.timelineController.setInsets(top: self.topOverlayInset, bottom: bottomInset)
             self.collectionView.layoutIfNeeded()
             if (shouldMaintainLatest || shouldForceLatest) && !isUserScrolling {
                 self.timelineController.scrollToBottom(animated: false)
