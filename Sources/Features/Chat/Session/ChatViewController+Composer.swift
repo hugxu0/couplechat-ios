@@ -6,7 +6,7 @@ extension ChatViewController {
               force || !keyboardLayoutAnimationActive,
               view.bounds.width > 0,
               view.bounds.height > 0 else { return }
-        // 输入框、左右按钮、面板和底部渐变必须共用同一个取色区域。
+        // 输入框、左右按钮和面板必须共用同一个取色区域。
         // 只采输入胶囊会让同一排控件在横向明暗变化的壁纸上各自“翻色”。
         let dockFrame = bottomStack.convert(bottomStack.bounds, to: view).integral
         guard !dockFrame.isEmpty, !dockFrame.isNull else { return }
@@ -26,7 +26,6 @@ extension ChatViewController {
         guard composerUsesLightContent != usesLightContent else { return }
         composerUsesLightContent = usesLightContent
         composer.applyTheme(theme, usesLightContent: usesLightContent)
-        bottomBackdrop.applyTone(usesLightContent: usesLightContent)
         stickerPanel?.applyTheme(
             accentColor: theme.accent.uiColor,
             usesLightContent: usesLightContent)

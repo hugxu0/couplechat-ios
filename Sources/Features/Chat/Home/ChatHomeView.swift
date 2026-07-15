@@ -40,7 +40,12 @@ struct ChatHomeView: View {
     }
 
     private var statusMap: [String: String] {
-        store.sharedValue("chat_statuses") as? [String: String] ?? [:]
+        guard let raw = store.sharedValue("chat_statuses") else { return [:] }
+        return raw.reduce(into: [String: String]()) { result, entry in
+            if let value = entry.value as? String, !value.isEmpty {
+                result[entry.key] = value
+            }
+        }
     }
 
     private var storedStatuses: [ChatHomeStoredStatus] {
@@ -322,13 +327,7 @@ struct ChatHomeView: View {
                 ring: DS.Palette.member(myUsername),
                 editable: true,
                 statusOptions: statusOptions,
-                onStatusPick: { status in
-                    if statusMap[myUsername] == status.title {
-                        clearStatus()
-                    } else {
-                        setStatus(status)
-                    }
-                },
+                onStatusPick: setStatus,
                 onAddStatus: beginAddingStatus,
                 onClearStatus: clearStatus,
                 onEditStatus: beginEditingStatus,

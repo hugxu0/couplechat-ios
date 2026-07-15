@@ -22,7 +22,6 @@ final class ChatViewController: UIViewController {
     var timelineController: ChatTimelineController!
     var collectionView: UICollectionView!
     let bottomStack = UIStackView()
-    let bottomBackdrop = ChatBottomGradientBlurView()
     let panelContainer = UIView()
     let jumpToBottomBackground = ChatGlassView(style: .systemThinMaterial, cornerRadius: 21)
     let jumpToBottomButton = UIButton(type: .system)
@@ -137,7 +136,6 @@ final class ChatViewController: UIViewController {
         bindStore()
         composer.delegate = self
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
-        bottomBackdrop.applyTone(usesLightContent: composerUsesLightContent)
         applyAccentColor()
         installStickerPanel()
         NotificationCenter.default.addObserver(
@@ -255,7 +253,6 @@ final class ChatViewController: UIViewController {
             timelineUsesLightContent = dark
         }
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
-        bottomBackdrop.applyTone(usesLightContent: composerUsesLightContent)
         stickerPanel?.applyTheme(
             accentColor: theme.accent.uiColor,
             usesLightContent: composerUsesLightContent)
@@ -292,7 +289,6 @@ final class ChatViewController: UIViewController {
         self.timelineUsesLightContent = timelineUsesLightContent
         if themeChanged || composerToneChanged || dynamicToneChanged || wallpaperAppearanceChanged || appliedAccent != theme.accent {
             composer.applyTheme(theme, usesLightContent: self.composerUsesLightContent)
-            bottomBackdrop.applyTone(usesLightContent: self.composerUsesLightContent)
             stickerPanel?.applyTheme(
                 accentColor: theme.accent.uiColor,
                 usesLightContent: self.composerUsesLightContent)
@@ -399,8 +395,6 @@ final class ChatViewController: UIViewController {
     }
 
     func buildBottomDock() {
-        bottomBackdrop.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(bottomBackdrop)
         bottomStack.axis = .vertical
         bottomStack.spacing = 0
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
@@ -436,10 +430,6 @@ final class ChatViewController: UIViewController {
             bottomStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomConstraint,
-            bottomBackdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bottomBackdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomBackdrop.topAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -28),
-            bottomBackdrop.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
         ])
     }
 

@@ -6,6 +6,7 @@ enum ChatHomeAvatarArt {
 }
 
 struct ChatHomeCoupleAvatarColumn: View {
+    @Environment(\.colorScheme) private var colorScheme
     let name: String
     let avatar: String
     var avatarURL: URL? = nil
@@ -20,7 +21,6 @@ struct ChatHomeCoupleAvatarColumn: View {
     let onClearStatus: () -> Void
     let onEditStatus: (ChatHomeStatusOption) -> Void
     let onDeleteStatus: (ChatHomeStatusOption) -> Void
-    @State private var showStatusPicker = false
 
     var body: some View {
         VStack(spacing: 9) {
@@ -57,48 +57,93 @@ struct ChatHomeCoupleAvatarColumn: View {
     @ViewBuilder
     private var statusCapsule: some View {
         if editable {
-            Button {
-                Haptics.light()
-                showStatusPicker = true
-            } label: {
-                Text(status ?? "加状态")
-                    .font(DS.Typo.secondary.weight(.bold))
-                    .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.pink)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(DS.Palette.innerSurface, in: Capsule())
-            }
-            .frame(minWidth: 76, minHeight: 34)
-            .contentShape(Capsule())
-            .buttonStyle(PressableStyle())
-            .confirmationDialog("选择状态", isPresented: $showStatusPicker, titleVisibility: .visible) {
+            Menu {
                 ForEach(statusOptions) { option in
-                    Button(option.title) { onStatusPick(option) }
+                    Button {
+                        onStatusPick(option)
+                    } label: {
+                        if option.title == status {
+                            Label(option.title, systemImage: "checkmark")
+                        } else {
+                            Text(option.title)
+                        }
+                    }
                 }
+                Divider()
                 Button("添加状态") { onAddStatus() }
                 if status != nil {
+                    if let currentStatus = statusOptions.first(where: { $0.title == status }) {
+                        Button("编辑当前状态") { onEditStatus(currentStatus) }
+                        Button("删除当前状态", role: .destructive) { onDeleteStatus(currentStatus) }
+                    }
                     Button("清除当前状态", role: .destructive) { onClearStatus() }
                 }
+            } label: {
+                statusCapsuleLabel(showsMenuIndicator: true)
             }
-            .contextMenu {
-                ForEach(statusOptions) { option in
-                    Button(option.title) { onStatusPick(option) }
-                }
-                Button("添加状态") { onAddStatus() }
-                if let currentStatus = statusOptions.first(where: { $0.title == status }) {
-                    Button("编辑当前状态") { onEditStatus(currentStatus) }
-                    Button("删除当前状态", role: .destructive) { onDeleteStatus(currentStatus) }
-                }
-            }
+            .buttonStyle(PressableStyle())
             .accessibilityLabel(status == nil ? "添加状态" : "当前状态 \(status ?? "")")
+            .accessibilityHint("轻点选择或管理自己的状态")
         } else {
-            Text(status ?? "想贴贴")
-                .font(DS.Typo.secondary.weight(.bold))
-                .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.textPrimary.opacity(0.62))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(DS.Palette.innerSurface, in: Capsule())
+            statusCapsuleLabel(showsMenuIndicator: false)
+                .accessibilityLabel(status == nil ? "对方暂未设置状态" : "对方状态 \(status ?? "")")
         }
+    }
+
+    private func statusCapsuleLabel(showsMenuIndicator: Bool) -> some View {
+        let tint = statusOptions.first(where: { $0.title == status })?.color ?? ring
+        let title = status ?? (editable ? "加状态" : "暂无状态")
+        return HStack(spacing: 6) {
+            ZStack {
+                Circle()
+                    .fill(tint.opacity(colorScheme == .dark ? 0.28 : 0.16))
+                    .frame(width: 16, height: 16)
+                if status == nil && editable {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(tint)
+                } else {
+                    Circle()
+                        .fill(status == nil ? DS.Palette.textTertiary : tint)
+                        .frame(width: 7, height: 7)
+                }
+            }
+            Text(title)
+                .font(DS.Typo.secondary.weight(.bold))
+                .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.textPrimary)
+                .lineLimit(1)
+            if showsMenuIndicator {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(DS.Palette.textSecondary)
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
+        .frame(minWidth: 92, minHeight: 36)
+        .contentShape(Capsule())
+        .background {
+            Capsule()
+                .fill(DS.Palette.fieldSurface)
+            Capsule()
+                .fill(tint.opacity(colorScheme == .dark ? 0.16 : 0.09))
+        }
+        .overlay {
+            Capsule()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(colorScheme == .dark ? 0.18 : 0.76),
+                            tint.opacity(colorScheme == .dark ? 0.48 : 0.30),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing),
+                    lineWidth: 1)
+        }
+        .shadow(
+            color: Color.black.opacity(colorScheme == .dark ? 0.22 : 0.10),
+            radius: 7,
+            y: 3)
     }
 }
 
