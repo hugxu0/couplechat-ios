@@ -275,29 +275,17 @@ struct AlbumDetailView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    HStack(spacing: 0) {
-                        Button { captionPost = post } label: {
-                            Image(systemName: "pencil")
-                                .font(.caption.weight(.semibold))
-                                .frame(width: 32, height: 32)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(DS.Palette.accent)
-                        .accessibilityLabel(post.caption.isEmpty ? "添加文案" : "编辑文案")
-
-                        Menu {
-                            Button("编辑文案", systemImage: "pencil") { captionPost = post }
-                            Button("删除动态", systemImage: "trash", role: .destructive) { deletingPost = post }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                                .font(.caption.weight(.semibold))
-                                .frame(width: 32, height: 32)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                        .accessibilityLabel("动态操作")
+                    Menu {
+                        Button("编辑文案", systemImage: "pencil") { captionPost = post }
+                        Button("删除动态", systemImage: "trash", role: .destructive) { deletingPost = post }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 32, height: 32)
                     }
-                    .fixedSize(horizontal: true, vertical: false)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DS.Palette.textSecondary)
+                    .accessibilityLabel("动态操作")
                 }
                 postMediaGrid(post.assets, width: bodyWidth)
             }
