@@ -16,11 +16,7 @@ struct ChatHomeCoupleAvatarColumn: View {
     let ring: Color
     let editable: Bool
     let statusOptions: [ChatHomeStatusOption]
-    let onStatusPick: (ChatHomeStatusOption) -> Void
-    let onAddStatus: () -> Void
-    let onClearStatus: () -> Void
-    let onEditStatus: (ChatHomeStatusOption) -> Void
-    let onDeleteStatus: (ChatHomeStatusOption) -> Void
+    let onStatusTap: () -> Void
 
     var body: some View {
         VStack(spacing: 9) {
@@ -38,13 +34,21 @@ struct ChatHomeCoupleAvatarColumn: View {
                 }
                 .frame(width: 88, height: 88)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(DS.Palette.innerSurface.opacity(0.92), lineWidth: 4))
+                .overlay(
+                    Circle()
+                        .stroke(DS.Palette.innerSurface.opacity(0.92), lineWidth: 4)
+                        .allowsHitTesting(false)
+                )
                 .shadow(color: ring.opacity(0.18), radius: 10, y: 5)
 
                 Circle()
                     .fill(online ? DS.Palette.green : DS.Palette.textSecondary.opacity(0.55))
                     .frame(width: 16, height: 16)
-                    .overlay(Circle().stroke(DS.Palette.cardSurface, lineWidth: 4))
+                    .overlay(
+                        Circle()
+                            .stroke(DS.Palette.cardSurface, lineWidth: 4)
+                            .allowsHitTesting(false)
+                    )
                     .offset(x: -9, y: -10)
             }
 
@@ -57,31 +61,15 @@ struct ChatHomeCoupleAvatarColumn: View {
     @ViewBuilder
     private var statusCapsule: some View {
         if editable {
-            Menu {
-                ForEach(statusOptions) { option in
-                    Button {
-                        onStatusPick(option)
-                    } label: {
-                        if option.title == status {
-                            Label(option.title, systemImage: "checkmark")
-                        } else {
-                            Text(option.title)
-                        }
-                    }
-                }
-                Divider()
-                Button("添加状态") { onAddStatus() }
-                if status != nil {
-                    if let currentStatus = statusOptions.first(where: { $0.title == status }) {
-                        Button("编辑当前状态") { onEditStatus(currentStatus) }
-                        Button("删除当前状态", role: .destructive) { onDeleteStatus(currentStatus) }
-                    }
-                    Button("清除当前状态", role: .destructive) { onClearStatus() }
-                }
+            Button {
+                Haptics.light()
+                onStatusTap()
             } label: {
                 statusCapsuleLabel(showsMenuIndicator: true)
             }
-            .buttonStyle(PressableStyle())
+            .buttonStyle(.plain)
+            .contentShape(Capsule())
+            .zIndex(2)
             .accessibilityLabel(status == nil ? "添加状态" : "当前状态 \(status ?? "")")
             .accessibilityHint("轻点选择或管理自己的状态")
         } else {
@@ -120,7 +108,7 @@ struct ChatHomeCoupleAvatarColumn: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 7)
-        .frame(minWidth: 92, minHeight: 36)
+        .frame(minWidth: 96, minHeight: 44)
         .contentShape(Capsule())
         .background {
             Capsule()
@@ -139,11 +127,86 @@ struct ChatHomeCoupleAvatarColumn: View {
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing),
                     lineWidth: 1)
+                .allowsHitTesting(false)
         }
         .shadow(
             color: Color.black.opacity(colorScheme == .dark ? 0.22 : 0.10),
             radius: 7,
             y: 3)
+    }
+}
+
+struct ChatHomeStatusPickerSheet: View {
+    let currentStatus: String?
+    let options: [ChatHomeStatusOption]
+    let onPick: (ChatHomeStatusOption) -> Void
+    let onAdd: () -> Void
+    let onEdit: (ChatHomeStatusOption) -> Void
+    let onDelete: (ChatHomeStatusOption) -> Void
+    let onClear: () -> Void
+    let onClose: () -> Void
+
+    private var currentOption: ChatHomeStatusOption? {
+        options.first(where: { $0.title == currentStatus })
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("选择状态") {
+                    ForEach(options) { option in
+                        Button {
+                            onPick(option)
+                        } label: {
+                            HStack(spacing: 11) {
+                                Circle()
+                                    .fill(option.color)
+                                    .frame(width: 10, height: 10)
+                                Text(option.title)
+                                    .foregroundStyle(DS.Palette.textPrimary)
+                                Spacer()
+                                if option.title == currentStatus {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(option.color)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Section("管理") {
+                    Button(action: onAdd) {
+                        Label("添加自定义状态", systemImage: "plus.circle")
+                    }
+                    if let currentOption {
+                        Button { onEdit(currentOption) } label: {
+                            Label("编辑当前状态", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) {
+                            onDelete(currentOption)
+                        } label: {
+                            Label("删除当前状态", systemImage: "trash")
+                        }
+                    }
+                    if currentStatus != nil {
+                        Button(role: .destructive, action: onClear) {
+                            Label("清除当前状态", systemImage: "xmark.circle")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("我的状态")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成", action: onClose)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 

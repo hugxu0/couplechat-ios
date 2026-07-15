@@ -153,6 +153,12 @@ enum WallpaperChoice: String, CaseIterable, Identifiable {
         return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
+    /// 内置壁纸在深色外观下都会以低透明度叠到深色页面上，因此最终表面都是暗色；
+    /// 星夜在浅色外观下也仍然是暗色。气泡、顶栏和输入栏必须共享这个兜底值。
+    func fallbackSurfaceLuminance(for appearance: WallpaperAppearance) -> CGFloat {
+        appearance == .dark || self == .night ? 0.18 : 0.82
+    }
+
     /// 壁纸选择器里的预览色带
     var previewGradient: LinearGradient {
         LinearGradient(colors: stops, startPoint: .topLeading, endPoint: .bottomTrailing)

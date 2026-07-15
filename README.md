@@ -45,7 +45,7 @@ server/
 project.yml            XcodeGen 工程定义
 ```
 
-当前客户端版本为 `0.2.0 (9)`，部署目标、Bundle ID、依赖和生产基地址以 `project.yml` 为准。`Sources/Resources/cute_cat.glb` 是不入库的本地资源，缺失不影响编译。
+当前客户端版本为 `0.2.0 (10)`，部署目标、Bundle ID、依赖和生产基地址以 `project.yml` 为准。`Sources/Resources/cute_cat.glb` 是不入库的本地资源，缺失不影响编译。
 
 ## 常用验证
 

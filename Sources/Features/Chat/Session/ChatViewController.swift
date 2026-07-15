@@ -247,11 +247,22 @@ final class ChatViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
         wallpaperAppearance = traitCollection.userInterfaceStyle == .dark ? .dark : .light
-        if !theme.hasCustomWallpaper(for: channel, appearance: wallpaperAppearance) {
-            let dark = traitCollection.userInterfaceStyle == .dark
-            usesDarkChatSurface = dark
-            timelineUsesLightContent = dark
-        }
+        let wallpaper = theme.wallpaper(for: channel, appearance: wallpaperAppearance)
+        let timelineLuminance = theme.customWallpaperLuminance(
+            for: channel,
+            appearance: wallpaperAppearance,
+            region: .timelineCenter
+        ) ?? wallpaper.fallbackSurfaceLuminance(for: wallpaperAppearance)
+        let timelineTone = ChatSurfaceTone(luminance: timelineLuminance).usesLightContent
+        usesDarkChatSurface = timelineTone
+        timelineUsesLightContent = timelineTone
+
+        let composerLuminance = theme.customWallpaperLuminance(
+            for: channel,
+            appearance: wallpaperAppearance,
+            region: .composerCenter
+        ) ?? wallpaper.fallbackSurfaceLuminance(for: wallpaperAppearance)
+        composerUsesLightContent = ChatSurfaceTone(luminance: composerLuminance).usesLightContent
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
         stickerPanel?.applyTheme(
             accentColor: theme.accent.uiColor,

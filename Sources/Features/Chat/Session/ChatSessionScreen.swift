@@ -63,7 +63,7 @@ struct ChatSessionScreen: View {
             region: .composerCenter) {
             return luminance
         }
-        return displayedWallpaper == .night ? 0.18 : 0.82
+        return displayedWallpaper.fallbackSurfaceLuminance(for: wallpaperAppearance)
     }
 
     private var composerChromeTone: ChatSurfaceTone {
@@ -77,7 +77,9 @@ struct ChatSessionScreen: View {
             region: .timelineCenter) {
             return ChatSurfaceTone(luminance: luminance).usesLightContent
         }
-        return displayedWallpaper == .night
+        return ChatSurfaceTone(
+            luminance: displayedWallpaper.fallbackSurfaceLuminance(for: wallpaperAppearance)
+        ).usesLightContent
     }
 
     private var usesDarkChatSurface: Bool {

@@ -4,6 +4,11 @@ import SwiftUI
 // 视觉块与模型拆到 Home/ 子目录，本文件只负责装配与状态逻辑。
 
 struct ChatHomeView: View {
+    private enum StatusPickerFollowUp {
+        case add
+        case edit(ChatHomeStatusOption)
+    }
+
     private enum ConnectionNotice: Equatable {
         case connecting
         case connected
@@ -17,6 +22,8 @@ struct ChatHomeView: View {
     @State private var showChat = false
     @State private var sentAction: String?
     @State private var showCustomStatusPrompt = false
+    @State private var showStatusPicker = false
+    @State private var statusPickerFollowUp: StatusPickerFollowUp?
     @State private var customStatusText = ""
     @State private var editingStatusID: String?
     @State private var showNotePrompt = false
@@ -90,7 +97,36 @@ struct ChatHomeView: View {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text(editingStatusID == nil ? "点按状态即可切换，长按已有状态可以编辑。" : "修改后会同步更新当前正在使用的状态。")
+                Text(editingStatusID == nil ? "添加后会立即设为我的状态。" : "修改后会同步更新当前正在使用的状态。")
+            }
+            .sheet(
+                isPresented: $showStatusPicker,
+                onDismiss: handleStatusPickerDismissed
+            ) {
+                ChatHomeStatusPickerSheet(
+                    currentStatus: statusMap[myUsername],
+                    options: statusOptions,
+                    onPick: { option in
+                        setStatus(option)
+                        showStatusPicker = false
+                    },
+                    onAdd: {
+                        statusPickerFollowUp = .add
+                        showStatusPicker = false
+                    },
+                    onEdit: { option in
+                        statusPickerFollowUp = .edit(option)
+                        showStatusPicker = false
+                    },
+                    onDelete: { option in
+                        deleteStatus(id: option.id)
+                        showStatusPicker = false
+                    },
+                    onClear: {
+                        clearStatus()
+                        showStatusPicker = false
+                    },
+                    onClose: { showStatusPicker = false })
             }
             .alert("贴一张小纸条", isPresented: $showNotePrompt) {
                 TextField("写一句想贴给 TA 的话", text: $noteText)
@@ -143,6 +179,7 @@ struct ChatHomeView: View {
         .overlay(
             RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
                 .stroke(DS.Palette.hairline, lineWidth: 0.8)
+                .allowsHitTesting(false)
         )
         .shadow(
             color: colorScheme == .dark ? .black.opacity(0.34) : .black.opacity(0.08),
@@ -327,11 +364,7 @@ struct ChatHomeView: View {
                 ring: DS.Palette.member(myUsername),
                 editable: true,
                 statusOptions: statusOptions,
-                onStatusPick: setStatus,
-                onAddStatus: beginAddingStatus,
-                onClearStatus: clearStatus,
-                onEditStatus: beginEditingStatus,
-                onDeleteStatus: { deleteStatus(id: $0.id) }
+                onStatusTap: { showStatusPicker = true }
             )
             .frame(maxWidth: .infinity)
 
@@ -371,11 +404,7 @@ struct ChatHomeView: View {
                 ring: DS.Palette.member(partnerUsername),
                 editable: false,
                 statusOptions: statusOptions,
-                onStatusPick: { _ in },
-                onAddStatus: {},
-                onClearStatus: {},
-                onEditStatus: { _ in },
-                onDeleteStatus: { _ in }
+                onStatusTap: {}
             )
             .frame(maxWidth: .infinity)
         }
@@ -549,6 +578,17 @@ struct ChatHomeView: View {
         editingStatusID = nil
         customStatusText = ""
         showCustomStatusPrompt = true
+    }
+
+    private func handleStatusPickerDismissed() {
+        guard let followUp = statusPickerFollowUp else { return }
+        statusPickerFollowUp = nil
+        switch followUp {
+        case .add:
+            beginAddingStatus()
+        case .edit(let option):
+            beginEditingStatus(option)
+        }
     }
 
     private func beginEditingStatus(_ status: ChatHomeStatusOption) {

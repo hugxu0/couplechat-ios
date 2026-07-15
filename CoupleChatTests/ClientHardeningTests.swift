@@ -83,6 +83,24 @@ final class ClientHardeningTests: XCTestCase {
             "共享空间暂时不可用，请联系管理员")
     }
 
+    func testEveryBuiltInWallpaperUsesDarkSurfaceToneInDarkAppearance() {
+        for wallpaper in WallpaperChoice.allCases {
+            let luminance = wallpaper.fallbackSurfaceLuminance(for: .dark)
+            XCTAssertTrue(
+                ChatSurfaceTone(luminance: luminance).usesLightContent,
+                "\(wallpaper.rawValue) should use a dark bubble palette in dark appearance")
+        }
+    }
+
+    func testNightWallpaperStaysDarkInLightAppearance() {
+        XCTAssertTrue(ChatSurfaceTone(
+            luminance: WallpaperChoice.night.fallbackSurfaceLuminance(for: .light)
+        ).usesLightContent)
+        XCTAssertFalse(ChatSurfaceTone(
+            luminance: WallpaperChoice.aurora.fallbackSurfaceLuminance(for: .light)
+        ).usesLightContent)
+    }
+
     private func message(
         id: String,
         text: String = "媒体",
