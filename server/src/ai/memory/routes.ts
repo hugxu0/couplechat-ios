@@ -4,6 +4,8 @@ import { requireAuth } from "../../auth/httpAuth";
 import { flushMemory } from "./extractor";
 import {
   MEMORY_LAYERS,
+  MEMORY_KINDS,
+  MEMORY_PERSPECTIVES,
   deleteMemoryForControl,
   getMemoryForControl,
   listMemoryForControl,
@@ -18,6 +20,8 @@ import { decodeCursor, encodeCursor } from "../../utils/cursor";
 const listQuery = z.object({
   scope: z.enum(["all", "shared", "private"]).default("all"),
   layer: z.string().optional(),
+  perspective: z.enum(MEMORY_PERSPECTIVES).optional(),
+  kind: z.enum(MEMORY_KINDS).optional(),
   status: z.enum(["active", "all"]).default("active"),
   subject: z.enum(["xu", "si", "both"]).optional(),
   q: z.string().max(120).optional(),
@@ -71,6 +75,8 @@ export async function registerMemoryRoutes(app: FastifyInstance) {
         coupleId: identity.coupleId,
         accountId: identity.accountId,
         layer,
+        perspective: parsed.data.perspective,
+        kind: parsed.data.kind,
         status: parsed.data.status === "all" ? undefined : parsed.data.status,
         subject: parsed.data.subject,
         query: parsed.data.q,

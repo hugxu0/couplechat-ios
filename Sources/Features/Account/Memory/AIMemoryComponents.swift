@@ -138,6 +138,8 @@ struct AIMemoryRow: View {
                 }
                 HStack(spacing: 7) {
                     Label(item.subjectTitle, systemImage: item.logicalSubject == "both" ? "person.2.fill" : "person.fill")
+                    Label(item.perspectiveTitle, systemImage: item.perspective == .daju ? "pawprint.fill" : "person.fill")
+                    Text(item.kindTitle)
                     Text(item.visibilityTitle)
                     Text(item.layer.title)
                     if item.status != "active" { Text(item.statusTitle) }

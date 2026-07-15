@@ -163,6 +163,7 @@ private struct MediaPage: View {
     let onSave: () -> Void
     let onToggleFavorite: () -> Void
     let onZoomScaleChange: (CGFloat) -> Void
+    @State private var imageSize: CGSize?
 
     var body: some View {
         GeometryReader { geometry in
@@ -174,7 +175,11 @@ private struct MediaPage: View {
                     ZoomableRemoteImage(
                         url: url,
                         size: geometry.size,
-                        onScaleChange: onZoomScaleChange)
+                        onScaleChange: onZoomScaleChange,
+                        onImageSizeChange: { value in
+                            guard value.width > 0, value.height > 0 else { return }
+                            imageSize = value
+                        })
                 } else if item.mediaURL != nil {
                     ProgressView().tint(.white.opacity(0.7))
                 } else {
@@ -183,7 +188,12 @@ private struct MediaPage: View {
 
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
-            .background(MediaViewerTransitionTarget(identifier: item.id))
+            .overlay {
+                let targetSize = transitionMediaSize(in: geometry.size)
+                MediaViewerTransitionTarget(identifier: item.id)
+                    .frame(width: targetSize.width, height: targetSize.height)
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+            }
             .contentShape(Rectangle())
             // 使用真实媒体作为系统上下文预览；UIKit 负责长按时的缩放和菜单转场。
             .contextMenu(menuItems: {
@@ -232,6 +242,19 @@ private struct MediaPage: View {
         }
         .foregroundStyle(.white.opacity(0.72))
     }
+
+    private func transitionMediaSize(in container: CGSize) -> CGSize {
+        guard !item.isVideo,
+              let imageSize,
+              imageSize.width > 0,
+              imageSize.height > 0,
+              container.width > 0,
+              container.height > 0 else {
+            return container
+        }
+        let scale = min(container.width / imageSize.width, container.height / imageSize.height)
+        return CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+    }
 }
 
 final class MediaViewerTransitionTargetView: UIView {
@@ -257,6 +280,7 @@ private struct ZoomableRemoteImage: View {
     let url: URL
     let size: CGSize
     let onScaleChange: (CGFloat) -> Void
+    let onImageSizeChange: (CGSize) -> Void
 
     @State private var settledScale: CGFloat = 1
     @State private var settledOffset: CGSize = .zero
@@ -275,7 +299,7 @@ private struct ZoomableRemoteImage: View {
     }
 
     var body: some View {
-        CachedImage(url: url, contentMode: .fit) {
+        CachedImage(url: url, contentMode: .fit, onImageSizeChange: onImageSizeChange) {
             ProgressView().tint(.white)
         }
         .frame(maxWidth: size.width, maxHeight: size.height)

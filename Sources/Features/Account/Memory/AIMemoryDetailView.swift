@@ -28,7 +28,7 @@ struct AIMemoryDetailView: View {
             }
             identitySection
             contentSection
-            if item.layer == .relationship || item.layer == .insight {
+            if item.layer == .relationship || item.layer == .insight || item.kind == .observation {
                 sourceSection
             }
             informationSection
@@ -66,7 +66,7 @@ struct AIMemoryDetailView: View {
                     .frame(width: 34, height: 34)
                     .background(item.layer.tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(item.subjectTitle) · \(item.visibilityTitle)")
+                    Text("\(item.perspectiveTitle) · \(item.kindTitle)")
                         .font(DS.Typo.button)
                     Text("\(item.layer.title) · \(item.statusTitle)")
                         .font(DS.Typo.caption)
@@ -85,7 +85,9 @@ struct AIMemoryDetailView: View {
         } header: {
             Text("大橘记住的内容")
         } footer: {
-            Text("纠正后，大橘会使用你保存的版本。")
+            Text(item.kind == .observation
+                 ? "这是大橘的观察性假设，不等于主人明确说过的事实；纠正后，大橘会使用你保存的版本。"
+                 : "纠正后，大橘会使用你保存的版本。")
         }
     }
 
@@ -115,9 +117,14 @@ struct AIMemoryDetailView: View {
     private var informationSection: some View {
         Section("记录信息") {
             LabeledContent("人物", value: item.subjectTitle)
+            LabeledContent("记忆视角", value: item.perspectiveTitle)
+            LabeledContent("记忆类型", value: item.kindTitle)
             LabeledContent("可见范围", value: item.visibilityTitle)
             LabeledContent("分类", value: item.layer.title)
             LabeledContent("状态", value: item.statusTitle)
+            if item.kind == .observation {
+                LabeledContent("观察置信度", value: "\(Int((item.confidence * 100).rounded()))%")
+            }
             if item.layer == .event {
                 LabeledContent("经历时间", value: item.eventTimeTitle)
             } else {

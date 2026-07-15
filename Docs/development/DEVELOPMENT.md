@@ -15,7 +15,7 @@ npm install
 
 ## 数据库调试
 
-当前工作树要求 schema v27；生产发布必须先备份并使用独立 migrator 升级，Web 进程保持 `RUN_MIGRATIONS=false`。不要用当前工作树运行 `npm run dev:cloud-db` 直连生产，版本不匹配时服务会安全退出，不会自动迁移。
+当前工作树要求 schema v30；生产发布必须先备份并使用独立 migrator 升级，Web 进程保持 `RUN_MIGRATIONS=false`。不要用当前工作树运行 `npm run dev:cloud-db` 直连生产，版本不匹配时服务会安全退出，不会自动迁移。
 
 生产环境只允许做只读连接检查：
 

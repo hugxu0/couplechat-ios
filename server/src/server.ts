@@ -10,6 +10,7 @@ import { startUploadCleanup } from "./upload/cleanup";
 import { socketEvents } from "./contracts/realtime";
 import { shutdownServer } from "./lifecycle/shutdown";
 import { createTranscriptScheduler } from "./transcription/scheduler";
+import { createRecommendationScheduler } from "./daily/scheduler";
 
 async function main() {
   await initDatabase();
@@ -33,9 +34,11 @@ async function main() {
 
   const reminderScheduler = createReminderScheduler();
   const transcriptScheduler = createTranscriptScheduler();
+  const recommendationScheduler = createRecommendationScheduler();
   if (config.scheduledJobsEnabled) {
     reminderScheduler.start();
     transcriptScheduler.start();
+    recommendationScheduler.start();
   }
   await app.listen({ host: config.host, port: config.port });
   const stopUploadCleanup = config.scheduledJobsEnabled ? startUploadCleanup() : () => undefined;
@@ -53,6 +56,7 @@ async function main() {
         stopSchedulers: () => {
           reminderScheduler.stop();
           transcriptScheduler.stop();
+          recommendationScheduler.stop();
           shutdownAi();
         },
         stopUploadCleanup,

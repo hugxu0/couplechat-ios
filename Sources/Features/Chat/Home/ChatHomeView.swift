@@ -69,7 +69,7 @@ struct ChatHomeView: View {
                 Color.clear.frame(height: 58)
             }
             .scrollIndicators(.hidden)
-            .background(AppPageBackground())
+            .background(homePageBackground)
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showChat) {
                 ChatView().appSubpageChrome()
@@ -102,6 +102,7 @@ struct ChatHomeView: View {
                 handleConnectionStateChange(from: oldState, to: newState)
             }
         }
+        .toolbar(.visible, for: .tabBar)
     }
 
     private var mainPanel: some View {
@@ -115,15 +116,9 @@ struct ChatHomeView: View {
 
             ChatHomeSectionDivider()
 
-            statusStrip
-                .padding(.top, 10)
-                .padding(.bottom, 6)
-
-            ChatHomeSectionDivider()
-
             actionStrip
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+                .padding(.top, 12)
+                .padding(.bottom, 12)
 
             ChatHomeSectionDivider()
 
@@ -188,39 +183,40 @@ struct ChatHomeView: View {
     private var homeCardBackground: some View {
         ZStack(alignment: .top) {
             if colorScheme == .dark {
+                // 有色深表面：保留主题氛围，但避免把页面背景直接透进卡片。
                 LinearGradient(
                     colors: [
-                        Color(red: 0.095, green: 0.105, blue: 0.145),
-                        Color(red: 0.07, green: 0.078, blue: 0.11),
-                        Color(red: 0.082, green: 0.075, blue: 0.125),
+                        Color(red: 0.145, green: 0.125, blue: 0.18),
+                        Color(red: 0.105, green: 0.11, blue: 0.16),
+                        Color(red: 0.16, green: 0.12, blue: 0.17),
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-                RadialGradient(
-                    colors: [theme.accent.color.opacity(0.075), DS.Palette.purple.opacity(0.03), .clear],
-                    center: .top,
-                    startRadius: 8,
-                    endRadius: 210
+                LinearGradient(
+                    colors: [theme.accent.color.opacity(0.14), .clear, theme.accent.color.opacity(0.05)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
+                .blendMode(.screen)
             } else {
+                // 不是纯白卡片：以暖粉灰为底，再用主题色轻轻染色。
                 LinearGradient(
                     colors: [
-                        Color(red: 1, green: 0.99, blue: 0.995),
-                        theme.accent.color.opacity(0.045),
-                        DS.Palette.pink.opacity(0.028),
-                        Color(red: 0.975, green: 0.968, blue: 0.992),
+                        Color(red: 0.965, green: 0.925, blue: 0.95),
+                        Color(red: 0.94, green: 0.925, blue: 0.97),
+                        Color(red: 0.965, green: 0.94, blue: 0.90),
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-                RadialGradient(
-                    colors: [.white.opacity(0.52), theme.accent.color.opacity(0.025), .clear],
-                    center: .top,
-                    startRadius: 6,
-                    endRadius: 195
+                LinearGradient(
+                    colors: [theme.accent.color.opacity(0.11), .clear, theme.accent.color.opacity(0.04)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
             }
+
             HStack {
                 Image(systemName: "sparkles")
                 Spacer()
@@ -228,10 +224,26 @@ struct ChatHomeView: View {
                     .font(DS.Typo.micro)
             }
             .font(DS.Typo.button)
-            .foregroundStyle(theme.accent.color.opacity(0.11))
+            .foregroundStyle(theme.accent.color.opacity(colorScheme == .dark ? 0.14 : 0.16))
             .padding(.horizontal, 22)
             .padding(.top, 13)
         }
+    }
+
+    private var homePageBackground: some View {
+        ZStack {
+            DS.Palette.bgGradient
+            LinearGradient(
+                colors: [
+                    theme.accent.color.opacity(colorScheme == .dark ? 0.10 : 0.07),
+                    .clear,
+                    theme.accent.color.opacity(colorScheme == .dark ? 0.04 : 0.05),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+        .ignoresSafeArea()
     }
 
     @ViewBuilder
@@ -315,7 +327,17 @@ struct ChatHomeView: View {
                 ring: DS.Palette.member(myUsername),
                 editable: true,
                 statusOptions: statusOptions,
-                onStatusPick: { setStatus($0) }
+                onStatusPick: { status in
+                    if statusMap[myUsername] == status.title {
+                        clearStatus()
+                    } else {
+                        setStatus(status)
+                    }
+                },
+                onAddStatus: beginAddingStatus,
+                onClearStatus: clearStatus,
+                onEditStatus: beginEditingStatus,
+                onDeleteStatus: { deleteStatus(id: $0.id) }
             )
             .frame(maxWidth: .infinity)
 
@@ -355,7 +377,11 @@ struct ChatHomeView: View {
                 ring: DS.Palette.member(partnerUsername),
                 editable: false,
                 statusOptions: statusOptions,
-                onStatusPick: { _ in }
+                onStatusPick: { _ in },
+                onAddStatus: {},
+                onClearStatus: {},
+                onEditStatus: { _ in },
+                onDeleteStatus: { _ in }
             )
             .frame(maxWidth: .infinity)
         }
@@ -370,55 +396,30 @@ struct ChatHomeView: View {
 
     private var conversationWindowBackground: some View {
         ZStack(alignment: .bottomTrailing) {
-            LinearGradient(
-                colors: [
-                    theme.accent.color.opacity(0.12),
-                    DS.Palette.innerSurface.opacity(0.92),
-                    DS.Palette.pink.opacity(0.06),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing)
+            if colorScheme == .dark {
+                Color(red: 0.115, green: 0.16, blue: 0.16)
+                LinearGradient(
+                    colors: [theme.accent.color.opacity(0.18), .clear, theme.accent.color.opacity(0.08)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            } else {
+                Color(red: 0.93, green: 0.97, blue: 0.945)
+                LinearGradient(
+                    colors: [theme.accent.color.opacity(0.18), .clear, theme.accent.color.opacity(0.08)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
             Image(systemName: "sparkles")
                 .font(.system(size: 56, weight: .thin))
-                .foregroundStyle(theme.accent.color.opacity(0.09))
+                .foregroundStyle(theme.accent.color.opacity(colorScheme == .dark ? 0.14 : 0.11))
                 .rotationEffect(.degrees(-14))
                 .offset(x: 13, y: 15)
             Image(systemName: "heart.fill")
                 .font(.system(size: 17))
-                .foregroundStyle(DS.Palette.pink.opacity(0.14))
+                .foregroundStyle(theme.accent.color.opacity(colorScheme == .dark ? 0.16 : 0.14))
                 .offset(x: -40, y: -16)
-        }
-    }
-
-    private var statusStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: DS.Spacing.compact) {
-                ForEach(statusOptions) { status in
-                    ChatHomeStatusChip(
-                        status: status,
-                        selected: statusMap[myUsername] == status.title,
-                        onTap: { toggleStatus(status) },
-                        onEdit: { beginEditingStatus(status) },
-                        onDelete: { deleteStatus(id: status.id) }
-                    )
-                }
-
-                Button {
-                    editingStatusID = nil
-                    customStatusText = ""
-                    showCustomStatusPrompt = true
-                } label: {
-                    Label("添加", systemImage: "plus")
-                        .font(DS.Typo.sectionLabel)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                        .padding(.horizontal, 13)
-                        .frame(height: 36)
-                        .background(DS.Palette.innerSurface, in: Capsule())
-                        .overlay(Capsule().stroke(DS.Palette.textTertiary.opacity(0.16), lineWidth: 1))
-                }
-                .buttonStyle(PressableStyle())
-            }
-            .padding(.horizontal, 1)
         }
     }
 
@@ -432,6 +433,16 @@ struct ChatHomeView: View {
                 )
             }
         }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .fill(theme.accent.color.opacity(colorScheme == .dark ? 0.12 : 0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .stroke(theme.accent.color.opacity(colorScheme == .dark ? 0.22 : 0.13), lineWidth: 0.8)
+        )
     }
 
     private var latestMessages: some View {
@@ -447,7 +458,7 @@ struct ChatHomeView: View {
                         .foregroundStyle(DS.Palette.textSecondary)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background(DS.Palette.innerSurface, in: Capsule())
+                        .background(theme.accent.color.opacity(colorScheme == .dark ? 0.16 : 0.10), in: Capsule())
                 }
             }
 
@@ -476,12 +487,12 @@ struct ChatHomeView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
-        .frame(maxWidth: .infinity, minHeight: 136, alignment: .top)
+        .frame(maxWidth: .infinity, minHeight: 156, alignment: .top)
         .background(conversationWindowBackground)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                .stroke(theme.accent.color.opacity(0.12), lineWidth: 1)
+                .stroke(theme.accent.color.opacity(colorScheme == .dark ? 0.22 : 0.16), lineWidth: 1)
         )
     }
 
@@ -550,12 +561,11 @@ struct ChatHomeView: View {
         store.setShared("chat_statuses", value: next)
     }
 
-    private func toggleStatus(_ status: ChatHomeStatusOption) {
-        if statusMap[myUsername] == status.title {
-            clearStatus()
-        } else {
-            setStatus(status)
-        }
+    private func beginAddingStatus() {
+        Haptics.medium()
+        editingStatusID = nil
+        customStatusText = ""
+        showCustomStatusPrompt = true
     }
 
     private func beginEditingStatus(_ status: ChatHomeStatusOption) {

@@ -1231,6 +1231,78 @@ export const schemaMigrations: readonly SchemaMigration[] = [
       WHERE status = 'active' AND layer IN ('state', 'relationship', 'insight');
     `,
   },
+  {
+    version: 29,
+    name: "daily_recommendations",
+    sql: `
+    CREATE TABLE IF NOT EXISTS recommendations (
+      id TEXT PRIMARY KEY,
+      couple_id TEXT NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+      source_kind TEXT NOT NULL CHECK (source_kind IN ('daju', 'member')),
+      source_account_id TEXT REFERENCES accounts(id) ON DELETE CASCADE,
+      recipient_account_id TEXT REFERENCES accounts(id) ON DELETE CASCADE,
+      cycle_date TEXT NOT NULL,
+      content TEXT NOT NULL,
+      generation_kind TEXT NOT NULL CHECK (generation_kind IN ('daily', 'refresh', 'manual')),
+      source_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+      created_at BIGINT NOT NULL,
+      CHECK (
+        (source_kind = 'daju'
+          AND source_account_id IS NULL
+          AND recipient_account_id IS NULL
+          AND generation_kind IN ('daily', 'refresh'))
+        OR
+        (source_kind = 'member'
+          AND source_account_id IS NOT NULL
+          AND recipient_account_id IS NOT NULL
+          AND source_account_id <> recipient_account_id
+          AND generation_kind = 'manual')
+      )
+    );
+    CREATE INDEX IF NOT EXISTS recommendations_couple_cycle_created_idx
+      ON recommendations(couple_id, cycle_date, created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS recommendations_recipient_created_idx
+      ON recommendations(recipient_account_id, created_at DESC, id DESC)
+      WHERE source_kind = 'member';
+    CREATE UNIQUE INDEX IF NOT EXISTS recommendations_one_daily_daju_idx
+      ON recommendations(couple_id, cycle_date)
+      WHERE source_kind = 'daju' AND generation_kind = 'daily';
+
+    CREATE TABLE IF NOT EXISTS recommendation_user_state (
+      recommendation_id TEXT NOT NULL REFERENCES recommendations(id) ON DELETE CASCADE,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      read_at BIGINT,
+      hidden_at BIGINT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY(recommendation_id, account_id)
+    );
+    CREATE INDEX IF NOT EXISTS recommendation_state_account_history_idx
+      ON recommendation_user_state(account_id, hidden_at, recommendation_id);
+    CREATE INDEX IF NOT EXISTS recommendation_state_account_unread_idx
+      ON recommendation_user_state(account_id, read_at, recommendation_id)
+      WHERE read_at IS NULL AND hidden_at IS NULL;
+    `,
+  },
+  {
+    version: 30,
+    name: "daju_memory_perspective",
+    sql: `
+    ALTER TABLE ai_memory ADD COLUMN IF NOT EXISTS perspective TEXT NOT NULL DEFAULT 'people';
+    ALTER TABLE ai_memory ADD COLUMN IF NOT EXISTS memory_kind TEXT NOT NULL DEFAULT 'standard';
+    CREATE INDEX IF NOT EXISTS ai_memory_perspective_idx
+      ON ai_memory(perspective, memory_kind, scope, status, updated_at DESC, id DESC);
+
+    DROP INDEX IF EXISTS ai_memory_one_active_rolling_idx;
+    CREATE UNIQUE INDEX IF NOT EXISTS ai_memory_one_active_rolling_idx
+      ON ai_memory (
+        COALESCE(couple_id, ''), COALESCE(owner_account_id, ''), scope,
+        perspective, memory_kind, layer,
+        (CASE WHEN layer = 'state' THEN subjects_json ELSE '["both"]' END)
+      )
+      WHERE status = 'active' AND layer IN ('state', 'relationship', 'insight');
+    `,
+  },
 ];
 
 export async function migrate(

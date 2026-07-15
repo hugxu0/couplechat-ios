@@ -1,6 +1,6 @@
 # 大橘 AI 系统
 
-> 当前生产只服务 `xu/si`。两位用户使用完整 Agent、MCP、历史检索与自动 Memory，数据通过 conversation/account/couple ownership 约束。
+> 当前生产只服务 `xu/si`。两位用户使用完整 Agent、MCP、历史检索与自动 Memory，数据通过 conversation/account/couple ownership 约束；Memory 还区分“关于主人”和“大橘自己”的动态记忆。
 
 ## 回答链路
 
@@ -57,6 +57,8 @@
 - `ai_memory_exclusions`：用户忘掉后按卡片 key 阻止重新生成；
 - `ai_runtime_state`：上下文摘要和派生记忆维护游标等可重建状态。
 
+`ai_memory.perspective` 区分 `people` 与 `daju`，`memory_kind` 区分 `standard`、`instruction` 和 `observation`。大橘要求只接受主人明确提出的行为偏好；大橘观察必须引用至少两张基础记忆卡，并按有效期自动过期。普通人物检索默认只看 `people`，大橘行为要求由 Agent 自动注入，观察仅在复盘、分析和调解时按需读取。
+
 整理器按游标读取最多 80 条主人消息。达到 80 条立即整理；20 条以上在空闲 15 分钟后整理，20 条以下空闲 60 分钟后整理，最老消息等待满 2 小时也会整理。整理器读取整段聊天作为当次上下文，但卡片落库后不保存原始消息 ID、摘录或引用。无效 JSON 或写入失败不能推进游标。
 
 关键规则：
@@ -83,6 +85,7 @@ Memory 本地离线缓存尚未完成；runtime/tool 以 `conversation_id/couple
 ## MCP 工具
 
 - 分层 Memory 检索，以及关系/理解的基础记忆来源读取
+- 大橘行为要求与观察读取；观察结果明确标记为假设，不作为主人事实
 - 原始聊天搜索及相邻上下文
 - 当前用户可见提醒/备忘查询
 - 需要确认的提醒/备忘完整增删改草案；修改与删除先查询准确 id

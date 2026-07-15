@@ -13,9 +13,17 @@ import { appendSyncEvent } from "../../sync/events";
 export const MEMORY_LAYERS = ["fact", "event", "plan", "state", "relationship", "insight"] as const;
 export type MemoryLayer = typeof MEMORY_LAYERS[number];
 
+export const MEMORY_PERSPECTIVES = ["people", "daju"] as const;
+export type MemoryPerspective = typeof MEMORY_PERSPECTIVES[number];
+
+export const MEMORY_KINDS = ["standard", "instruction", "observation"] as const;
+export type MemoryKind = typeof MEMORY_KINDS[number];
+
 export interface MemoryItem {
   id: string;
   layer: MemoryLayer;
+  perspective: MemoryPerspective;
+  kind: MemoryKind;
   scope: string;
   memoryKey: string;
   subjects: string[];
@@ -39,6 +47,8 @@ export interface MemoryItem {
 
 export interface MemoryCandidate {
   layer: MemoryLayer;
+  perspective?: MemoryPerspective;
+  kind?: MemoryKind;
   scope: string;
   memoryKey: string;
   subjects: string[];
@@ -85,6 +95,8 @@ function mapItem(row: AiMemoryRow): MemoryItem {
   return {
     id: row.id,
     layer: row.layer as MemoryLayer,
+    perspective: (row.perspective ?? "people") as MemoryPerspective,
+    kind: (row.memory_kind ?? "standard") as MemoryKind,
     scope: row.scope,
     memoryKey: row.memory_key,
     subjects: parseArray(row.subjects_json),
@@ -120,11 +132,13 @@ function normalizedKey(candidate: MemoryCandidate): string {
 
 function embeddingText(input: {
   layer: MemoryLayer;
+  perspective?: MemoryPerspective;
+  kind?: MemoryKind;
   category?: string | null;
   subjects: string[];
   content: string;
 }): string {
-  return `${input.layer} ${input.category ?? ""} ${input.subjects.join(" ")} ${input.content}`;
+  return `${input.perspective ?? "people"} ${input.kind ?? "standard"} ${input.layer} ${input.category ?? ""} ${input.subjects.join(" ")} ${input.content}`;
 }
 
 const LOGICAL_MEMORY_SUBJECTS = new Set(["xu", "si", "both"]);
@@ -207,6 +221,11 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
   const subjects = normalizedMemorySubjects(candidate.subjects);
   const requestedSourceMemoryIds = [...new Set(candidate.sourceMemoryIds ?? [])];
   if (content.length < 3 || subjects.length !== 1) return null;
+  const perspective = candidate.perspective ?? "people";
+  const kind = candidate.kind ?? "standard";
+  if (!MEMORY_PERSPECTIVES.includes(perspective) || !MEMORY_KINDS.includes(kind)) return null;
+  if (perspective === "people" && kind !== "standard") return null;
+  if (perspective === "daju" && kind === "standard") return null;
   const memoryKey = normalizedKey(candidate);
   const now = Date.now();
   const confidence = clamp(candidate.confidence, 0, 1, 0.7);
@@ -238,6 +257,8 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
   if (embeddingEnabled()) {
     const vector = await embedOne(embeddingText({
       layer: candidate.layer,
+      perspective,
+      kind,
       category: candidate.category,
       subjects,
       content,
@@ -252,39 +273,40 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
   return transaction(async (db) => {
     const target = candidate.targetMemoryId && versioned
       ? await db.get<AiMemoryRow>(
-          `SELECT * FROM ai_memory
-           WHERE id = ? AND scope = ? AND layer = ? AND status = 'active'
+           `SELECT * FROM ai_memory
+           WHERE id = ? AND scope = ? AND layer = ? AND perspective = ? AND memory_kind = ? AND status = 'active'
              AND ${ownerSQL.clause}
            FOR UPDATE`,
-          [candidate.targetMemoryId, candidate.scope, candidate.layer, ownerSQL.value],
+          [candidate.targetMemoryId, candidate.scope, candidate.layer, perspective, kind, ownerSQL.value],
         )
       : undefined;
     if (candidate.targetMemoryId && versioned && !target) return null;
     const existing = target ?? (versioned
       ? rolling
         ? await db.get<AiMemoryRow>(
-            `SELECT * FROM ai_memory
-             WHERE scope = ? AND layer = ? AND status = 'active'
-               AND ${ownerSQL.clause}
+             `SELECT * FROM ai_memory
+              WHERE scope = ? AND layer = ? AND perspective = ? AND memory_kind = ? AND status = 'active'
+                AND ${ownerSQL.clause}
                ${candidate.layer === "state" ? "AND subjects_json::jsonb = CAST(? AS jsonb)" : ""}
              ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1 FOR UPDATE`,
-            [candidate.scope, candidate.layer, ownerSQL.value,
+            [candidate.scope, candidate.layer, perspective, kind, ownerSQL.value,
               ...(candidate.layer === "state" ? [JSON.stringify(subjects)] : [])],
           )
         : await db.get<AiMemoryRow>(
-            `SELECT * FROM ai_memory
-             WHERE scope = ? AND layer = ? AND memory_key = ? AND status = 'active'
-               AND ${ownerSQL.clause}
+             `SELECT * FROM ai_memory
+              WHERE scope = ? AND layer = ? AND perspective = ? AND memory_kind = ? AND memory_key = ? AND status = 'active'
+                AND ${ownerSQL.clause}
              ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
-            [candidate.scope, candidate.layer, memoryKey, ownerSQL.value],
+            [candidate.scope, candidate.layer, perspective, kind, memoryKey, ownerSQL.value],
           )
       : await db.get<AiMemoryRow>(
-          `SELECT m.* FROM ai_memory m
-           WHERE m.scope = ? AND m.layer = 'event' AND m.memory_key = ? AND m.content = ?
+           `SELECT m.* FROM ai_memory m
+            WHERE m.scope = ? AND m.layer = 'event' AND m.perspective = ? AND m.memory_kind = ?
+              AND m.memory_key = ? AND m.content = ?
              AND m.${owner.coupleId ? "couple_id" : "owner_account_id"} = ?
              AND m.status = 'active'
            LIMIT 1 FOR UPDATE`,
-          [candidate.scope, memoryKey, content, ownerSQL.value],
+          [candidate.scope, perspective, kind, memoryKey, content, ownerSQL.value],
         ));
     const finalMemoryKey = target?.memory_key ?? (rolling ? memoryKey : existing?.memory_key ?? memoryKey);
 
@@ -324,14 +346,16 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
     }
     await db.run(
       `INSERT INTO ai_memory
-       (id, layer, scope, memory_key, subjects_json, speakers_json, content, category,
+       (id, layer, perspective, memory_kind, scope, memory_key, subjects_json, speakers_json, content, category,
         confidence, importance, occurred_at, occurred_end_at, valid_from, valid_until,
         status, supersedes_id, metadata_json, embedding, created_at, updated_at,
         couple_id, owner_account_id, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 0)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 0)`,
       [
         id,
         candidate.layer,
+        perspective,
+        kind,
         candidate.scope,
         finalMemoryKey,
         JSON.stringify(subjects),
@@ -429,7 +453,9 @@ export async function transitionMemory(input: {
 export async function expireMemoryStates(now = Date.now()): Promise<number> {
   return run(
     `UPDATE ai_memory SET status = 'expired', updated_at = ?
-     WHERE layer IN ('state', 'plan') AND status = 'active'
+     WHERE (layer IN ('state', 'plan')
+       OR (perspective = 'daju' AND memory_kind = 'observation'))
+       AND status = 'active'
        AND valid_until IS NOT NULL AND valid_until <= ?`,
     [now, now],
   );
@@ -456,6 +482,8 @@ export interface SearchMemoryInput {
   query: string;
   layers: MemoryLayer[];
   scopes: string[];
+  perspectives?: MemoryPerspective[];
+  kinds?: MemoryKind[];
   subjects?: string[];
   subjectMode?: "related" | "exact";
   from?: number;
@@ -470,9 +498,18 @@ export async function searchMemory(input: SearchMemoryInput): Promise<Array<Memo
   const clauses = [
     `layer IN (${input.layers.map(() => "?").join(",")})`,
     `scope IN (${input.scopes.map(() => "?").join(",")})`,
+    `perspective IN (${(input.perspectives?.length ? input.perspectives : ["people"]).map(() => "?").join(",")})`,
     "status = 'active'",
   ];
-  const params: Array<string | number> = [...input.layers, ...input.scopes];
+  const params: Array<string | number> = [
+    ...input.layers,
+    ...input.scopes,
+    ...(input.perspectives?.length ? input.perspectives : ["people"]),
+  ];
+  if (input.kinds?.length) {
+    clauses.push(`memory_kind IN (${input.kinds.map(() => "?").join(",")})`);
+    params.push(...input.kinds);
+  }
   const eventOnly = input.layers.length === 1 && input.layers[0] === "event";
   const timeColumn = eventOnly ? "occurred_at" : "COALESCE(occurred_at, valid_from, created_at)";
   if (input.from) { clauses.push(`${timeColumn} >= ?`); params.push(input.from); }
@@ -554,6 +591,8 @@ export interface MemoryControlFilter {
   coupleId?: string | null;
   accountId?: string | null;
   layer?: MemoryLayer;
+  perspective?: MemoryPerspective;
+  kind?: MemoryKind;
   status?: string;
   subject?: "xu" | "si" | "both";
   query?: string;
@@ -601,6 +640,14 @@ export async function listMemoryForControl(input: MemoryControlFilter): Promise<
   if (input.status) {
     clauses.push("status = ?");
     params.push(input.status);
+  }
+  if (input.perspective) {
+    clauses.push("perspective = ?");
+    params.push(input.perspective);
+  }
+  if (input.kind) {
+    clauses.push("memory_kind = ?");
+    params.push(input.kind);
   }
   if (input.subject) {
     clauses.push("subjects_json::jsonb = CAST(? AS jsonb)");
@@ -702,11 +749,11 @@ export async function archiveSiblingMemories(
   const ownerValue = keep.couple_id ?? keep.owner_account_id;
   if (!ownerValue) return 0;
   return run(
-    `UPDATE ai_memory SET status = 'superseded', updated_at = ?
-     WHERE id <> ? AND layer = ? AND scope = ? AND status = 'active'
-       AND ${ownerColumn} = ?
+      `UPDATE ai_memory SET status = 'superseded', updated_at = ?
+      WHERE id <> ? AND layer = ? AND perspective = ? AND memory_kind = ? AND scope = ? AND status = 'active'
+        AND ${ownerColumn} = ?
        ${sameSubject ? "AND subjects_json::jsonb = CAST(? AS jsonb)" : ""}`,
-    [now, keep.id, keep.layer, keep.scope, ownerValue,
+    [now, keep.id, keep.layer, keep.perspective ?? "people", keep.memory_kind ?? "standard", keep.scope, ownerValue,
       ...(sameSubject ? [JSON.stringify(normalizedMemorySubjects(parseArray(keep.subjects_json)))] : [])],
   );
 }

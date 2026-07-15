@@ -44,6 +44,7 @@ struct DajuView: View {
                 showAIChat = true
             }
         }
+        .toolbar(.visible, for: .tabBar)
     }
 
     private func petHome(pet: CouplePetState, session: Session) -> some View {

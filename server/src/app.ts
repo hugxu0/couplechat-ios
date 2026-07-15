@@ -21,6 +21,7 @@ import { registerAlbumRoutes } from "./albums/routes";
 import { registerCalendarRoutes } from "./calendar/routes";
 import { registerPetRoutes } from "./pet/routes";
 import { registerStatsRoutes } from "./stats/routes";
+import { registerRecommendationRoutes } from "./daily/routes";
 
 export interface AppDependencies {
   personalItemEvents?: PersonalItemRouteEvents;
@@ -81,6 +82,7 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   await registerCalendarRoutes(app);
   await registerPetRoutes(app);
   await registerStatsRoutes(app);
+  await registerRecommendationRoutes(app);
   await registerAiMcpRoutes(app);
   await registerAiDebugRoutes(app);
 

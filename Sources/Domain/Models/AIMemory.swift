@@ -43,6 +43,66 @@ enum AIMemorySubjectFilter: String, CaseIterable, Identifiable {
     }
 }
 
+enum AIMemoryPerspective: String, Codable, CaseIterable, Identifiable {
+    case all
+    case people
+    case daju
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "全部记忆"
+        case .people: return "关于主人"
+        case .daju: return "大橘自己"
+        }
+    }
+
+    var apiValue: String? { self == .all ? nil : rawValue }
+}
+
+enum AIMemoryKind: String, Codable, CaseIterable, Identifiable {
+    case standard
+    case instruction
+    case observation
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard: return "主人记忆"
+        case .instruction: return "主人要求"
+        case .observation: return "大橘观察"
+        }
+    }
+}
+
+enum AIMemoryKindFilter: String, CaseIterable, Identifiable {
+    case all
+    case standard
+    case instruction
+    case observation
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .all: return "全部类型"
+        case .standard: return "主人记忆"
+        case .instruction: return "主人要求"
+        case .observation: return "大橘观察"
+        }
+    }
+
+    var apiValue: AIMemoryKind? {
+        switch self {
+        case .all: return nil
+        case .standard: return .standard
+        case .instruction: return .instruction
+        case .observation: return .observation
+        }
+    }
+}
+
 enum AIMemoryStatusFilter: String, CaseIterable, Identifiable {
     case active
     case all
@@ -76,6 +136,8 @@ enum AIMemoryLayer: String, Codable, CaseIterable, Identifiable {
 struct AIMemoryItem: Codable, Identifiable, Equatable {
     let id: String
     let layer: AIMemoryLayer
+    let perspective: AIMemoryPerspective
+    let kind: AIMemoryKind
     let scope: String
     let memoryKey: String
     let subjects: [String]
@@ -96,6 +158,8 @@ struct AIMemoryItem: Codable, Identifiable, Equatable {
     let version: Int?
 
     var isShared: Bool { scope == "couple" }
+    var perspectiveTitle: String { perspective == .daju ? "大橘自己" : "关于主人" }
+    var kindTitle: String { kind.title }
     var visibilityTitle: String { isShared ? "两人可见" : "仅自己可见" }
     var logicalSubject: String {
         if subjects.contains("both") || (subjects.contains("xu") && subjects.contains("si")) {
@@ -109,6 +173,38 @@ struct AIMemoryItem: Codable, Identifiable, Equatable {
         case "si": return "小偲"
         default: return "两个人"
         }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, layer, perspective, kind, scope, memoryKey, subjects, speakers, content, category,
+             confidence, importance, occurredAt, occurredEndAt, validFrom, validUntil, status,
+             supersedesId, createdAt, updatedAt, derivedFromCount, version
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        layer = try container.decode(AIMemoryLayer.self, forKey: .layer)
+        perspective = try container.decodeIfPresent(AIMemoryPerspective.self, forKey: .perspective) ?? .people
+        kind = try container.decodeIfPresent(AIMemoryKind.self, forKey: .kind) ?? .standard
+        scope = try container.decode(String.self, forKey: .scope)
+        memoryKey = try container.decode(String.self, forKey: .memoryKey)
+        subjects = try container.decode([String].self, forKey: .subjects)
+        speakers = try container.decode([String].self, forKey: .speakers)
+        content = try container.decode(String.self, forKey: .content)
+        category = try container.decode(String.self, forKey: .category)
+        confidence = try container.decode(Double.self, forKey: .confidence)
+        importance = try container.decode(Int.self, forKey: .importance)
+        occurredAt = try container.decodeIfPresent(Int.self, forKey: .occurredAt)
+        occurredEndAt = try container.decodeIfPresent(Int.self, forKey: .occurredEndAt)
+        validFrom = try container.decodeIfPresent(Int.self, forKey: .validFrom)
+        validUntil = try container.decodeIfPresent(Int.self, forKey: .validUntil)
+        status = try container.decode(String.self, forKey: .status)
+        supersedesId = try container.decodeIfPresent(String.self, forKey: .supersedesId)
+        createdAt = try container.decode(Int.self, forKey: .createdAt)
+        updatedAt = try container.decode(Int.self, forKey: .updatedAt)
+        derivedFromCount = try container.decodeIfPresent(Int.self, forKey: .derivedFromCount)
+        version = try container.decodeIfPresent(Int.self, forKey: .version)
     }
     var statusTitle: String {
         switch status {

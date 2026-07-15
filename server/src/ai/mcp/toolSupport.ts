@@ -63,6 +63,8 @@ export function memoryView(item: MemoryItem & { score?: number; lexicalHits?: nu
   return {
     id: item.id,
     layer: item.layer,
+    perspective: item.perspective,
+    kind: item.kind,
     subjects: item.subjects,
     subjectNames,
     content: item.content,

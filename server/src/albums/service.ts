@@ -30,6 +30,7 @@ interface AssetRow {
   note_id?: string | null;
   note_text?: string | null;
   note_version?: number | null;
+  added_by_username?: string | null;
 }
 
 interface ItemRow extends AssetRow {
@@ -55,10 +56,12 @@ function mapAlbum(row: AlbumRow) {
 
 async function albumPreviewItems(albumId: string, limit = 3) {
   const rows = await all<ItemRow>(
-    `SELECT item.id AS item_id, item.added_at, item.sort_order, item.post_id, asset.*,
+    `SELECT item.id AS item_id, item.added_at, item.sort_order, item.post_id,
+            added_by.username AS added_by_username, asset.*,
             note.id AS note_id, note.text AS note_text, note.version AS note_version
        FROM album_items item
        JOIN media_assets asset ON asset.id = item.asset_id
+       JOIN accounts added_by ON added_by.id = item.added_by_account_id
        LEFT JOIN media_notes note ON note.asset_id = asset.id
       WHERE item.album_id = ?
       ORDER BY item.sort_order DESC, item.id DESC LIMIT ?`,
@@ -67,7 +70,7 @@ async function albumPreviewItems(albumId: string, limit = 3) {
   return rows.map((row) => ({ ...mapAsset(row), postId: row.post_id ?? undefined }));
 }
 
-function mapAsset(row: AssetRow) {
+function mapAsset(row: AssetRow, addedBy?: string) {
   return {
     id: row.id,
     sourceMessageId: row.source_message_id ?? undefined,
@@ -83,6 +86,7 @@ function mapAsset(row: AssetRow) {
       text: row.note_text ?? "",
       version: row.note_version ?? 0,
     } : undefined,
+    addedBy: row.added_by_username ?? addedBy ?? undefined,
   };
 }
 
@@ -237,10 +241,12 @@ export async function listAlbumItems(user: AuthUser, albumId: string, cursor: st
   if (!album) return null;
   const decoded = decodeCursor(cursor, isNumberStringCursor);
   const rows = await all<ItemRow>(
-    `SELECT item.id AS item_id, item.added_at, item.sort_order, item.post_id, asset.*,
+    `SELECT item.id AS item_id, item.added_at, item.sort_order, item.post_id,
+            added_by.username AS added_by_username, asset.*,
             note.id AS note_id, note.text AS note_text, note.version AS note_version
        FROM album_items item
        JOIN media_assets asset ON asset.id = item.asset_id
+       JOIN accounts added_by ON added_by.id = item.added_by_account_id
        LEFT JOIN media_notes note ON note.asset_id = asset.id
       WHERE item.album_id = ?
         AND (?::BIGINT IS NULL OR (item.sort_order, item.id) < (?, ?))
@@ -321,7 +327,13 @@ export async function addMessageMedia(user: AuthUser, albumId: string, messageId
          VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(album_id, asset_id) DO NOTHING`,
         [itemId, albumId, asset.id, identity.accountId, now, now * 100 + index, `message:${messageId}`],
       );
-      if (inserted) added.push({ itemId, postId: `message:${messageId}`, asset: mapAsset(asset) });
+      if (inserted) {
+        added.push({
+          itemId,
+          postId: `message:${messageId}`,
+          asset: mapAsset(asset, user.username),
+        });
+      }
     }
     if (added.length) {
       const cover = album.cover_asset_id ?? added[0].asset.id;
@@ -415,7 +427,7 @@ export async function addUploadedMedia(
     if (postId) {
       await db.run("UPDATE album_items SET post_id = COALESCE(post_id, ?) WHERE id = ?", [postId, item.id]);
     }
-    const added = [{ itemId: item.id, postId, asset: mapAsset(asset) }];
+    const added = [{ itemId: item.id, postId, asset: mapAsset(asset, user.username) }];
     if (inserted) {
       const cover = album.cover_asset_id ?? asset.id;
       await db.run(
@@ -555,7 +567,7 @@ export async function onThisDay(
   return {
     date: input.date,
     timezone: input.timezone,
-    assets: page.map(mapAsset),
+    assets: page.map((row) => mapAsset(row)),
     nextCursor: rows.length > input.limit && page.length
       ? encodeCursor([page.at(-1)!.taken_at, page.at(-1)!.id]) : undefined,
     hasMore: rows.length > input.limit,

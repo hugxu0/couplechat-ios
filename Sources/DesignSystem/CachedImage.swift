@@ -5,13 +5,20 @@ import SwiftUI
 struct CachedImage<Placeholder: View>: View {
     let url: URL?
     var contentMode: ContentMode = .fill
+    var onImageSizeChange: ((CGSize) -> Void)?
     let placeholder: () -> Placeholder
 
     @State private var image: UIImage?
 
-    init(url: URL?, contentMode: ContentMode = .fill, @ViewBuilder placeholder: @escaping () -> Placeholder) {
+    init(
+        url: URL?,
+        contentMode: ContentMode = .fill,
+        onImageSizeChange: ((CGSize) -> Void)? = nil,
+        @ViewBuilder placeholder: @escaping () -> Placeholder
+    ) {
         self.url = url
         self.contentMode = contentMode
+        self.onImageSizeChange = onImageSizeChange
         self.placeholder = placeholder
     }
 
@@ -37,6 +44,10 @@ struct CachedImage<Placeholder: View>: View {
             } else {
                 image = await ImageCache.shared.image(for: url)
             }
+        }
+        .onChange(of: image?.size) { _, size in
+            guard let size, size.width > 0, size.height > 0 else { return }
+            onImageSizeChange?(size)
         }
     }
 }

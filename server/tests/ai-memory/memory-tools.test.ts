@@ -11,7 +11,7 @@ function toolJson(result: Awaited<ReturnType<Client["callTool"]>>): Record<strin
   return JSON.parse("text" in first ? first.text : "{}");
 }
 
-test("six memory MCP tools follow layered subjects, Beijing dates and rolling cards", async () => {
+test("layered memory MCP tools include Daju instructions and observations", async () => {
   await withTestDatabase(async () => {
     const { run } = await import("../../src/db");
     const now = Date.now();
@@ -90,6 +90,22 @@ test("six memory MCP tools follow layered subjects, Beijing dates and rolling ca
       subjects: ["both"], speakers: [], content: "提前说明需求有助于减少误会",
       sourceMemoryIds: [xuFact.id, siFact.id, sharedFact.id], validFrom: now,
     });
+    const dajuInstruction = await memory.addMemory({
+      layer: "fact", perspective: "daju", kind: "instruction", scope: "couple",
+      memoryKey: "daju.instruction.reply_style", subjects: ["both"], speakers: [],
+      content: "两位主人都希望大橘回答简短一些", importance: 5,
+    });
+    const dajuObservation = await memory.addMemory({
+      layer: "insight", perspective: "daju", kind: "observation", scope: "couple",
+      memoryKey: "daju.observation.conflict", subjects: ["both"], speakers: [],
+      content: "两位主人出现分歧时，先复述双方观点通常更容易继续沟通",
+      sourceMemoryIds: [xuFact.id, siFact.id, sharedFact.id], validFrom: now,
+    });
+    assert.ok(dajuInstruction && dajuObservation);
+    const defaultFacts = await memory.searchMemory({
+      query: "回答简短", layers: ["fact"], scopes: ["couple"],
+    });
+    assert.equal(defaultFacts.some((item) => item.id === dajuInstruction.id), false);
 
     const trace = {
       id: "memory-tools-test",
@@ -128,6 +144,8 @@ test("six memory MCP tools follow layered subjects, Beijing dates and rolling ca
       assert.ok(names.has("get_current_states"));
       assert.ok(names.has("get_relationship_context"));
       assert.ok(names.has("get_current_insight"));
+      assert.ok(names.has("get_daju_instructions"));
+      assert.ok(names.has("get_daju_observations"));
       assert.equal(names.has("search_insights"), false);
 
       const events = toolJson(await client.callTool({
@@ -162,6 +180,18 @@ test("six memory MCP tools follow layered subjects, Beijing dates and rolling ca
       }));
       assert.equal(insight.returnedCount, 1);
       assert.match(insight.warning, /假设/);
+
+      const instructions = toolJson(await client.callTool({
+        name: "get_daju_instructions", arguments: {},
+      }));
+      assert.equal(instructions.returnedCount, 1);
+      assert.equal(instructions.instructions[0].kind, "instruction");
+
+      const observations = toolJson(await client.callTool({
+        name: "get_daju_observations", arguments: {},
+      }));
+      assert.equal(observations.returnedCount, 1);
+      assert.equal(observations.observations[0].perspective, "daju");
 
       const people = toolJson(await client.callTool({
         name: "get_people_context", arguments: {},

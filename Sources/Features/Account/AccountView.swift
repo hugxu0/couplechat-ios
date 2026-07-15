@@ -87,6 +87,7 @@ struct AccountView: View {
             }
             .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
         }
+        .toolbar(.visible, for: .tabBar)
     }
 
     private func loadAndUpload(from item: PhotosPickerItem) {

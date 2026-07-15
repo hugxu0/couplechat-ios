@@ -80,6 +80,7 @@ export async function refreshDerivedMemory(
   const state = parseState(await readRuntimeState(stateKey));
   const allActive = await listActiveMemoryContext(channel, 180);
   const eligibleSources = allActive.filter((memory) => {
+    if (memory.perspective !== "people") return false;
     if (!["fact", "event", "plan", "state"].includes(memory.layer)) return false;
     if (memory.layer !== "event") return true;
     return (memory.occurredAt ?? memory.updatedAt) >= now - 30 * DAY_MS;

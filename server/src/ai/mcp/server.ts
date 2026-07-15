@@ -28,7 +28,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
     { name: "couplechat-ai-tools", version: "0.1.0" },
     {
       instructions:
-        "按问题类型选择六层结构化记忆：事实 search_facts、经历 search_events、计划 search_plans、近况 get_current_states、近期关系 get_relationship_context、互动理解 get_current_insight。人物查询按 search_facts → search_events → search_chat_messages 回退，facts 为空时不能跳过 events。结构化记忆命中后直接使用；只有用户明确要求逐字原话，或 facts/events 都为空时，才搜索原始聊天。任何记忆都不能跨越当前频道权限。",
+        "按问题类型选择结构化记忆：事实 search_facts、经历 search_events、计划 search_plans、近况 get_current_states、近期关系 get_relationship_context、互动理解 get_current_insight；涉及大橘行为规则时读取 get_daju_instructions，涉及大橘观察或复盘时读取 get_daju_observations。人物查询按 search_facts → search_events → search_chat_messages 回退，facts 为空时不能跳过 events。结构化记忆命中后直接使用；只有用户明确要求逐字原话，或 facts/events 都为空时，才搜索原始聊天。任何记忆都不能跨越当前频道权限。",
     },
   );
 
@@ -356,6 +356,58 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
       return {
         warning: "这是观察性假设，不是确定事实",
         ...memoryResult("insights", rows),
+      };
+    })));
+
+  server.registerTool(
+    "get_daju_instructions",
+    {
+      description: "读取主人明确交给大橘的行为要求和偏好。它们是大橘的动态行为约束，当前主人消息和系统安全规则优先级更高。",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => jsonResult(await recordAgentTool(run, "get_daju_instructions", args, async () => {
+      const rows = await searchMemory({
+        query: "",
+        layers: ["fact"],
+        scopes: visibleMemoryScopes(run.identity.storedChannel),
+        perspectives: ["daju"],
+        kinds: ["instruction"],
+        sort: "importance",
+        limit: 20,
+      });
+      return {
+        warning: "这些是主人明确提出的动态要求；当前请求和系统规则优先",
+        ...memoryResult("instructions", rows),
+      };
+    })));
+
+  server.registerTool(
+    "get_daju_observations",
+    {
+      description: "读取大橘根据多条主人记忆形成的观察性假设。仅用于相关的复盘、理解和调解，不能当作确定事实。",
+      inputSchema: z.object({
+        query: z.string().max(300).optional(),
+        subject: z.string().max(40).optional().describe("username、主人昵称、both 或留空"),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => jsonResult(await recordAgentTool(run, "get_daju_observations", args, async () => {
+      const wantedSubject = resolveSubject(args.subject);
+      const rows = await searchMemory({
+        query: args.query ?? "",
+        layers: ["insight"],
+        scopes: visibleMemoryScopes(run.identity.storedChannel),
+        perspectives: ["daju"],
+        kinds: ["observation"],
+        subjects: wantedSubject ? [wantedSubject] : undefined,
+        sort: args.query?.trim() ? "relevance" : "recent",
+        limit: 8,
+      });
+      return {
+        warning: "这是大橘的观察性假设，可能不准确，不能当作主人明确说过的事实",
+        subject: wantedSubject ?? null,
+        ...memoryResult("observations", rows),
       };
     })));
 

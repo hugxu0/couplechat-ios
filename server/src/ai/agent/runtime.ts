@@ -14,6 +14,7 @@ import { GEN } from "../settings";
 import { personaCore } from "../persona";
 import { extractJson, extractReplyText, type Citation } from "../provider";
 import { beijingDateTime } from "../time";
+import { searchMemory, visibleMemoryScopes } from "../memory/store";
 import type { TraceEntry } from "../debug/trace";
 import type { AiAction } from "../actions/personalItems";
 import type { Trigger } from "./replyQueue";
@@ -50,6 +51,7 @@ function instructions(trigger: Trigger): string {
     "你可以自主使用 MCP 工具。普通闲聊无需调用工具；涉及个人事实、过去事件、原话、准确时间、提醒备忘、图片或最新外部信息时，自己选择并串联工具。",
     "完成度自检：最终回答前，先在心里核对当前请求涉及的对象、时间范围、字段、限制和格式是否都已覆盖。若依赖工具且结果只覆盖部分对象或字段、来源不能支撑结论、结果彼此冲突或仍有关键缺项，应继续选择合适工具补齐；确实无法补齐时明确说明缺少什么，不能拿猜测或自己先前未经核实的回答填空。普通闲聊和不依赖外部证据的问题无需为了走流程反复调用工具。",
     "记忆检索原则：稳定信息用 search_facts；发生过什么用 search_events；未来安排用 search_plans；最近几天的活动、身体和情绪用 get_current_states；近期两个人相处状态用 get_relationship_context；只有用户要求分析、复盘或调解时才用 get_current_insight。结构化记忆命中后直接使用，不再追溯原始聊天。只有用户当前消息明确要求逐字原话时才调用 search_chat_messages。没有可靠结果就说没找到，绝不能脑补。",
+    "大橘行为要求会自动放在本轮上下文中：明确的当前请求和系统安全规则优先于旧要求。只有涉及分析、复盘或调解时，才按需调用 get_daju_observations；观察只是大橘的假设，不能当作主人明确说过的事实。",
     "人物查询强制回退顺序：主人问‘知不知道某人、某人是谁、和某人什么关系’时先 search_facts；如果 facts 为空或没有回答身份/关系，必须用同一个核心名字调用 search_events；只有 facts 和 events 都没有相关结果，或主人明确要求逐字原话时，才调用 search_chat_messages。不能从 facts 直接跳到聊天。",
     "证据纪律：最近聊天和搜索结果里，大橘自己以前说过的话只能用于理解对话，绝不能作为事实证据。人物姓名、身份和关系必须来自主人原话或可靠事实卡，不能因为名字在附近出现就建立关系。",
     "上下文层级：当前问题最高；最近 8 条重点原文用于理解当前话题、语气和指代；较早原文只是辅助背景，不能压过当前问题；跨会话摘要用于连接已经滚出原文窗口的大橘会话。不同层级冲突时以当前问题和较新的主人原话为准。",
@@ -68,6 +70,25 @@ function instructions(trigger: Trigger): string {
     "一次最多回复 1~3 条短消息，第一条直接接住问题或情绪。不要汇报工具调用过程，不说数据库、MCP、检索系统或 Agent。",
     '最终只输出 JSON：{"replies":["第一条","第二条（可选）","第三条（可选）"]}。不要输出 JSON 以外内容。',
   ].join("\n\n");
+}
+
+async function loadDajuInstructions(channel: string): Promise<string> {
+  try {
+    const rows = await searchMemory({
+      query: "",
+      layers: ["fact"],
+      scopes: visibleMemoryScopes(channel),
+      perspectives: ["daju"],
+      kinds: ["instruction"],
+      sort: "importance",
+      limit: 20,
+    });
+    if (!rows.length) return "";
+    return rows.map((row) => `- ${row.content}`).join("\n");
+  } catch (error) {
+    console.warn("[ai] 大橘行为要求读取失败:", error instanceof Error ? error.message : error);
+    return "";
+  }
 }
 
 function normalizeOutput(raw: string): string[] {
@@ -136,6 +157,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
         : []).filter(Boolean),
   )].slice(0, 9);
   const context = await buildConversationContext(trigger.storedChannel, trigger.messageId);
+  const dajuInstructions = await loadDajuInstructions(trigger.storedChannel);
   const currentMessage = background
     ? ""
     : currentImageUrls.length
@@ -158,6 +180,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
   ];
   const input = [
     ...inputHeader,
+    dajuInstructions ? `【大橘当前行为要求】\n${dajuInstructions}` : "",
     conversationContextText(context),
     ...inputTail,
   ].filter(Boolean).join("\n\n");

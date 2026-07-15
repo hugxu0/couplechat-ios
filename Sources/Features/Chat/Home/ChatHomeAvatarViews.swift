@@ -16,6 +16,10 @@ struct ChatHomeCoupleAvatarColumn: View {
     let editable: Bool
     let statusOptions: [ChatHomeStatusOption]
     let onStatusPick: (ChatHomeStatusOption) -> Void
+    let onAddStatus: () -> Void
+    let onClearStatus: () -> Void
+    let onEditStatus: (ChatHomeStatusOption) -> Void
+    let onDeleteStatus: (ChatHomeStatusOption) -> Void
     @State private var showStatusPicker = false
 
     var body: some View {
@@ -71,10 +75,19 @@ struct ChatHomeCoupleAvatarColumn: View {
                 ForEach(statusOptions) { option in
                     Button(option.title) { onStatusPick(option) }
                 }
+                Button("添加状态") { onAddStatus() }
+                if status != nil {
+                    Button("清除当前状态", role: .destructive) { onClearStatus() }
+                }
             }
             .contextMenu {
                 ForEach(statusOptions) { option in
                     Button(option.title) { onStatusPick(option) }
+                }
+                Button("添加状态") { onAddStatus() }
+                if let currentStatus = statusOptions.first(where: { $0.title == status }) {
+                    Button("编辑当前状态") { onEditStatus(currentStatus) }
+                    Button("删除当前状态", role: .destructive) { onDeleteStatus(currentStatus) }
                 }
             }
             .accessibilityLabel(status == nil ? "添加状态" : "当前状态 \(status ?? "")")

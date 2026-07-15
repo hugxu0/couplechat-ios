@@ -1,11 +1,28 @@
 import SwiftUI
 
 struct MomentsView: View {
+    private enum RecommendationSheet: Identifiable {
+        case composer
+        case history
+        case received(RecommendationItem)
+
+        var id: String {
+            switch self {
+            case .composer: return "composer"
+            case .history: return "history"
+            case .received(let item): return "received-\(item.id)"
+            }
+        }
+    }
+
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
     @StateObject private var model = MomentsViewModel()
+    @StateObject private var recommendationModel = RecommendationViewModel()
+    @StateObject private var badges = AppBadgeState.shared
     @State private var showingCreateAlbum = false
     @State private var showingDateEditor = false
+    @State private var recommendationSheet: RecommendationSheet?
 
     var body: some View {
         NavigationStack {
@@ -14,6 +31,13 @@ struct MomentsView: View {
                     coupleOverview
                     onThisDaySection
                     ChatStatsCard()
+                    TodayRecommendationCard(
+                        snapshot: recommendationModel.today,
+                        loading: recommendationModel.loading,
+                        refreshing: recommendationModel.refreshing,
+                        onRefresh: { Task { await refreshRecommendation() } },
+                        onHistory: { recommendationSheet = .history },
+                        onGift: { recommendationSheet = .composer })
                     albumSection
                     errorSection
                 }
@@ -24,14 +48,24 @@ struct MomentsView: View {
             .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
             .task { await reload() }
+            .onAppear {
+                Task { await loadRecommendations(presentUnread: true) }
+            }
             .onReceive(NotificationCenter.default.publisher(for: MomentsViewModel.albumsChanged)) { _ in
                 Task { await reload(force: true) }
             }
             .onReceive(NotificationCenter.default.publisher(for: .persistentSyncChanged)) { note in
-                guard note.persistentSyncIncludes(["album", "album_item", "media_note", "media_asset"]) else {
-                    return
+                if note.persistentSyncIncludes(["album", "album_item", "media_note", "media_asset"]) {
+                    Task { await reload(force: true) }
                 }
-                Task { await reload(force: true) }
+                if note.persistentSyncIncludes(["recommendation", "recommendation_state"]) {
+                    Task {
+                        await loadRecommendations(presentUnread: false)
+                        if let token = store.session?.token {
+                            await badges.refreshRecommendations(token: token)
+                        }
+                    }
+                }
             }
             .sheet(isPresented: $showingCreateAlbum) {
                 AlbumCreateSheet { title, note in
@@ -43,6 +77,34 @@ struct MomentsView: View {
             .sheet(isPresented: $showingDateEditor) {
                 DateEditorSheet().presentationDetents([.medium, .large])
             }
+            .sheet(item: $recommendationSheet) { sheet in
+                recommendationSheetContent(sheet)
+            }
+        }
+        .toolbar(.visible, for: .tabBar)
+    }
+
+    @ViewBuilder
+    private func recommendationSheetContent(_ sheet: RecommendationSheet) -> some View {
+        switch sheet {
+        case .composer:
+            RecommendationComposerSheet(partnerName: partnerDisplayName) { content in
+                await sendRecommendation(content)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        case .history:
+            if let token = store.session?.token {
+                RecommendationHistoryView(token: token)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
+        case .received(let item):
+            ReceivedRecommendationSheet(item: item) {
+                Task { await acceptRecommendation(item) }
+            }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -218,6 +280,9 @@ struct MomentsView: View {
         if let message = model.errorMessage {
             StatusBanner(text: message, kind: .error)
         }
+        if let message = recommendationModel.errorMessage {
+            StatusBanner(text: message, kind: .error)
+        }
     }
 
     private var togetherLabel: String {
@@ -231,6 +296,33 @@ struct MomentsView: View {
     private func reload(force: Bool = false) async {
         guard let token = store.session?.token else { return }
         await model.load(token: token, force: force)
+    }
+
+    private var partnerDisplayName: String {
+        store.partner?.name ?? "TA"
+    }
+
+    private func loadRecommendations(presentUnread: Bool) async {
+        guard let token = store.session?.token else { return }
+        let unread = await recommendationModel.load(token: token)
+        guard presentUnread, recommendationSheet == nil, let unread else { return }
+        recommendationSheet = .received(unread)
+    }
+
+    private func refreshRecommendation() async {
+        guard let token = store.session?.token else { return }
+        await recommendationModel.refresh(token: token)
+    }
+
+    private func sendRecommendation(_ content: String) async -> Bool {
+        guard let token = store.session?.token else { return false }
+        return await recommendationModel.send(content, token: token)
+    }
+
+    private func acceptRecommendation(_ item: RecommendationItem) async {
+        guard let token = store.session?.token else { return }
+        await recommendationModel.markRead(item, token: token)
+        await badges.refreshRecommendations(token: token)
     }
 
     private func loadMore(_ album: MomentAlbum) async {

@@ -11,6 +11,8 @@ struct AIMemoryRepository {
         scope: AIMemoryScopeFilter,
         layer: AIMemoryLayer?,
         query: String,
+        perspective: AIMemoryPerspective = .all,
+        kind: AIMemoryKind? = nil,
         subject: String? = nil,
         status: AIMemoryStatusFilter = .active,
         token: String,
@@ -18,6 +20,8 @@ struct AIMemoryRepository {
     ) async throws -> AIMemorySnapshot {
         var queryItems = [URLQueryItem(name: "scope", value: scope.rawValue)]
         if let layer { queryItems.append(URLQueryItem(name: "layer", value: layer.rawValue)) }
+        if let value = perspective.apiValue { queryItems.append(URLQueryItem(name: "perspective", value: value)) }
+        if let kind { queryItems.append(URLQueryItem(name: "kind", value: kind.rawValue)) }
         if let subject { queryItems.append(URLQueryItem(name: "subject", value: subject)) }
         queryItems.append(URLQueryItem(name: "status", value: status.rawValue))
         let search = query.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -189,6 +189,7 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
       const firstAdd = await addPhoto();
       assert.equal(firstAdd.statusCode, 201, firstAdd.body);
       assert.equal(firstAdd.json().added.length, 1);
+      assert.equal(firstAdd.json().added[0].asset.addedBy, "xu");
       const duplicateAdd = await addPhoto();
       assert.equal(duplicateAdd.statusCode, 201, duplicateAdd.body);
       assert.equal(duplicateAdd.json().added.length, 0);
@@ -207,9 +208,11 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
       assert.equal(directAdd.statusCode, 201, directAdd.body);
       assert.equal(directAdd.json().added[0].asset.kind, "video");
       assert.equal(directAdd.json().added[0].asset.sourceMessageId, undefined);
+      assert.equal(directAdd.json().added[0].asset.addedBy, "xu");
       assert.equal(directAdd.json().added[0].postId, "post-summer-trip");
       const albumList = await app.inject({ method: "GET", url: "/api/v2/albums", headers: auth(bobToken) });
       assert.equal(albumList.json().albums[0].coverURL, `http://example.test/media/up_album_photo_0003`);
+      assert.equal(albumList.json().albums[0].previewItems[0].addedBy, "xu");
       const note = await app.inject({
         method: "PATCH", url: `/api/v2/media-assets/${assetId}/note`, headers: auth(bobToken), payload: { text: "那天风很温柔" },
       });
@@ -232,6 +235,7 @@ test("V2 transcription, albums, calendar and pet are durable for the fixed coupl
       assert.equal(emptiedAlbum.statusCode, 200, emptiedAlbum.body);
       assert.equal(emptiedAlbum.json().items.length, 1, "direct uploads survive recalling an unrelated chat message");
       assert.equal(emptiedAlbum.json().items[0].postId, "post-summer-trip");
+      assert.equal(emptiedAlbum.json().items[0].asset.addedBy, "xu");
       assert.equal(emptiedAlbum.json().album.coverURL, undefined);
       const deletedAlbum = await app.inject({
         method: "DELETE", url: `/api/v2/albums/${albumId}`, headers: auth(aliceToken),

@@ -20,52 +20,6 @@ struct ChatHomeSectionDivider: View {
     }
 }
 
-struct ChatHomeStatusChip: View {
-    let status: ChatHomeStatusOption
-    let selected: Bool
-    let onTap: () -> Void
-    let onEdit: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 6) {
-                if selected {
-                    Circle()
-                        .fill(status.color)
-                        .frame(width: 6, height: 6)
-                }
-                Text(status.title)
-                    .lineLimit(1)
-            }
-            .font(DS.Typo.sectionLabel)
-            .foregroundStyle(selected ? status.color : DS.Palette.textPrimary.opacity(0.72))
-            .padding(.horizontal, 14)
-            .frame(height: 36)
-            .background(
-                Capsule().fill(
-                    selected
-                        ? AnyShapeStyle(status.color.opacity(0.14))
-                        : AnyShapeStyle(DS.Palette.innerSurface)
-                )
-            )
-            .overlay(Capsule().stroke(selected ? status.color.opacity(0.22) : DS.Palette.textTertiary.opacity(0.16), lineWidth: 1))
-            .shadow(color: selected ? status.color.opacity(0.12) : .clear, radius: 7, y: 3)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(PressableStyle())
-        .contextMenu {
-            Button(action: onEdit) {
-                Label("编辑状态", systemImage: "pencil")
-            }
-            Button(role: .destructive, action: onDelete) {
-                Label("删除状态", systemImage: "trash")
-            }
-        }
-        .accessibilityHint("点按切换状态，长按可编辑或删除")
-    }
-}
-
 struct ChatHomeActionButton: View {
     @Environment(\.colorScheme) private var colorScheme
     let action: ChatHomeQuickAction
@@ -90,11 +44,12 @@ struct ChatHomeActionButton: View {
                             RoundedRectangle(cornerRadius: DS.Radius.tile, style: .continuous)
                                 .stroke(DS.Palette.textTertiary.opacity(0.15), lineWidth: 1)
                         }
-                        .frame(height: 40)
+                        .frame(height: 56)
                     Text(sent ? "✓" : action.emoji)
-                        .font(DS.Typo.pageTitle)
+                        .font(.system(size: 29))
                         .contentTransition(.numericText())
                 }
+                .frame(maxWidth: .infinity)
                 Text(action.title)
                     .font(DS.Typo.micro.weight(.bold))
                     .foregroundStyle(DS.Palette.textPrimary)

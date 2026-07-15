@@ -49,6 +49,7 @@ struct RootTabView: View {
                     .tag(MainTab.chat)
                 MomentsView()
                     .tabItem { Label(MainTab.records.rawValue, systemImage: MainTab.records.icon) }
+                    .badge(recommendationBadge)
                     .tag(MainTab.records)
                 DajuView()
                     .tabItem { Label(MainTab.pet.rawValue, systemImage: MainTab.pet.icon) }
@@ -98,10 +99,20 @@ struct RootTabView: View {
                 return
             }
             await badges.refreshReminders(token: token)
+            await badges.refreshRecommendations(token: token)
         }
         .onReceive(NotificationCenter.default.publisher(for: PersonalItemsRepository.changedNotification)) { _ in
             guard let token = store.session?.token else { return }
             Task { await badges.refreshReminders(token: token) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: RecommendationRepository.changedNotification)) { _ in
+            guard let token = store.session?.token else { return }
+            Task { await badges.refreshRecommendations(token: token) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .persistentSyncChanged)) { note in
+            guard note.persistentSyncIncludes(["recommendation", "recommendation_state"]),
+                  let token = store.session?.token else { return }
+            Task { await badges.refreshRecommendations(token: token) }
         }
         .onChange(of: deepLinks.destination) { _, destination in
             handleDeepLink(destination)
@@ -160,6 +171,10 @@ struct RootTabView: View {
                 && message.ts > readAt
         }
         .count
+    }
+
+    private var recommendationBadge: Text? {
+        badges.hasUnreadRecommendation ? Text("•") : nil
     }
 
     private func handleIncomingNote() {

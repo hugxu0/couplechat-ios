@@ -52,6 +52,7 @@ struct PlansView: View {
                 }
             }
         }
+        .toolbar(.visible, for: .tabBar)
     }
 
     private var sectionPicker: some View {

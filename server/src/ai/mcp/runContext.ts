@@ -90,6 +90,8 @@ export async function recordAgentTool<T>(
     get_current_states: 2,
     get_relationship_context: 1,
     get_current_insight: 1,
+    get_daju_instructions: 1,
+    get_daju_observations: 2,
     search_chat_messages: 2,
     get_messages_around: 2,
     fallback_web_search: 2,

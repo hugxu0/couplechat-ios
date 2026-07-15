@@ -23,6 +23,7 @@ interface ExtractedMemory {
   operation?: "upsert" | "append" | "retract" | "complete" | "cancel";
   targetMemoryId?: string;
   layer?: string;
+  kind?: "instruction" | "observation";
   memoryKey?: string;
   subjects?: string[];
   content?: string;
@@ -30,6 +31,7 @@ interface ExtractedMemory {
   confidence?: number;
   importance?: number;
   validHours?: number;
+  sourceMemoryIds?: string[];
   metadata?: Record<string, unknown>;
   reason?: string;
 }
@@ -94,10 +96,14 @@ export function shouldExtractMemoryBatch(
     && (force || sourceMessageCount >= MEMORY_SOURCE_BATCH_SIZE || dueDelay <= 0);
 }
 
+export function hasDajuInstructionSignal(text: string): boolean {
+  return /(?:记住|请你|希望你|以后|下次|不要|别再|叫我|称呼我|回答要|回复要|少一点|短一点)/.test(text);
+}
+
 function systemPrompt(includeEngagement: boolean): string {
   const people = accounts().map((account) => `${account.username}=${account.name}`).join("、");
   return [
-    "你是 CoupleChat 的基础记忆整理器。输入包含当前有效基础记忆和一段连续聊天；只提取事实、经历、计划、近况四类。关系与理解由另一阶段根据这些卡片生成，本阶段禁止输出 relationship/insight。",
+    "你是 CoupleChat 的基础记忆整理器。输入包含当前有效基础记忆和一段连续聊天；基础 changes 只提取事实、经历、计划、近况四类。关系与理解由另一阶段根据这些卡片生成，基础 changes 禁止输出 relationship/insight。",
     `人物 username：${people}。subjects 必须且只能是单个逻辑主体：xu、si 或 both。`,
     "subjects 表示内容是谁的，不表示谁说了这句话，也不表示卡片是否双方可见。只属于小旭的事情用 xu，只属于小偲的事情用 si；只有两个人共同参与、共同承担或整体状态才用 both。双方只是讨论某一个人的事，仍归这个人。",
     "fact：稳定、将来可直接查询的个人或共同事实，例如身份、偏好、习惯、健康禁忌和重要人物。事实应原子化。",
@@ -109,11 +115,12 @@ function systemPrompt(includeEngagement: boolean): string {
     "根据整段新消息与当前记忆直接生成变更，不要输出或引用原始消息 ID；不得编造日期。",
     "连续的同一次经历合成一张 event；近况中的琐碎活动不要再重复生成 event，除非它具有长期回忆或检索价值。",
     "confidence 0~1，importance 1~5。玩笑、问句、AI 回复、未确认猜测、辱骂中的人格判断均不保存。",
+    "同时整理大橘自己的记忆，放入 dajuChanges：kind=instruction 只保存主人明确提出的长期行为要求或回复偏好，不能从语气推断；kind=observation 只保存基于至少两张当前基础记忆卡的谨慎观察，layer 固定为 insight，并列出实际使用的 sourceMemoryIds。大橘观察不是主人事实，默认有效 30 天；主人明确要求默认长期有效。大橘要求 layer 固定为 fact。subjects 仍表示观察/要求涉及哪位主人或两个人。",
     ...(includeEngagement ? [
       "同时判断公聊 engagement，但不要回复用户：明显冲突才用 conflict；无冲突但确有情侣专属价值可补充时用 interject；普通闲聊用 none。",
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"engagement":{"kind":"none","confidence":0,"reason":""}}',
+      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"instruction","memoryKey":"daju.instruction.reply_style","subjects":["xu"],"content":"回答尽量简短"}],"engagement":{"kind":"none","confidence":0,"reason":""}}',
     ] : [
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}]}',
+      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"instruction","memoryKey":"daju.instruction.reply_style","subjects":["xu"],"content":"回答尽量简短"}]}',
     ]),
     "changes 最多 40 条。没有变更时 changes 为空数组。",
   ].join("\n");
@@ -141,31 +148,42 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     }
     const sourceMessages = await ownerTextMessagesAfter(channel, cursor, MEMORY_SOURCE_BATCH_SIZE);
     if (!sourceMessages.length) return;
+    const hasInstruction = sourceMessages.some((message) => hasDajuInstructionSignal(message.text));
     const dueDelay = memoryExtractionDelay(
       sourceMessages.length,
       sourceMessages[0].ts,
       sourceMessages.at(-1)!.ts,
+      Date.now(),
+      force || hasInstruction,
     ) ?? Number.POSITIVE_INFINITY;
-    if (!shouldExtractMemoryBatch(sourceMessages.length, force, dueDelay)) {
+    if (!shouldExtractMemoryBatch(sourceMessages.length, force || hasInstruction, dueDelay)) {
       scheduleMemoryScan(channel, dueDelay);
       return;
     }
 
     const nextCursor = { ts: sourceMessages.at(-1)!.ts, id: sourceMessages.at(-1)!.id };
-    const activeMemories = (await listActiveMemoryContext(channel, 180))
+    const allActiveMemories = await listActiveMemoryContext(channel, 220);
+    const activeMemories = allActiveMemories
       .filter((memory) => BASE_MEMORY_LAYERS.has(memory.layer));
+    const activeDajuMemories = allActiveMemories.filter((memory) => memory.perspective === "daju");
     const activeById = new Map(activeMemories.map((memory) => [memory.id, memory]));
+    const activeDajuById = new Map(activeDajuMemories.map((memory) => [memory.id, memory]));
     const output = await chat({
       profile: "task",
       system: systemPrompt(channel === "couple"),
       user: [
         `【当前有效基础记忆，频道=${channel}】\n${activeMemories.map(memoryContextLine).join("\n") || "（空）"}`,
+        `【当前大橘自己的记忆】\n${activeDajuMemories.map(memoryContextLine).join("\n") || "（空）"}`,
         `【本批新消息】\n${sourceMessages.map(messageLine).join("\n")}`,
       ].join("\n\n"),
       gen: GEN.extractFacts,
     });
     if (!output) throw new Error("基础记忆模型无输出");
-    const parsed = extractJson<{ changes?: ExtractedMemory[]; engagement?: ExtractedEngagement }>(output);
+    const parsed = extractJson<{
+      changes?: ExtractedMemory[];
+      dajuChanges?: ExtractedMemory[];
+      engagement?: ExtractedEngagement;
+    }>(output);
     if (!parsed || !Array.isArray(parsed.changes)) throw new Error("基础记忆 JSON 无效");
 
     let saved = 0;
@@ -229,6 +247,67 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       }
     }
 
+    for (const item of (parsed.dajuChanges ?? []).slice(0, 20)) {
+      const operation = item.operation ?? "upsert";
+      const target = item.targetMemoryId ? activeDajuById.get(item.targetMemoryId) : undefined;
+      if (["retract", "complete", "cancel"].includes(operation)) {
+        if (!target) continue;
+        const status = operation === "complete" ? "completed" : operation === "cancel" ? "cancelled" : "retracted";
+        if (await transitionMemory({
+          memoryId: target.id,
+          scope: channel,
+          status,
+          reason: item.reason,
+        })) saved += 1;
+        continue;
+      }
+
+      const kind = item.kind;
+      if (!item.content || !item.memoryKey || !kind) continue;
+      const layer = kind === "instruction" ? "fact" : "insight";
+      const subjects = normalizedMemorySubjects(item.subjects ?? []);
+      if (subjects.length !== 1 || (target && (target.kind !== kind || target.layer !== layer))) continue;
+      const sourceMemoryIds = [...new Set(item.sourceMemoryIds ?? [])]
+        .filter((id) => activeById.has(id))
+        .slice(0, 20);
+      if (kind === "observation" && sourceMemoryIds.length < 2) continue;
+
+      const baseTime = sourceMessages.at(-1)?.ts ?? Date.now();
+      const suppliedValidHours = Number(item.validHours);
+      const validHours = kind === "observation"
+        ? (Number.isFinite(suppliedValidHours) && suppliedValidHours > 0
+          ? Math.min(24 * 365, suppliedValidHours)
+          : 30 * 24)
+        : null;
+      const stored = await addMemory({
+        layer,
+        perspective: "daju",
+        kind,
+        scope: channel,
+        memoryKey: target?.memoryKey ?? item.memoryKey,
+        subjects,
+        speakers: [],
+        content: item.content,
+        category: kind === "instruction" ? "大橘行为要求" : "大橘观察",
+        confidence: kind === "instruction" ? 0.98 : item.confidence,
+        importance: item.importance ?? (kind === "instruction" ? 5 : 3),
+        validFrom: baseTime,
+        validUntil: validHours ? baseTime + validHours * 60 * 60 * 1000 : null,
+        metadata: {
+          ...item.metadata,
+          dajuMemory: true,
+          extractorVersion: 1,
+          updateReason: item.reason ?? "",
+        },
+        sourceMemoryIds,
+        targetMemoryId: target?.id,
+      });
+      if (stored) {
+        saved += 1;
+        if (kind === "observation") await archiveSiblingMemories(stored.id, false);
+      }
+    }
+
     await advanceMemoryCursor(channel, nextCursor);
     await reconcileMemoryLifecycle();
     const engagement = parsed.engagement;
@@ -272,7 +351,8 @@ async function planMemoryScan(channel: string): Promise<void> {
     sourceMessages[0].ts,
     sourceMessages.at(-1)!.ts,
   );
-  if (delay !== null) scheduleMemoryScan(channel, delay);
+  const hasInstruction = sourceMessages.some((message) => hasDajuInstructionSignal(message.text));
+  if (delay !== null) scheduleMemoryScan(channel, hasInstruction ? 0 : delay);
 }
 
 function schedulePlanning(channel: string): void {

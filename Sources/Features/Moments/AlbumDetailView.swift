@@ -252,7 +252,7 @@ struct AlbumDetailView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(sharedAuthorName)
+                    Text(authorName(for: post))
                         .font(DS.Typo.secondary.weight(.semibold))
                         .foregroundStyle(DS.Palette.textPrimary)
                     Spacer()
@@ -310,12 +310,34 @@ struct AlbumDetailView: View {
     }
 
     private func postMediaGrid(_ assets: [MomentAsset], width: CGFloat) -> some View {
-        let count = min(3, max(1, assets.count))
         let gap: CGFloat = 4
-        let tileWidth = max(1, (width - gap * CGFloat(count - 1)) / CGFloat(count))
-        let columns = Array(repeating: GridItem(.fixed(tileWidth), spacing: gap), count: count)
-        return LazyVGrid(columns: columns, spacing: 4) {
-            ForEach(assets) { asset in assetTile(asset, postAssets: assets, side: tileWidth) }
+        // Keep the tile size tied to the two-up layout. One item stays a half-width
+        // square; two items fill the row; additional items continue horizontally.
+        let tileSide = max(1, (width - gap) / 2)
+        return ZStack(alignment: .topTrailing) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: gap) {
+                    ForEach(assets) { asset in
+                        assetTile(asset, postAssets: assets, side: tileSide)
+                    }
+                }
+                .frame(height: tileSide, alignment: .leading)
+                .scrollTargetLayout()
+            }
+            .scrollIndicators(.hidden)
+            .scrollTargetBehavior(.viewAligned)
+            .frame(height: tileSide)
+
+            if assets.count > 2 {
+                Label("共 \(assets.count) 张", systemImage: "photo.stack.fill")
+                    .font(DS.Typo.micro.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(.black.opacity(0.48), in: Capsule())
+                    .padding(8)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(width: width, alignment: .leading)
         .clipped()
@@ -459,10 +481,19 @@ struct AlbumDetailView: View {
         AlbumTimelinePost.group(model.assets)
     }
 
-    private var sharedAuthorName: String {
-        let mine = store.session?.name ?? "我"
-        let partner = store.partner?.name ?? "TA"
-        return "\(mine)和\(partner)"
+    private func authorName(for post: AlbumTimelinePost) -> String {
+        var usernames: [String] = []
+        for username in post.assets.compactMap(\.addedBy) where !username.isEmpty {
+            if !usernames.contains(username) { usernames.append(username) }
+        }
+        guard !usernames.isEmpty else { return "共同添加" }
+        return usernames.map(displayName(for:)).joined(separator: "、")
+    }
+
+    private func displayName(for username: String) -> String {
+        if username == store.session?.username { return store.session?.name ?? "我" }
+        if username == store.partner?.username { return store.partner?.name ?? "TA" }
+        return store.auth.account(for: username)?.name ?? username
     }
 
     private func discardDraftMedia() {

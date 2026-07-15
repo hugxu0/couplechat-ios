@@ -85,6 +85,8 @@ export interface UploadRow {
 export interface AiMemoryRow {
   id: string;
   layer: string;
+  perspective?: string;
+  memory_kind?: string;
   scope: string;
   memory_key: string;
   subjects_json: string;

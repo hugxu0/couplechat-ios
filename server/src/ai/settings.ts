@@ -15,6 +15,7 @@ export const GEN = {
   search: { maxTokens: 1800, temperature: 0.3, timeoutMs: 45_000 },
   conflict: { maxTokens: 1400, temperature: 0.25, timeoutMs: 30_000 },
   interject: { maxTokens: 900, temperature: 0.8, timeoutMs: 20_000 },
+  dailyRecommendation: { maxTokens: 500, temperature: 0.75, timeoutMs: 30_000 },
 } satisfies Record<string, GenProfile>;
 
 export const CONTEXT = {
