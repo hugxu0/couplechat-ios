@@ -13,7 +13,7 @@ function toolJson(result: Awaited<ReturnType<Client["callTool"]>>): Record<strin
 
 test("layered memory MCP tools include Daju instructions and observations", async () => {
   await withTestDatabase(async () => {
-    const { run } = await import("../../src/db");
+    const { get, run } = await import("../../src/db");
     const now = Date.now();
     await run(
       `INSERT INTO accounts
@@ -121,6 +121,7 @@ test("layered memory MCP tools include Daju instructions and observations", asyn
         requesterUsername: "xu",
         requesterName: "小旭",
         storedChannel: "couple",
+        allowDajuInstructionWrite: true,
         expiresAt: now + 60_000,
       },
       trace,
@@ -146,6 +147,7 @@ test("layered memory MCP tools include Daju instructions and observations", asyn
       assert.ok(names.has("get_current_insight"));
       assert.ok(names.has("get_daju_instructions"));
       assert.ok(names.has("get_daju_observations"));
+      assert.ok(names.has("save_daju_instruction"));
       assert.equal(names.has("search_insights"), false);
 
       const events = toolJson(await client.callTool({
@@ -186,6 +188,30 @@ test("layered memory MCP tools include Daju instructions and observations", asyn
       }));
       assert.equal(instructions.returnedCount, 1);
       assert.equal(instructions.instructions[0].kind, "instruction");
+
+      const savedInstruction = toolJson(await client.callTool({
+        name: "save_daju_instruction",
+        arguments: {
+          topic: "称呼方式",
+          instruction: "和小旭说话时称呼他为爸爸",
+          appliesTo: "current_user",
+        },
+      }));
+      assert.equal(savedInstruction.saved, true);
+      assert.deepEqual(savedInstruction.instruction.subjects, ["xu"]);
+      const directInstructions = await memory.searchMemory({
+        query: "称呼爸爸",
+        layers: ["fact"],
+        scopes: ["couple"],
+        perspectives: ["daju"],
+        kinds: ["instruction"],
+      });
+      assert.ok(directInstructions.some((item) => item.content.includes("称呼他为爸爸")));
+      const syncEvent = await get<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM sync_events WHERE entity_type = 'memory' AND entity_id = ?",
+        [savedInstruction.instruction.id],
+      );
+      assert.equal(syncEvent?.count, 1);
 
       const observations = toolJson(await client.callTool({
         name: "get_daju_observations", arguments: {},

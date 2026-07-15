@@ -34,7 +34,9 @@ struct AIMemoryDetailView: View {
             informationSection
             deleteSection
         }
-        .navigationTitle(item.layer.title)
+        .navigationTitle(item.perspective == .daju
+                         ? dajuKindTitle
+                         : item.layer.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -66,9 +68,13 @@ struct AIMemoryDetailView: View {
                     .frame(width: 34, height: 34)
                     .background(item.layer.tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(item.perspectiveTitle) · \(item.kindTitle)")
+                    Text(item.perspective == .daju
+                         ? "\(dajuKindTitle) · \(item.visibilityTitle)"
+                         : "\(item.subjectTitle) · \(item.visibilityTitle)")
                         .font(DS.Typo.button)
-                    Text("\(item.layer.title) · \(item.statusTitle)")
+                    Text(item.perspective == .daju
+                         ? item.statusTitle
+                         : "\(item.layer.title) · \(item.statusTitle)")
                         .font(DS.Typo.caption)
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
@@ -117,10 +123,10 @@ struct AIMemoryDetailView: View {
     private var informationSection: some View {
         Section("记录信息") {
             LabeledContent("人物", value: item.subjectTitle)
-            LabeledContent("记忆视角", value: item.perspectiveTitle)
-            LabeledContent("记忆类型", value: item.kindTitle)
             LabeledContent("可见范围", value: item.visibilityTitle)
-            LabeledContent("分类", value: item.layer.title)
+            if item.perspective != .daju {
+                LabeledContent("分类", value: item.layer.title)
+            }
             LabeledContent("状态", value: item.statusTitle)
             if item.kind == .observation {
                 LabeledContent("观察置信度", value: "\(Int((item.confidence * 100).rounded()))%")
@@ -155,6 +161,8 @@ struct AIMemoryDetailView: View {
             errorMessage = error.localizedDescription
         }
     }
+
+    private var dajuKindTitle: String { item.kind == .instruction ? "指令" : "观察" }
 
     private func save() async {
         guard let token = store.session?.token else { return }

@@ -81,7 +81,6 @@ struct MomentsView: View {
                 recommendationSheetContent(sheet)
             }
         }
-        .toolbar(.visible, for: .tabBar)
     }
 
     @ViewBuilder

@@ -51,7 +51,9 @@ function instructions(trigger: Trigger): string {
     "你可以自主使用 MCP 工具。普通闲聊无需调用工具；涉及个人事实、过去事件、原话、准确时间、提醒备忘、图片或最新外部信息时，自己选择并串联工具。",
     "完成度自检：最终回答前，先在心里核对当前请求涉及的对象、时间范围、字段、限制和格式是否都已覆盖。若依赖工具且结果只覆盖部分对象或字段、来源不能支撑结论、结果彼此冲突或仍有关键缺项，应继续选择合适工具补齐；确实无法补齐时明确说明缺少什么，不能拿猜测或自己先前未经核实的回答填空。普通闲聊和不依赖外部证据的问题无需为了走流程反复调用工具。",
     "记忆检索原则：稳定信息用 search_facts；发生过什么用 search_events；未来安排用 search_plans；最近几天的活动、身体和情绪用 get_current_states；近期两个人相处状态用 get_relationship_context；只有用户要求分析、复盘或调解时才用 get_current_insight。结构化记忆命中后直接使用，不再追溯原始聊天。只有用户当前消息明确要求逐字原话时才调用 search_chat_messages。没有可靠结果就说没找到，绝不能脑补。",
-    "大橘行为要求会自动放在本轮上下文中：明确的当前请求和系统安全规则优先于旧要求。只有涉及分析、复盘或调解时，才按需调用 get_daju_observations；观察只是大橘的假设，不能当作主人明确说过的事实。",
+    background
+      ? "大橘行为要求会自动放在上下文中，但后台介入候选不得新增或修改指令。只有涉及分析、复盘或调解时，才按需调用 get_daju_observations；观察只是大橘的假设，不能当作主人明确说过的事实。"
+      : "大橘行为要求：已有要求会自动放在本轮上下文中，当前请求和系统安全规则优先。如果当前主人明确提出一条以后持续生效、针对大橘未来行为、称呼、语气、回复方式或边界的要求，必须在本轮直接调用 save_daju_instruction 保存；由你理解整句话判断，不能依赖固定关键词。只服务于当前这一次回答的临时格式要求、普通任务、玩笑、问句、你自行推断出的偏好，以及主人明确说不要记住的内容都不要保存；是否长期生效不明确时先问清楚。工具成功后可以自然确认已经记住，工具失败则不能声称已保存。只有涉及分析、复盘或调解时，才按需调用 get_daju_observations；观察只是大橘的假设，不能当作主人明确说过的事实。",
     "人物查询强制回退顺序：主人问‘知不知道某人、某人是谁、和某人什么关系’时先 search_facts；如果 facts 为空或没有回答身份/关系，必须用同一个核心名字调用 search_events；只有 facts 和 events 都没有相关结果，或主人明确要求逐字原话时，才调用 search_chat_messages。不能从 facts 直接跳到聊天。",
     "证据纪律：最近聊天和搜索结果里，大橘自己以前说过的话只能用于理解对话，绝不能作为事实证据。人物姓名、身份和关系必须来自主人原话或可靠事实卡，不能因为名字在附近出现就建立关系。",
     "上下文层级：当前问题最高；最近 8 条重点原文用于理解当前话题、语气和指代；较早原文只是辅助背景，不能压过当前问题；跨会话摘要用于连接已经滚出原文窗口的大橘会话。不同层级冲突时以当前问题和较新的主人原话为准。",
@@ -201,6 +203,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
     requesterUsername: trigger.requesterUsername,
     requesterName: trigger.requesterName,
     storedChannel: trigger.storedChannel,
+    allowDajuInstructionWrite: !background,
     currentImageUrl: currentImageUrls[0],
     currentImageUrls,
   }, trace);

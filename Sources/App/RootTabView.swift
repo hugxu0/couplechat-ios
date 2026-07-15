@@ -21,8 +21,36 @@ enum MainTab: String, CaseIterable {
     }
 }
 
+@MainActor
+final class AppChromeState: ObservableObject {
+    @Published private(set) var hidesTabBar = false
+
+    private var activeSubpages: Set<UUID> = []
+    private var pendingLeaves: [UUID: Task<Void, Never>] = [:]
+
+    func enterSubpage(_ id: UUID) {
+        pendingLeaves.removeValue(forKey: id)?.cancel()
+        guard activeSubpages.insert(id).inserted else { return }
+        hidesTabBar = true
+    }
+
+    func leaveSubpage(_ id: UUID) {
+        pendingLeaves.removeValue(forKey: id)?.cancel()
+        pendingLeaves[id] = Task { @MainActor [weak self] in
+            // Push 到下一层时，旧页面的 disappear 和新页面的 appear 可能分属
+            // 相邻两个更新周期；让一帧可以避免底栏在两层子页面之间闪现。
+            await Task.yield()
+            guard !Task.isCancelled, let self else { return }
+            self.pendingLeaves[id] = nil
+            guard self.activeSubpages.remove(id) != nil else { return }
+            self.hidesTabBar = !self.activeSubpages.isEmpty
+        }
+    }
+}
+
 struct RootTabView: View {
     @State private var tab: MainTab = .chat
+    @StateObject private var chrome = AppChromeState()
     @StateObject private var badges = AppBadgeState.shared
     @StateObject private var deepLinks = AppDeepLinkRouter.shared
     @EnvironmentObject private var store: ChatStore
@@ -63,6 +91,7 @@ struct RootTabView: View {
                     .tag(MainTab.profile)
             }
             .tabViewStyle(.sidebarAdaptable)
+            .background(AppTabBarVisibilityController(isHidden: chrome.hidesTabBar))
 
             if let presentation = activePresentation {
                 IncomingInteractionOverlay(
@@ -117,6 +146,7 @@ struct RootTabView: View {
         .onChange(of: deepLinks.destination) { _, destination in
             handleDeepLink(destination)
         }
+        .environmentObject(chrome)
     }
 
     private func handleIncomingInteraction() {
@@ -225,11 +255,97 @@ struct RootTabView: View {
 
 }
 
-/// 一级 Tab 只出现在五个根页面。由每个 push 目的页直接声明隐藏，避免等到
-/// `onAppear` 后再切换造成安全区仍按旧 Tab Bar 高度布局。
+private struct AppTabBarVisibilityController: UIViewControllerRepresentable {
+    let isHidden: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeUIViewController(context: Context) -> HostController {
+        let controller = HostController()
+        controller.view.backgroundColor = .clear
+        controller.view.isUserInteractionEnabled = false
+        controller.update(isHidden: isHidden, animated: false)
+        return controller
+    }
+
+    func updateUIViewController(_ controller: HostController, context: Context) {
+        controller.update(isHidden: isHidden, animated: !reduceMotion)
+    }
+
+    final class HostController: UIViewController {
+        private var desiredHidden = false
+        private var shouldAnimate = true
+        private var lastAppliedHidden: Bool?
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            applyIfPossible()
+        }
+
+        func update(isHidden: Bool, animated: Bool) {
+            desiredHidden = isHidden
+            shouldAnimate = animated
+            applyIfPossible()
+        }
+
+        private func applyIfPossible() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let tabBarController = self.resolveTabBarController() else { return }
+                let changed = tabBarController.isTabBarHidden != self.desiredHidden
+                guard changed || self.lastAppliedHidden == nil else { return }
+
+                let animated = self.lastAppliedHidden != nil && self.shouldAnimate
+                if changed {
+                    tabBarController.setTabBarHidden(self.desiredHidden, animated: animated)
+                }
+                self.lastAppliedHidden = self.desiredHidden
+            }
+        }
+
+        private func resolveTabBarController() -> UITabBarController? {
+            if let tabBarController { return tabBarController }
+
+            var ancestor = parent
+            while let controller = ancestor {
+                if let tabBarController = controller as? UITabBarController {
+                    return tabBarController
+                }
+                ancestor = controller.parent
+            }
+
+            guard let root = view.window?.rootViewController else { return nil }
+            return findTabBarController(in: root)
+        }
+
+        private func findTabBarController(in controller: UIViewController) -> UITabBarController? {
+            if let tabBarController = controller as? UITabBarController {
+                return tabBarController
+            }
+            for child in controller.children {
+                if let tabBarController = findTabBarController(in: child) {
+                    return tabBarController
+                }
+            }
+            return nil
+        }
+    }
+}
+
+private struct AppSubpageChromeModifier: ViewModifier {
+    @EnvironmentObject private var chrome: AppChromeState
+    @State private var registrationID = UUID()
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { chrome.enterSubpage(registrationID) }
+            .onDisappear { chrome.leaveSubpage(registrationID) }
+    }
+}
+
+/// 一级 Tab 只出现在五个根页面。子页面通过身份注册统一驱动原生 Tab Bar，
+/// 让显隐和安全区一起使用系统动画更新。
 extension View {
     func appSubpageChrome() -> some View {
-        toolbar(.hidden, for: .tabBar)
+        modifier(AppSubpageChromeModifier())
     }
 }
 

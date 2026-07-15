@@ -66,6 +66,12 @@ export interface MemoryCandidate {
   targetMemoryId?: string;
 }
 
+export interface MemoryWriteSync {
+  actorAccountId: string;
+  actorDeviceId?: string | null;
+  restoreExcluded?: boolean;
+}
+
 export interface MemoryCursor {
   ts: number;
   id: string;
@@ -216,7 +222,10 @@ function memoryOwnerSQL(owner: ResolvedMemoryOwner): { clause: string; value: st
     : { clause: "owner_account_id = ?", value: owner.accountId! };
 }
 
-export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem | null> {
+export async function addMemory(
+  candidate: MemoryCandidate,
+  sync?: MemoryWriteSync,
+): Promise<MemoryItem | null> {
   const content = candidate.content.replace(/\s+/g, " ").trim().slice(0, 1200);
   const subjects = normalizedMemorySubjects(candidate.subjects);
   const requestedSourceMemoryIds = [...new Set(candidate.sourceMemoryIds ?? [])];
@@ -251,7 +260,7 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
      LIMIT 1`,
     [ownerSQL.value, memoryKey],
   );
-  if (excluded) return null;
+  if (excluded && !sync?.restoreExcluded) return null;
 
   let embedding: Uint8Array | null = null;
   if (embeddingEnabled()) {
@@ -271,6 +280,30 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
     || candidate.layer === "relationship"
     || candidate.layer === "insight";
   return transaction(async (db) => {
+    if (excluded && sync?.restoreExcluded) {
+      await db.run(
+        `DELETE FROM ai_memory_exclusions
+         WHERE ${owner.coupleId ? "couple_id = ?" : "account_id = ?"}
+           AND memory_key = ? AND source_message_id IS NULL`,
+        [ownerSQL.value, memoryKey],
+      );
+    }
+    const finishWrite = async (row: AiMemoryRow): Promise<MemoryItem> => {
+      if (!sync) return mapItem(row);
+      const version = await appendSyncEvent(db, {
+        coupleId: row.couple_id,
+        accountId: row.owner_account_id,
+        entityType: "memory",
+        entityId: row.id,
+        operation: "upsert",
+        payload: controlItem(row, sourceMemories.length),
+        actorAccountId: sync.actorAccountId,
+        actorDeviceId: sync.actorDeviceId,
+        createdAt: now,
+      });
+      await db.run("UPDATE ai_memory SET version = ? WHERE id = ?", [version, row.id]);
+      return mapItem({ ...row, version });
+    };
     const target = candidate.targetMemoryId && versioned
       ? await db.get<AiMemoryRow>(
            `SELECT * FROM ai_memory
@@ -330,7 +363,7 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
           [existing.id, source.id, now],
         );
       }
-      return mapItem({
+      return finishWrite({
         ...existing,
         confidence: Math.max(existing.confidence, confidence),
         importance: Math.max(existing.importance, importance),
@@ -385,7 +418,7 @@ export async function addMemory(candidate: MemoryCandidate): Promise<MemoryItem 
       );
     }
     const row = await db.get<AiMemoryRow>("SELECT * FROM ai_memory WHERE id = ?", [id]);
-    return row ? mapItem(row) : null;
+    return row ? finishWrite(row) : null;
   });
 }
 

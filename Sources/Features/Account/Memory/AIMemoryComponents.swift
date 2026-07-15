@@ -116,6 +116,28 @@ struct AIMemoryLayerChip: View {
     }
 }
 
+struct AIMemoryKindChip: View {
+    let kind: AIMemoryKind
+    let isSelected: Bool
+    let action: () -> Void
+
+    private var title: String { kind == .instruction ? "指令" : "观察" }
+    private var icon: String { kind == .instruction ? "text.badge.checkmark" : "eye" }
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(DS.Typo.caption.weight(.semibold))
+                .foregroundStyle(isSelected ? Color.white : DS.Palette.textSecondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(isSelected ? DS.Palette.accent : DS.Palette.innerSurface, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 struct AIMemoryRow: View {
     let item: AIMemoryItem
 
@@ -138,10 +160,11 @@ struct AIMemoryRow: View {
                 }
                 HStack(spacing: 7) {
                     Label(item.subjectTitle, systemImage: item.logicalSubject == "both" ? "person.2.fill" : "person.fill")
-                    Label(item.perspectiveTitle, systemImage: item.perspective == .daju ? "pawprint.fill" : "person.fill")
-                    Text(item.kindTitle)
+                    if item.perspective == .daju {
+                        Text(item.kind == .instruction ? "指令" : "观察")
+                    }
                     Text(item.visibilityTitle)
-                    Text(item.layer.title)
+                    if item.perspective != .daju { Text(item.layer.title) }
                     if item.status != "active" { Text(item.statusTitle) }
                 }
                 .font(DS.Typo.micro)

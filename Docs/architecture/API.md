@@ -82,9 +82,9 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | `DELETE` | `/api/me/memory/:id` | 彻底删除 Memory |
 | `POST` | `/api/me/memory/refresh` | 立即整理共同聊天或当前用户私聊 |
 
-`scope` 为 `all/shared/private`；`layer` 为 `fact/event/plan/state/relationship/insight`；`perspective` 为 `people/daju`；`kind` 为 `standard/instruction/observation`；`q` 搜索正文、分类和主体。列表默认只返回 active Memory，响应含 `nextCursor/hasMore`。未指定 `perspective` 时，Agent 的普通人物检索只读取 `people`；控制中心不指定时会显示两类记忆。
+`scope` 为 `all/shared/private`；`layer` 为 `fact/event/plan/state/relationship/insight`；`perspective` 为 `people/daju`；`kind` 为 `standard/instruction/observation`；`q` 搜索正文、分类和主体。列表默认只返回 active Memory，响应含 `nextCursor/hasMore`。未指定 `perspective` 时，Agent 的普通人物检索只读取 `people`；客户端选择“大橘”时会显式请求 `daju`，并按指令或观察分类。
 
-共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion }`，importance 范围 `1...5`；版本冲突返回 409 和权威 `item`，客户端会载入它。删除会按卡片 key 记录 exclusion，避免再次自动生成。`POST refresh` body 为 `{ scope: "shared" | "private" }`。
+共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion }`，importance 范围 `1...5`；版本冲突返回 409 和权威 `item`，客户端会载入它。删除会按卡片 key 记录 exclusion，避免后台再次自动生成；主人之后明确重新下达同主题指令时可以恢复。`POST refresh` body 为 `{ scope: "shared" | "private" }`。
 
 ### 增量同步
 

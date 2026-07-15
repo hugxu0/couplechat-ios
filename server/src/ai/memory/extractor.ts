@@ -23,7 +23,7 @@ interface ExtractedMemory {
   operation?: "upsert" | "append" | "retract" | "complete" | "cancel";
   targetMemoryId?: string;
   layer?: string;
-  kind?: "instruction" | "observation";
+  kind?: "observation";
   memoryKey?: string;
   subjects?: string[];
   content?: string;
@@ -96,10 +96,6 @@ export function shouldExtractMemoryBatch(
     && (force || sourceMessageCount >= MEMORY_SOURCE_BATCH_SIZE || dueDelay <= 0);
 }
 
-export function hasDajuInstructionSignal(text: string): boolean {
-  return /(?:记住|请你|希望你|以后|下次|不要|别再|叫我|称呼我|回答要|回复要|少一点|短一点)/.test(text);
-}
-
 function systemPrompt(includeEngagement: boolean): string {
   const people = accounts().map((account) => `${account.username}=${account.name}`).join("、");
   return [
@@ -115,12 +111,12 @@ function systemPrompt(includeEngagement: boolean): string {
     "根据整段新消息与当前记忆直接生成变更，不要输出或引用原始消息 ID；不得编造日期。",
     "连续的同一次经历合成一张 event；近况中的琐碎活动不要再重复生成 event，除非它具有长期回忆或检索价值。",
     "confidence 0~1，importance 1~5。玩笑、问句、AI 回复、未确认猜测、辱骂中的人格判断均不保存。",
-    "同时整理大橘自己的记忆，放入 dajuChanges：kind=instruction 只保存主人明确提出的长期行为要求或回复偏好，不能从语气推断；kind=observation 只保存基于至少两张当前基础记忆卡的谨慎观察，layer 固定为 insight，并列出实际使用的 sourceMemoryIds。大橘观察不是主人事实，默认有效 30 天；主人明确要求默认长期有效。大橘要求 layer 固定为 fact。subjects 仍表示观察/要求涉及哪位主人或两个人。",
+    "同时整理大橘基于现有记忆形成的观察，放入 dajuChanges：只允许 kind=observation，只保存基于至少两张当前基础记忆卡的谨慎观察，layer 固定为 insight，并列出实际使用的 sourceMemoryIds。大橘观察不是主人事实，默认有效 30 天。主人对大橘的行为指令由对话 Agent 直接处理，这里不得生成 instruction，也不得把这类要求改写成 changes 中的人物事实或偏好。subjects 表示观察涉及哪位主人或两个人。",
     ...(includeEngagement ? [
       "同时判断公聊 engagement，但不要回复用户：明显冲突才用 conflict；无冲突但确有情侣专属价值可补充时用 interject；普通闲聊用 none。",
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"instruction","memoryKey":"daju.instruction.reply_style","subjects":["xu"],"content":"回答尽量简短"}],"engagement":{"kind":"none","confidence":0,"reason":""}}',
+      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"observation","memoryKey":"daju.observation.interaction","subjects":["both"],"content":"...","sourceMemoryIds":["mem_1","mem_2"],"validHours":720}],"engagement":{"kind":"none","confidence":0,"reason":""}}',
     ] : [
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"instruction","memoryKey":"daju.instruction.reply_style","subjects":["xu"],"content":"回答尽量简短"}]}',
+      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"observation","memoryKey":"daju.observation.interaction","subjects":["xu"],"content":"...","sourceMemoryIds":["mem_1","mem_2"],"validHours":720}]}',
     ]),
     "changes 最多 40 条。没有变更时 changes 为空数组。",
   ].join("\n");
@@ -148,15 +144,14 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     }
     const sourceMessages = await ownerTextMessagesAfter(channel, cursor, MEMORY_SOURCE_BATCH_SIZE);
     if (!sourceMessages.length) return;
-    const hasInstruction = sourceMessages.some((message) => hasDajuInstructionSignal(message.text));
     const dueDelay = memoryExtractionDelay(
       sourceMessages.length,
       sourceMessages[0].ts,
       sourceMessages.at(-1)!.ts,
       Date.now(),
-      force || hasInstruction,
+      force,
     ) ?? Number.POSITIVE_INFINITY;
-    if (!shouldExtractMemoryBatch(sourceMessages.length, force || hasInstruction, dueDelay)) {
+    if (!shouldExtractMemoryBatch(sourceMessages.length, force, dueDelay)) {
       scheduleMemoryScan(channel, dueDelay);
       return;
     }
@@ -165,7 +160,9 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     const allActiveMemories = await listActiveMemoryContext(channel, 220);
     const activeMemories = allActiveMemories
       .filter((memory) => BASE_MEMORY_LAYERS.has(memory.layer));
-    const activeDajuMemories = allActiveMemories.filter((memory) => memory.perspective === "daju");
+    const activeDajuMemories = allActiveMemories.filter(
+      (memory) => memory.perspective === "daju" && memory.kind === "observation",
+    );
     const activeById = new Map(activeMemories.map((memory) => [memory.id, memory]));
     const activeDajuById = new Map(activeDajuMemories.map((memory) => [memory.id, memory]));
     const output = await chat({
@@ -263,22 +260,20 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       }
 
       const kind = item.kind;
-      if (!item.content || !item.memoryKey || !kind) continue;
-      const layer = kind === "instruction" ? "fact" : "insight";
+      if (!item.content || !item.memoryKey || kind !== "observation") continue;
+      const layer = "insight";
       const subjects = normalizedMemorySubjects(item.subjects ?? []);
       if (subjects.length !== 1 || (target && (target.kind !== kind || target.layer !== layer))) continue;
       const sourceMemoryIds = [...new Set(item.sourceMemoryIds ?? [])]
         .filter((id) => activeById.has(id))
         .slice(0, 20);
-      if (kind === "observation" && sourceMemoryIds.length < 2) continue;
+      if (sourceMemoryIds.length < 2) continue;
 
       const baseTime = sourceMessages.at(-1)?.ts ?? Date.now();
       const suppliedValidHours = Number(item.validHours);
-      const validHours = kind === "observation"
-        ? (Number.isFinite(suppliedValidHours) && suppliedValidHours > 0
-          ? Math.min(24 * 365, suppliedValidHours)
-          : 30 * 24)
-        : null;
+      const validHours = Number.isFinite(suppliedValidHours) && suppliedValidHours > 0
+        ? Math.min(24 * 365, suppliedValidHours)
+        : 30 * 24;
       const stored = await addMemory({
         layer,
         perspective: "daju",
@@ -288,9 +283,9 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         subjects,
         speakers: [],
         content: item.content,
-        category: kind === "instruction" ? "大橘行为要求" : "大橘观察",
-        confidence: kind === "instruction" ? 0.98 : item.confidence,
-        importance: item.importance ?? (kind === "instruction" ? 5 : 3),
+        category: "大橘观察",
+        confidence: item.confidence,
+        importance: item.importance ?? 3,
         validFrom: baseTime,
         validUntil: validHours ? baseTime + validHours * 60 * 60 * 1000 : null,
         metadata: {
@@ -304,7 +299,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       });
       if (stored) {
         saved += 1;
-        if (kind === "observation") await archiveSiblingMemories(stored.id, false);
+        await archiveSiblingMemories(stored.id, false);
       }
     }
 
@@ -351,8 +346,7 @@ async function planMemoryScan(channel: string): Promise<void> {
     sourceMessages[0].ts,
     sourceMessages.at(-1)!.ts,
   );
-  const hasInstruction = sourceMessages.some((message) => hasDajuInstructionSignal(message.text));
-  if (delay !== null) scheduleMemoryScan(channel, hasInstruction ? 0 : delay);
+  if (delay !== null) scheduleMemoryScan(channel, delay);
 }
 
 function schedulePlanning(channel: string): void {

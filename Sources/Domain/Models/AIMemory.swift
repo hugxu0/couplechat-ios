@@ -50,14 +50,6 @@ enum AIMemoryPerspective: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
-        switch self {
-        case .all: return "全部记忆"
-        case .people: return "关于主人"
-        case .daju: return "大橘自己"
-        }
-    }
-
     var apiValue: String? { self == .all ? nil : rawValue }
 }
 
@@ -68,39 +60,6 @@ enum AIMemoryKind: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
-        switch self {
-        case .standard: return "主人记忆"
-        case .instruction: return "主人要求"
-        case .observation: return "大橘观察"
-        }
-    }
-}
-
-enum AIMemoryKindFilter: String, CaseIterable, Identifiable {
-    case all
-    case standard
-    case instruction
-    case observation
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .all: return "全部类型"
-        case .standard: return "主人记忆"
-        case .instruction: return "主人要求"
-        case .observation: return "大橘观察"
-        }
-    }
-
-    var apiValue: AIMemoryKind? {
-        switch self {
-        case .all: return nil
-        case .standard: return .standard
-        case .instruction: return .instruction
-        case .observation: return .observation
-        }
-    }
 }
 
 enum AIMemoryStatusFilter: String, CaseIterable, Identifiable {
@@ -158,8 +117,6 @@ struct AIMemoryItem: Codable, Identifiable, Equatable {
     let version: Int?
 
     var isShared: Bool { scope == "couple" }
-    var perspectiveTitle: String { perspective == .daju ? "大橘自己" : "关于主人" }
-    var kindTitle: String { kind.title }
     var visibilityTitle: String { isShared ? "两人可见" : "仅自己可见" }
     var logicalSubject: String {
         if subjects.contains("both") || (subjects.contains("xu") && subjects.contains("si")) {

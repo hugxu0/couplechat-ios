@@ -3,11 +3,8 @@ import SwiftUI
 struct AIMemoryControlCenterView: View {
     @EnvironmentObject private var store: ChatStore
 
-    @State private var scope = AIMemoryScopeFilter.all
-    @State private var perspective = AIMemoryPerspective.all
-    @State private var subject = AIMemorySubjectFilter.all
-    @State private var kind = AIMemoryKindFilter.all
-    @State private var status = AIMemoryStatusFilter.active
+    @State private var primaryFilter = AIMemoryPrimaryFilter.all
+    @State private var dajuKind = AIMemoryKind.instruction
     @State private var layer: AIMemoryLayer?
     @State private var searchText = ""
     @State private var snapshot = AIMemorySnapshot(items: [], stats: .empty)
@@ -23,7 +20,6 @@ struct AIMemoryControlCenterView: View {
                     isRefreshing: refreshingScope != nil)
             }
             scopeSection
-            filterSection
             categorySection
             memoriesSection
         }
@@ -34,7 +30,7 @@ struct AIMemoryControlCenterView: View {
         .refreshable { await load() }
         .toolbar { refreshMenu }
         .task(id: LoadKey(
-            scope: scope, perspective: perspective, subject: subject, kind: kind, status: status,
+            primaryFilter: primaryFilter, dajuKind: dajuKind,
             layer: layer, query: searchText)) {
             if !searchText.isEmpty {
                 try? await Task.sleep(nanoseconds: 280_000_000)
@@ -50,39 +46,12 @@ struct AIMemoryControlCenterView: View {
 
     private var scopeSection: some View {
         Section {
-            Picker("记忆范围", selection: $scope) {
-                ForEach(AIMemoryScopeFilter.allCases) { filter in
+            Picker("记忆范围", selection: $primaryFilter) {
+                ForEach(AIMemoryPrimaryFilter.allCases) { filter in
                     Text(filter.title).tag(filter)
                 }
             }
             .pickerStyle(.segmented)
-        } footer: {
-            Text("可见范围、记忆视角和人物归属是三回事：‘大橘自己’里包含主人给大橘的要求，以及大橘带有效期的观察。")
-        }
-    }
-
-    private var filterSection: some View {
-        Section("筛选") {
-            Picker("记忆视角", selection: $perspective) {
-                ForEach(AIMemoryPerspective.allCases) { filter in
-                    Text(filter.title).tag(filter)
-                }
-            }
-            Picker("人物归属", selection: $subject) {
-                ForEach(AIMemorySubjectFilter.allCases) { filter in
-                    Text(filter.title).tag(filter)
-                }
-            }
-            Picker("记录状态", selection: $status) {
-                ForEach(AIMemoryStatusFilter.allCases) { filter in
-                    Text(filter.title).tag(filter)
-                }
-            }
-            Picker("记忆类型", selection: $kind) {
-                ForEach(AIMemoryKindFilter.allCases) { filter in
-                    Text(filter.title).tag(filter)
-                }
-            }
         }
     }
 
@@ -90,10 +59,19 @@ struct AIMemoryControlCenterView: View {
         Section("分类") {
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
-                    AIMemoryLayerChip(layer: nil, isSelected: layer == nil) { layer = nil }
-                    ForEach(AIMemoryLayer.allCases) { candidate in
-                        AIMemoryLayerChip(layer: candidate, isSelected: layer == candidate) {
-                            layer = candidate
+                    if primaryFilter == .daju {
+                        AIMemoryKindChip(kind: .instruction, isSelected: dajuKind == .instruction) {
+                            dajuKind = .instruction
+                        }
+                        AIMemoryKindChip(kind: .observation, isSelected: dajuKind == .observation) {
+                            dajuKind = .observation
+                        }
+                    } else {
+                        AIMemoryLayerChip(layer: nil, isSelected: layer == nil) { layer = nil }
+                        ForEach(AIMemoryLayer.allCases) { candidate in
+                            AIMemoryLayerChip(layer: candidate, isSelected: layer == candidate) {
+                                layer = candidate
+                            }
                         }
                     }
                 }
@@ -116,8 +94,7 @@ struct AIMemoryControlCenterView: View {
                     .padding(.vertical, 24)
             } else if snapshot.items.isEmpty {
                 AIMemoryEmptyState(
-                    hasFilter: layer != nil || perspective != .all || kind != .all || subject != .all
-                        || status != .active || !searchText.isEmpty)
+                    hasFilter: primaryFilter == .daju || layer != nil || !searchText.isEmpty)
             } else {
                 ForEach(snapshot.items) { item in
                     NavigationLink {
@@ -171,13 +148,11 @@ struct AIMemoryControlCenterView: View {
         defer { isLoading = false }
         do {
             snapshot = try await store.memoryControl.fetch(
-                scope: scope,
-                layer: layer,
+                scope: primaryFilter.scope,
+                layer: primaryFilter == .daju ? nil : layer,
                 query: searchText,
-                perspective: perspective,
-                kind: kind.apiValue,
-                subject: subject.apiValue(for: store.session?.username ?? "xu"),
-                status: status,
+                perspective: primaryFilter.perspective,
+                kind: primaryFilter == .daju ? dajuKind : .standard,
                 token: token)
             errorMessage = nil
         } catch is CancellationError {
@@ -195,13 +170,11 @@ struct AIMemoryControlCenterView: View {
         defer { isLoading = false }
         do {
             let page = try await store.memoryControl.fetch(
-                scope: scope,
-                layer: layer,
+                scope: primaryFilter.scope,
+                layer: primaryFilter == .daju ? nil : layer,
                 query: searchText,
-                perspective: perspective,
-                kind: kind.apiValue,
-                subject: subject.apiValue(for: store.session?.username ?? "xu"),
-                status: status,
+                perspective: primaryFilter.perspective,
+                kind: primaryFilter == .daju ? dajuKind : .standard,
                 token: token,
                 cursor: cursor)
             let known = Set(snapshot.items.map(\.id))
@@ -230,11 +203,36 @@ struct AIMemoryControlCenterView: View {
 }
 
 private struct LoadKey: Hashable {
-    let scope: AIMemoryScopeFilter
-    let perspective: AIMemoryPerspective
-    let subject: AIMemorySubjectFilter
-    let kind: AIMemoryKindFilter
-    let status: AIMemoryStatusFilter
+    let primaryFilter: AIMemoryPrimaryFilter
+    let dajuKind: AIMemoryKind
     let layer: AIMemoryLayer?
     let query: String
+}
+
+private enum AIMemoryPrimaryFilter: String, CaseIterable, Identifiable {
+    case all
+    case shared
+    case privateMemory
+    case daju
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "全部"
+        case .shared: return "两人可见"
+        case .privateMemory: return "仅自己"
+        case .daju: return "大橘"
+        }
+    }
+
+    var scope: AIMemoryScopeFilter {
+        switch self {
+        case .all, .daju: return .all
+        case .shared: return .shared
+        case .privateMemory: return .privateMemory
+        }
+    }
+
+    var perspective: AIMemoryPerspective { self == .daju ? .daju : .people }
 }

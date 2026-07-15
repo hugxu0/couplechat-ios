@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { all, get, type MessageRow } from "../../db";
 import { accounts } from "../accounts";
-import { searchMemory, visibleMemoryScopes } from "../memory/store";
+import { addMemory, searchMemory, visibleMemoryScopes } from "../memory/store";
 import { recordAgentTool, type AgentToolRun } from "./runContext";
 import { rankChatSearchRows, searchTerms, type ChatSearchMode } from "../conversation/search";
 import { registerExternalTools } from "./externalTools";
@@ -28,7 +28,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
     { name: "couplechat-ai-tools", version: "0.1.0" },
     {
       instructions:
-        "按问题类型选择结构化记忆：事实 search_facts、经历 search_events、计划 search_plans、近况 get_current_states、近期关系 get_relationship_context、互动理解 get_current_insight；涉及大橘行为规则时读取 get_daju_instructions，涉及大橘观察或复盘时读取 get_daju_observations。人物查询按 search_facts → search_events → search_chat_messages 回退，facts 为空时不能跳过 events。结构化记忆命中后直接使用；只有用户明确要求逐字原话，或 facts/events 都为空时，才搜索原始聊天。任何记忆都不能跨越当前频道权限。",
+        "按问题类型选择结构化记忆：事实 search_facts、经历 search_events、计划 search_plans、近况 get_current_states、近期关系 get_relationship_context、互动理解 get_current_insight；当前主人明确提出长期的大橘行为要求时直接调用 save_daju_instruction，涉及已有大橘行为规则时读取 get_daju_instructions，涉及大橘观察或复盘时读取 get_daju_observations。人物查询按 search_facts → search_events → search_chat_messages 回退，facts 为空时不能跳过 events。结构化记忆命中后直接使用；只有用户明确要求逐字原话，或 facts/events 都为空时，才搜索原始聊天。任何记忆都不能跨越当前频道权限。",
     },
   );
 
@@ -358,6 +358,59 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
         ...memoryResult("insights", rows),
       };
     })));
+
+  server.registerTool(
+    "save_daju_instruction",
+    {
+      description: "把当前主人在本轮消息中明确提出、以后持续生效的大橘行为要求直接保存或按主题更新。适用于称呼、语气、回复方式、互动边界等长期要求；只影响本次回答的临时格式、普通任务、玩笑、问句、推断偏好，以及主人明确说不要记住的内容不得保存。topic 是稳定的简短语义主题，同一主题更新时必须复用，例如‘回复长度’或‘称呼方式’。存储范围由当前聊天自动决定，不能自行选择。",
+      inputSchema: z.object({
+        topic: z.string().trim().min(2).max(80).describe("稳定的简短语义主题；同一类要求更新时复用同一主题"),
+        instruction: z.string().trim().min(3).max(600).describe("脱离当前对话也能独立理解的明确行为要求"),
+        appliesTo: z.enum(["current_user", "both"]).optional()
+          .describe("默认只表示当前主人的要求；只有主人明确说对两个人都适用时才用 both"),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (args) => jsonResult(await recordAgentTool(run, "save_daju_instruction", args, async () => {
+      if (!run.identity.allowDajuInstructionWrite) {
+        throw new Error("后台候选不能修改大橘指令");
+      }
+      if (!["couple", `ai:${run.identity.requesterUsername}`].includes(run.identity.storedChannel)) {
+        throw new Error("当前聊天不能保存大橘指令");
+      }
+      const actor = await get<{ id: string }>(
+        "SELECT id FROM accounts WHERE username = ? AND status = 'active'",
+        [run.identity.requesterUsername],
+      );
+      if (!actor) throw new Error("当前主人身份不可用");
+      const subjects = args.appliesTo === "both" ? ["both"] : [run.identity.requesterUsername];
+      const item = await addMemory({
+        layer: "fact",
+        perspective: "daju",
+        kind: "instruction",
+        scope: run.identity.storedChannel,
+        memoryKey: `daju.instruction.${args.topic}`,
+        subjects,
+        speakers: [run.identity.requesterUsername],
+        content: args.instruction,
+        category: "大橘行为要求",
+        confidence: 1,
+        importance: 5,
+        validFrom: Date.now(),
+        validUntil: null,
+        metadata: {
+          savedDirectlyByAgent: true,
+          requestedBy: run.identity.requesterUsername,
+        },
+      }, { actorAccountId: actor.id, restoreExcluded: true });
+      if (!item) throw new Error("大橘指令保存失败");
+      return {
+        saved: true,
+        updatedExistingTopic: Boolean(item.supersedesId),
+        instruction: memoryView(item),
+      };
+    })),
+  );
 
   server.registerTool(
     "get_daju_instructions",
