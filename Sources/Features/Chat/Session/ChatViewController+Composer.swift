@@ -21,6 +21,10 @@ extension ChatViewController {
         let usesLightContent = ChatSurfaceTone(luminance: luminance).usesLightContent
         guard composerUsesLightContent != usesLightContent else { return }
         composerUsesLightContent = usesLightContent
+        bottomDockBackground.setGlassTone(
+            dark: usesLightContent,
+            tintAlpha: usesLightContent ? 0.08 : 0.06,
+            borderAlpha: 0)
         composer.applyTheme(theme, usesLightContent: usesLightContent)
         stickerPanel?.applyTheme(
             accentColor: theme.accent.uiColor,
@@ -97,6 +101,7 @@ extension ChatViewController {
         }
         keyboardTransitionGeneration += 1
         let transitionGeneration = keyboardTransitionGeneration
+        keyboardLayoutAnimationActive = true
         keyboardOverlap = overlap
         if overlap > 0, isReplacingInputSurface {
             panelHeightConstraint.constant = 0
@@ -133,6 +138,10 @@ extension ChatViewController {
             : timelineController.visibleAnchor()
 
         let updates = {
+            if !self.bottomDockUsesScreenBottom {
+                self.bottomConstraint.constant = -(
+                    self.inputDockSpacing + max(self.keyboardOverlap, self.view.safeAreaInsets.bottom))
+            }
             self.view.layoutIfNeeded()
             self.timelineController.setInsets(top: self.topOverlayInset, bottom: 0)
             self.collectionView.layoutIfNeeded()
@@ -147,6 +156,7 @@ extension ChatViewController {
             UIView.performWithoutAnimation(updates)
             if transitionGeneration == keyboardTransitionGeneration {
                 keyboardTransitionMaintainsLatest = nil
+                keyboardLayoutAnimationActive = false
             }
             return
         }
@@ -162,6 +172,7 @@ extension ChatViewController {
                 self.timelineController.settleFollowingLatestIfNeeded()
                 if transitionGeneration == self.keyboardTransitionGeneration {
                     self.keyboardTransitionMaintainsLatest = nil
+                    self.keyboardLayoutAnimationActive = false
                 }
             })
     }
@@ -256,12 +267,14 @@ extension ChatViewController {
     }
 
     private func updateBottomDockAnchor(usesScreenBottom: Bool) {
+        bottomDockUsesScreenBottom = usesScreenBottom
         bottomConstraint.isActive = false
         bottomConstraint = usesScreenBottom
             ? bottomStack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
             : bottomStack.bottomAnchor.constraint(
-                equalTo: view.keyboardLayoutGuide.topAnchor,
-                constant: -inputDockSpacing)
+                equalTo: view.bottomAnchor,
+                constant: -(
+                    inputDockSpacing + max(keyboardOverlap, view.safeAreaInsets.bottom)))
         bottomConstraint.isActive = true
     }
 

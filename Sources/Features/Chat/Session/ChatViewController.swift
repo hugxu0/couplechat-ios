@@ -21,6 +21,7 @@ final class ChatViewController: UIViewController {
     let voiceTranscriptRepository = VoiceTranscriptRepository()
     var timelineController: ChatTimelineController!
     var collectionView: UICollectionView!
+    let bottomDockBackground = ChatGlassView(style: .systemUltraThinMaterial, cornerRadius: 0)
     let bottomStack = UIStackView()
     let panelContainer = UIView()
     let jumpToBottomBackground = ChatGlassView(style: .systemThinMaterial, cornerRadius: 21)
@@ -39,6 +40,8 @@ final class ChatViewController: UIViewController {
     /// 固定变化开始前的“是否贴底”意图，避免首帧几何变化把它误判为已离底。
     var keyboardTransitionMaintainsLatest: Bool?
     var keyboardTransitionGeneration = 0
+    var keyboardLayoutAnimationActive = false
+    var bottomDockUsesScreenBottom = false
     var topOverlayInset: CGFloat = 96
     var composerUsesLightContent = false
     var dynamicallySamplesComposerTone = false
@@ -229,7 +232,9 @@ final class ChatViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         timelineController.invalidateLayoutIfNeeded()
-        applyInputLayout(duration: 0, curve: .curveEaseOut)
+        if !keyboardLayoutAnimationActive {
+            applyInputLayout(duration: 0, curve: .curveEaseOut)
+        }
         refreshComposerSurfaceTone()
         timelineController.scheduleInitialPositioning()
     }
@@ -380,6 +385,14 @@ final class ChatViewController: UIViewController {
         bottomStack.axis = .vertical
         bottomStack.spacing = 0
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
+        bottomDockBackground.translatesAutoresizingMaskIntoConstraints = false
+        bottomDockBackground.isUserInteractionEnabled = false
+        bottomDockBackground.update(cornerRadius: 0, tintAlpha: 0.06, borderAlpha: 0)
+        bottomDockBackground.setGlassTone(
+            dark: composerUsesLightContent,
+            tintAlpha: composerUsesLightContent ? 0.08 : 0.06,
+            borderAlpha: 0)
+        view.addSubview(bottomDockBackground)
         view.addSubview(bottomStack)
         composer.translatesAutoresizingMaskIntoConstraints = false
         panelContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -399,9 +412,13 @@ final class ChatViewController: UIViewController {
         panelHeightConstraint = panelContainer.heightAnchor.constraint(equalToConstant: 0)
         panelHeightConstraint.isActive = true
         bottomConstraint = bottomStack.bottomAnchor.constraint(
-            equalTo: view.keyboardLayoutGuide.topAnchor,
-            constant: -inputDockSpacing)
+            equalTo: view.bottomAnchor,
+            constant: -(inputDockSpacing + max(view.safeAreaInsets.bottom, keyboardOverlap)))
         NSLayoutConstraint.activate([
+            bottomDockBackground.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomDockBackground.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomDockBackground.topAnchor.constraint(equalTo: bottomStack.topAnchor),
+            bottomDockBackground.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
