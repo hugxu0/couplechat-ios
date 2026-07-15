@@ -202,6 +202,19 @@ final class ChatTimelineController: NSObject {
         scrollState.hasNewMessagesBelow = false
     }
 
+    /// 搜索/按日期跳转会切换到一个历史窗口。开始跳转前必须取消此前
+    /// 所有贴底动画和待恢复锚点，否则 followLatest 的异步收尾可能在
+    /// 定位完成后再次把列表拉到最底部。
+    func beginHistoricalJump() {
+        completeFollowingLatest()
+        collectionView.layer.removeAllAnimations()
+        pendingTopAnchor = nil
+        dragStartAnchor = nil
+        stickToLatestAfterNextReload = false
+        browsingHistoricalWindow = true
+        scrollState.hasNewMessagesBelow = false
+    }
+
     func returnToLatest(animated: Bool) {
         stickToLatestAfterNextReload = false
         browsingHistoricalWindow = false

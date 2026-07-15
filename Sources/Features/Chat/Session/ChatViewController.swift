@@ -321,11 +321,7 @@ final class ChatViewController: UIViewController {
     }
 
     func completeJump(to target: ChatMessage) {
-        timelineController.browsingHistoricalWindow = true
-        // 搜索跳转优先级高于此前任何一次发送/实时消息的贴底意图，
-        // 否则下一次时间线刷新可能把刚定位好的历史窗口拉回末尾。
-        timelineController.stickToLatestAfterNextReload = false
-        timelineController.clearNewMessagesBelow()
+        timelineController.beginHistoricalJump()
         initialLatestCorrectionPending = false
         reloadTimeline(animated: false)
         view.layoutIfNeeded()

@@ -119,7 +119,20 @@ extension ChatViewController {
         // 键盘模式的 bottomStack 本身位于 keyboardLayoutGuide 上方 8pt；
         // 面板模式直接贴屏幕底部，列表 inset 只能加入实际存在的锚点间距。
         let anchorSpacing = panelContainer.isHidden ? inputDockSpacing : 0
-        let bottomInset = dockHeight + coveredBottom + anchorSpacing
+        let estimatedBottomInset = dockHeight + coveredBottom + anchorSpacing
+        // SwiftUI 宿主忽略安全区后，UIView.safeAreaInsets 与 keyboardLayoutGuide
+        // 在键盘收起时不一定处于同一坐标系。直接读取输入栏实际顶部，确保
+        // 最后一条消息的底部永远停在输入栏上方，而不是落到它背后。
+        let measuredBottomInset: CGFloat
+        if bottomStack.bounds.height > 0,
+           bottomStack.frame.minY > 0,
+           bottomStack.frame.minY < view.bounds.maxY {
+            measuredBottomInset = view.bounds.maxY - bottomStack.frame.minY
+        } else {
+            measuredBottomInset = 0
+        }
+        let messageBottomClearance: CGFloat = 8
+        let bottomInset = max(estimatedBottomInset, measuredBottomInset) + messageBottomClearance
         let bottomInsetDelta = bottomInset - currentListBottomInset
         currentListBottomInset = bottomInset
 
@@ -146,7 +159,10 @@ extension ChatViewController {
             options: [curve, .beginFromCurrentState, .allowUserInteraction],
             animations: updates,
             completion: { [weak self] _ in
-                self?.timelineController.settleFollowingLatestIfNeeded()
+                guard let self else { return }
+                // 动画结束后使用最终 frame 再校准一次；duration=0 不会递归动画。
+                self.applyInputLayout(duration: 0, curve: .curveEaseOut)
+                self.timelineController.settleFollowingLatestIfNeeded()
             })
     }
 
