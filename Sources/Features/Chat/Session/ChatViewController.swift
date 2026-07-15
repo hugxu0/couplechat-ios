@@ -35,7 +35,6 @@ final class ChatViewController: UIViewController {
     let inputDockSpacing: CGFloat = 8
     var keyboardOverlap: CGFloat = 0
     var lastVisibleKeyboardOverlap: CGFloat = 300
-    var currentListBottomInset: CGFloat = 0
     var topOverlayInset: CGFloat = 96
     var composerUsesLightContent = false
     var dynamicallySamplesComposerTone = false
@@ -57,7 +56,9 @@ final class ChatViewController: UIViewController {
     var pendingMedia: [ChatPendingMedia] = []
     var photoPickerPurpose: PhotoPickerPurpose = .messageMedia
     var isChatVisible = false
-    var initialLatestCorrectionPending = false
+    var hasCompletedEntryBootstrap = false
+    var entryBootstrapTask: Task<Void, Never>?
+    var jumpTask: Task<Void, Never>?
 
     var voicePlayer: AVAudioPlayer?
     var voicePlaybackTimer: Timer?
@@ -113,6 +114,8 @@ final class ChatViewController: UIViewController {
         voicePlayer?.pause()
         voicePlaybackLoadTask?.cancel()
         voicePlaybackTimer?.invalidate()
+        entryBootstrapTask?.cancel()
+        jumpTask?.cancel()
     }
 
     override func viewDidLoad() {
@@ -156,22 +159,18 @@ final class ChatViewController: UIViewController {
             selector: #selector(audioSessionRouteChanged(_:)),
             name: AVAudioSession.routeChangeNotification,
             object: AVAudioSession.sharedInstance())
-        reloadTimeline(animated: false)
-        Task { [weak self] in
-            guard let self else { return }
-            await store.ensureLocalMessages(channel)
-            reloadTimeline(animated: false)
-        }
+        collectionView.alpha = 0
+        beginEntryBootstrap()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // 先在页面真正显示前完成 bottom inset 与初始贴底，避免用户看到
-        // 输入栏出现后列表再向上/向下挪动。
-        initialLatestCorrectionPending = true
         applyInputLayout(duration: 0, curve: .curveEaseOut)
+        guard hasCompletedEntryBootstrap else {
+            collectionView.alpha = 0
+            return
+        }
         timelineController.scheduleInitialPositioning()
-        correctInitialLatestPositionIfNeeded()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -179,7 +178,6 @@ final class ChatViewController: UIViewController {
         isChatVisible = true
         applyInputLayout(duration: 0, curve: .curveEaseOut)
         timelineController.scheduleInitialPositioning()
-        correctInitialLatestPositionIfNeeded()
         DispatchQueue.main.async { [weak self] in self?.reportDisplayedMessagesAsRead() }
     }
 
@@ -230,7 +228,6 @@ final class ChatViewController: UIViewController {
         applyInputLayout(duration: 0, curve: .curveEaseOut)
         refreshComposerSurfaceTone()
         timelineController.scheduleInitialPositioning()
-        correctInitialLatestPositionIfNeeded()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -304,17 +301,26 @@ final class ChatViewController: UIViewController {
     func performJump(_ command: ChatSessionJumpCommand) {
         guard activeJumpID != command.id else { return }
         activeJumpID = command.id
+        entryBootstrapTask?.cancel()
+        hasCompletedEntryBootstrap = true
+        collectionView.alpha = 1
+        jumpTask?.cancel()
+        // 在任何异步读取开始前就关闭所有贴底收尾；否则 store 更新先到达时，
+        // 旧的 followLatest completion 仍可能覆盖搜索定位。
+        timelineController.beginHistoricalJump()
         switch command.action {
         case .message(let message):
-            Task { [weak self] in
+            jumpTask = Task { [weak self] in
                 guard let self else { return }
                 _ = await store.ensureMessageLoaded(message, channel: channel)
+                guard !Task.isCancelled, activeJumpID == command.id else { return }
                 completeJump(to: message)
             }
         case .date(let date):
-            Task { @MainActor [weak self] in
+            jumpTask = Task { @MainActor [weak self] in
                 guard let self,
                       let target = await store.ensureDateLoaded(date, channel: channel) else { return }
+                guard !Task.isCancelled, activeJumpID == command.id else { return }
                 completeJump(to: target)
             }
         }
@@ -322,7 +328,6 @@ final class ChatViewController: UIViewController {
 
     func completeJump(to target: ChatMessage) {
         timelineController.beginHistoricalJump()
-        initialLatestCorrectionPending = false
         reloadTimeline(animated: false)
         view.layoutIfNeeded()
         DispatchQueue.main.async { [weak self] in
@@ -331,37 +336,29 @@ final class ChatViewController: UIViewController {
         }
     }
 
-    /// 输入栏是浮在列表上方的，首次进入页面时再做一次“贴底”校正，
-    /// 确保 composer 的最终高度已经计入 bottom inset，最后一条消息不会被遮住。
-    func correctInitialLatestPositionIfNeeded() {
-        guard initialLatestCorrectionPending,
-              timelineController.hasInitialPosition,
-              isNearLatestWindow(),
-              viewIfLoaded?.window != nil,
-              !collectionView.isTracking,
-              !collectionView.isDragging,
-              !collectionView.isDecelerating else { return }
-        let apply = { [weak self] in
-            guard let self,
-                  self.initialLatestCorrectionPending,
-                  self.isNearLatestWindow(),
-                  self.viewIfLoaded?.window != nil,
-                  !self.collectionView.isTracking,
-                  !self.collectionView.isDragging,
-                  !self.collectionView.isDecelerating else { return }
-            self.initialLatestCorrectionPending = false
-            self.timelineController.completeFollowingLatest()
-            UIView.performWithoutAnimation {
-                self.collectionView.layer.removeAllAnimations()
-                self.applyInputLayout(duration: 0, curve: .curveEaseOut)
-                self.timelineController.scrollToBottom(animated: false)
-                self.updateJumpToBottomVisibility(animated: false)
-            }
+    /// 新控制器只执行一次：先恢复真实的最新消息窗口，再完成布局和贴底，最后
+    /// 才显示列表。这样搜索留下的历史切片不会污染下次进入，也看不到二次校正。
+    func beginEntryBootstrap() {
+        entryBootstrapTask?.cancel()
+        entryBootstrapTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await store.restoreLatestMessages(channel)
+            guard !Task.isCancelled else { return }
+
+            timelineController.completeFollowingLatest()
+            timelineController.browsingHistoricalWindow = false
+            reloadTimeline(animated: false, preservingWindowState: true)
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            applyInputLayout(duration: 0, curve: .curveEaseOut, forceBottom: true)
+
+            hasCompletedEntryBootstrap = true
+            timelineController.scheduleInitialPositioning()
+            timelineController.scrollToBottom(animated: false)
+            timelineController.clearNewMessagesBelow()
+            collectionView.alpha = 1
+            updateJumpToBottomVisibility(animated: false)
         }
-        // 首次进入时在 viewDidAppear 之前同步完成；已经可见的页面才延后一帧，
-        // 但仍使用 performWithoutAnimation，避免用户看到贴底过程。
-        if isChatVisible { DispatchQueue.main.async { apply() } }
-        else { apply() }
     }
 
     func buildTimeline() {
@@ -404,7 +401,11 @@ final class ChatViewController: UIViewController {
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            // 时间线视口在结构上就截止于输入栏上方；不再依赖全屏列表叠加
+            // 一个估算 bottomInset，任何安全区/键盘/面板高度都不会盖住最后一条。
+            collectionView.bottomAnchor.constraint(
+                equalTo: bottomStack.topAnchor,
+                constant: -inputDockSpacing),
             bottomStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomConstraint,

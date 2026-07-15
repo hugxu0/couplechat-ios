@@ -164,7 +164,8 @@ final class ChatTimelineController: NSObject {
             wasNearLatestBottom: wasNearLatestBottom,
             lastMessageChanged: oldLast != lastMessageId(in: items),
             messageCountIncreased: messageCount(in: items) > oldCount,
-            wasShowingAIActivity: wasShowingActivity)
+            wasShowingAIActivity: wasShowingActivity,
+            isHistoricalWindow: browsingHistoricalWindow)
         execute(decision, oldAnchor: oldAnchor, animated: animated)
         scheduleInitialPositioning()
     }
@@ -176,6 +177,12 @@ final class ChatTimelineController: NSObject {
 
     var hasInitialPosition: Bool { scrollState.didInitialPosition }
 
+    /// 与当前几何无关的跟随意图。输入栏/键盘改变 viewport 高度后，旧 offset
+    /// 可能已经不再满足 isNearBottom；此状态仍能把最新消息保持在新底边。
+    var maintainsLatestPosition: Bool {
+        scrollState.isAtLatestWindow && scrollState.isNearBottom
+    }
+
     var shouldShowJumpToLatest: Bool {
         !suppressesJumpToLatest && !(isNearBottom() && isNearLatestWindow())
     }
@@ -185,6 +192,13 @@ final class ChatTimelineController: NSObject {
     /// 在时间线数据刷新前记录收消息时的真实阅读位置。
     /// UICollectionView reload 后 contentSize 已改变，届时再判断是否贴底会丢失原始意图。
     func registerReceivedMessage(isMine: Bool) {
+        // 历史窗口中的追加/实时回调都不能因为“自己发的消息”而直接触发
+        // followLatest；搜索定位的阅读位置优先。真正回到最新由用户滚到底部
+        // 或点击按钮完成。
+        if browsingHistoricalWindow {
+            scrollState.hasNewMessagesBelow = true
+            return
+        }
         scrollState.isNearBottom = isNearBottom()
         scrollState.isAtLatestWindow = isNearLatestWindow()
         let commands = ChatScrollReducer.reduce(
@@ -223,6 +237,10 @@ final class ChatTimelineController: NSObject {
     }
 
     func setInsets(top: CGFloat, bottom: CGFloat) {
+        guard abs(topInset - top) > 0.5
+                || abs(bottomInset - bottom) > 0.5
+                || abs(collectionView.contentInset.top - top) > 0.5
+                || abs(collectionView.contentInset.bottom - bottom) > 0.5 else { return }
         topInset = top
         bottomInset = bottom
         collectionView.contentInset = UIEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
@@ -250,8 +268,7 @@ final class ChatTimelineController: NSObject {
         guard !scrollState.didInitialPosition,
               !items.isEmpty,
               collectionView.bounds.width > 0,
-              collectionView.bounds.height > 0,
-              bottomInset > 0 else { return }
+              collectionView.bounds.height > 0 else { return }
         collectionView.collectionViewLayout.invalidateLayout()
         collectionView.layoutIfNeeded()
         let commands = ChatScrollReducer.reduce(state: &scrollState, event: .initialContent)

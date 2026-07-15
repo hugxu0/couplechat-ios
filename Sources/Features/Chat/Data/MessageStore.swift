@@ -191,16 +191,29 @@ final class MessageStore: ObservableObject {
 
     @discardableResult
     func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) async -> Bool {
-        if messages(for: channel).contains(where: { $0.id == target.id }) { return true }
-        let window = await persistence.fetchMessagesAround(
-            channel: channel.rawValue, centerTimestamp: target.ts, beforeLimit: 36, afterLimit: 28)
-        if !window.isEmpty {
-            updateMessages(channel) { list in
-                list = ChatMessageWindowing.mergedWindow(window, with: list, around: target.id)
+        // 即使命中消息已经在内存，也必须重建它附近的连续窗口。此前的直接返回
+        // 会保留旧版搜索产生的「历史片段 + 最新片段」断层。
+        var window = await persistence.fetchMessagesAround(
+            channel: channel.rawValue, centerTimestamp: target.ts, beforeLimit: 40, afterLimit: 60)
+        if !window.contains(where: { $0.id == target.id }), socketProvider?.isConnected == true {
+            let remote = await fetchRemoteMessages(
+                MessagePageRequest(channel: channel, around: target.ts, limit: 100),
+                context: "ensureMessageAround:\(channel.rawValue)")
+            if !remote.isEmpty {
+                _ = await persistence.insertMessages(remote + [target])
+                window = await persistence.fetchMessagesAround(
+                    channel: channel.rawValue,
+                    centerTimestamp: target.ts,
+                    beforeLimit: 40,
+                    afterLimit: 60)
             }
         }
-        if !messages(for: channel).contains(where: { $0.id == target.id }) {
-            upsert(target, in: channel)
+        if !window.contains(where: { $0.id == target.id }) {
+            window.append(target)
+            window.sort { $0.ts == $1.ts ? $0.id < $1.id : $0.ts < $1.ts }
+        }
+        updateMessages(channel) { list in
+            list = ChatMessageWindowing.mergedWindow(window, with: list, around: target.id)
         }
         return messages(for: channel).contains(where: { $0.id == target.id })
     }
@@ -256,8 +269,19 @@ final class MessageStore: ObservableObject {
             if !latest.isEmpty { _ = await persistence.insertMessages(latest) }
         }
         guard !latest.isEmpty else { return }
+        let pendingOptimistic: [ChatMessage]
+        if let session = socketProvider?.currentSession {
+            let pending = await outboxProcessor.allPending()
+            pendingOptimistic = pending
+                .filter { $0.channel == channel.rawValue }
+                .map { $0.optimisticMessage(session: session) }
+        } else {
+            pendingOptimistic = []
+        }
         updateMessages(channel) { current in
-            current = ChatMessageWindowing.latestWindow(latest, preservingOutboundFrom: current)
+            current = ChatMessageWindowing.latestWindow(
+                latest,
+                preservingOutboundFrom: current + pendingOptimistic)
         }
         if let lastConfirmed = latest
             .filter({ !$0.pending && !$0.failed })

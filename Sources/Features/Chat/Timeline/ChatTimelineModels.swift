@@ -40,8 +40,16 @@ enum ChatTimelineReloadDecision: Equatable {
         wasNearLatestBottom: Bool,
         lastMessageChanged: Bool,
         messageCountIncreased: Bool,
-        wasShowingAIActivity: Bool
+        wasShowingAIActivity: Bool,
+        isHistoricalWindow: Bool = false
     ) -> ChatTimelineReloadDecision {
+        // 历史窗口的 reload（搜索定位/向下分页）只允许恢复锚点；即使旧
+        // offset 恰好落在旧窗口底部，也不能把新数据解释成“跟随最新”。
+        if isHistoricalWindow {
+            if hasPendingAnchor, hasValidPendingAnchor { return .restorePendingAnchor }
+            if !hasPendingAnchor, hasValidVisibleAnchor { return .restoreVisibleAnchor }
+            return .preservePosition
+        }
         // 发送操作会先清空输入框/媒体预览，这可能触发一次没有新增消息的 reload。
         // 保留贴底意图，直到乐观消息真正进入时间线后再消费。
         if stickToLatest, lastMessageChanged || messageCountIncreased {

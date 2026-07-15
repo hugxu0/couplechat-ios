@@ -109,41 +109,22 @@ extension ChatViewController {
         let isUserScrolling = collectionView.isTracking
             || collectionView.isDragging
             || collectionView.isDecelerating
-        let wasNearBottom = timelineController.isNearBottom()
-        let anchor = wasNearBottom ? nil : timelineController.visibleAnchor()
-        let panelHeight = panelContainer.isHidden ? 0 : panelHeightConstraint.constant
-        let dockHeight = composerHeightConstraint.constant + panelHeight
-        let coveredBottom = panelContainer.isHidden
-            ? max(keyboardOverlap, view.safeAreaInsets.bottom)
-            : 0
-        // 键盘模式的 bottomStack 本身位于 keyboardLayoutGuide 上方 8pt；
-        // 面板模式直接贴屏幕底部，列表 inset 只能加入实际存在的锚点间距。
-        let anchorSpacing = panelContainer.isHidden ? inputDockSpacing : 0
-        let estimatedBottomInset = dockHeight + coveredBottom + anchorSpacing
-        // SwiftUI 宿主忽略安全区后，UIView.safeAreaInsets 与 keyboardLayoutGuide
-        // 在键盘收起时不一定处于同一坐标系。直接读取输入栏实际顶部，确保
-        // 最后一条消息的底部永远停在输入栏上方，而不是落到它背后。
-        let measuredBottomInset: CGFloat
-        if bottomStack.bounds.height > 0,
-           bottomStack.frame.minY > 0,
-           bottomStack.frame.minY < view.bounds.maxY {
-            measuredBottomInset = view.bounds.maxY - bottomStack.frame.minY
-        } else {
-            measuredBottomInset = 0
-        }
-        let messageBottomClearance: CGFloat = 8
-        let bottomInset = max(estimatedBottomInset, measuredBottomInset) + messageBottomClearance
-        let bottomInsetDelta = bottomInset - currentListBottomInset
-        currentListBottomInset = bottomInset
+        // collectionView 的底边已直接约束在 bottomStack 上方。这里保留的是
+        // 用户布局变化前的“逻辑跟随最新”状态，而不是用变化后的几何再猜一次。
+        let shouldMaintainLatest = timelineController.maintainsLatestPosition
+        let shouldForceLatest = forceBottom
+            && !timelineController.browsingHistoricalWindow
+            && shouldMaintainLatest
+        let anchor = shouldMaintainLatest || shouldForceLatest
+            ? nil
+            : timelineController.visibleAnchor()
 
         let updates = {
-            self.timelineController.setInsets(top: self.topOverlayInset, bottom: bottomInset)
             self.view.layoutIfNeeded()
-            if forceBottom {
+            self.timelineController.setInsets(top: self.topOverlayInset, bottom: 0)
+            self.collectionView.layoutIfNeeded()
+            if (shouldMaintainLatest || shouldForceLatest) && !isUserScrolling {
                 self.timelineController.scrollToBottom(animated: false)
-            } else if wasNearBottom && !isUserScrolling {
-                self.timelineController.setClampedContentOffsetY(
-                    self.collectionView.contentOffset.y + bottomInsetDelta)
             } else if let anchor, !isUserScrolling {
                 self.timelineController.restore(anchor)
             }
@@ -311,7 +292,7 @@ extension ChatViewController: ChatComposerViewDelegate {
         let replacingPanel = panelHeightConstraint.constant > 0
         inputState = .editing
         composer.setStickerPanelVisible(false)
-        if !replacingPanel {
+        if !replacingPanel, !timelineController.browsingHistoricalWindow {
             timelineController.scrollToBottom(animated: true)
         }
     }

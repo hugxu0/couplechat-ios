@@ -6,7 +6,9 @@ extension ChatTimelineController {
     }
 
     func captureVisibleAnchor() {
-        pendingTopAnchor = dragStartAnchor ?? visibleAnchor()
+        // 向下分页要固定触发加载这一刻的可视位置；dragStartAnchor 是本次手势
+        // 刚开始时的位置，复用它会在追加消息后把用户拉回很远。
+        pendingTopAnchor = visibleAnchor() ?? dragStartAnchor
     }
 
     func captureDragStartAnchor() {

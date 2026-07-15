@@ -68,8 +68,8 @@ extension ChatViewController {
         }
         let messages = store.messages(for: channel)
         timelineController.reload(messages: messages, activity: nil, animated: animated)
+        if !hasCompletedEntryBootstrap { collectionView.alpha = 0 }
         lastRenderedMessageID = messages.last?.id
-        correctInitialLatestPositionIfNeeded()
         updateJumpToBottomVisibility(animated: animated)
     }
 
@@ -108,20 +108,23 @@ extension ChatViewController {
         suppressesNextPaginationStoreChange = true
         timelineController.captureVisibleAnchor()
         bottomRefreshIndicator.startAnimating()
-        let previousCount = store.messages(for: channel).count
         Task { [weak self] in
             guard let self else { return }
             await store.loadNewerAsync(channel)
-            let countChanged = store.messages(for: channel).count != previousCount
-            if !countChanged {
-                suppressesNextPaginationStoreChange = false
+            // @Published + receive(on: RunLoop.main) 的回调可能晚于本 Task 返回。
+            // 保留分页事务到下一轮投递完成，避免追加页被误判成实时消息。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self else { return }
+                self.suppressesNextPaginationStoreChange = false
+                self.isNewerRefreshing = false
+                self.bottomRefreshIndicator.stopAnimating()
+                // “数据窗口已含最新”不等于“用户已在最新底部”。只有真实 offset
+                // 已自然到达底部时才切换状态，绝不在加载完成时主动贴底。
+                if self.isNearLatestWindow(), self.timelineController.isNearBottom() {
+                    self.timelineController.browsingHistoricalWindow = false
+                }
+                self.updateJumpToBottomVisibility(animated: true)
             }
-            if isNearLatestWindow() {
-                timelineController.browsingHistoricalWindow = false
-            }
-            isNewerRefreshing = false
-            bottomRefreshIndicator.stopAnimating()
-            updateJumpToBottomVisibility(animated: true)
         }
     }
 
@@ -237,12 +240,17 @@ extension ChatViewController: ChatTimelineControllerDelegate {
     }
 
     func timelineDidBeginDragging() {
-        // 用户一旦开始主动浏览，就不要让首次进入页面的贴底校正覆盖手势。
-        initialLatestCorrectionPending = false
         hidePanel(animated: true)
     }
 
     func timelineDidScroll() {
+        if timelineController.browsingHistoricalWindow,
+           !isNewerRefreshing,
+           isNearLatestWindow(),
+           timelineController.isNearBottom() {
+            timelineController.browsingHistoricalWindow = false
+            timelineController.clearNewMessagesBelow()
+        }
         updateJumpToBottomVisibility(animated: false)
     }
 

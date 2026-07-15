@@ -171,6 +171,24 @@ final class MessageStoreMergedWindowTests: XCTestCase {
         XCTAssertEqual(result.count, 90)  // suffix(90)
     }
 
+    func testMergedWindowDoesNotBridgeHistoricalContextToLatestMessages() {
+        let historical = (0..<65).map {
+            makeMessage(id: "h\($0)", ts: Double(1_000 + $0))
+        }
+        let latest = (0..<50).map {
+            makeMessage(id: "n\($0)", ts: Double(100_000 + $0))
+        }
+
+        let result = ChatMessageWindowing.mergedWindow(
+            historical,
+            with: latest,
+            around: "h36")
+
+        XCTAssertEqual(result.map(\.id), historical.map(\.id))
+        XCTAssertFalse(result.contains(where: { $0.id.hasPrefix("n") }))
+        XCTAssertEqual(result.last?.ts, historical.last?.ts)
+    }
+
     private func makeMessage(id: String, ts: Double) -> ChatMessage {
         ChatMessage(dict: [
             "id": id, "sender": "xu", "senderName": "小旭",

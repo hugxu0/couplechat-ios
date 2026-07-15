@@ -78,6 +78,21 @@ final class ChatTimelineReloadDecisionTests: XCTestCase {
         XCTAssertEqual(decision, .followLatest)
     }
 
+    func testHistoricalWindowNeverFallsThroughToFollowLatest() {
+        let decision = ChatTimelineReloadDecision.decide(
+            stickToLatest: false,
+            hasPendingAnchor: true,
+            hasValidPendingAnchor: false,
+            hasValidVisibleAnchor: false,
+            wasNearLatestBottom: true,
+            lastMessageChanged: true,
+            messageCountIncreased: true,
+            wasShowingAIActivity: false,
+            isHistoricalWindow: true)
+
+        XCTAssertEqual(decision, .preservePosition)
+    }
+
     func testReaderAtBottomFollowsNewMessage() {
         let decision = decide(
             pending: false,
