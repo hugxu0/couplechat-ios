@@ -35,6 +35,10 @@ final class ChatViewController: UIViewController {
     let inputDockSpacing: CGFloat = 8
     var keyboardOverlap: CGFloat = 0
     var lastVisibleKeyboardOverlap: CGFloat = 300
+    /// keyboardLayoutGuide 会在键盘动画中逐帧改变时间线高度。动画期间需要
+    /// 固定变化开始前的“是否贴底”意图，避免首帧几何变化把它误判为已离底。
+    var keyboardTransitionMaintainsLatest: Bool?
+    var keyboardTransitionGeneration = 0
     var topOverlayInset: CGFloat = 96
     var composerUsesLightContent = false
     var dynamicallySamplesComposerTone = false

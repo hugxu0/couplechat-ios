@@ -80,6 +80,7 @@ extension ChatViewController {
         let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue ?? .zero
         let frameInView = view.convert(endFrame, from: view.window)
         let overlap = max(0, view.bounds.maxY - frameInView.minY)
+        let keyboardIsAppearing = overlap > keyboardOverlap + 0.5
         if overlap > 0 { lastVisibleKeyboardOverlap = overlap }
         let isReplacingInputSurface = panelHeightConstraint.constant > 0
         if overlap > 0, isReplacingInputSurface,
@@ -87,6 +88,15 @@ extension ChatViewController {
             // 表情面板正在接管键盘空间，忽略键盘尚未完全落下时的中间帧。
             return
         }
+        if keyboardTransitionMaintainsLatest == nil {
+            // 编辑开始时本来就会回到最新；即使 keyboardLayoutGuide 已抢先改变了
+            // 一帧几何，也不能因此丢掉贴底意图。收起键盘时则尊重用户是否已上滑。
+            keyboardTransitionMaintainsLatest = !timelineController.browsingHistoricalWindow
+                && (timelineController.maintainsLatestPosition
+                    || (keyboardIsAppearing && composer.textView.isFirstResponder))
+        }
+        keyboardTransitionGeneration += 1
+        let transitionGeneration = keyboardTransitionGeneration
         keyboardOverlap = overlap
         if overlap > 0, isReplacingInputSurface {
             panelHeightConstraint.constant = 0
@@ -97,13 +107,15 @@ extension ChatViewController {
         applyInputLayout(
             duration: duration,
             curve: curve,
-            forceBottom: !isReplacingInputSurface)
+            forceBottom: !isReplacingInputSurface,
+            keyboardTransitionGeneration: transitionGeneration)
     }
 
     func applyInputLayout(
         duration: TimeInterval,
         curve: UIView.AnimationOptions,
-        forceBottom: Bool = false
+        forceBottom: Bool = false,
+        keyboardTransitionGeneration transitionGeneration: Int? = nil
     ) {
         guard timelineController != nil else { return }
         let isUserScrolling = collectionView.isTracking
@@ -111,7 +123,8 @@ extension ChatViewController {
             || collectionView.isDecelerating
         // collectionView 的底边已直接约束在 bottomStack 上方。这里保留的是
         // 用户布局变化前的“逻辑跟随最新”状态，而不是用变化后的几何再猜一次。
-        let shouldMaintainLatest = timelineController.maintainsLatestPosition
+        let shouldMaintainLatest = keyboardTransitionMaintainsLatest
+            ?? timelineController.maintainsLatestPosition
         let shouldForceLatest = forceBottom
             && !timelineController.browsingHistoricalWindow
             && shouldMaintainLatest
@@ -132,6 +145,9 @@ extension ChatViewController {
         }
         guard duration > 0 else {
             UIView.performWithoutAnimation(updates)
+            if transitionGeneration == keyboardTransitionGeneration {
+                keyboardTransitionMaintainsLatest = nil
+            }
             return
         }
         UIView.animate(
@@ -144,6 +160,9 @@ extension ChatViewController {
                 // 动画结束后使用最终 frame 再校准一次；duration=0 不会递归动画。
                 self.applyInputLayout(duration: 0, curve: .curveEaseOut)
                 self.timelineController.settleFollowingLatestIfNeeded()
+                if transitionGeneration == self.keyboardTransitionGeneration {
+                    self.keyboardTransitionMaintainsLatest = nil
+                }
             })
     }
 
