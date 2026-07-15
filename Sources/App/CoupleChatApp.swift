@@ -68,149 +68,189 @@ struct CoupleChatApp: App {
 }
 
 private struct LaunchSplashView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
     @State private var pulse = false
 
+    private var palette: LaunchSplashPalette {
+        LaunchSplashPalette(colorScheme: colorScheme)
+    }
+
     var body: some View {
         ZStack {
-            Color(red: 0.99, green: 0.94, blue: 0.95)
-                .ignoresSafeArea()
             LinearGradient(
-                colors: [
-                    Color.white.opacity(0.72),
-                    Color(red: 1.0, green: 0.85, blue: 0.89).opacity(0.68),
-                    Color(red: 0.95, green: 0.63, blue: 0.75).opacity(0.46),
-                ],
+                colors: [palette.backgroundTop, palette.backgroundBottom],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
+
             Circle()
-                .fill(Color.white.opacity(0.42))
-                .frame(width: 330, height: 330)
-                .blur(radius: 22)
-                .offset(x: -120, y: -260)
-            Circle()
-                .fill(Color(red: 0.86, green: 0.30, blue: 0.53).opacity(0.16))
-                .frame(width: 300, height: 300)
-                .blur(radius: 34)
-                .offset(x: 150, y: 300)
+                .fill(palette.glow)
+                .frame(width: 390, height: 390)
+                .blur(radius: 56)
+                .scaleEffect(pulse && !reduceMotion ? 1.06 : 0.94)
+                .opacity(pulse && !reduceMotion ? 0.92 : 0.68)
 
             VStack(spacing: 0) {
-                Spacer(minLength: 96)
-
-                SplashConversationMark(pulse: pulse)
-                    .frame(width: 176, height: 146)
-                    .scaleEffect(appeared ? 1 : 0.76)
-                    .opacity(appeared ? 1 : 0)
+                Spacer()
 
                 Text("LONG NIGHT TALK")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .tracking(4.2)
-                    .foregroundStyle(Color(red: 0.56, green: 0.27, blue: 0.38).opacity(0.76))
-                    .padding(.top, 30)
-                    .opacity(appeared ? 1 : 0)
+                    .font(.system(size: 11, weight: .medium, design: .serif))
+                    .tracking(5.5)
+                    .foregroundStyle(palette.eyebrow)
+                    .padding(.leading, 5.5)
+                    .splashReveal(appeared, delay: 0, reduceMotion: reduceMotion)
 
-                Text("悄悄话")
-                    .font(.system(size: 42, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color(red: 0.22, green: 0.12, blue: 0.17))
-                    .padding(.top, 10)
-                    .opacity(appeared ? 1 : 0)
+                Text("漫长悄悄话")
+                    .font(.system(size: 38, weight: .semibold, design: .serif))
+                    .tracking(2.5)
+                    .foregroundStyle(palette.title)
+                    .padding(.top, 20)
+                    .splashReveal(appeared, delay: 0.06, reduceMotion: reduceMotion)
 
                 Capsule()
-                    .fill(Color(red: 0.84, green: 0.39, blue: 0.52).opacity(0.52))
-                    .frame(width: 42, height: 2)
-                    .padding(.top, 18)
-                    .scaleEffect(x: appeared ? 1 : 0.2)
-
-                Text("把想说的话，留给最亲近的人")
-                    .font(.system(size: 16, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color(red: 0.34, green: 0.22, blue: 0.26).opacity(0.68))
-                    .padding(.top, 28)
+                    .fill(palette.rule)
+                    .frame(width: 74, height: 1)
+                    .padding(.top, 32)
+                    .scaleEffect(x: appeared ? 1 : 0.05)
                     .opacity(appeared ? 1 : 0)
+                    .animation(
+                        reduceMotion ? nil : .easeOut(duration: 0.48).delay(0.12),
+                        value: appeared
+                    )
 
-                SplashLoadingDots(pulse: pulse)
+                Text("故事自哪一页开始？")
+                    .font(.system(size: 16, weight: .regular, design: .serif))
+                    .italic()
+                    .foregroundStyle(palette.secondary)
                     .padding(.top, 38)
-                    .opacity(appeared ? 1 : 0)
+                    .splashReveal(appeared, delay: 0.18, reduceMotion: reduceMotion)
+
+                Text("手与手的相握，心与心碰触，\n涌动在喉咙深处，我温暖的火。")
+                    .font(.system(size: 16, weight: .regular, design: .serif))
+                    .tracking(0.7)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(13)
+                    .foregroundStyle(palette.body)
+                    .padding(.top, 30)
+                    .splashReveal(appeared, delay: 0.24, reduceMotion: reduceMotion)
+
+                SplashLoadingDots(
+                    pulse: pulse,
+                    color: palette.accent,
+                    reduceMotion: reduceMotion
+                )
+                    .padding(.top, 42)
+                    .splashReveal(appeared, delay: 0.3, reduceMotion: reduceMotion)
 
                 Spacer()
             }
+            .padding(.horizontal, 24)
+            .offset(y: 36)
         }
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 2.2).repeatForever(autoreverses: true),
+            value: pulse
+        )
         .onAppear {
             if reduceMotion {
                 appeared = true
                 pulse = true
             } else {
-                withAnimation(.spring(response: 0.72, dampingFraction: 0.82)) {
-                    appeared = true
-                }
-                withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) {
-                    pulse = true
-                }
+                appeared = true
+                pulse = true
             }
         }
     }
 }
 
-private struct SplashConversationMark: View {
-    let pulse: Bool
+private struct LaunchSplashPalette {
+    let backgroundTop: Color
+    let backgroundBottom: Color
+    let glow: Color
+    let eyebrow: Color
+    let title: Color
+    let rule: Color
+    let secondary: Color
+    let body: Color
+    let accent: Color
 
-    var body: some View {
-        ZStack {
-            SplashBubble()
-                .fill(.white.opacity(0.94))
-                .frame(width: 126, height: 86)
-                .rotationEffect(.degrees(-8))
-                .offset(x: -19, y: -9)
-                .shadow(color: .black.opacity(0.08), radius: 12, y: 8)
-
-            SplashBubble()
-                .fill(Color(red: 0.33, green: 0.13, blue: 0.26))
-                .frame(width: 126, height: 86)
-                .rotationEffect(.degrees(7))
-                .offset(x: 20, y: 11)
-                .shadow(color: Color(red: 0.40, green: 0.12, blue: 0.25).opacity(0.24), radius: 14, y: 8)
-
-            Image(systemName: "heart.fill")
-                .font(.system(size: 39, weight: .bold))
-                .foregroundStyle(Color(red: 0.98, green: 0.47, blue: 0.64))
-                .scaleEffect(pulse ? 1.08 : 0.94)
-                .shadow(color: Color(red: 0.92, green: 0.25, blue: 0.48).opacity(0.22), radius: 9)
+    init(colorScheme: ColorScheme) {
+        if colorScheme == .dark {
+            backgroundTop = Color(red: 0.105, green: 0.073, blue: 0.086)
+            backgroundBottom = Color(red: 0.155, green: 0.092, blue: 0.112)
+            glow = Color(red: 0.34, green: 0.15, blue: 0.20).opacity(0.52)
+            eyebrow = Color(red: 0.82, green: 0.61, blue: 0.56)
+            title = Color(red: 0.95, green: 0.89, blue: 0.90)
+            rule = Color(red: 0.72, green: 0.47, blue: 0.43).opacity(0.58)
+            secondary = Color(red: 0.72, green: 0.62, blue: 0.64)
+            body = Color(red: 0.80, green: 0.72, blue: 0.74)
+            accent = Color(red: 0.84, green: 0.55, blue: 0.47)
+        } else {
+            backgroundTop = Color(red: 0.99, green: 0.955, blue: 0.958)
+            backgroundBottom = Color(red: 0.982, green: 0.925, blue: 0.915)
+            glow = Color(red: 1.0, green: 0.82, blue: 0.73).opacity(0.42)
+            eyebrow = Color(red: 0.64, green: 0.43, blue: 0.39)
+            title = Color(red: 0.29, green: 0.24, blue: 0.25)
+            rule = Color(red: 0.70, green: 0.48, blue: 0.43).opacity(0.42)
+            secondary = Color(red: 0.55, green: 0.48, blue: 0.49)
+            body = Color(red: 0.43, green: 0.37, blue: 0.38)
+            accent = Color(red: 0.78, green: 0.51, blue: 0.40)
         }
-    }
-}
-
-private struct SplashBubble: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let body = rect.insetBy(dx: 5, dy: 5)
-        path.addRoundedRect(in: body, cornerSize: CGSize(width: 26, height: 26))
-        path.move(to: CGPoint(x: body.maxX - 36, y: body.maxY - 8))
-        path.addLine(to: CGPoint(x: body.maxX + 8, y: body.maxY + 24))
-        path.addLine(to: CGPoint(x: body.maxX - 62, y: body.maxY - 27))
-        path.closeSubpath()
-        return path
     }
 }
 
 private struct SplashLoadingDots: View {
     let pulse: Bool
+    let color: Color
+    let reduceMotion: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 9) {
             ForEach(0..<3, id: \.self) { index in
                 Circle()
-                    .fill(Color(red: 0.75, green: 0.31, blue: 0.45).opacity(0.74))
-                    .frame(width: 7, height: 7)
-                    .scaleEffect(pulse ? (index == 1 ? 1.35 : 0.88) : 0.88)
+                    .fill(color.opacity(0.88 - Double(index) * 0.14))
+                    .frame(width: 6, height: 6)
+                    .scaleEffect(reduceMotion ? 1 : (pulse ? 1.18 : 0.72))
                     .animation(
-                        .easeInOut(duration: 0.72)
-                            .delay(Double(index) * 0.12)
-                            .repeatForever(autoreverses: true),
+                        reduceMotion
+                            ? nil
+                            : .easeInOut(duration: 0.58)
+                                .delay(Double(index) * 0.14)
+                                .repeatForever(autoreverses: true),
                         value: pulse
                     )
             }
         }
+    }
+}
+
+private struct SplashRevealModifier: ViewModifier {
+    let appeared: Bool
+    let delay: Double
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared || reduceMotion ? 0 : 8)
+            .animation(
+                reduceMotion ? nil : .easeOut(duration: 0.42).delay(delay),
+                value: appeared
+            )
+    }
+}
+
+private extension View {
+    func splashReveal(_ appeared: Bool, delay: Double, reduceMotion: Bool) -> some View {
+        modifier(
+            SplashRevealModifier(
+                appeared: appeared,
+                delay: delay,
+                reduceMotion: reduceMotion
+            )
+        )
     }
 }

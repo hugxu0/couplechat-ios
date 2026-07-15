@@ -29,7 +29,8 @@ targets:
         CFBundleDisplayName: 悄悄话
         CFBundleShortVersionString: "0.2.0"
         CFBundleVersion: "7"
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         CFBundleURLTypes:
