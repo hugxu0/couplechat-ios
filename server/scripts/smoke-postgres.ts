@@ -107,6 +107,8 @@ async function main() {
       [26, "memory_derivation_dependencies"],
       [27, "retire_memory_message_evidence"],
       [28, "enforce_single_active_rolling_memory"],
+      [29, "daily_recommendations"],
+      [30, "daju_memory_perspective"],
     ] as const;
     assertOk(
       "数据库结构版本完整",
