@@ -85,16 +85,20 @@ extension ChatViewController {
             return
         }
         isHistoryRefreshing = true
-        let previousCount = store.messages(for: channel).count
         timelineController.captureBoundaryAnchor()
         Task { [weak self] in
             guard let self else { return }
-            await store.loadOlderAsync(channel)
-            if store.messages(for: channel).count == previousCount {
-                timelineController.refreshControl.endRefreshing()
+            defer {
+                // UIRefreshControl 的结束状态不能依赖下一轮 @Published reload：
+                // 没有更多历史、只命中本地缓存或 reload 被合并时，pendingTopAnchor
+                // 可能为空，导致控件一直停在半圈的中间状态。
+                UIView.performWithoutAnimation {
+                    self.timelineController.refreshControl.endRefreshing()
+                }
+                self.isHistoryRefreshing = false
+                self.updateJumpToBottomVisibility(animated: true)
             }
-            isHistoryRefreshing = false
-            updateJumpToBottomVisibility(animated: true)
+            await store.loadOlderAsync(channel)
         }
     }
 
