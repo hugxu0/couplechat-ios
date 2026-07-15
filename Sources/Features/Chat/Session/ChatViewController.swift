@@ -164,10 +164,19 @@ final class ChatViewController: UIViewController {
         }
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // 先在页面真正显示前完成 bottom inset 与初始贴底，避免用户看到
+        // 输入栏出现后列表再向上/向下挪动。
+        initialLatestCorrectionPending = true
+        applyInputLayout(duration: 0, curve: .curveEaseOut)
+        timelineController.scheduleInitialPositioning()
+        correctInitialLatestPositionIfNeeded()
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         isChatVisible = true
-        initialLatestCorrectionPending = true
         applyInputLayout(duration: 0, curve: .curveEaseOut)
         timelineController.scheduleInitialPositioning()
         correctInitialLatestPositionIfNeeded()
@@ -313,6 +322,10 @@ final class ChatViewController: UIViewController {
 
     func completeJump(to target: ChatMessage) {
         timelineController.browsingHistoricalWindow = true
+        // 搜索跳转优先级高于此前任何一次发送/实时消息的贴底意图，
+        // 否则下一次时间线刷新可能把刚定位好的历史窗口拉回末尾。
+        timelineController.stickToLatestAfterNextReload = false
+        timelineController.clearNewMessagesBelow()
         initialLatestCorrectionPending = false
         reloadTimeline(animated: false)
         view.layoutIfNeeded()
@@ -326,25 +339,33 @@ final class ChatViewController: UIViewController {
     /// 确保 composer 的最终高度已经计入 bottom inset，最后一条消息不会被遮住。
     func correctInitialLatestPositionIfNeeded() {
         guard initialLatestCorrectionPending,
-              isChatVisible,
               timelineController.hasInitialPosition,
               isNearLatestWindow(),
+              viewIfLoaded?.window != nil,
               !collectionView.isTracking,
               !collectionView.isDragging,
               !collectionView.isDecelerating else { return }
-        DispatchQueue.main.async { [weak self] in
+        let apply = { [weak self] in
             guard let self,
                   self.initialLatestCorrectionPending,
-                  self.isChatVisible,
                   self.isNearLatestWindow(),
+                  self.viewIfLoaded?.window != nil,
                   !self.collectionView.isTracking,
                   !self.collectionView.isDragging,
                   !self.collectionView.isDecelerating else { return }
             self.initialLatestCorrectionPending = false
-            self.applyInputLayout(duration: 0, curve: .curveEaseOut)
-            self.timelineController.scrollToBottom(animated: false)
-            self.updateJumpToBottomVisibility(animated: false)
+            self.timelineController.completeFollowingLatest()
+            UIView.performWithoutAnimation {
+                self.collectionView.layer.removeAllAnimations()
+                self.applyInputLayout(duration: 0, curve: .curveEaseOut)
+                self.timelineController.scrollToBottom(animated: false)
+                self.updateJumpToBottomVisibility(animated: false)
+            }
         }
+        // 首次进入时在 viewDidAppear 之前同步完成；已经可见的页面才延后一帧，
+        // 但仍使用 performWithoutAnimation，避免用户看到贴底过程。
+        if isChatVisible { DispatchQueue.main.async { apply() } }
+        else { apply() }
     }
 
     func buildTimeline() {

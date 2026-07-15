@@ -18,7 +18,12 @@ extension ChatViewController {
                     guard let self else { return }
                     self.composer.setTypingVisible(false)
                     self.composer.setCatThinking(self.store.isAIComposing(in: self.channel))
-                    self.reloadTimeline(animated: true)
+                    let preservingPaginationWindow = self.isNewerRefreshing
+                        || self.suppressesNextPaginationStoreChange
+                        || self.store.isLoadingNewer(self.channel)
+                    self.reloadTimeline(
+                        animated: true,
+                        preservingWindowState: preservingPaginationWindow)
                 }
             }
             .store(in: &cancellables)
@@ -46,13 +51,19 @@ extension ChatViewController {
             let containsIncoming = appendedMessages.contains { $0.sender != currentUsername }
             timelineController.registerReceivedMessage(isMine: !containsIncoming)
         }
-        reloadTimeline(animated: true)
+        reloadTimeline(
+            animated: true,
+            preservingWindowState: isAppendingNewerHistory)
     }
 
     func reloadTimeline(animated: Bool, preservingWindowState: Bool = false) {
         guard timelineController != nil else { return }
         timelineController.updatePresentation(makeTimelinePresentation())
-        if !preservingWindowState {
+        // 已经通过搜索进入历史窗口后，后续刷新不能仅因为内存列表里
+        // 拼进了最新消息，就把“浏览历史”状态改成贴底状态。否则
+        // ChatTimelineController 会在本次 reload 中执行 followLatest。
+        if !preservingWindowState,
+           !timelineController.browsingHistoricalWindow {
             timelineController.browsingHistoricalWindow = !isNearLatestWindow()
         }
         let messages = store.messages(for: channel)
@@ -92,6 +103,8 @@ extension ChatViewController {
               !store.isLoadingNewer(channel),
               !store.messages(for: channel).isEmpty else { return }
         isNewerRefreshing = true
+        // 用户正在主动向下翻阅历史；本次分页不能消费之前遗留的贴底意图。
+        timelineController.stickToLatestAfterNextReload = false
         suppressesNextPaginationStoreChange = true
         timelineController.captureVisibleAnchor()
         bottomRefreshIndicator.startAnimating()
