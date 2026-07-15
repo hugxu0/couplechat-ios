@@ -262,7 +262,7 @@ final class MessageStore: ObservableObject {
     /// 必须重新加载最新窗口，不能只修改滚动状态，否则下一次刷新仍会回到历史窗口。
     func restoreLatestMessages(_ channel: ChatChannel) async {
         var latest = await persistence.fetchLatestMessages(channel: channel.rawValue, limit: 50)
-        if latest.isEmpty {
+        if latest.isEmpty, socketProvider?.isConnected == true {
             latest = await fetchRemoteMessages(
                 MessagePageRequest(channel: channel, limit: 50),
                 context: "restoreLatest:\(channel.rawValue)")
