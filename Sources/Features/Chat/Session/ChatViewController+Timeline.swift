@@ -28,7 +28,17 @@ extension ChatViewController {
         composer.setTypingVisible(false)
         composer.setCatThinking(store.isAIComposing(in: channel))
         let messages = store.messages(for: channel)
-        if let previousLastID = lastRenderedMessageID,
+        // 向下翻页本身会把一批更晚的历史消息追加到尾部；这不是实时收消息，
+        // 不能因此把阅读位置标记成“下方有新消息”。翻页期间保留当前窗口状态，
+        // 等 handleNewerRefresh 根据是否已到最新窗口统一处理。
+        let isAppendingNewerHistory = suppressesNextPaginationStoreChange
+            || isNewerRefreshing
+            || store.isLoadingNewer(channel)
+        if suppressesNextPaginationStoreChange {
+            suppressesNextPaginationStoreChange = false
+        }
+        if !isAppendingNewerHistory,
+           let previousLastID = lastRenderedMessageID,
            let previousLastIndex = messages.firstIndex(where: { $0.id == previousLastID }),
            previousLastIndex < messages.index(before: messages.endIndex) {
             let appendedMessages = messages[messages.index(after: previousLastIndex)...]
@@ -48,6 +58,7 @@ extension ChatViewController {
         let messages = store.messages(for: channel)
         timelineController.reload(messages: messages, activity: nil, animated: animated)
         lastRenderedMessageID = messages.last?.id
+        correctInitialLatestPositionIfNeeded()
         updateJumpToBottomVisibility(animated: animated)
     }
 
@@ -81,11 +92,17 @@ extension ChatViewController {
               !store.isLoadingNewer(channel),
               !store.messages(for: channel).isEmpty else { return }
         isNewerRefreshing = true
+        suppressesNextPaginationStoreChange = true
         timelineController.captureVisibleAnchor()
         bottomRefreshIndicator.startAnimating()
+        let previousCount = store.messages(for: channel).count
         Task { [weak self] in
             guard let self else { return }
             await store.loadNewerAsync(channel)
+            let countChanged = store.messages(for: channel).count != previousCount
+            if !countChanged {
+                suppressesNextPaginationStoreChange = false
+            }
             if isNearLatestWindow() {
                 timelineController.browsingHistoricalWindow = false
             }
@@ -207,6 +224,8 @@ extension ChatViewController: ChatTimelineControllerDelegate {
     }
 
     func timelineDidBeginDragging() {
+        // 用户一旦开始主动浏览，就不要让首次进入页面的贴底校正覆盖手势。
+        initialLatestCorrectionPending = false
         hidePanel(animated: true)
     }
 

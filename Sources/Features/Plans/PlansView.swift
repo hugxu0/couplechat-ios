@@ -4,7 +4,7 @@ struct PlansView: View {
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
     @StateObject private var model = PlansViewModel()
-    @State private var section: PlanSection = .calendar
+    @State private var section: PlanSection = .reminder
     @State private var scope = "shared"
     @State private var selectedDate = Date()
     @State private var monthMode = true

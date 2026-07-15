@@ -57,6 +57,8 @@ final class ChatTimelineController: NSObject {
     var topInset: CGFloat = 96
     var bottomInset: CGFloat = 0
     private var lastMeasuredWidth: CGFloat = 0
+    /// UIKit 不提供回弹距离配置；滚动代理会用这个值限制拖动越界。
+    static let maximumRubberBandDistance: CGFloat = 84
 
     init(presentation: Presentation) {
         self.presentation = presentation

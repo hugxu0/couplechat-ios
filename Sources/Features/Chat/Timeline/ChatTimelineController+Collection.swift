@@ -123,6 +123,7 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        limitRubberBandDistance(scrollView)
         _ = ChatScrollReducer.reduce(
             state: &scrollState,
             event: .userScrolled(isNearBottom: isNearBottom(), isAtLatestWindow: isNearLatestWindow()))
@@ -132,6 +133,22 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         if scrollView.isDragging, bottomPull > 48, !isNearLatestWindow() {
             delegate?.timelineDidRequestNewer()
         }
+    }
+
+    private func limitRubberBandDistance(_ scrollView: UIScrollView) {
+        guard scrollView.isDragging, !refreshControl.isRefreshing else { return }
+        let minOffset = -scrollView.adjustedContentInset.top
+        let maxOffset = max(
+            minOffset,
+            scrollView.contentSize.height - scrollView.bounds.height
+                + scrollView.adjustedContentInset.bottom)
+        let lowerBound = minOffset - Self.maximumRubberBandDistance
+        let upperBound = maxOffset + Self.maximumRubberBandDistance
+        let y = scrollView.contentOffset.y
+        guard y < lowerBound || y > upperBound else { return }
+        scrollView.setContentOffset(
+            CGPoint(x: scrollView.contentOffset.x, y: min(max(y, lowerBound), upperBound)),
+            animated: false)
     }
 
     func collectionView(

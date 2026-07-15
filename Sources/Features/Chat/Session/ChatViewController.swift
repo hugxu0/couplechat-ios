@@ -49,11 +49,15 @@ final class ChatViewController: UIViewController {
     var activeJumpID: UUID?
     var isHistoryRefreshing = false
     var isNewerRefreshing = false
+    /// Combine 的时间线更新可能在 loadNewerAsync 返回后才投递；保留一次
+    /// “这是翻页追加”标记，避免它被实时消息状态机误判。
+    var suppressesNextPaginationStoreChange = false
     var lastRenderedMessageID: String?
     var replyTarget: ChatMessage?
     var pendingMedia: [ChatPendingMedia] = []
     var photoPickerPurpose: PhotoPickerPurpose = .messageMedia
     var isChatVisible = false
+    var initialLatestCorrectionPending = false
 
     var voicePlayer: AVAudioPlayer?
     var voicePlaybackTimer: Timer?
@@ -163,8 +167,10 @@ final class ChatViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         isChatVisible = true
+        initialLatestCorrectionPending = true
         applyInputLayout(duration: 0, curve: .curveEaseOut)
         timelineController.scheduleInitialPositioning()
+        correctInitialLatestPositionIfNeeded()
         DispatchQueue.main.async { [weak self] in self?.reportDisplayedMessagesAsRead() }
     }
 
@@ -215,6 +221,7 @@ final class ChatViewController: UIViewController {
         applyInputLayout(duration: 0, curve: .curveEaseOut)
         refreshComposerSurfaceTone()
         timelineController.scheduleInitialPositioning()
+        correctInitialLatestPositionIfNeeded()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -306,11 +313,37 @@ final class ChatViewController: UIViewController {
 
     func completeJump(to target: ChatMessage) {
         timelineController.browsingHistoricalWindow = true
+        initialLatestCorrectionPending = false
         reloadTimeline(animated: false)
         view.layoutIfNeeded()
         DispatchQueue.main.async { [weak self] in
             self?.timelineController.scrollToMessage(id: target.id, highlighted: true)
             self?.updateJumpToBottomVisibility(animated: true)
+        }
+    }
+
+    /// 输入栏是浮在列表上方的，首次进入页面时再做一次“贴底”校正，
+    /// 确保 composer 的最终高度已经计入 bottom inset，最后一条消息不会被遮住。
+    func correctInitialLatestPositionIfNeeded() {
+        guard initialLatestCorrectionPending,
+              isChatVisible,
+              timelineController.hasInitialPosition,
+              isNearLatestWindow(),
+              !collectionView.isTracking,
+              !collectionView.isDragging,
+              !collectionView.isDecelerating else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.initialLatestCorrectionPending,
+                  self.isChatVisible,
+                  self.isNearLatestWindow(),
+                  !self.collectionView.isTracking,
+                  !self.collectionView.isDragging,
+                  !self.collectionView.isDecelerating else { return }
+            self.initialLatestCorrectionPending = false
+            self.applyInputLayout(duration: 0, curve: .curveEaseOut)
+            self.timelineController.scrollToBottom(animated: false)
+            self.updateJumpToBottomVisibility(animated: false)
         }
     }
 
