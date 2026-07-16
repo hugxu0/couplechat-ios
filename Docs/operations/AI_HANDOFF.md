@@ -129,30 +129,26 @@ curl -kfsS https://127.0.0.1:8444/live \
 
 ## 生产写操作前的硬门槛
 
-任何部署、migration、Nginx reload、备份恢复或日本切换，都必须先明确记录：
+任何生产写操作都必须先明确记录：
 
 1. 目标服务器：美国源站，或经批准的日本冷切换；
 2. 完整 commit/tag；禁止 `main`、`latest` 或 moving branch；
 3. 当前 `RELEASE`、schema 和容器 image；
-4. quiesce/停写方式；
-5. 发布前备份目录、SHA-256、`consistency_mode` 和 `RESTORE-VERIFIED`；
-6. 回滚 image、数据库、uploads 和密钥的边界；
-7. 三层健康检查结果。
+4. 回滚 image、数据库、uploads 和密钥的边界；
+5. 三层健康检查结果。
 
-美国发布顺序必须是：
+普通代码发布顺序是：
 
 ```text
 固定 server-only 包
   → SHA-256 校验
-  → quiesced 备份
-  → 真实临时库恢复验证
-  → 候选镜像 build
-  → 停止旧 writer
-  → 独立 migrator
-  → 启动候选
+  → 构建或复用镜像
+  → 仅重建美国 writer
   → 本机 / origin / hoo66.top 健康检查
   → 最后写 RELEASE
 ```
+
+只有 migration、数据修复、媒体结构变化、同步协议不兼容或恢复/冷切换，才额外记录 quiesce、备份 SHA-256、`RESTORE-VERIFIED` 和独立 migrator，并按 [DEPLOYMENT.md](DEPLOYMENT.md) 的数据变更路径执行。
 
 当前仓库仍没有真正实现的 `/opt/couplechat/bin/deploy-server` 一键入口；在它实现前，AI 必须按 [DEPLOYMENT.md](DEPLOYMENT.md) 的人工步骤操作，不能自行拼接一条“自动部署命令”。
 
@@ -160,7 +156,7 @@ curl -kfsS https://127.0.0.1:8444/live \
 
 - 当前源码 commit、服务端生产 `RELEASE` 和 schema；
 - 哪台服务器被读取或修改；
-- 备份/恢复验证和三层健康结果；
+- 三层健康结果；如果执行数据变更路径，再附备份/恢复验证；
 - 是否修改了数据库、Nginx、证书、密钥或设备状态；
 - 尚未完成的真机、离机备份、rerun attempt 和安全任务。
 

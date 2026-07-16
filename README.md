@@ -38,14 +38,13 @@ server/                Fastify/Socket.IO/PostgreSQL 服务端
 project.yml            XcodeGen 工程定义
 ```
 
-发布规范要求服务端包只包含 `server/` 子目录，并绑定精确 tag/commit 与 SHA-256；对应 release workflow 与一键部署入口尚待实现，不会把整个项目复制到服务器。
+发布规范要求服务端包只包含 `server/` 子目录，并绑定精确 tag/commit 与 SHA-256；普通代码发布按部署文档的短路径人工执行，远程一键入口尚未实现，不会把整个项目复制到服务器。
 
 ## 最短验证
 
 ```powershell
 cd server
-npm test
-npm run build
+npm run check
 ```
 
 iOS 工程由 XcodeGen 生成；Windows 开发机通过 GitHub Actions 验证，Mac 可本地运行 Xcode 测试。真机安装步骤见 [IOS_SIDELOAD.md](Docs/operations/IOS_SIDELOAD.md)。

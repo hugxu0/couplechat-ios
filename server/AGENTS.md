@@ -14,6 +14,5 @@
 完成服务端改动至少运行：
 
 ```powershell
-npm test
-npm run build
+npm run check
 ```

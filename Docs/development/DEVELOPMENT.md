@@ -36,7 +36,7 @@ npm start
 
 ## 数据库调试
 
-当前工作树要求 schema v31；生产发布必须先备份并使用独立 migrator 升级，Web 进程保持 `RUN_MIGRATIONS=false`。连接生产库启动本地调试服务的入口已经移除；版本不匹配时也不能用开发进程“试一下”。
+当前工作树要求 schema v31。普通代码发布不运行 migrator，也不重复完整备份恢复；只有 migration、数据修复或媒体结构变化才使用独立 migrator 和 quiesced 备份，Web 进程始终保持 `RUN_MIGRATIONS=false`。连接生产库启动本地调试服务的入口已经移除；版本不匹配时也不能用开发进程“试一下”。
 
 功能调试只能使用本地临时 PostgreSQL，或从备份恢复的隔离 PostgreSQL，再显式运行 `npm run migrate`。隔离调试服务应固定使用：
 

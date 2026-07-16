@@ -41,7 +41,7 @@
 ## 安全规则
 
 - 未经用户明确授权，不连接、修改或部署生产环境，不触发 migration，不写生产数据库。
-- 即使获准部署，也要先确认目标主机、精确 commit/tag、备份结果和回滚边界；禁止发布 moving `main`。
+- 即使获准部署，也要先确认目标主机、精确 commit/tag、现行基线与回滚边界；数据库、数据修复或媒体结构变更还必须确认新备份、恢复结果和停写边界。禁止发布 moving `main`。
 - 不打印或提交 token、密码、数据库连接串、AI key、Bark key、代理 key、Apple 密码、2FA、证书私钥、provisioning profile 或 UDID。
 - 不把免费签名凭据放入 GitHub Secrets；仓库流水线只生成 unsigned IPA。
 - 日志与 AI Trace 不得持久化完整私聊、完整 prompt、工具结果或敏感 URL 查询参数。

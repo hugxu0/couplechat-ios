@@ -8,9 +8,9 @@
 
 | 层级 | 最后核验 | 结论 |
 |---|---|---|
-| 本次审查基线 | `74ecbd3361cbaab519b4aa2c3f6aa84e65b48c62` + 当前未提交工作树 | 单仓库与生产拓扑保持不变；本轮精简验证链、无调用方代码、AI 备用搜索/Trace、废弃脚本和重复数据库测试；schema 仍为 v31 |
+| 本次审查基线 | 文档更新前的 `1c9074ad857bb15b19aa620ee7651f780bedde33` | 单仓库与生产拓扑保持不变；本轮继续收紧发布与备份规则，schema 仍为 v31 |
 | 服务端验证 | 2026-07-17 | 对当前本地工作树执行 `npm run check`：32 个快速测试、一次 PostgreSQL 18 当前行为烟测和生产编译全部通过，耗时约 15.3 秒；未连接生产环境 |
-| 最近一次 iOS 远程验证 | `ee419a4ec26f54676543db8b0a392a6e7c798034` / Actions run `29487714361` | macOS Xcode 26.3 的 SwiftLint、177 个 iPhone XCTest、iPad 编译、unsigned archive 和 artifact 校验全部通过；本轮工作流已改为单条快速验证链，新的远程运行尚未执行 |
+| 最近一次 iOS 远程验证 | `4efff3c9d058d16a6ec48f8255e214d9f2a3225f` / quick run `29527650542` / IPA run `29527662722` | 新的单条快速验证链和 unsigned IPA 归档均通过；IPA artifact 已完成 metadata、SHA-256、资源和签名残留校验 |
 | 生产环境 | 2026-07-17 | 美国唯一可写源站已部署 `4efff3c9d058d16a6ec48f8255e214d9f2a3225f`，schema v31；日本入口保持原拓扑且不运行 CoupleChat Node/PostgreSQL。发布前生成并验证 quiesced 基线备份 `20260716T192532Z-589c7962924a`，临时库真实恢复、51 张策略表、关键序列、20/455 媒体抽样、SHA-256、本机、私有 origin、公开入口和 Socket.IO transport 均通过；旧 release 目录、旧 CoupleChat 镜像和旧本地备份已清理，仅保留一个旧版本回滚镜像 | 
 
 本机旧 IPA、tar、展开的 release 或备份目录不属于上述任何生产证据。
@@ -68,7 +68,7 @@
 - 清空 App 数据后，已经丢失本地文件的失败媒体无法继续重传。
 - iOS 自动验证依赖 GitHub Actions 或 Mac；真机仍需检查视觉、手势、蓝牙音频和双设备行为。
 - GitHub 当前只生成 unsigned IPA；免费账号签名 7 天到期，三台设备需要定期刷新。完整流程见 [IOS_SIDELOAD.md](../operations/IOS_SIDELOAD.md)。
-- 备份与恢复脚本仍共享 v1–v31 全表策略并校验关键序列；日常发布只创建当前基线备份，旧备份和旧发布物在确认当前基线后清理，恢复演练与离机副本由私有运维资料维护，边界见 [DEPLOYMENT.md](../operations/DEPLOYMENT.md)。
+- 备份与恢复脚本仍共享 v1–v31 全表策略并校验关键序列；定时任务维护现行基线，普通代码发布不重复完整备份/恢复，只有 migration、数据修复、媒体结构变化或恢复切换才走 quiesced 备份路径。旧备份和旧发布物在确认现行基线后清理，边界见 [DEPLOYMENT.md](../operations/DEPLOYMENT.md)。
 - Sync 提交顺序、SQLite 失败传播、频道隔离、Sync 协议版本、3D 加载状态和生产端口的代码修复已进入当前工作树；账号切换竞态、媒体 I/O、分页、生产安全和备份状态仍以 [KNOWN_ISSUES.md](KNOWN_ISSUES.md) 为准。
 
 ## 架构保护边界
