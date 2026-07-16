@@ -29,9 +29,11 @@ test("AI timeout emits one fallback and clears typing", async () => {
 });
 
 test("Responses reasoning explicitly requests a compatible summary shape", async () => {
-  const { responsesReasoningSettings } = await import("../../src/ai/settings");
+  const { GEN, responsesReasoningSettings } = await import("../../src/ai/settings");
   assert.deepEqual(responsesReasoningSettings("high"), { effort: "high", summary: "auto" });
   assert.deepEqual(responsesReasoningSettings(undefined), undefined);
+  assert.equal(GEN.extractFacts.reasoningEffort, "low");
+  assert.equal(GEN.extractFacts.timeoutMs, 120_000);
 });
 
 test("AI queue coalesces overload to the newest request", async () => {

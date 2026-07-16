@@ -6,12 +6,18 @@ export interface GenProfile {
   maxTokens: number;
   temperature: number;
   timeoutMs?: number;
+  reasoningEffort?: AiProvider["reasoningEffort"];
 }
 
 export const GEN = {
   // Responses 的输出预算同时承载推理与最终文本；high reasoning 下给普通回复保留足够余量。
   reply: { maxTokens: 6000, temperature: 0.85, timeoutMs: 45_000 },
-  extractFacts: { maxTokens: 4000, temperature: 0.2, timeoutMs: 60_000 },
+  extractFacts: {
+    maxTokens: 4000,
+    temperature: 0.2,
+    timeoutMs: 120_000,
+    reasoningEffort: "low",
+  },
   contextSummary: { maxTokens: 1200, temperature: 0.2, timeoutMs: 30_000 },
   describeImage: { maxTokens: 1500, temperature: 0.4, timeoutMs: 40_000 },
   search: { maxTokens: 1800, temperature: 0.3, timeoutMs: 45_000 },

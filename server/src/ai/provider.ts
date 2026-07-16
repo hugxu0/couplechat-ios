@@ -132,7 +132,7 @@ async function chatOpenAiResponses(p: AiProvider, args: ChatArgs, signal: AbortS
       input: args.user,
       max_output_tokens: args.gen.maxTokens,
       temperature: args.gen.temperature,
-      reasoning: responsesReasoningSettings(p.reasoningEffort),
+      reasoning: responsesReasoningSettings(args.gen.reasoningEffort ?? p.reasoningEffort),
       store: false,
     }),
     signal,
