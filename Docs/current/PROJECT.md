@@ -11,7 +11,7 @@
 | 本次审查基线 | `ee419a4ec26f54676543db8b0a392a6e7c798034` | 单仓库重构、发布脚本和 plist 校验修复已提交并推送到 `main`；schema 仍为 v31 |
 | 服务端验证 | 2026-07-16 | 对当前本地工作树执行 `npm test`（58/58，含 PostgreSQL 18 smoke）、`npm run build` 和生产依赖审计，均通过且审计为 0 个已知漏洞 |
 | iOS 当前改动 | `ee419a4ec26f54676543db8b0a392a6e7c798034` / Actions run `29487714361` | macOS Xcode 26.3 的 SwiftLint、177 个 iPhone XCTest、iPad 编译、unsigned archive 和 artifact 校验全部通过；产物已下载到固定本地目录 |
-| 生产环境 | 2026-07-16 | 美国唯一可写源站已部署 `636b13de929211515d01ce97a79e65395e2e7661`，schema v31；quiesced 备份、临时库真实恢复、51 张策略表、关键序列和媒体抽样均通过，三层健康检查通过 |
+| 生产环境 | 2026-07-16 | 美国唯一可写源站已部署 `2cc1517593e504b3b95bf9a8bbbe5ea1135f261f`，schema v31；Memory 控制中心按事件发生时间、有效开始时间和创建时间倒序分页。发布前 quiesced 备份、临时库真实恢复、51 张策略表、关键序列、媒体抽样和加密离机副本校验均通过，本机、私有 origin、公开入口与 Socket.IO 握手通过 |
 
 本机旧 IPA、tar、展开的 release 或备份目录不属于上述任何生产证据。
 
