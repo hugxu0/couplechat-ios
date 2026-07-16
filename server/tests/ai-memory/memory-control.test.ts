@@ -35,7 +35,15 @@ test("memory control routes isolate private scope and support review actions", a
       layer: "plan", scope: "ai:xu", memoryKey: "surprise", subjects: ["xu"],
       speakers: ["xu"], content: "小旭准备了一个惊喜",
     });
-    assert.ok(shared && privateItem);
+    const olderEvent = await addMemory({
+      layer: "event", scope: "couple", memoryKey: "event.older", subjects: ["both"],
+      speakers: ["xu"], content: "较早发生的事情", occurredAt: now - 2 * 24 * 60 * 60 * 1000,
+    });
+    const newerEvent = await addMemory({
+      layer: "event", scope: "couple", memoryKey: "event.newer", subjects: ["both"],
+      speakers: ["xu"], content: "较晚发生的事情", occurredAt: now - 24 * 60 * 60 * 1000,
+    });
+    assert.ok(shared && privateItem && olderEvent && newerEvent);
 
     const { buildApp } = await import("../../src/app");
     const { createToken } = await import("../../src/auth/token");
@@ -50,14 +58,29 @@ test("memory control routes isolate private scope and support review actions", a
     assert.equal(xuList.statusCode, 200);
     assert.deepEqual(
       new Set(xuList.json().items.map((item: { id: string }) => item.id)),
-      new Set([shared!.id, privateItem!.id]),
+      new Set([shared!.id, privateItem!.id, olderEvent!.id, newerEvent!.id]),
     );
+    const eventPage = await app.inject({
+      method: "GET", url: "/api/me/memory?scope=shared&layer=event&limit=1",
+      headers: { authorization: `Bearer ${xuToken}` },
+    });
+    assert.equal(eventPage.json().items[0].id, newerEvent!.id);
+    assert.equal(eventPage.json().hasMore, true);
+    const eventNextPage = await app.inject({
+      method: "GET",
+      url: `/api/me/memory?scope=shared&layer=event&limit=1&cursor=${encodeURIComponent(eventPage.json().nextCursor)}`,
+      headers: { authorization: `Bearer ${xuToken}` },
+    });
+    assert.equal(eventNextPage.json().items[0].id, olderEvent!.id);
 
     const siList = await app.inject({
       method: "GET", url: "/api/me/memory?scope=all",
       headers: { authorization: `Bearer ${siToken}` },
     });
-    assert.deepEqual(siList.json().items.map((item: { id: string }) => item.id), [shared!.id]);
+    assert.deepEqual(
+      new Set(siList.json().items.map((item: { id: string }) => item.id)),
+      new Set([shared!.id, olderEvent!.id, newerEvent!.id]),
+    );
 
     const corrected = await app.inject({
       method: "PATCH", url: `/api/me/memory/${shared!.id}`,

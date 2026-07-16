@@ -49,11 +49,11 @@ function filteredScopes(username: string, scope: "all" | "shared" | "private"): 
   return visibleScopes(username);
 }
 
-function isMemoryCursor(value: unknown): value is { updatedAt: number; id: string } {
+function isMemoryCursor(value: unknown): value is { sortAt: number; id: string } {
   if (!value || typeof value !== "object") return false;
   const cursor = value as Record<string, unknown>;
-  return typeof cursor.updatedAt === "number"
-    && Number.isFinite(cursor.updatedAt)
+  return typeof cursor.sortAt === "number"
+    && Number.isFinite(cursor.sortAt)
     && typeof cursor.id === "string";
 }
 
@@ -94,7 +94,12 @@ export async function registerMemoryRoutes(app: FastifyInstance) {
       stats,
       hasMore,
       nextCursor: hasMore && items.length
-        ? encodeCursor({ updatedAt: items.at(-1)!.updatedAt, id: items.at(-1)!.id })
+        ? encodeCursor({
+          sortAt: items.at(-1)!.occurredAt
+            ?? items.at(-1)!.validFrom
+            ?? items.at(-1)!.createdAt,
+          id: items.at(-1)!.id,
+        })
         : null,
     };
   });

@@ -630,7 +630,7 @@ export interface MemoryControlFilter {
   subject?: "xu" | "si" | "both";
   query?: string;
   limit?: number;
-  cursor?: { updatedAt: number; id: string };
+  cursor?: { sortAt: number; id: string };
 }
 
 function addControlOwnership(
@@ -692,14 +692,17 @@ export async function listMemoryForControl(input: MemoryControlFilter): Promise<
     params.push(`%${query}%`, `%${query}%`, `%${query}%`);
   }
   if (input.cursor) {
-    clauses.push("(updated_at < ? OR (updated_at = ? AND id < ?))");
-    params.push(input.cursor.updatedAt, input.cursor.updatedAt, input.cursor.id);
+    clauses.push(`(
+      COALESCE(occurred_at, valid_from, created_at) < ?
+      OR (COALESCE(occurred_at, valid_from, created_at) = ? AND id < ?)
+    )`);
+    params.push(input.cursor.sortAt, input.cursor.sortAt, input.cursor.id);
   }
   params.push(Math.max(1, Math.min(201, input.limit ?? 100)));
   const rows = await all<AiMemoryRow>(
     `SELECT * FROM ai_memory
      WHERE ${clauses.join(" AND ")}
-     ORDER BY updated_at DESC, id DESC LIMIT ?`,
+     ORDER BY COALESCE(occurred_at, valid_from, created_at) DESC, id DESC LIMIT ?`,
     params,
   );
   if (!rows.length) return [];
