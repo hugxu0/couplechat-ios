@@ -8,10 +8,10 @@
 
 | 层级 | 最后核验 | 结论 |
 |---|---|---|
-| 本次审查基线 | `f1e69c446b614301859cb9d06d9b504af061172d` | 当前本地工作树基于该 commit 重构为单仓库；本批改动尚未提交或推送，schema 仍为 v31 |
+| 本次审查基线 | `ee419a4ec26f54676543db8b0a392a6e7c798034` | 单仓库重构、发布脚本和 plist 校验修复已提交并推送到 `main`；schema 仍为 v31 |
 | 服务端验证 | 2026-07-16 | 对当前本地工作树执行 `npm test`（58/58，含 PostgreSQL 18 smoke）、`npm run build` 和生产依赖审计，均通过且审计为 0 个已知漏洞 |
-| iOS 当前改动 | 待同一新 commit | Windows 已完成静态检查和脚本测试；本批 Swift 编译/XCTest 尚未在 macOS Action 执行，不能沿用旧 SHA 的 CI 结果 |
-| 生产环境 | 2026-07-16 | 公开 `healthcheck` 当前成功并返回固定双账号；美国为唯一可写主机。真实 release、schema、备份和安全状态只在私有运维环境现场复核，不由公开接口推断 |
+| iOS 当前改动 | `ee419a4ec26f54676543db8b0a392a6e7c798034` / Actions run `29487714361` | macOS Xcode 26.3 的 SwiftLint、177 个 iPhone XCTest、iPad 编译、unsigned archive 和 artifact 校验全部通过；产物已下载到固定本地目录 |
+| 生产环境 | 2026-07-16 | 美国唯一可写源站已部署 `636b13de929211515d01ce97a79e65395e2e7661`，schema v31；quiesced 备份、临时库真实恢复、51 张策略表、关键序列和媒体抽样均通过，三层健康检查通过 |
 
 本机旧 IPA、tar、展开的 release 或备份目录不属于上述任何生产证据。
 
@@ -68,7 +68,7 @@
 - 清空 App 数据后，已经丢失本地文件的失败媒体无法继续重传。
 - iOS 自动验证依赖 GitHub Actions 或 Mac；真机仍需检查视觉、手势、蓝牙音频和双设备行为。
 - GitHub 当前只生成 unsigned IPA；免费账号签名 7 天到期，三台设备需要定期刷新。完整流程见 [IOS_SIDELOAD.md](../operations/IOS_SIDELOAD.md)。
-- 备份与恢复脚本已共享 v1–v31 全表策略、校验关键序列，并保护最后一份 `quiesced + RESTORE-VERIFIED`；但尚未在目标 Linux/真实生产副本完成恢复演练，也不会自动确认加密离机副本。`best_effort` 备份不能作为 migration 发布门禁，边界见 [DEPLOYMENT.md](../operations/DEPLOYMENT.md)。
+- 备份与恢复脚本已共享 v1–v31 全表策略、校验关键序列，并保护最后一份 `quiesced + RESTORE-VERIFIED`；本次已在真实生产副本完成一次 v31 恢复验证，但仍不会自动确认加密离机副本，失败注入也待补。`best_effort` 备份不能作为 migration 发布门禁，边界见 [DEPLOYMENT.md](../operations/DEPLOYMENT.md)。
 - Sync 提交顺序、SQLite 失败传播、频道隔离、Sync 协议版本、3D 加载状态和生产端口的代码修复已进入当前工作树；iOS/macOS CI、混合版本部署禁令、账号切换竞态和安全问题仍以 [KNOWN_ISSUES.md](KNOWN_ISSUES.md) 为准。
 
 ## 架构保护边界
@@ -103,7 +103,7 @@ npm test
 npm run build
 ```
 
-iOS 质量 workflow 验证公开仓库安全、SwiftLint、结构护栏、iPhone 单测和 iPad build；手动 unsigned IPA workflow 会先调用同 SHA 的完整质量门禁，再归档并写入 commit/run/attempt metadata 与 SHA-256。新流程尚需推送后的首次 GitHub Actions 和重跑验收。涉及媒体交互时还需在真机验证轻点预览、长按菜单、纵向退出、横向翻页及返回缩略图转场。
+iOS 质量 workflow 已在 run `29487714361` 对同一 SHA 验证公开仓库安全、SwiftLint、结构护栏、177 个 iPhone 单测、iPad build，并归档 unsigned IPA；metadata、run/attempt、SHA-256、实际 `Info.plist` 和签名残留校验均通过。仍需在三台真实设备验证视觉、手势、蓝牙音频和通知。
 
 ## 文档与完成定义
 
