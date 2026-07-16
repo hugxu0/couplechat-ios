@@ -280,10 +280,26 @@ function Read-XmlPlistDictionaryFromArchive {
         if ($values.ContainsKey($key)) {
             throw "IPA Info.plist contains a duplicate key: $key"
         }
-        if ($valueNode.LocalName -cne "string" -and $valueNode.LocalName -cne "integer") {
-            throw "IPA Info.plist key $key is not a string or integer"
+        if ($valueNode.LocalName -notin @(
+                "string",
+                "integer",
+                "dict",
+                "array",
+                "true",
+                "false",
+                "real",
+                "data",
+                "date"
+            )) {
+            throw "IPA Info.plist key $key has an unsupported plist value type"
         }
-        $values.Add($key, [string]$valueNode.InnerText)
+        $storedValue = if ($valueNode.LocalName -ceq "string" -or
+            $valueNode.LocalName -ceq "integer") {
+            [string]$valueNode.InnerText
+        } else {
+            ""
+        }
+        $values.Add($key, $storedValue)
     }
     return ,$values
 }
