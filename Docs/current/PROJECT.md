@@ -11,7 +11,7 @@
 | 本次审查基线 | `74ecbd3361cbaab519b4aa2c3f6aa84e65b48c62` + 当前未提交工作树 | 单仓库与生产拓扑保持不变；本轮精简验证链、无调用方代码、AI 备用搜索/Trace、废弃脚本和重复数据库测试；schema 仍为 v31 |
 | 服务端验证 | 2026-07-17 | 对当前本地工作树执行 `npm run check`：32 个快速测试、一次 PostgreSQL 18 当前行为烟测和生产编译全部通过，耗时约 15.3 秒；未连接生产环境 |
 | 最近一次 iOS 远程验证 | `ee419a4ec26f54676543db8b0a392a6e7c798034` / Actions run `29487714361` | macOS Xcode 26.3 的 SwiftLint、177 个 iPhone XCTest、iPad 编译、unsigned archive 和 artifact 校验全部通过；本轮工作流已改为单条快速验证链，新的远程运行尚未执行 |
-| 生产环境 | 2026-07-17 | 美国唯一可写源站已部署 `f82c29f2f05678b82d0fe04f46c5d130ad4faccd`，schema v31。Memory 基础提取只输入最多 80 条新消息，`fact/plan` 按 key 与同层同主体向量候选更新，`event` 追加幂等，后台使用低推理强度和 120 秒上限；历史积压已追平到 0，六层均有本轮正常写入。发布前 quiesced 备份、临时库真实恢复、51 张策略表、关键序列、媒体抽样和离机 checksum 均通过，本机、私有 origin、公开入口与 Socket.IO transport 均通过 |
+| 生产环境 | 2026-07-17 | 美国唯一可写源站已部署 `4efff3c9d058d16a6ec48f8255e214d9f2a3225f`，schema v31；日本入口保持原拓扑且不运行 CoupleChat Node/PostgreSQL。发布前生成并验证 quiesced 基线备份 `20260716T192532Z-589c7962924a`，临时库真实恢复、51 张策略表、关键序列、20/455 媒体抽样、SHA-256、本机、私有 origin、公开入口和 Socket.IO transport 均通过；旧 release 目录、旧 CoupleChat 镜像和旧本地备份已清理，仅保留一个旧版本回滚镜像 | 
 
 本机旧 IPA、tar、展开的 release 或备份目录不属于上述任何生产证据。
 
