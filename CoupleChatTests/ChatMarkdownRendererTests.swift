@@ -183,7 +183,7 @@ final class ChatMarkdownRendererTests: XCTestCase {
             "kind": "ai",
             "type": "text",
             "text": "请确认",
-            "channel": "ai:xu",
+            "channel": "ai",
             "ts": 1_000,
         ]
         value["meta"] = meta
