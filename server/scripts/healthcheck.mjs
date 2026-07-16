@@ -1,4 +1,4 @@
-const baseURL = process.argv[2] || process.env.PUBLIC_BASE_URL || 'http://localhost:8080';
+const baseURL = process.argv[2] || process.env.PUBLIC_BASE_URL || 'http://localhost:3000';
 
 async function main() {
   const health = await fetch(new URL('/health', baseURL));

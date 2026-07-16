@@ -1,67 +1,59 @@
-# 悄悄话
+# 悄悄话（CoupleChat）
 
-只服务 `xu` 与 `si` 两位固定用户、支持 iPhone/iPad 多设备同步的情侣 App。客户端目标为 iOS/iPadOS 26，使用 SwiftUI + UIKit；服务端使用 Node.js 22、Fastify、Socket.IO、PostgreSQL，并集成“大橘”AI。
+只服务 `xu` 与 `si` 两位固定用户的私有情侣应用。仓库同时包含 iOS/iPadOS 客户端与服务端；两端协议、数据库迁移、测试和发布说明在同一提交中维护。
 
-生产服务：`https://hoo66.top`
+## 当前基线
 
-## 当前能力
+- iOS/iPadOS 26，Swift 5.9，SwiftUI + UIKit，客户端版本 `0.2.0 (11)`。
+- Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16。
+- 客户端公开基地址：`https://hoo66.top`。
+- 日本 RFCHost 只做公开入口和跨国反向代理；美国 RackNerd 是唯一可写应用与数据库主机。
+- GitHub Actions 生成的是 **unsigned IPA**。三台自用设备通过免费 Apple Personal Team 在本机签名，签名配置每 7 天需要刷新。
+- 仓库保持公开以使用公开仓库的标准 GitHub-hosted Actions；公开范围只包含源码和脱敏文档，运维与签名秘密永不进入 Git 或 artifact。
+- `Sources/Resources/cute_cat.glb` 是受版本控制并随 App 发布的资源；授权说明见 `Sources/Resources/ThirdPartyNotices.txt`。
 
-- 固定双账号登录、设备会话、实时在线、严格已读、撤回、引用、搜索和离线历史。
-- 文字、原图、视频、语音、文件与贴纸消息；语音异步转写；Live Photo 当前按静态图处理。
-- 纪念日、服务端统计优先且本地缓存兜底的聊天统计、共同相册、那年今日、共享/私人日历、提醒与备忘。
-- 大橘每日内容推荐、双方互荐、未读提示与推荐历史。
-- 服务端持久化的大橘状态、互动与 AI 私聊，以及可管理的结构化 Memory；本地存在 `cute_cat.glb` 时显示 3D 模型，否则使用占位界面。
-- SQLite 本地缓存、可靠发送队列、媒体缓存、Socket.IO 实时同步和 Bark 多设备通知。
+公开注册、邀请码、创建或加入其他情侣空间均不属于当前产品。
 
-公开注册、邀请码、创建或加入其他情侣空间均已删除。
+## 从这里开始
 
-## 文档
+- [文档索引](Docs/README.md)
+- [当前产品与验证状态](Docs/current/PROJECT.md)
+- [已知问题与修复顺序](Docs/current/KNOWN_ISSUES.md)
+- [端到端系统架构](Docs/architecture/SYSTEM_ARCHITECTURE.md)
+- [数据同步与可靠性设计](Docs/architecture/DATA_SYNC.md)
+- [生产拓扑](Docs/operations/PRODUCTION_TOPOLOGY.md)
+- [服务端部署](Docs/operations/DEPLOYMENT.md)
+- [免费账号签名与侧载](Docs/operations/IOS_SIDELOAD.md)
+- [给 AI/开发者的工作规则](AGENTS.md)
 
-- [当前项目](Docs/current/PROJECT.md)：功能、限制、保护边界和验证基线。
-- [系统架构](Docs/architecture/SYSTEM_ARCHITECTURE.md)：客户端、服务端、数据与实时链路。
-- [接口契约](Docs/architecture/API.md)：当前 REST 与 Socket.IO 协议。
-- [AI 系统](Docs/architecture/AI.md)：Agent、Memory、MCP 与调试。
-- [开发指南](Docs/development/DEVELOPMENT.md)：本地开发、测试和构建。
-- [生产部署](Docs/operations/DEPLOYMENT.md)：部署、备份和恢复。
-
-仓库不保存历史报告、交接记录、旧计划或发布快照；Git 历史负责追溯。
-
-## 目录
+## 单仓库结构
 
 ```text
 CoupleChatTests/       iOS 单元测试
-Docs/                  仅包含现行文档
-Sources/
-  App/                 App 入口与主导航
-  Domain/              领域模型
-  Platform/            网络、Socket、持久化、媒体与状态
-  DesignSystem/        主题与通用视觉组件
-  Features/            Chat、Moments、Plans、Daju、Account
-server/
-  deploy/              生产 nginx 配置
-  scripts/             开发、部署与健康检查脚本
-  src/                 服务端业务代码
-.github/workflows/     独立的质量验证与快速 IPA 打包
+Docs/                  当前设计、契约、开发与运维文档
+Sources/               iOS/iPadOS 客户端
+server/                Fastify/Socket.IO/PostgreSQL 服务端
+.github/workflows/     质量验证与 unsigned IPA 构建
 project.yml            XcodeGen 工程定义
 ```
 
-当前客户端版本为 `0.2.0 (11)`，部署目标、Bundle ID、依赖和生产基地址以 `project.yml` 为准。`Sources/Resources/cute_cat.glb` 是不入库的本地资源，缺失不影响编译。
+发布规范要求服务端包只包含 `server/` 子目录，并绑定精确 tag/commit 与 SHA-256；对应 release workflow 与一键部署入口尚待实现，不会把整个项目复制到服务器。
 
-## 常用验证
+## 最短验证
 
 ```powershell
 cd server
 npm test
 npm run build
-npm run healthcheck -- https://hoo66.top
 ```
 
-iOS 工程由 XcodeGen 生成。Windows 上通过 GitHub Actions 执行 SwiftLint、单元测试、Archive 和 IPA 打包。
+iOS 工程由 XcodeGen 生成；Windows 开发机通过 GitHub Actions 验证，Mac 可本地运行 Xcode 测试。真机安装步骤见 [IOS_SIDELOAD.md](Docs/operations/IOS_SIDELOAD.md)。
 
 ## 不可破坏的边界
 
-- 生产数据库与媒体目录是事实源；调试不得直接改写生产聊天或 Memory。
-- 当前代码要求数据库 schema v31；v1–v31 迁移不可删除或改写，新变化只能追加版本。
-- 现有数据库主键包含 `legacy` 字样，它们属于线上数据身份，不代表仍支持旧产品流程。
-- Socket 字段变化必须同步修改 `server/src/contracts/realtime.ts`、`Sources/Platform/Networking/SocketContract.swift` 和测试。
-- `.env`、`server/.data/`、`server/uploads/`、数据库备份与构建产物不得提交。
+- PostgreSQL 与 `uploads/` 是线上事实源；iOS SQLite 是设备缓存。
+- 美国 RackNerd 是唯一可写主机；日本冷回滚服务不得与美国同时启动。
+- 当前源码要求 schema v31。已有迁移不可删除或改写，新变化只能追加。
+- REST/Socket/Sync 变化必须同时更新服务端、客户端、契约测试和文档。
+- `.env`、生产数据、媒体副本、数据库备份、Apple 凭据、证书、provisioning profile、设备 UDID 和构建产物不得提交。
+- 源码通过测试、CI 成功、IPA 已生成和线上已发布是四件不同的事，必须分别提供证据。

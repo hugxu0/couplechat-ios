@@ -7,9 +7,12 @@ iOS App
   ├─ REST：登录、启动快照、历史分页、上传和提醒
   └─ Socket.IO：实时消息、已读、在线状态、共享状态和 AI 状态
         ↓
-日本 RFCHost nginx · https://hoo66.top（TLS 入口与反向代理）
+日本 RFCHost Nginx stream · https://hoo66.top:443
+        ↓ 127.0.0.1:8444 HTTPS edge，注入私有代理 header
+https://chat.huhuhu.top（当前经 DNS / Cloudflare 链路）
         ↓
-美国 RackNerd nginx · https://chat.huhuhu.top（私有 origin）
+美国 RackNerd Nginx stream
+        ↓ 127.0.0.1:10443 HTTPS 私有 origin
         ↓
 Fastify + Socket.IO · 127.0.0.1:3000
   ├─ PostgreSQL：账号、消息、状态、提醒、AI Memory
@@ -19,7 +22,9 @@ Fastify + Socket.IO · 127.0.0.1:3000
   └─ Bark：离线推送
 ```
 
-美国服务器是唯一可写主机；日本服务器不运行第二套后端或数据库。日本到美国 origin 使用 TLS 与独立代理密钥，直接访问 origin 会返回 `403`。
+美国服务器是唯一可写主机；日本服务器不运行第二套后端或数据库。日本到美国 origin 使用 TLS 与独立代理密钥，直接访问 origin 会返回 `403`。生产端口、反代约束和冷回滚边界以 [PRODUCTION_TOPOLOGY.md](../operations/PRODUCTION_TOPOLOGY.md) 为准。
+
+客户端与服务端保存在同一 Git 仓库，但运行和发布边界独立：iOS workflow 构建 App；服务端发布包只包含 `server/`。单仓库用于保证协议与兼容改动原子提交，不表示把 iOS 源码复制到生产服务器。
 
 ## iOS 客户端
 
@@ -98,7 +103,7 @@ Sources/
                             共同宠物、互动、模型和大橘私聊入口
 ```
 
-`Sources/Resources/cute_cat.glb` 被 Git 忽略，本机存在时由 GLTFKit2 转为 SceneKit 场景；缺失或加载失败时 `DajuModelView` 保留可编译、可运行的占位界面。
+`Sources/Resources/cute_cat.glb` 已受 Git 版本控制并随 App/IPA 发布，由 GLTFKit2 转为 SceneKit 场景；授权说明位于 `Sources/Resources/ThirdPartyNotices.txt`。资源缺失或加载失败时仍必须结束加载状态并显示可恢复的占位界面。
 
 `MessageStore` 与 `ChatStore` 为兼容现有页面保留 facade，但不再拥有全部底层实现。新增功能应优先进入已有的 Repository、Coordinator 或专用 Store；只有跨模块装配和向后兼容转发可以留在 facade，避免重新形成单体状态对象。
 
@@ -165,9 +170,11 @@ server/src/db/
 4. 通过 `/api/messages` 分页补齐历史或按时间增量同步。
 5. 通过 `/api/v2/sync` 在启动、重连、回前台和前台轮询时恢复持久化变更与删除 tombstone。
 
+当前服务端在统一 Sync 事件写入边界取得 transaction-level advisory lock，并用独立 PostgreSQL 连接覆盖反序提交、回滚空洞与并发轮询；客户端也会在整页协议/频道校验和 SQLite 成功后才推进 cursor/ack。服务端测试已在本地通过，iOS 改动仍需同一提交的 macOS CI 和真机验证。完整不变量、混合版本发布禁令与剩余故障注入见 [DATA_SYNC.md](DATA_SYNC.md) 和 [KNOWN_ISSUES.md](../current/KNOWN_ISSUES.md)。
+
 发送流程：
 
-1. 客户端生成 `clientId`，将 pending 消息和 outbox 写入 SQLite。
+1. 客户端生成 `clientId`，把 pending outbound outbox 记录写入 SQLite；界面 pending 是该记录的内存投影，不写入正式 messages 表，重启后从 outbox 恢复。
 2. 媒体消息先上传，服务端返回 `uploadId` 和签名 URL。
 3. 客户端发送 `message:send`；服务端在事务中绑定上传记录并写消息。
 4. ack 或 `message:new` 将 pending 消息替换为服务端消息并清除 outbox。

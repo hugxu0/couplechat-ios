@@ -41,7 +41,7 @@ final class ChatLocalDatabaseOutboxTests: XCTestCase {
         XCTAssertEqual(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId), item)
         XCTAssertEqual(ChatLocalDatabase.shared.loadPendingOutbounds(), [item])
 
-        ChatLocalDatabase.shared.deletePendingOutbound(clientId: item.clientId)
+        XCTAssertTrue(ChatLocalDatabase.shared.deletePendingOutbound(clientId: item.clientId))
         XCTAssertNil(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId))
     }
 
@@ -60,5 +60,19 @@ final class ChatLocalDatabaseOutboxTests: XCTestCase {
             attempts: 0, lastError: nil, attachments: [attachment])
         XCTAssertTrue(ChatLocalDatabase.shared.upsertPendingOutbound(item))
         XCTAssertEqual(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId), item)
+    }
+
+    func testUnknownChannelOutboxIsRejectedInsteadOfBecomingCoupleMessage() {
+        let username = "unknown-channel-outbox-\(UUID().uuidString)"
+        XCTAssertTrue(ChatLocalDatabase.shared.open(username: username))
+        databaseURL = ChatLocalDatabase.shared.currentDatabaseURL
+        let item = PendingOutboundMessage(
+            clientId: "tmp-unknown-channel", channel: "private-future", type: "text", text: "private",
+            replyTo: nil, replyPreview: nil, localFilePath: nil, mimeType: nil,
+            uploadId: nil, uploadURL: nil, createdAt: 1_710_000_000_000,
+            attempts: 0, lastError: nil)
+
+        XCTAssertFalse(ChatLocalDatabase.shared.upsertPendingOutbound(item))
+        XCTAssertNil(ChatLocalDatabase.shared.pendingOutbound(clientId: item.clientId))
     }
 }

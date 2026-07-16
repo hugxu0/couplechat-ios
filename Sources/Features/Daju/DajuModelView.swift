@@ -70,22 +70,44 @@ struct DajuModelView: UIViewRepresentable {
         }
 
         private func loadModelIfNeeded() {
-            guard !isLoading, modelRoot == nil,
-                  let url = Bundle.main.url(forResource: "cute_cat", withExtension: "glb") else {
+            guard !isLoading, modelRoot == nil else { return }
+            guard let url = Bundle.main.url(forResource: "cute_cat", withExtension: "glb") else {
+                container?.finishLoading(success: false)
                 return
             }
             isLoading = true
-            GLTFAsset.load(with: url, options: [:]) { [weak self] _, status, asset, _, _ in
-                guard let self, status == .complete, let asset else { return }
+            GLTFAsset.load(with: url, options: [:]) { [weak self] _, status, asset, error, _ in
+                guard let self else { return }
+                if status == .error || error != nil {
+                    self.finishLoadingFailure()
+                    return
+                }
+                guard status == .complete else { return }
+                guard let asset else {
+                    self.finishLoadingFailure()
+                    return
+                }
                 let source = GLTFSCNSceneSource(asset: asset)
-                guard let loadedScene = source.defaultScene else { return }
+                guard let loadedScene = source.defaultScene else {
+                    self.finishLoadingFailure()
+                    return
+                }
                 DispatchQueue.main.async {
                     self.install(loadedScene)
                 }
             }
         }
 
+        private func finishLoadingFailure() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.isLoading = false
+                self.container?.finishLoading(success: false)
+            }
+        }
+
         private func install(_ loadedScene: SCNScene) {
+            isLoading = false
             guard let container else { return }
             let presentationScene = SCNScene()
             let pivot = SCNNode()
@@ -108,7 +130,7 @@ struct DajuModelView: UIViewRepresentable {
             presentationScene.rootNode.addChildNode(ambientLight())
             container.sceneView.scene = presentationScene
             container.setModelRoot(pivot)
-            container.setLoaded(true)
+            container.finishLoading(success: true)
             modelRoot = pivot
         }
 
@@ -233,9 +255,13 @@ final class CatModelContainerView: UIView {
         gesture.setTranslation(.zero, in: sceneView)
     }
 
-    func setLoaded(_ loaded: Bool) {
-        placeholder.isHidden = loaded
-        spinner.isHidden = loaded
-        if loaded { spinner.stopAnimating() }
+    func finishLoading(success: Bool) {
+        placeholder.isHidden = success
+        spinner.stopAnimating()
+        spinner.isHidden = true
+        if !success {
+            accessibilityLabel = "大橘的三维模型暂时无法加载"
+            accessibilityHint = "页面其他互动仍可使用"
+        }
     }
 }

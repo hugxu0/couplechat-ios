@@ -14,6 +14,11 @@ final class RealtimeEventRouter {
     private let onIncomingInteraction: (ChatMessage) -> Void
     private weak var activeSocket: SocketIOClient?
 
+    nonisolated static func validatedChannel(from value: Any?) -> ChatChannel? {
+        guard let rawChannel = value as? String else { return nil }
+        return ChatChannel(rawValue: rawChannel)
+    }
+
     init(
         auth: AuthStore,
         messageStore: MessageStore,
@@ -49,10 +54,10 @@ final class RealtimeEventRouter {
     private func bindNewMessage(_ s: SocketIOClient) {
         s.on(SocketEvent.messageNew.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
-                  let msg = MessageStore.parseMessage(dict, context: "message:new") else { return }
+                  let msg = MessageStore.parseMessage(dict, context: "message:new"),
+                  let channel = Self.validatedChannel(from: msg.channel) else { return }
             Task { @MainActor in
                 guard let self else { return }
-                let channel = ChatChannel(rawValue: msg.channel) ?? .couple
                 self.messageStore.upsert(msg, in: channel)
                 self.onIncomingInteraction(msg)
                 if msg.sender == "ai" {
@@ -70,8 +75,8 @@ final class RealtimeEventRouter {
         s.on(SocketEvent.readUpdate.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let user = dict["user"] as? String,
-                  let ts = (dict["ts"] as? NSNumber)?.doubleValue else { return }
-            let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "couple") ?? .couple
+                  let ts = (dict["ts"] as? NSNumber)?.doubleValue,
+                  let channel = Self.validatedChannel(from: dict["channel"]) else { return }
             Task { @MainActor in self?.messageStore.setReadState(channel, user: user, ts: ts) }
         }
     }
@@ -79,10 +84,13 @@ final class RealtimeEventRouter {
     private func bindMessageRecall(_ s: SocketIOClient) {
         s.on(SocketEvent.messageRecalled.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
-                  let id = dict["id"] as? String else { return }
-            let channel = ChatChannel(rawValue: dict["channel"] as? String ?? "")
+                  let id = dict["id"] as? String,
+                  let channel = Self.validatedChannel(from: dict["channel"]) else { return }
             Task { @MainActor in
-                self?.messageStore.applyRecall(id: id, channel: channel)
+                guard let self else { return }
+                if !(await self.messageStore.applyRecall(id: id, channel: channel)) {
+                    print("[RealtimeEventRouter] 撤回事件等待本地持久化重试 id=\(id)")
+                }
             }
         }
     }
@@ -92,7 +100,12 @@ final class RealtimeEventRouter {
             guard let dict = data.first as? [String: Any],
                   let id = dict["id"] as? String else { return }
             let metaDict = dict["meta"] as? [String: Any]
-            Task { @MainActor in self?.messageStore.applyMessageUpdate(id: id, meta: metaDict) }
+            Task { @MainActor in
+                guard let self else { return }
+                if !(await self.messageStore.applyMessageUpdate(id: id, meta: metaDict)) {
+                    print("[RealtimeEventRouter] 消息更新等待后续同步重试 id=\(id)")
+                }
+            }
         }
     }
 
@@ -113,8 +126,7 @@ final class RealtimeEventRouter {
     private func bindAIActivity(_ s: SocketIOClient) {
         s.on(SocketEvent.aiActivity.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
-                  let rawChannel = dict["channel"] as? String,
-                  let channel = ChatChannel(rawValue: rawChannel),
+                  let channel = Self.validatedChannel(from: dict["channel"]),
                   let phase = dict["phase"] as? String else { return }
             let activity = AIActivity(
                 channel: channel,

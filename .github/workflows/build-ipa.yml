@@ -1,4 +1,4 @@
-name: 构建 IPA
+name: 构建 unsigned IPA
 
 on:
   workflow_dispatch:
@@ -11,17 +11,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate:
+    name: 同 SHA 质量门禁
+    uses: ./.github/workflows/validate.yml
+
   build-ipa:
     name: Release 归档与打包
+    needs: validate
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Checkout exact commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
 
       - name: Select Xcode 26.3
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: "26.3"
 
@@ -29,10 +36,14 @@ jobs:
         run: brew install xcodegen
 
       - name: Generate project
-        run: xcodegen generate
+        run: |
+          set -o pipefail
+          mkdir -p build-artifacts
+          xcodegen generate 2>&1 | tee build-artifacts/xcodegen.log
 
       - name: Archive unsigned app
         run: |
+          set -o pipefail
           xcodebuild archive \
             -project CoupleChat.xcodeproj \
             -scheme CoupleChat \
@@ -41,33 +52,139 @@ jobs:
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build-artifacts/archive.log
 
-      - name: Package IPA
+      - name: Package and describe unsigned IPA
+        id: package
         run: |
-          APP_PATH="$PWD/build/CoupleChat.xcarchive/Products/Applications/CoupleChat.app"
-          test -d "$APP_PATH"
-          mkdir -p build/Payload
-          ditto "$APP_PATH" build/Payload/CoupleChat.app
-          cd build
-          zip -qry CoupleChat-latest.ipa Payload
-          shasum -a 256 CoupleChat-latest.ipa > CoupleChat-latest.ipa.sha256
+          set -Eeuo pipefail
 
-      - name: Upload IPA
-        uses: actions/upload-artifact@v7
+          APP_PATH="$PWD/build/CoupleChat.xcarchive/Products/Applications/CoupleChat.app"
+          INFO_PLIST="$APP_PATH/Info.plist"
+          EXPECTED_BUNDLE_ID='com.hugxu0.couplechat.native'
+          EXPECTED_MINIMUM_OS='26.0'
+          test -d "$APP_PATH"
+          test -f "$INFO_PLIST"
+
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")
+          BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO_PLIST")
+          MINIMUM_OS=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$INFO_PLIST")
+          [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]
+          [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]
+          [[ "$BUNDLE_ID" == "$EXPECTED_BUNDLE_ID" ]]
+          [[ "$MINIMUM_OS" == "$EXPECTED_MINIMUM_OS" ]]
+
+          SIGNING_RESIDUE=$(find "$APP_PATH" \
+            \( -name '_CodeSignature' -o -name 'embedded.mobileprovision' \) \
+            -print -quit)
+          if [[ -n "$SIGNING_RESIDUE" ]]; then
+            echo "Archive unexpectedly contains signing material" >&2
+            exit 1
+          fi
+          if codesign --verify --deep --strict "$APP_PATH" >/dev/null 2>&1; then
+            echo "Archive unexpectedly has a valid code signature" >&2
+            exit 1
+          fi
+          if codesign --display "$APP_PATH" >/dev/null 2>&1; then
+            echo "Archive unexpectedly contains a code signature" >&2
+            exit 1
+          fi
+
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          IPA_NAME="CoupleChat-unsigned-${SHORT_SHA}-${VERSION}-${BUILD_NUMBER}.ipa"
+          PACKAGE_DIR="$PWD/build/package"
+          ARTIFACT_NAME="CoupleChat-unsigned-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+
+          test ! -e "$PACKAGE_DIR"
+          mkdir -p "$PACKAGE_DIR/Payload"
+          ditto "$APP_PATH" "$PACKAGE_DIR/Payload/CoupleChat.app"
+          PACKAGED_APP="$PACKAGE_DIR/Payload/CoupleChat.app"
+          PACKAGED_INFO_PLIST="$PACKAGED_APP/Info.plist"
+          chmod u+w "$PACKAGED_INFO_PLIST"
+          plutil -convert xml1 "$PACKAGED_INFO_PLIST"
+
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PACKAGED_INFO_PLIST")" == \
+            "$EXPECTED_BUNDLE_ID" ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PACKAGED_INFO_PLIST")" == \
+            "$EXPECTED_MINIMUM_OS" ]]
+          test -z "$(find "$PACKAGED_APP" \
+            \( -name '_CodeSignature' -o -name 'embedded.mobileprovision' \) \
+            -print -quit)"
+
+          cd "$PACKAGE_DIR"
+          zip -qry "$IPA_NAME" Payload
+
+          unzip -Z1 "$IPA_NAME" > "$PWD/../../build-artifacts/ipa-entries.txt"
+          grep -qx 'Payload/CoupleChat.app/Info.plist' "$PWD/../../build-artifacts/ipa-entries.txt"
+          grep -qx 'Payload/CoupleChat.app/cute_cat.glb' "$PWD/../../build-artifacts/ipa-entries.txt"
+          grep -qx 'Payload/CoupleChat.app/ThirdPartyNotices.txt' "$PWD/../../build-artifacts/ipa-entries.txt"
+          if grep -Eq '(^|/)_CodeSignature(/|$)|(^|/)embedded\.mobileprovision$' \
+            "$PWD/../../build-artifacts/ipa-entries.txt"; then
+            echo "IPA unexpectedly contains signing material" >&2
+            exit 1
+          fi
+
+          IPA_SHA256=$(shasum -a 256 "$IPA_NAME" | awk '{print $1}')
+          XCODE_VERSION=$(xcodebuild -version | paste -sd ' ' -)
+          GENERATED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+          export VERSION BUILD_NUMBER BUNDLE_ID MINIMUM_OS IPA_NAME IPA_SHA256 XCODE_VERSION GENERATED_AT
+          export ARTIFACT_NAME
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          metadata = {
+              "schemaVersion": 2,
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "commitSha": os.environ["GITHUB_SHA"],
+              "ref": os.environ["GITHUB_REF"],
+              "refName": os.environ["GITHUB_REF_NAME"],
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "workflowFile": ".github/workflows/build-ipa.yml",
+              "workflowRef": os.environ["GITHUB_WORKFLOW_REF"],
+              "runId": int(os.environ["GITHUB_RUN_ID"]),
+              "runAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "artifactName": os.environ["ARTIFACT_NAME"],
+              "generatedAtUtc": os.environ["GENERATED_AT"],
+              "version": os.environ["VERSION"],
+              "buildNumber": os.environ["BUILD_NUMBER"],
+              "bundleIdentifier": os.environ["BUNDLE_ID"],
+              "minimumOSVersion": os.environ["MINIMUM_OS"],
+              "xcodeVersion": os.environ["XCODE_VERSION"],
+              "ipaFile": os.environ["IPA_NAME"],
+              "ipaSha256": os.environ["IPA_SHA256"],
+              "signed": False,
+          }
+          Path("BUILD-METADATA.json").write_text(
+              json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          shasum -a 256 "$IPA_NAME" BUILD-METADATA.json > SHA256SUMS
+          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+          echo "ipa_name=$IPA_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified unsigned IPA
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: CoupleChat-latest
+          name: ${{ steps.package.outputs.artifact_name }}
           path: |
-            build/CoupleChat-latest.ipa
-            build/CoupleChat-latest.ipa.sha256
+            build/package/${{ steps.package.outputs.ipa_name }}
+            build/package/BUILD-METADATA.json
+            build/package/SHA256SUMS
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 14
 
       - name: Upload archive diagnostics
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: CoupleChat-build-failure-${{ github.run_number }}
-          path: build/
+          name: CoupleChat-build-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build-artifacts/
           if-no-files-found: ignore
           retention-days: 7

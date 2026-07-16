@@ -48,8 +48,8 @@ actor OutboxProcessor {
     }
 
     func remove(clientId: String) async -> PendingOutboundMessage? {
-        let item = await persistence.pendingOutbound(clientId: clientId)
-        await persistence.deletePendingOutbound(clientId: clientId)
+        guard let item = await persistence.pendingOutbound(clientId: clientId) else { return nil }
+        guard await persistence.deletePendingOutbound(clientId: clientId) else { return nil }
         return item
     }
 

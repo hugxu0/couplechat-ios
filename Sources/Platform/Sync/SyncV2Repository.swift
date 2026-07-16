@@ -41,6 +41,8 @@ final class SyncV2Repository {
 enum SyncV2Error: Error {
     case invalidURL
     case invalidResponse
+    case invalidPayload
+    case localPersistence
     case unauthorized
     case server(Int)
 }

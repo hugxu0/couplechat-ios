@@ -92,6 +92,49 @@ final class MessageStoreParseTests: XCTestCase {
         let result = MessageStore.parseMessages([], context: "empty")
         XCTAssertTrue(result.isEmpty)
     }
+
+    func testSendAckUsesLegacyFallbackOnlyWhenMessageKeyIsAbsent() {
+        XCTAssertEqual(
+            MessageStore.validateSendAckMessage(
+                ["ok": true, "id": "server-id"],
+                expectedChannel: .couple),
+            .absent)
+
+        let validMessage: [String: Any] = [
+            "id": "server-id",
+            "sender": "xu",
+            "type": "text",
+            "text": "hello",
+            "channel": "couple",
+            "ts": 100,
+        ]
+        guard case let .valid(message) = MessageStore.validateSendAckMessage(
+            ["message": validMessage],
+            expectedChannel: .couple)
+        else {
+            return XCTFail("Expected a valid acknowledgement message")
+        }
+        XCTAssertEqual(message.id, "server-id")
+
+        var missingChannel = validMessage
+        missingChannel.removeValue(forKey: "channel")
+        var unknownChannel = validMessage
+        unknownChannel["channel"] = "private-future"
+        var wrongChannel = validMessage
+        wrongChannel["channel"] = "ai"
+
+        let invalidPayloads: [[String: Any]] = [
+            ["message": NSNull()],
+            ["message": missingChannel],
+            ["message": unknownChannel],
+            ["message": wrongChannel],
+        ]
+        for payload in invalidPayloads {
+            XCTAssertEqual(
+                MessageStore.validateSendAckMessage(payload, expectedChannel: .couple),
+                .invalid)
+        }
+    }
 }
 
 @MainActor

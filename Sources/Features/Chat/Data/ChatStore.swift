@@ -18,6 +18,23 @@ struct AIActivity: Equatable {
 final class ChatStore: ObservableObject {
     static let baseURL = ServerConfig.baseURL
 
+    nonisolated static func validatedSyncChannel(_ rawChannel: String?) -> ChatChannel? {
+        rawChannel.flatMap(ChatChannel.init(rawValue:))
+    }
+
+    nonisolated static func validatedSyncMessageChannels(
+        _ events: [SyncV2Event]
+    ) -> [ChatChannel]? {
+        var channels: [ChatChannel] = []
+        for event in events where event.entityType == "message" {
+            guard let channel = validatedSyncChannel(event.payload.channel) else {
+                return nil
+            }
+            channels.append(channel)
+        }
+        return channels
+    }
+
     // MARK: - 子 store
 
     let auth: AuthStore
@@ -653,15 +670,25 @@ final class ChatStore: ObservableObject {
             var hasMore = true
             while hasMore {
                 let page = try await syncV2.fetch(after: cursor, token: session.token)
+                guard Self.validatedSyncMessageChannels(page.events) != nil else {
+                    throw SyncV2Error.invalidPayload
+                }
                 for event in page.events where event.entityType == "message" && event.operation == "delete" {
-                    let channel = event.payload.channel.flatMap(ChatChannel.init(rawValue:))
-                    messageStore.applyRecall(id: event.payload.id ?? event.entityId, channel: channel)
+                    guard let channel = Self.validatedSyncChannel(event.payload.channel) else {
+                        throw SyncV2Error.invalidPayload
+                    }
+                    guard await messageStore.applyRecallPersisted(
+                        id: event.payload.id ?? event.entityId,
+                        channel: channel
+                    ) else {
+                        throw SyncV2Error.localPersistence
+                    }
                 }
                 changedEntityTypes.formUnion(page.events.map(\.entityType))
                 cursor = max(cursor, page.nextCursor)
-                defaults.set(Int(cursor), forKey: key)
                 hasMore = page.hasMore
             }
+            defaults.set(Int(cursor), forKey: key)
             await syncV2.acknowledge(cursor, token: session.token)
             if !changedEntityTypes.isEmpty {
                 NotificationCenter.default.post(

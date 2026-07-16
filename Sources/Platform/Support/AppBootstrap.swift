@@ -24,8 +24,8 @@ struct AppBootstrapSnapshot {
         var messagesByChannel: [String: [ChatMessage]] = [:]
         for channel in ChatChannel.allCases {
             let rows = messageRoot[channel.rawValue] as? [[String: Any]] ?? []
-            messagesByChannel[channel.rawValue] = ChatMessageMapper.parse(
-                rows, context: "bootstrap:\(channel.rawValue)")
+            let parsed = ChatMessageMapper.parse(rows, context: "bootstrap:\(channel.rawValue)")
+            messagesByChannel[channel.rawValue] = parsed.filter { $0.channel == channel.rawValue }
         }
 
         let readRoot = root["readStates"] as? [String: Any] ?? [:]

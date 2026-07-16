@@ -10,7 +10,9 @@ RUN npm run build && npm prune --omit=dev --omit=optional
 
 FROM node:22-bookworm-slim AS runtime
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    HOST=127.0.0.1 \
+    PORT=3000
 WORKDIR /app
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
@@ -20,5 +22,5 @@ COPY assets ./assets
 RUN mkdir -p /app/uploads /app/.data && chown -R node:node /app
 USER node
 
-EXPOSE 8080
+EXPOSE 3000
 CMD ["node", "dist/server.js"]

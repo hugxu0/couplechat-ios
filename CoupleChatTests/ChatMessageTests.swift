@@ -1,4 +1,5 @@
 import Combine
+import Foundation
 import XCTest
 @testable import CoupleChat
 
@@ -53,6 +54,87 @@ final class ChatMessageTests: XCTestCase {
             "text": "hello",
         ]
         XCTAssertNil(ChatMessage(dict: dict))
+    }
+
+    func testDictionaryMessageRejectsMissingAndUnknownChannel() {
+        let base: [String: Any] = [
+            "id": "channel-validation",
+            "sender": "xu",
+            "type": "text",
+            "text": "hello",
+            "ts": 100,
+        ]
+        XCTAssertNil(ChatMessage(dict: base))
+
+        var unknown = base
+        unknown["channel"] = "private-future"
+        XCTAssertNil(ChatMessage(dict: unknown))
+
+        var supported = base
+        supported["channel"] = "ai"
+        XCTAssertEqual(ChatMessage(dict: supported)?.channel, "ai")
+    }
+
+    func testCodableMessageRejectsUnknownChannel() throws {
+        let unknown = Data(#"{"id":"future","channel":"private-future","ts":100}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(ChatMessage.self, from: unknown))
+
+        let supported = Data(#"{"id":"known","channel":"couple","ts":100}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(ChatMessage.self, from: supported).channel, "couple")
+    }
+
+    func testRealtimeRouterChannelValidationNeverFallsBackToCouple() {
+        XCTAssertEqual(RealtimeEventRouter.validatedChannel(from: "couple"), .couple)
+        XCTAssertEqual(RealtimeEventRouter.validatedChannel(from: "ai"), .ai)
+        XCTAssertNil(RealtimeEventRouter.validatedChannel(from: "private-future"))
+        XCTAssertNil(RealtimeEventRouter.validatedChannel(from: nil))
+        XCTAssertEqual(ChatStore.validatedSyncChannel("couple"), .couple)
+        XCTAssertNil(ChatStore.validatedSyncChannel("private-future"))
+        XCTAssertNil(ChatStore.validatedSyncChannel(nil))
+    }
+
+    func testSyncV2PageAcceptsOnlyProtocolVersionTwo() throws {
+        let supported = Data(
+            #"{"protocolVersion":2,"events":[],"nextCursor":12,"hasMore":false}"#.utf8)
+        let page = try JSONDecoder().decode(SyncV2Page.self, from: supported)
+        XCTAssertEqual(page.protocolVersion, 2)
+        XCTAssertEqual(page.nextCursor, 12)
+
+        let unsupported = Data(
+            #"{"protocolVersion":3,"events":[],"nextCursor":99,"hasMore":false}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(SyncV2Page.self, from: unsupported))
+
+        let missing = Data(#"{"events":[],"nextCursor":99,"hasMore":false}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(SyncV2Page.self, from: missing))
+    }
+
+    func testSyncV2PreflightRejectsInvalidChannelAnywhereInMessagePage() {
+        func event(_ seq: Int64, _ operation: String, _ channel: String?) -> SyncV2Event {
+            SyncV2Event(
+                seq: seq,
+                entityType: "message",
+                entityId: "message-\(seq)",
+                operation: operation,
+                version: 1,
+                payload: SyncV2Payload(id: nil, channel: channel))
+        }
+
+        let validEvents = [
+            event(1, "create", "couple"),
+            event(2, "update", "ai"),
+            event(3, "upsert", "couple"),
+            event(4, "delete", "couple"),
+        ]
+        XCTAssertEqual(
+            ChatStore.validatedSyncMessageChannels(validEvents),
+            [.couple, .ai, .couple, .couple])
+
+        XCTAssertNil(ChatStore.validatedSyncMessageChannels([
+            event(5, "delete", "couple"),
+            event(6, "update", "private-future"),
+        ]))
+        XCTAssertNil(ChatStore.validatedSyncMessageChannels([event(7, "create", nil)]))
+        XCTAssertNil(ChatStore.validatedSyncMessageChannels([event(8, "delete", "private-future")]))
     }
 
     func testOptimisticText() {

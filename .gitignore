@@ -8,19 +8,56 @@ build-artifacts/
 DerivedData/
 dist/
 node_modules/
-
-# 已复制到 Sources/Resources 的本地模型源文件
-cute_cat.glb
+*.ipa
+*.xcarchive
+*.xcresult
+*.dSYM
+*.dSYM.zip
+*.tar.gz
+*.tgz
 
 # macOS / 编辑器
 .DS_Store
 Thumbs.db
 
-# 后端运行数据
+# 后端运行数据与任何环境密钥
 server/.data/
 server/uploads/
-server/.env
+server/RELEASE
+**/.env
+**/.env.*
+!**/.env.example
+!server/.env.production.example
 /data/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# 私有运维资料与数据库备份不得进入公开仓库
+private/
+secrets/
+vps/
+VPS/
+backups/
+*.dump
+*.backup
+*.pgdump
 
 # SwiftLint
 .swiftlint.cache
+
+# Apple 免费签名与设备资料（只允许保存在用户自己的受信电脑）
+*.p12
+*.p8
+*.cer
+*.crt
+*.key
+*.pem
+*.mobileprovision
+*.provisionprofile
+local-signing/
+device-udids.*
+.npmrc
+.netrc
+.ssh/

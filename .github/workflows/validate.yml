@@ -1,6 +1,7 @@
 name: 项目质量验证
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main]
@@ -17,10 +18,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: validation-${{ github.ref }}
+  group: validation-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  public-repository-safety:
+    name: Public repository safety
+    if: github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/public-repository-safety.yml
+
   server:
     name: Server
     runs-on: ubuntu-latest
@@ -31,10 +37,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Use Node.js 22
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: npm
@@ -42,6 +48,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Validate backup shell safety
+        run: |
+          bash -n scripts/*.sh tests/operations/*.test.sh
+          bash tests/operations/backup-retention.test.sh
 
       - name: Test
         run: npm test
@@ -56,12 +67,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
 
       - name: Select Xcode 26.3
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: "26.3"
 
@@ -116,9 +127,9 @@ jobs:
 
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: CoupleChat-validation-failure-${{ github.run_number }}
+          name: CoupleChat-validation-failure-${{ github.run_id }}-${{ github.run_attempt }}
           path: build-artifacts/
           if-no-files-found: warn
           retention-days: 7

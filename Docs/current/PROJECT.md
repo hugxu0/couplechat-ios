@@ -2,6 +2,19 @@
 
 > 更新时间：2026-07-16。本文是产品现状的唯一入口，不记录开发过程与历史版本。
 
+本文把源码、测试、构建产物和生产环境分开记录。详细缺陷与验收条件见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。
+
+## 状态证据
+
+| 层级 | 最后核验 | 结论 |
+|---|---|---|
+| 本次审查基线 | `f1e69c446b614301859cb9d06d9b504af061172d` | 当前本地工作树基于该 commit 重构为单仓库；本批改动尚未提交或推送，schema 仍为 v31 |
+| 服务端验证 | 2026-07-16 | 对当前本地工作树执行 `npm test`（58/58，含 PostgreSQL 18 smoke）、`npm run build` 和生产依赖审计，均通过且审计为 0 个已知漏洞 |
+| iOS 当前改动 | 待同一新 commit | Windows 已完成静态检查和脚本测试；本批 Swift 编译/XCTest 尚未在 macOS Action 执行，不能沿用旧 SHA 的 CI 结果 |
+| 生产环境 | 2026-07-16 | 公开 `healthcheck` 当前成功并返回固定双账号；美国为唯一可写主机。真实 release、schema、备份和安全状态只在私有运维环境现场复核，不由公开接口推断 |
+
+本机旧 IPA、tar、展开的 release 或备份目录不属于上述任何生产证据。
+
 ## 产品边界
 
 悄悄话只服务 `xu` 与 `si` 两位固定用户，支持同账号在 iPhone/iPad 多设备同时登录。产品入口按当前 Tab 顺序为聊天、时光、大橘、计划和我的。
@@ -10,9 +23,10 @@
 
 ## 技术基线
 
-- 客户端版本 `0.2.0 (7)`，Bundle ID `com.hugxu0.couplechat.native`，最低 iOS/iPadOS 26，Swift 5.9；工程由 XcodeGen 的 `project.yml` 生成。
-- 客户端依赖 Socket.IO Client Swift `16.1.0+` 和 GLTFKit2 `0.5.15`；3D 模型 `Sources/Resources/cute_cat.glb` 为本机资源，不提交 Git，缺失时显示轻量占位。
+- 客户端版本 `0.2.0 (11)`，Bundle ID `com.hugxu0.couplechat.native`，最低 iOS/iPadOS 26，Swift 5.9；工程由 XcodeGen 的 `project.yml` 生成。
+- 客户端依赖精确版本 Socket.IO Client Swift `16.1.0` 和 GLTFKit2 `0.5.15`；3D 模型 `Sources/Resources/cute_cat.glb` 已受 Git 版本控制并随 IPA 发布，授权见同目录 `ThirdPartyNotices.txt`。
 - 服务端使用 Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL，生产公开基地址为 `https://hoo66.top`。
+- 目标设备固定为两台 iPhone 17 和一台 iPad，均运行最新稳定 iOS/iPadOS 26；签名使用免费 Apple Personal Team，不支持 TestFlight/App Store。
 
 ## 已实现
 
@@ -36,7 +50,7 @@
 - 今日推荐按北京时间 06:00 切换作息日：大橘给双方同一条内容/体验推荐，支持换一条、双方互荐、未读提示、收下与个人历史隐藏。
 - 共享/私人日历、提醒、备忘、完成、删除和版本冲突处理。
 - 共享提醒通知双方设备，私人提醒只通知创建者设备。
-- 服务端持久化的大橘状态、互动冷却、日夜场景和 AI 私聊；本机包含 `cute_cat.glb` 时加载 3D 模型，否则显示占位。
+- 服务端持久化的大橘状态、互动冷却、日夜场景和 AI 私聊；客户端从随包 `cute_cat.glb` 加载 3D 模型，加载失败时显示占位。
 
 ### 设置与 AI
 
@@ -53,6 +67,9 @@
 - 推荐变化通过 REST、Sync V2 和 App 内未读角标同步，当前不单独发送 Bark 推荐通知。
 - 清空 App 数据后，已经丢失本地文件的失败媒体无法继续重传。
 - iOS 自动验证依赖 GitHub Actions 或 Mac；真机仍需检查视觉、手势、蓝牙音频和双设备行为。
+- GitHub 当前只生成 unsigned IPA；免费账号签名 7 天到期，三台设备需要定期刷新。完整流程见 [IOS_SIDELOAD.md](../operations/IOS_SIDELOAD.md)。
+- 备份与恢复脚本已共享 v1–v31 全表策略、校验关键序列，并保护最后一份 `quiesced + RESTORE-VERIFIED`；但尚未在目标 Linux/真实生产副本完成恢复演练，也不会自动确认加密离机副本。`best_effort` 备份不能作为 migration 发布门禁，边界见 [DEPLOYMENT.md](../operations/DEPLOYMENT.md)。
+- Sync 提交顺序、SQLite 失败传播、频道隔离、Sync 协议版本、3D 加载状态和生产端口的代码修复已进入当前工作树；iOS/macOS CI、混合版本部署禁令、账号切换竞态和安全问题仍以 [KNOWN_ISSUES.md](KNOWN_ISSUES.md) 为准。
 
 ## 架构保护边界
 
@@ -86,7 +103,7 @@ npm test
 npm run build
 ```
 
-iOS 改动通过 GitHub Actions 验证 SwiftLint、结构护栏、iPhone 单测、必要的 iPad build、unsigned Archive 和 IPA 打包。涉及媒体交互时还需在真机验证轻点预览、长按菜单、纵向退出、横向翻页及返回缩略图转场。
+iOS 质量 workflow 验证公开仓库安全、SwiftLint、结构护栏、iPhone 单测和 iPad build；手动 unsigned IPA workflow 会先调用同 SHA 的完整质量门禁，再归档并写入 commit/run/attempt metadata 与 SHA-256。新流程尚需推送后的首次 GitHub Actions 和重跑验收。涉及媒体交互时还需在真机验证轻点预览、长按菜单、纵向退出、横向翻页及返回缩略图转场。
 
 ## 文档与完成定义
 

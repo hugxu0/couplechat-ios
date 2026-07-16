@@ -69,4 +69,47 @@ final class ChatRemoteDataSourceTests: XCTestCase {
         XCTAssertEqual(page.total, 18)
         XCTAssertNil(page.error)
     }
+
+    func testFetchHistoryPageRejectsEntirePageWhenAnyRowIsMalformed() async {
+        let url = URL(string: "https://example.com/api/messages")!
+        let body = Data("""
+        {"list":[
+          {"id":"valid","sender":"xu","type":"text","text":"hello","channel":"couple","ts":100},
+          {"sender":"si","type":"text","text":"missing id","channel":"couple","ts":200}
+        ],"total":2}
+        """.utf8)
+        let source = ChatRemoteDataSource(
+            httpClient: RecordingHTTPClient(data: body, responseURL: url))
+
+        let page = await source.fetchHistoryPage(
+            channel: .couple,
+            before: nil,
+            limit: 300,
+            session: Session(token: "token", username: "xu", name: "小旭"))
+
+        XCTAssertTrue(page.messages.isEmpty)
+        XCTAssertEqual(page.total, 2)
+        XCTAssertNotNil(page.error)
+    }
+
+    func testFetchHistoryPageRejectsEntirePageWhenMessageUsesWrongChannel() async {
+        let url = URL(string: "https://example.com/api/messages")!
+        let body = Data("""
+        {"list":[
+          {"id":"wrong","sender":"xu","type":"text","text":"hello","channel":"ai","ts":100}
+        ],"total":1}
+        """.utf8)
+        let source = ChatRemoteDataSource(
+            httpClient: RecordingHTTPClient(data: body, responseURL: url))
+
+        let page = await source.fetchHistoryPage(
+            channel: .couple,
+            before: nil,
+            limit: 300,
+            session: Session(token: "token", username: "xu", name: "小旭"))
+
+        XCTAssertTrue(page.messages.isEmpty)
+        XCTAssertEqual(page.total, 1)
+        XCTAssertNotNil(page.error)
+    }
 }

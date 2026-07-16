@@ -54,7 +54,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | `around` | 获取某个时间附近的消息 |
 | `limit` | `1...300`，默认 `80` |
 
-响应为 `{ ok, list, total }`。同一请求不要同时组合多个方向参数。
+响应为 `{ ok, list, total }`。`after` 与 `before` 可以组合，服务端返回半开区间 `[after,before)`，当前客户端用它做有界核对；`around`、`since` 与方向分页不要组合。现有边界只有毫秒时间戳，同毫秒多消息的稳定游标问题见 [DATA_SYNC.md](DATA_SYNC.md)。
 
 ### 上传与媒体
 

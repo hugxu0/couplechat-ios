@@ -78,11 +78,11 @@ private actor InMemoryChatPersistence: ChatPersistenceProtocol {
     func databaseSizeBytes() -> Int64 { 0 }
     func messageCount(channel: String) -> Int { 0 }
     func mediaURLs(channel: String, types: [String]) -> [String] { [] }
-    func insertMessage(_ message: ChatMessage) {}
+    func insertMessage(_ message: ChatMessage) -> Bool { true }
     func insertMessages(_ messages: [ChatMessage]) -> Int { messages.count }
     func oldestMessageTimestamp(channel: String) -> Double? { nil }
-    func deleteMessages(channel: String?) {}
-    func deleteMessage(id: String) {}
+    func deleteMessages(channel: String?) -> Bool { true }
+    func deleteMessage(id: String, channel: String) -> Bool { true }
     func fetchMessages(channel: String, beforeTimestamp: Double, limit: Int) -> [ChatMessage] { [] }
     func fetchMessages(channel: String, fromTimestamp: Double, toTimestamp: Double) -> [ChatMessage] { [] }
     func fetchMessagesAround(channel: String, centerTimestamp: Double, beforeLimit: Int, afterLimit: Int) -> [ChatMessage] { [] }
@@ -101,13 +101,14 @@ private actor InMemoryChatPersistence: ChatPersistenceProtocol {
         pendingItems.first { $0.clientId == clientId }
     }
     func loadPendingOutbounds() -> [PendingOutboundMessage] { pendingItems }
-    func deletePendingOutbound(clientId: String) {
+    func deletePendingOutbound(clientId: String) -> Bool {
         pendingItems.removeAll { $0.clientId == clientId }
+        return true
     }
     func fetchLatestMessages(channel: String, limit: Int) -> [ChatMessage] { [] }
     func searchMessages(query: String, channel: String) -> [ChatMessage] { [] }
-    func saveReadReceipt(channel: String, username: String, ts: Double, updatedAt: Double) {}
+    func saveReadReceipt(channel: String, username: String, ts: Double, updatedAt: Double) -> Bool { true }
     func loadReadReceipts(channel: String) -> [String: Double] { [:] }
-    func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double) {}
+    func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double) -> Bool { true }
     func loadSharedState() -> [String: Any] { [:] }
 }

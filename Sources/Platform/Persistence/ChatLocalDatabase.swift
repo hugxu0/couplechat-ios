@@ -123,7 +123,7 @@ final class ChatLocalDatabase {
         guard execute(sql: "BEGIN IMMEDIATE TRANSACTION;") else { return false }
         var committed = false
         defer {
-            if !committed { _ = execute(sql: "ROLLBACK;") }
+            if !committed { rollbackOrInvalidate(context: "schema migration") }
         }
 
         let messagesSQL = """
@@ -286,53 +286,71 @@ final class ChatLocalDatabase {
     
     // MARK: - Message Operations
     
-    func insertMessage(_ msg: ChatMessage) {
+    @discardableResult
+    func insertMessage(_ msg: ChatMessage) -> Bool {
         databaseLock.lock()
         defer { databaseLock.unlock() }
+        return insertMessageLocked(msg)
+    }
+
+    private func insertMessageLocked(_ msg: ChatMessage) -> Bool {
         // 乐观占位/发送失败的消息不落库：它们的 id 是临时的 tmp-xxx，
         // 重启后既发不出去也删不掉，只会在列表里留下幽灵消息。
-        guard !msg.pending, !msg.failed, !msg.id.hasPrefix("tmp-") else { return }
+        guard !msg.pending, !msg.failed, !msg.id.hasPrefix("tmp-") else { return false }
+        guard ChatChannel(rawValue: msg.channel) != nil else {
+            print("[ChatLocalDatabase] ⚠️ 拒绝写入未知频道消息 id=\(msg.id)")
+            return false
+        }
         let sql = """
         INSERT OR REPLACE INTO messages 
         (id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText, attachmentsJson)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            return
-        }
-        
-        sqlite3_bind_text(stmt, 1, msg.id, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 2, msg.channel, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 3, msg.sender, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 4, msg.senderName, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 5, msg.kind, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 6, msg.type, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 7, msg.text, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 8, msg.url, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 9, msg.replyTo, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 10, msg.replyPreview, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_double(stmt, 11, msg.ts)
-        sqlite3_bind_text(stmt, 12, msg.clientId, -1, SQLITE_TRANSIENT)
-        
-        var metaStr: String? = nil
-        if let meta = msg.meta {
-            if let data = try? JSONEncoder().encode(meta) {
-                metaStr = String(data: data, encoding: .utf8)
+        let metaString: String?
+        let attachmentsString: String?
+        do {
+            if let meta = msg.meta {
+                let data = try JSONEncoder().encode(meta)
+                guard let value = String(data: data, encoding: .utf8) else { return false }
+                metaString = value
+            } else {
+                metaString = nil
             }
+            if let attachments = msg.attachments {
+                let data = try JSONEncoder().encode(attachments)
+                guard let value = String(data: data, encoding: .utf8) else { return false }
+                attachmentsString = value
+            } else {
+                attachmentsString = nil
+            }
+        } catch {
+            print("[ChatLocalDatabase] ⚠️ 消息附加数据编码失败 id=\(msg.id)")
+            return false
         }
-        sqlite3_bind_text(stmt, 13, metaStr, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 14, msg.recalledText, -1, SQLITE_TRANSIENT)
-        var attachmentsString: String?
-        if let attachments = msg.attachments,
-           let data = try? JSONEncoder().encode(attachments) {
-            attachmentsString = String(data: data, encoding: .utf8)
-        }
-        sqlite3_bind_text(stmt, 15, attachmentsString, -1, SQLITE_TRANSIENT)
-        
-        sqlite3_step(stmt)
-        sqlite3_finalize(stmt)
+
+        return performPreparedWrite(
+            sql: sql,
+            operation: "upsert message",
+            bindings: { stmt in
+                [
+                    sqlite3_bind_text(stmt, 1, msg.id, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 2, msg.channel, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 3, msg.sender, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 4, msg.senderName, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 5, msg.kind, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 6, msg.type, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 7, msg.text, -1, self.SQLITE_TRANSIENT),
+                    self.bindTextResult(stmt, index: 8, value: msg.url),
+                    self.bindTextResult(stmt, index: 9, value: msg.replyTo),
+                    self.bindTextResult(stmt, index: 10, value: msg.replyPreview),
+                    sqlite3_bind_double(stmt, 11, msg.ts),
+                    self.bindTextResult(stmt, index: 12, value: msg.clientId),
+                    self.bindTextResult(stmt, index: 13, value: metaString),
+                    self.bindTextResult(stmt, index: 14, value: msg.recalledText),
+                    self.bindTextResult(stmt, index: 15, value: attachmentsString),
+                ]
+            })
     }
 
     /// 全量同步按页事务写入，避免每条消息单独提交 WAL。
@@ -341,11 +359,16 @@ final class ChatLocalDatabase {
         databaseLock.lock()
         defer { databaseLock.unlock() }
         guard !messages.isEmpty, execute(sql: "BEGIN IMMEDIATE TRANSACTION;") else { return 0 }
-        for message in messages { insertMessage(message) }
-        guard execute(sql: "COMMIT;") else {
-            _ = execute(sql: "ROLLBACK;")
-            return 0
+        var transactionOpen = true
+        defer {
+            if transactionOpen { rollbackOrInvalidate(context: "batch message write") }
         }
+
+        for message in messages {
+            guard insertMessageLocked(message) else { return 0 }
+        }
+        guard execute(sql: "COMMIT;") else { return 0 }
+        transactionOpen = false
         return messages.count
     }
 
@@ -362,30 +385,55 @@ final class ChatLocalDatabase {
         return sqlite3_column_double(stmt, 0)
     }
 
-    func deleteMessages(channel: String? = nil) {
+    @discardableResult
+    func deleteMessages(channel: String? = nil) -> Bool {
         databaseLock.lock()
         defer { databaseLock.unlock() }
+        let deleted: Bool
         if let channel {
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "DELETE FROM messages WHERE channel = ?;", -1, &stmt, nil) == SQLITE_OK else { return }
-            sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
-            _ = sqlite3_step(stmt)
-            sqlite3_finalize(stmt)
+            guard ChatChannel(rawValue: channel) != nil else { return false }
+            deleted = performPreparedWrite(
+                sql: "DELETE FROM messages WHERE channel = ?;",
+                operation: "delete messages by channel",
+                bindings: { [sqlite3_bind_text($0, 1, channel, -1, self.SQLITE_TRANSIENT)] })
         } else {
-            _ = execute(sql: "DELETE FROM messages;")
+            deleted = execute(sql: "DELETE FROM messages;")
         }
-        _ = execute(sql: "PRAGMA wal_checkpoint(PASSIVE);")
+        guard deleted else { return false }
+        return execute(sql: "PRAGMA wal_checkpoint(PASSIVE);")
     }
     
-    func deleteMessage(id: String) {
+    @discardableResult
+    func deleteMessage(id: String, channel: String) -> Bool {
         databaseLock.lock()
         defer { databaseLock.unlock() }
-        let sql = "DELETE FROM messages WHERE id = ?;"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-        sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
-        sqlite3_step(stmt)
-        sqlite3_finalize(stmt)
+        guard ChatChannel(rawValue: channel) != nil else { return false }
+        guard execute(sql: "BEGIN IMMEDIATE TRANSACTION;") else { return false }
+        var transactionOpen = true
+        defer {
+            if transactionOpen { rollbackOrInvalidate(context: "delete message id=\(id)") }
+        }
+        guard performPreparedWrite(
+            sql: "UPDATE messages SET replyTo = NULL, replyPreview = NULL WHERE replyTo = ? AND channel = ?;",
+            operation: "repair replies before deleting message",
+            bindings: {
+                [
+                    sqlite3_bind_text($0, 1, id, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text($0, 2, channel, -1, self.SQLITE_TRANSIENT),
+                ]
+            }),
+              performPreparedWrite(
+                sql: "DELETE FROM messages WHERE id = ? AND channel = ?;",
+                operation: "delete message",
+                bindings: {
+                    [
+                        sqlite3_bind_text($0, 1, id, -1, self.SQLITE_TRANSIENT),
+                        sqlite3_bind_text($0, 2, channel, -1, self.SQLITE_TRANSIENT),
+                    ]
+                }),
+              execute(sql: "COMMIT;") else { return false }
+        transactionOpen = false
+        return true
     }
     
     func fetchMessages(channel: String, beforeTimestamp: Double, limit: Int) -> [ChatMessage] {
@@ -572,32 +620,47 @@ final class ChatLocalDatabase {
     func upsertPendingOutbound(_ item: PendingOutboundMessage) -> Bool {
         databaseLock.lock()
         defer { databaseLock.unlock() }
+        guard ChatChannel(rawValue: item.channel) != nil else {
+            print("[ChatLocalDatabase] ⚠️ 拒绝写入未知频道待发消息 clientId=\(item.clientId)")
+            return false
+        }
+        let attachmentsJSON: String
+        do {
+            let data = try JSONEncoder().encode(item.attachments)
+            guard let value = String(data: data, encoding: .utf8) else { return false }
+            attachmentsJSON = value
+        } catch {
+            print("[ChatLocalDatabase] ⚠️ 待发消息附件编码失败 clientId=\(item.clientId)")
+            return false
+        }
         let sql = """
         INSERT OR REPLACE INTO pending_outbound_messages
         (clientId, channel, type, text, replyTo, replyPreview, localFilePath, mimeType,
          uploadId, uploadURL, createdAt, attempts, lastError, metaJson, attachmentsJson)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, item.clientId, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 2, item.channel, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 3, item.type, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 4, item.text, -1, SQLITE_TRANSIENT)
-        bindText(stmt, index: 5, value: item.replyTo)
-        bindText(stmt, index: 6, value: item.replyPreview)
-        bindText(stmt, index: 7, value: item.localFilePath)
-        bindText(stmt, index: 8, value: item.mimeType)
-        bindText(stmt, index: 9, value: item.uploadId)
-        bindText(stmt, index: 10, value: item.uploadURL)
-        sqlite3_bind_double(stmt, 11, item.createdAt)
-        sqlite3_bind_int(stmt, 12, Int32(item.attempts))
-        bindText(stmt, index: 13, value: item.lastError)
-        bindText(stmt, index: 14, value: item.metaJSON)
-        let attachmentsJSON = (try? JSONEncoder().encode(item.attachments)).flatMap { String(data: $0, encoding: .utf8) }
-        bindText(stmt, index: 15, value: attachmentsJSON)
-        return sqlite3_step(stmt) == SQLITE_DONE
+        return performPreparedWrite(
+            sql: sql,
+            operation: "upsert pending outbound",
+            bindings: { stmt in
+                [
+                    sqlite3_bind_text(stmt, 1, item.clientId, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 2, item.channel, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 3, item.type, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 4, item.text, -1, self.SQLITE_TRANSIENT),
+                    self.bindTextResult(stmt, index: 5, value: item.replyTo),
+                    self.bindTextResult(stmt, index: 6, value: item.replyPreview),
+                    self.bindTextResult(stmt, index: 7, value: item.localFilePath),
+                    self.bindTextResult(stmt, index: 8, value: item.mimeType),
+                    self.bindTextResult(stmt, index: 9, value: item.uploadId),
+                    self.bindTextResult(stmt, index: 10, value: item.uploadURL),
+                    sqlite3_bind_double(stmt, 11, item.createdAt),
+                    sqlite3_bind_int(stmt, 12, Int32(item.attempts)),
+                    self.bindTextResult(stmt, index: 13, value: item.lastError),
+                    self.bindTextResult(stmt, index: 14, value: item.metaJSON),
+                    self.bindTextResult(stmt, index: 15, value: attachmentsJSON),
+                ]
+            })
     }
 
     func pendingOutbound(clientId: String) -> PendingOutboundMessage? {
@@ -634,14 +697,14 @@ final class ChatLocalDatabase {
         return items
     }
 
-    func deletePendingOutbound(clientId: String) {
+    @discardableResult
+    func deletePendingOutbound(clientId: String) -> Bool {
         databaseLock.lock()
         defer { databaseLock.unlock() }
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "DELETE FROM pending_outbound_messages WHERE clientId = ?;", -1, &stmt, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, clientId, -1, SQLITE_TRANSIENT)
-        sqlite3_step(stmt)
+        return performPreparedWrite(
+            sql: "DELETE FROM pending_outbound_messages WHERE clientId = ?;",
+            operation: "delete pending outbound",
+            bindings: { [sqlite3_bind_text($0, 1, clientId, -1, self.SQLITE_TRANSIENT)] })
     }
 
     private func parsePendingOutboundRow(_ stmt: OpaquePointer?) -> PendingOutboundMessage? {
@@ -815,23 +878,26 @@ final class ChatLocalDatabase {
     
     // MARK: - Read Receipt Operations
     
-    func saveReadReceipt(channel: String, username: String, ts: Double, updatedAt: Double) {
+    @discardableResult
+    func saveReadReceipt(channel: String, username: String, ts: Double, updatedAt: Double) -> Bool {
         databaseLock.lock()
         defer { databaseLock.unlock() }
+        guard ChatChannel(rawValue: channel) != nil else { return false }
         let sql = """
         INSERT OR REPLACE INTO read_receipts (channel, username, ts, updatedAt)
         VALUES (?, ?, ?, ?);
         """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-        
-        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 2, username, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_double(stmt, 3, ts)
-        sqlite3_bind_double(stmt, 4, updatedAt)
-        
-        sqlite3_step(stmt)
-        sqlite3_finalize(stmt)
+        return performPreparedWrite(
+            sql: sql,
+            operation: "save read receipt",
+            bindings: { stmt in
+                [
+                    sqlite3_bind_text(stmt, 1, channel, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 2, username, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_double(stmt, 3, ts),
+                    sqlite3_bind_double(stmt, 4, updatedAt),
+                ]
+            })
     }
     
     func loadReadReceipts(channel: String) -> [String: Double] {
@@ -857,23 +923,25 @@ final class ChatLocalDatabase {
     
     // MARK: - Shared State Operations
     
-    func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double) {
+    @discardableResult
+    func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double) -> Bool {
         databaseLock.lock()
         defer { databaseLock.unlock() }
         let sql = """
         INSERT OR REPLACE INTO shared_state (key, valueJson, updatedBy, updatedAt)
         VALUES (?, ?, ?, ?);
         """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-        
-        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 2, valueJson, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 3, updatedBy, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_double(stmt, 4, updatedAt)
-        
-        sqlite3_step(stmt)
-        sqlite3_finalize(stmt)
+        return performPreparedWrite(
+            sql: sql,
+            operation: "save shared state",
+            bindings: { stmt in
+                [
+                    sqlite3_bind_text(stmt, 1, key, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 2, valueJson, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 3, updatedBy, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_double(stmt, 4, updatedAt),
+                ]
+            })
     }
     
     func loadSharedState() -> [String: Any] {
@@ -907,13 +975,83 @@ final class ChatLocalDatabase {
     }
     
     // MARK: - Helper Methods
-    
-    private func bindText(_ stmt: OpaquePointer?, index: Int32, value: String?) {
-        if let value = value {
-            sqlite3_bind_text(stmt, index, value, -1, SQLITE_TRANSIENT)
-        } else {
-            sqlite3_bind_null(stmt, index)
+
+    private func logSQLiteFailure(operation: String, code: Int32) {
+        let detail = db.map { String(cString: sqlite3_errmsg($0)) } ?? "database is closed"
+        let extendedCode = db.map { sqlite3_extended_errcode($0) } ?? code
+        print("[ChatLocalDatabase] ⚠️ \(operation) failed code=\(code) extended=\(extendedCode): \(detail)")
+    }
+
+    private func rollbackOrInvalidate(context: String) {
+        let rolledBack = execute(sql: "ROLLBACK;")
+        let returnedToAutocommit = db.map { sqlite3_get_autocommit($0) != 0 } ?? false
+        guard rolledBack, returnedToAutocommit else {
+            print("[ChatLocalDatabase] ⚠️ \(context) 回滚后连接状态不可信，关闭本地数据库")
+            invalidateConnection()
+            return
         }
+    }
+
+    private func invalidateConnection() {
+        guard let handle = db else {
+            currentDatabaseURL = nil
+            return
+        }
+        let closeResult = sqlite3_close_v2(handle)
+        if closeResult != SQLITE_OK {
+            logSQLiteFailure(operation: "invalidate database connection", code: closeResult)
+        }
+        db = nil
+        currentDatabaseURL = nil
+    }
+
+    private func bindTextResult(
+        _ stmt: OpaquePointer?,
+        index: Int32,
+        value: String?
+    ) -> Int32 {
+        if let value {
+            return sqlite3_bind_text(stmt, index, value, -1, SQLITE_TRANSIENT)
+        }
+        return sqlite3_bind_null(stmt, index)
+    }
+
+    private func performPreparedWrite(
+        sql: String,
+        operation: String,
+        bindings: (OpaquePointer?) -> [Int32]
+    ) -> Bool {
+        var stmt: OpaquePointer?
+        let prepareResult = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        guard prepareResult == SQLITE_OK, stmt != nil else {
+            logSQLiteFailure(operation: "prepare \(operation)", code: prepareResult)
+            if let stmt {
+                let finalizeResult = sqlite3_finalize(stmt)
+                if finalizeResult != SQLITE_OK {
+                    logSQLiteFailure(operation: "finalize failed \(operation) preparation", code: finalizeResult)
+                }
+            }
+            return false
+        }
+
+        if let bindFailure = bindings(stmt).first(where: { $0 != SQLITE_OK }) {
+            logSQLiteFailure(operation: "bind \(operation)", code: bindFailure)
+            let finalizeResult = sqlite3_finalize(stmt)
+            if finalizeResult != SQLITE_OK {
+                logSQLiteFailure(operation: "finalize \(operation) after bind failure", code: finalizeResult)
+            }
+            return false
+        }
+
+        let stepResult = sqlite3_step(stmt)
+        if stepResult != SQLITE_DONE {
+            logSQLiteFailure(operation: "step \(operation)", code: stepResult)
+        }
+        let finalizeResult = sqlite3_finalize(stmt)
+        if finalizeResult != SQLITE_OK, finalizeResult != stepResult {
+            logSQLiteFailure(operation: "finalize \(operation)", code: finalizeResult)
+        }
+        return stepResult == SQLITE_DONE && finalizeResult == SQLITE_OK
     }
     
     private func readText(_ stmt: OpaquePointer?, index: Int32) -> String? {

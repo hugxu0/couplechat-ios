@@ -20,8 +20,15 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var pending = false
     var failed = false
 
+    private enum CodingKeys: String, CodingKey {
+        case id, sender, senderName, kind, type, text, url, channel, ts, clientId
+        case recalledText, replyTo, replyPreview, meta, attachments, transcript, pending, failed
+    }
+
     init?(dict: [String: Any]) {
-        guard let id = dict["id"] as? String else { return nil }
+        guard let id = dict["id"] as? String,
+              let rawChannel = dict["channel"] as? String,
+              ChatChannel(rawValue: rawChannel) != nil else { return nil }
         self.id = id
         sender = dict["sender"] as? String ?? ""
         senderName = dict["senderName"] as? String ?? ""
@@ -29,7 +36,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         type = dict["type"] as? String ?? "text"
         text = dict["text"] as? String ?? ""
         url = dict["url"] as? String
-        channel = dict["channel"] as? String ?? "couple"
+        channel = rawChannel
         if let value = dict["ts"] as? NSNumber {
             ts = value.doubleValue
         } else if let value = dict["ts"] as? Double {
@@ -64,6 +71,57 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         } else {
             transcript = nil
         }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        let rawChannel = try container.decode(String.self, forKey: .channel)
+        guard ChatChannel(rawValue: rawChannel) != nil else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .channel,
+                in: container,
+                debugDescription: "Unsupported chat channel")
+        }
+        channel = rawChannel
+        sender = try container.decodeIfPresent(String.self, forKey: .sender) ?? ""
+        senderName = try container.decodeIfPresent(String.self, forKey: .senderName) ?? ""
+        kind = try container.decodeIfPresent(String.self, forKey: .kind) ?? "user"
+        type = try container.decodeIfPresent(String.self, forKey: .type) ?? "text"
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+        ts = try container.decodeIfPresent(Double.self, forKey: .ts) ?? 0
+        clientId = try container.decodeIfPresent(String.self, forKey: .clientId)
+        recalledText = try container.decodeIfPresent(String.self, forKey: .recalledText)
+        replyTo = try container.decodeIfPresent(String.self, forKey: .replyTo)
+        replyPreview = try container.decodeIfPresent(String.self, forKey: .replyPreview)
+        meta = try container.decodeIfPresent(ChatMessageMeta.self, forKey: .meta)
+        attachments = try container.decodeIfPresent([ChatAttachment].self, forKey: .attachments)
+        transcript = try container.decodeIfPresent(VoiceTranscript.self, forKey: .transcript)
+        pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+        failed = try container.decodeIfPresent(Bool.self, forKey: .failed) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(sender, forKey: .sender)
+        try container.encode(senderName, forKey: .senderName)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(type, forKey: .type)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(url, forKey: .url)
+        try container.encode(channel, forKey: .channel)
+        try container.encode(ts, forKey: .ts)
+        try container.encodeIfPresent(clientId, forKey: .clientId)
+        try container.encodeIfPresent(recalledText, forKey: .recalledText)
+        try container.encodeIfPresent(replyTo, forKey: .replyTo)
+        try container.encodeIfPresent(replyPreview, forKey: .replyPreview)
+        try container.encodeIfPresent(meta, forKey: .meta)
+        try container.encodeIfPresent(attachments, forKey: .attachments)
+        try container.encodeIfPresent(transcript, forKey: .transcript)
+        try container.encode(pending, forKey: .pending)
+        try container.encode(failed, forKey: .failed)
     }
 
     init(optimisticText text: String, me: Session, clientId: String, channel: String,

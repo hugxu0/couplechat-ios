@@ -13,7 +13,12 @@ function required(name: string): string {
 
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const tokenSecret = required("TOKEN_SECRET");
-const publicBaseURL = process.env.PUBLIC_BASE_URL ?? "http://localhost:8080";
+const defaultPort = nodeEnv === "production" ? 3000 : 8080;
+const port = Number(process.env.PORT ?? defaultPort);
+if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+  throw new Error("PORT must be an integer between 1 and 65535");
+}
+const publicBaseURL = process.env.PUBLIC_BASE_URL ?? `http://localhost:${port}`;
 
 function booleanEnv(name: string, fallback: boolean): boolean {
   const value = process.env[name];
@@ -88,8 +93,8 @@ if (embeddingPools.length === 0 && fallbackEmbedding) {
 export const config = {
   nodeEnv,
   isProduction: nodeEnv === "production",
-  host: process.env.HOST ?? "0.0.0.0",
-  port: Number(process.env.PORT ?? 8080),
+  host: process.env.HOST ?? (nodeEnv === "production" ? "127.0.0.1" : "0.0.0.0"),
+  port,
   publicBaseURL,
   barkIconURL: process.env.BARK_ICON_URL
     ?? new URL("/assets/couplechat-icon.png", publicBaseURL).toString(),
@@ -109,7 +114,7 @@ export const config = {
       .map((s) => s.trim())
       .filter(Boolean),
   },
-  aiMcpUrl: process.env.AI_MCP_URL ?? `http://127.0.0.1:${Number(process.env.PORT ?? 8080)}/api/ai-mcp`,
+  aiMcpUrl: process.env.AI_MCP_URL ?? `http://127.0.0.1:${port}/api/ai-mcp`,
   tavilyMcpUrl: (process.env.TAVILY_MCP_URL ?? "").trim(),
   tavilyApiKey: (process.env.TAVILY_API_KEY ?? "").trim(),
   // 图片识图（多模态）：只有消息带图片时才调用，未配置则直接跳过图片。

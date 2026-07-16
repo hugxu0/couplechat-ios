@@ -26,7 +26,10 @@ struct ChatRemoteDataSource {
               (200..<300).contains(http.statusCode),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rows = root["list"] as? [[String: Any]] else { return [] }
-        return ChatMessageMapper.parse(rows, context: context)
+        return Self.parseStrictMessages(
+            rows,
+            expectedChannel: request.channel,
+            context: context) ?? []
     }
 
     func fetchHistoryPage(
@@ -49,13 +52,40 @@ struct ChatRemoteDataSource {
                 return ChatHistoryPage(messages: [], total: nil, error: "服务器同步响应无效")
             }
             let total = (root["total"] as? NSNumber)?.intValue ?? root["total"] as? Int
+            guard let messages = Self.parseStrictMessages(
+                rows,
+                expectedChannel: channel.rawValue,
+                context: "syncAllREST:\(channel.rawValue)")
+            else {
+                return ChatHistoryPage(
+                    messages: [],
+                    total: total,
+                    error: "服务器历史消息包含无效格式或错误频道")
+            }
             return ChatHistoryPage(
-                messages: ChatMessageMapper.parse(rows, context: "syncAllREST:\(channel.rawValue)"),
+                messages: messages,
                 total: total,
                 error: nil)
         } catch {
             return ChatHistoryPage(messages: [], total: nil, error: error.localizedDescription)
         }
+    }
+
+    private static func parseStrictMessages(
+        _ rows: [[String: Any]],
+        expectedChannel: String,
+        context: String
+    ) -> [ChatMessage]? {
+        var messages: [ChatMessage] = []
+        messages.reserveCapacity(rows.count)
+        for row in rows {
+            guard let message = ChatMessageMapper.parse(row, context: context),
+                  message.channel == expectedChannel else {
+                return nil
+            }
+            messages.append(message)
+        }
+        return messages
     }
 
     private func messageURL(for request: MessagePageRequest) -> URL? {

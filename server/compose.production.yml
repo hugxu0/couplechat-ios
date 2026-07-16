@@ -11,7 +11,7 @@ services:
     environment:
       NODE_ENV: production
       HOST: ${HOST:-127.0.0.1}
-      PORT: ${PORT:-8080}
+      PORT: ${PORT:-3000}
     volumes:
       - ./uploads:/app/uploads
       - ./.data:/app/.data

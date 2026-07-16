@@ -1,3 +1,4 @@
+import Foundation
 import SocketIO
 import UIKit
 import XCTest
@@ -25,14 +26,22 @@ final class ClientHardeningTests: XCTestCase {
         XCTAssertEqual(store.pendingReadTimestamp(for: .couple), 350)
     }
 
-    func testRecallRemovesMessageAndScrubsReplyReferenceInMemory() {
+    func testRecallRemovesMessageAndScrubsReplyReferenceInMemory() async {
         let target = message(id: "removed", text: "原文")
         let reply = message(
             id: "reply",
             text: "回复",
             replyTo: "removed",
             replyPreview: "原文")
-        let store = MessageStore()
+        let persistence = ChatPersistence.shared
+        let opened = await persistence.open(
+            username: "hardening-recall-\(UUID().uuidString)")
+        XCTAssertTrue(opened)
+        let databaseURL = await persistence.currentDatabaseURL()
+        let inserted = await persistence.insertMessages([target, reply])
+        XCTAssertEqual(inserted, 2)
+
+        let store = MessageStore(persistence: persistence)
         store.updateMessages(.couple) { $0 = [target, reply] }
         let notification = expectation(
             forNotification: MessageStore.messageDeletedNotification,
@@ -40,18 +49,28 @@ final class ClientHardeningTests: XCTestCase {
                 note.userInfo?["messageId"] as? String == "removed"
             }
 
-        store.applyRecall(id: "removed", channel: .couple)
+        let recalled = await store.applyRecall(id: "removed", channel: .couple)
 
-        wait(for: [notification], timeout: 0.1)
+        XCTAssertTrue(recalled)
+        await fulfillment(of: [notification], timeout: 0.1)
         XCTAssertEqual(store.messages(for: .couple).map(\.id), ["reply"])
         XCTAssertNil(store.messages(for: .couple).first?.replyTo)
         XCTAssertNil(store.messages(for: .couple).first?.replyPreview)
+
+        await persistence.close()
+        if let databaseURL {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+        }
     }
 
     func testLegacyFavoritesOnlyMigrateCoupleChannel() {
         let couple = MediaBrowserItem(message: message(id: "couple", channel: "couple"))!
         let ai = MediaBrowserItem(message: message(id: "ai", channel: "ai"))!
-        let unknown = MediaBrowserItem(message: message(id: "unknown", channel: "private-x"))!
+        var legacyUnknownMessage = message(id: "unknown", channel: "couple")
+        legacyUnknownMessage.channel = "private-x"
+        let unknown = MediaBrowserItem(message: legacyUnknownMessage)!
 
         XCTAssertEqual(
             MediaFavoriteStore.legacyItemsEligibleForMigration([ai, couple, unknown]).map(\.id),

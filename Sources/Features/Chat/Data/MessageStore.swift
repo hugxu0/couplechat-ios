@@ -8,6 +8,12 @@ enum OutboxRetryResult: Equatable {
     case notFound
 }
 
+enum SendAckMessageValidation: Equatable {
+    case absent
+    case valid(ChatMessage)
+    case invalid
+}
+
 /// 消息 CRUD、发送、搜索、历史同步，从 ChatStore 拆出。
 /// 通过 SocketProvider 访问 socket，不直接依赖 ChatStore。
 @MainActor
@@ -59,6 +65,17 @@ final class MessageStore: ObservableObject {
         ChatMessageMapper.parse(rows, context: context)
     }
 
+    nonisolated static func validateSendAckMessage(
+        _ payload: [String: Any],
+        expectedChannel: ChatChannel
+    ) -> SendAckMessageValidation {
+        guard payload.keys.contains("message") else { return .absent }
+        guard let dictionary = payload["message"] as? [String: Any],
+              let message = parseMessage(dictionary, context: "message:send ack"),
+              message.channel == expectedChannel.rawValue else { return .invalid }
+        return .valid(message)
+    }
+
     private var lastLoadOlderAt: [String: Date] = [:]
     private var lastLoadNewerAt: [String: Date] = [:]
     private let persistence: any ChatPersistenceProtocol
@@ -102,12 +119,20 @@ final class MessageStore: ObservableObject {
     }
 
     func upsert(_ msg: ChatMessage, in channel: ChatChannel) {
-        if !msg.pending, !msg.failed,
-           messages(for: channel).last.map({ $0.ts <= msg.ts }) != false {
-            latestPersistedMessageIDs[channel.rawValue] = msg.id
+        guard msg.channel == channel.rawValue else {
+            print("[MessageStore] ⚠️ 拒绝路由到不匹配频道的消息 id=\(msg.id)")
+            return
         }
+        let shouldUpdateLatest = !msg.pending && !msg.failed
+            && messages(for: channel).last.map({ $0.ts <= msg.ts }) != false
         Task {
-            await persistence.insertMessage(msg)
+            guard await persistence.insertMessage(msg) else {
+                print("[MessageStore] ⚠️ 消息写入本地数据库失败 id=\(msg.id)")
+                return
+            }
+            if shouldUpdateLatest {
+                latestPersistedMessageIDs[channel.rawValue] = msg.id
+            }
             if !msg.pending, !msg.failed, let clientId = msg.clientId {
                 await completePendingOutbound(clientId: clientId)
             }
@@ -117,12 +142,17 @@ final class MessageStore: ObservableObject {
         }
     }
 
-    func upsertBatch(_ msgs: [ChatMessage], in channel: ChatChannel) async {
-        guard !msgs.isEmpty else { return }
+    @discardableResult
+    func upsertBatch(_ msgs: [ChatMessage], in channel: ChatChannel) async -> Bool {
+        guard !msgs.isEmpty else { return true }
+        guard msgs.allSatisfy({ $0.channel == channel.rawValue }) else {
+            print("[MessageStore] ⚠️ 拒绝包含频道不匹配消息的批次 channel=\(channel.rawValue)")
+            return false
+        }
         let persisted = await persistence.insertMessages(msgs)
         guard persisted == msgs.count else {
             print("[MessageStore] ⚠️ 批量消息写入失败 channel=\(channel.rawValue)")
-            return
+            return false
         }
         for msg in msgs {
             if !msg.pending, !msg.failed, let clientId = msg.clientId {
@@ -132,6 +162,7 @@ final class MessageStore: ObservableObject {
         updateMessages(channel) { list in
             ChatMessageCollection.upsert(msgs, into: &list)
         }
+        return true
     }
 
     // MARK: - 本地缓存
@@ -153,7 +184,10 @@ final class MessageStore: ObservableObject {
         latestPersistedMessageIDs = cachedMessages.compactMapValues { $0.last?.id }
         // 正式消息和待发消息分表存储；重启后把 outbox 重新投影成聊天气泡。
         for item in await outboxProcessor.allPending() {
-            let channel = ChatChannel(rawValue: item.channel) ?? .couple
+            guard let channel = ChatChannel(rawValue: item.channel) else {
+                print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
+                continue
+            }
             let optimistic = item.optimisticMessage(session: session)
             updateMessages(channel) { list in
                 ChatMessageCollection.upsert(optimistic, into: &list)
@@ -164,8 +198,23 @@ final class MessageStore: ObservableObject {
     func applyBootstrap(_ snapshot: AppBootstrapSnapshot, session: Session) async {
         let remote = snapshot.messagesByChannel
         let receipts = snapshot.readStates
-        for messages in remote.values {
-            _ = await persistence.insertMessages(messages)
+        var next = messagesByChannel
+        var persistedLatestIDs = latestPersistedMessageIDs
+        for channel in ChatChannel.allCases {
+            let rawChannel = channel.rawValue
+            let messages = remote[rawChannel] ?? []
+            guard !messages.isEmpty else {
+                next[rawChannel] = []
+                persistedLatestIDs.removeValue(forKey: rawChannel)
+                continue
+            }
+            let persisted = await persistence.insertMessages(messages)
+            if persisted == messages.count {
+                persistedLatestIDs[rawChannel] = messages.last?.id
+                next[rawChannel] = messages
+            } else {
+                print("[MessageStore] ⚠️ bootstrap 消息写入失败 channel=\(rawChannel)")
+            }
         }
         let now = Date().timeIntervalSince1970 * 1000
         for (channel, state) in receipts {
@@ -175,16 +224,18 @@ final class MessageStore: ObservableObject {
             }
         }
 
-        var next = remote
         for item in await outboxProcessor.allPending() {
-            let channel = ChatChannel(rawValue: item.channel) ?? .couple
+            guard let channel = ChatChannel(rawValue: item.channel) else {
+                print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
+                continue
+            }
             var list = next[channel.rawValue] ?? []
             ChatMessageCollection.upsert(item.optimisticMessage(session: session), into: &list)
             next[channel.rawValue] = list
         }
         messagesByChannel = next
         readStates = receipts
-        latestPersistedMessageIDs = remote.compactMapValues { $0.last?.id }
+        latestPersistedMessageIDs = persistedLatestIDs
     }
 
     // MARK: - 搜索跳转
@@ -200,7 +251,11 @@ final class MessageStore: ObservableObject {
                 MessagePageRequest(channel: channel, around: target.ts, limit: 100),
                 context: "ensureMessageAround:\(channel.rawValue)")
             if !remote.isEmpty {
-                _ = await persistence.insertMessages(remote + [target])
+                let candidates = remote + [target]
+                guard await persistence.insertMessages(candidates) == candidates.count else {
+                    print("[MessageStore] ⚠️ 搜索窗口写入本地数据库失败")
+                    return false
+                }
                 window = await persistence.fetchMessagesAround(
                     channel: channel.rawValue,
                     centerTimestamp: target.ts,
@@ -228,7 +283,7 @@ final class MessageStore: ObservableObject {
                 MessagePageRequest(channel: channel, after: range.start, before: range.end, limit: 80),
                 context: "ensureDate:\(channel.rawValue)")
             guard !incoming.isEmpty else { return nil }
-            await upsertBatch(incoming, in: channel)
+            guard await upsertBatch(incoming, in: channel) else { return nil }
             dayMessages = incoming
         }
         guard let target = dayMessages.first else { return nil }
@@ -266,7 +321,11 @@ final class MessageStore: ObservableObject {
             latest = await fetchRemoteMessages(
                 MessagePageRequest(channel: channel, limit: 50),
                 context: "restoreLatest:\(channel.rawValue)")
-            if !latest.isEmpty { _ = await persistence.insertMessages(latest) }
+            if !latest.isEmpty,
+               await persistence.insertMessages(latest) != latest.count {
+                print("[MessageStore] ⚠️ 最新消息窗口写入本地数据库失败")
+                return
+            }
         }
         guard !latest.isEmpty else { return }
         let pendingOptimistic: [ChatMessage]
@@ -334,7 +393,10 @@ final class MessageStore: ObservableObject {
                 session: session)
             if page.error == nil {
                 guard !page.messages.isEmpty else { return }
-                _ = await persistence.insertMessages(page.messages)
+                guard await persistence.insertMessages(page.messages) == page.messages.count else {
+                    print("[MessageStore] ⚠️ 较早消息页写入本地数据库失败")
+                    return
+                }
                 updateMessages(channel) { current in
                     ChatMessageCollection.prependUnique(page.messages, to: &current)
                 }
@@ -356,7 +418,10 @@ final class MessageStore: ObservableObject {
             MessagePageRequest(channel: channel, before: firstTs, limit: limit),
             context: "loadOlder:\(channel.rawValue)")
         guard !older.isEmpty else { return }
-        _ = await persistence.insertMessages(older)
+        guard await persistence.insertMessages(older) == older.count else {
+            print("[MessageStore] ⚠️ 较早消息写入本地数据库失败")
+            return
+        }
         updateMessages(channel) { current in
             ChatMessageCollection.prependUnique(older, to: &current)
         }
@@ -386,7 +451,10 @@ final class MessageStore: ObservableObject {
             context: "loadNewer:\(channel.rawValue)")
         defer { loadingNewerChannels.remove(channel.rawValue) }
         guard !newer.isEmpty else { return }
-        _ = await persistence.insertMessages(newer)
+        guard await persistence.insertMessages(newer) == newer.count else {
+            print("[MessageStore] ⚠️ 较新消息写入本地数据库失败")
+            return
+        }
         updateMessages(channel) { current in
             ChatMessageCollection.appendUnique(newer, to: &current)
         }
@@ -495,7 +563,10 @@ final class MessageStore: ObservableObject {
         pending.lastError = nil
         pending.attempts = 0
         guard await outboxProcessor.save(pending) else { return .notFound }
-        let channel = ChatChannel(rawValue: pending.channel) ?? .couple
+        guard let channel = ChatChannel(rawValue: pending.channel) else {
+            print("[MessageStore] ⚠️ 拒绝重试未知频道待发消息 clientId=\(pending.clientId)")
+            return .notFound
+        }
         await schedulePendingOutbound(pending, channel: channel, session: session)
         return .started
     }
@@ -678,7 +749,9 @@ final class MessageStore: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     if ok {
-                        self.applyRecall(id: message.id, channel: channel)
+                        if !(await self.applyRecall(id: message.id, channel: channel)) {
+                            print("[MessageStore] ⚠️ 撤回已获服务器确认，等待本地持久化重试 id=\(message.id)")
+                        }
                         return
                     }
                     self.recallDrafts.removeValue(forKey: message.id)
@@ -692,31 +765,37 @@ final class MessageStore: ObservableObject {
             }
     }
 
-    func applyRecall(id: String, channel: ChatChannel?) {
+    @discardableResult
+    func applyRecall(id: String, channel: ChatChannel) async -> Bool {
+        await applyRecallPersisted(id: id, channel: channel)
+    }
+
+    func applyRecallPersisted(id: String, channel: ChatChannel) async -> Bool {
+        guard await persistRecall(id: id, channel: channel) else { return false }
+        applyRecallLocally(id: id, channel: channel)
+        return true
+    }
+
+    private func applyRecallLocally(id: String, channel: ChatChannel) {
         optimisticRecalls.removeValue(forKey: id)
-        let channels = channel.map { [$0] } ?? ChatChannel.allCases
-        var repairedReplies: [ChatMessage] = []
         var mediaURLs: Set<URL> = []
-        for c in channels {
-            updateMessages(c) { list in
-                for message in list where message.id == id {
-                    if let url = message.mediaURL { mediaURLs.insert(url) }
-                    for attachment in message.attachments ?? [] {
-                        if let url = attachment.mediaURL { mediaURLs.insert(url) }
-                    }
-                }
-                list.removeAll { $0.id == id }
-                for index in list.indices where list[index].replyTo == id {
-                    list[index].replyTo = nil
-                    list[index].replyPreview = nil
-                    repairedReplies.append(list[index])
+        updateMessages(channel) { list in
+            for message in list where message.id == id {
+                if let url = message.mediaURL { mediaURLs.insert(url) }
+                for attachment in message.attachments ?? [] {
+                    if let url = attachment.mediaURL { mediaURLs.insert(url) }
                 }
             }
-            if latestPersistedMessageIDs[c.rawValue] == id {
-                latestPersistedMessageIDs[c.rawValue] = messages(for: c).last(where: {
-                    !$0.pending && !$0.failed
-                })?.id
+            list.removeAll { $0.id == id }
+            for index in list.indices where list[index].replyTo == id {
+                list[index].replyTo = nil
+                list[index].replyPreview = nil
             }
+        }
+        if latestPersistedMessageIDs[channel.rawValue] == id {
+            latestPersistedMessageIDs[channel.rawValue] = messages(for: channel).last(where: {
+                !$0.pending && !$0.failed
+            })?.id
         }
         MediaFavoriteStore.shared.remove(messageId: id)
         for url in mediaURLs { ImageCache.shared.removeMedia(for: url) }
@@ -724,27 +803,34 @@ final class MessageStore: ObservableObject {
             name: Self.messageDeletedNotification,
             object: nil,
             userInfo: ["messageId": id])
-        let repliesToPersist = repairedReplies
-        Task {
-            await persistence.deleteMessage(id: id)
-            if !repliesToPersist.isEmpty {
-                _ = await persistence.insertMessages(repliesToPersist)
-            }
+    }
+
+    private func persistRecall(id: String, channel: ChatChannel) async -> Bool {
+        guard await persistence.deleteMessage(id: id, channel: channel.rawValue) else {
+            print("[MessageStore] ⚠️ 撤回消息未能从本地数据库删除 id=\(id)")
+            return false
         }
+        return true
     }
 
     // MARK: - Meta 更新（确认卡）
 
-    func applyMessageUpdate(id: String, meta: [String: Any]?) {
+    @discardableResult
+    func applyMessageUpdate(id: String, meta: [String: Any]?) async -> Bool {
         for c in ChatChannel.allCases {
-            updateMessages(c) { list in
-                guard let i = list.firstIndex(where: { $0.id == id }) else { return }
-                var m = list[i]
-                m.meta = meta.flatMap { ChatMessageMeta(dict: $0) }
-                list[i] = m
-                Task { await persistence.insertMessage(m) }
+            guard var updated = messages(for: c).first(where: { $0.id == id }) else { continue }
+            updated.meta = meta.flatMap { ChatMessageMeta(dict: $0) }
+            guard await persistence.insertMessage(updated) else {
+                print("[MessageStore] ⚠️ 消息更新未能写入本地数据库 id=\(id)")
+                return false
             }
+            updateMessages(c) { list in
+                guard let index = list.firstIndex(where: { $0.id == id }) else { return }
+                list[index].meta = updated.meta
+            }
+            return true
         }
+        return true
     }
 
     func confirmAction(messageId: String, decision: String) {
@@ -771,6 +857,7 @@ final class MessageStore: ObservableObject {
                         return
                     }
                     let remote = Self.parseMessages(list, context: "search:\(channel.rawValue)")
+                        .filter { $0.channel == channel.rawValue }
                     continuation.resume(returning: ChatMessageWindowing.mergeSearchResults(remote, local))
                 }
         }
@@ -813,7 +900,10 @@ final class MessageStore: ObservableObject {
     }
 
     func clearLocalHistory() async {
-        await persistence.deleteMessages(channel: nil)
+        guard await persistence.deleteMessages(channel: nil) else {
+            print("[MessageStore] ⚠️ 清理本地聊天记录失败")
+            return
+        }
         if let username = socketProvider?.currentSession?.username {
             MessageHistorySyncService.resetCheckpoint(username: username, channel: .couple)
             MessageHistorySyncService.resetCheckpoint(username: username, channel: .ai)
@@ -847,7 +937,10 @@ final class MessageStore: ObservableObject {
                 isConnected: { [weak self] in self?.socketProvider?.isConnected == true },
                 send: { [weak self] item in
                     guard let self else { return false }
-                    let channel = ChatChannel(rawValue: item.channel) ?? .couple
+                    guard let channel = ChatChannel(rawValue: item.channel) else {
+                        print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
+                        return false
+                    }
                     self.markPendingSending(clientId: item.clientId, channel: channel)
                     return await self.transmitPendingOutbound(item, session: session)
                 })
@@ -857,7 +950,10 @@ final class MessageStore: ObservableObject {
     private func transmitPendingOutbound(_ original: PendingOutboundMessage, session: Session) async -> Bool {
         guard let socket = socketProvider?.socket, socketProvider?.isConnected == true else { return false }
         var item = original
-        let channel = ChatChannel(rawValue: item.channel) ?? .couple
+        guard let channel = ChatChannel(rawValue: item.channel) else {
+            print("[MessageStore] ⚠️ 拒绝发送未知频道待发消息 clientId=\(item.clientId)")
+            return false
+        }
 
         if !item.attachments.isEmpty {
             for index in item.attachments.indices where item.attachments[index].uploadId == nil {
@@ -982,12 +1078,22 @@ final class MessageStore: ObservableObject {
 
     @discardableResult
     private func handleSendAck(_ data: [Any], clientId: String, channel: ChatChannel) async -> Bool {
-        let succeeded = (data.first as? [String: Any])?["ok"] as? Bool == true
-        let acknowledgedMessage: ChatMessage? = {
-            guard let dict = data.first as? [String: Any],
-                  let message = dict["message"] as? [String: Any] else { return nil }
-            return Self.parseMessage(message, context: "message:send ack")
-        }()
+        guard let payload = data.first as? [String: Any] else { return false }
+        let succeeded = payload["ok"] as? Bool == true
+        let validation = Self.validateSendAckMessage(payload, expectedChannel: channel)
+        guard validation != .invalid else {
+            print("[MessageStore] ⚠️ 发送确认消息频道或格式无效 clientId=\(clientId)")
+            return false
+        }
+        let acknowledgedMessage: ChatMessage?
+        switch validation {
+        case let .valid(message):
+            acknowledgedMessage = message
+        case .absent:
+            acknowledgedMessage = nil
+        case .invalid:
+            return false
+        }
         var messageToPersist: ChatMessage?
         updateMessages(channel) { list in
             guard let i = ChatMessageCollection.index(matchingClientId: clientId, in: list) else {
@@ -997,8 +1103,7 @@ final class MessageStore: ObservableObject {
                 }
                 return
             }
-            if let dict = data.first as? [String: Any],
-               dict["ok"] as? Bool == true, let realId = dict["id"] as? String {
+            if succeeded, let realId = payload["id"] as? String {
                 if let acknowledgedMessage {
                     ChatMessageCollection.replacePending(
                         clientId: clientId,
@@ -1028,8 +1133,16 @@ final class MessageStore: ObservableObject {
                 list[i].failed = true
             }
         }
-        if let messageToPersist { await persistence.insertMessage(messageToPersist) }
-        return succeeded
+        guard succeeded else { return false }
+        guard let messageToPersist else {
+            print("[MessageStore] ⚠️ 发送确认缺少可持久化消息 clientId=\(clientId)")
+            return false
+        }
+        guard await persistence.insertMessage(messageToPersist) else {
+            print("[MessageStore] ⚠️ 发送确认未能持久化 clientId=\(clientId)")
+            return false
+        }
+        return true
     }
 
     func uploadMedia(

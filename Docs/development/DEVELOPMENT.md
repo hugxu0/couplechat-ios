@@ -1,5 +1,15 @@
 # 开发指南
 
+## 开工检查
+
+```powershell
+git rev-parse --show-toplevel
+git status --short --branch
+git rev-parse HEAD
+```
+
+必须在同时包含 `Sources/` 与 `server/` 的真实单仓库中工作。无 `.git` 的客户端/服务端复制目录只是快照，不能继续作为开发或发布事实源。先阅读根 `AGENTS.md`、[当前项目](../current/PROJECT.md) 和 [已知问题](../current/KNOWN_ISSUES.md)。
+
 ## 环境要求
 
 - Windows 11 + PowerShell、Node.js 22、npm、SSH：可开发和验证服务端
@@ -26,16 +36,16 @@ npm start
 
 ## 数据库调试
 
-当前工作树要求 schema v31；生产发布必须先备份并使用独立 migrator 升级，Web 进程保持 `RUN_MIGRATIONS=false`。不要用当前工作树运行 `npm run dev:cloud-db` 直连生产，版本不匹配时服务会安全退出，不会自动迁移。
+当前工作树要求 schema v31；生产发布必须先备份并使用独立 migrator 升级，Web 进程保持 `RUN_MIGRATIONS=false`。连接生产库启动本地调试服务的入口已经移除；版本不匹配时也不能用开发进程“试一下”。
 
-生产环境只允许做只读连接检查：
+`scripts/dev-cloud-db.ps1` 已改为安全失效：没有默认主机，只接受仓库外 SSH alias，只允许 `-CheckOnly`，并要求目标 `.env` 提供专用 `READONLY_DATABASE_URL`；查询还会开启 read-only transaction。私有运维环境尚未完成只读角色和 SSH alias 的现场验收，因此当前不要把它用于生产结论。配置并验收后才可运行：
 
 ```powershell
 cd server
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-cloud-db.ps1 -CheckOnly
+npm run check:cloud-db -- -RemoteTarget <private-ssh-alias>
 ```
 
-功能调试应使用从备份恢复的隔离 PostgreSQL，再显式运行 `npm run migrate`。生产隧道脚本不会打印或保存数据库密码，并固定使用：
+功能调试只能使用从备份恢复的隔离 PostgreSQL，再显式运行 `npm run migrate`。隔离调试服务应固定使用：
 
 ```env
 CLOUD_DB_DEBUG=true
@@ -45,7 +55,7 @@ UPLOADS_WRITABLE=false
 PUSH_ENABLED=false
 ```
 
-`-CheckOnly` 只读取表计数并关闭 SSH 隧道。任何需要写聊天、共享状态或 AI Memory 的调试，都必须在隔离恢复库执行。
+任何需要写聊天、共享状态或 AI Memory 的调试，都必须在隔离恢复库执行。只读角色完成现场验收前，生产状态检查由受信运维者在服务器本机进行，不从开发机启动应用进程。
 
 AI key 和模型配置放在被 Git 忽略的 `server/.data/production-ai.env`。该文件只能保存在受信开发机，不得写入文档或提交。
 
@@ -84,34 +94,39 @@ xcodebuild test -project CoupleChat.xcodeproj -scheme CoupleChat \
   -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
-GitHub Actions 按职责拆成两条互不依赖的流程：
+GitHub Actions 按职责拆成可复用质量门禁与手动 IPA 流程：
 
-- `项目质量验证`：在 `main` 的非纯文档 push / pull request 或手动触发时运行；`README.md` 与 `Docs/**` 变更被 `paths-ignore` 排除。服务端执行 test/build；客户端执行 SwiftLint、新 Swift 文件结构护栏、iPhone 单元测试和 iPad 编译。它不归档、不生成 IPA。
-- `构建 IPA`：仅手动触发。它只安装 XcodeGen、生成工程、执行 Release unsigned Archive、打包并上传 `CoupleChat-latest.ipa` 和 SHA-256 文件，不运行服务端测试、SwiftLint、模拟器测试或视觉截图。
+- `公开仓库安全检查`：独立覆盖所有 `main` push 和面向 `main` 的 pull request，包括只改文档的提交；只报告风险类别和路径，不回显匹配内容。手动质量验证和 reusable IPA 门禁也会执行同一检查。
+- `项目质量验证`：在 `main` push、面向 `main` 的 pull request 或手动触发时运行，但根 `README.md` 与 `Docs/**` 被 `paths-ignore` 排除；其他 Markdown（例如 `AGENTS.md`、`server/README.md`）仍会触发。服务端执行 test/build；客户端执行 SwiftLint、新 Swift 文件结构护栏、iPhone 单元测试和 iPad 编译。它不归档、不生成 IPA。
+- `构建 unsigned IPA`：仅手动触发，先调用上述 reusable workflow 验证同一 commit；全部通过后才执行 Release unsigned Archive。artifact 名称包含完整 SHA、run ID 和 attempt，并带相同证据的 `BUILD-METADATA.json` 与 `SHA256SUMS`。它不进行 Apple 签名，也不替代真机视觉/手势验证。
 
-两条流程固定使用 Xcode 26.3。质量验证只在失败时上传诊断；IPA 流程的 artifact 固定名为 `CoupleChat-latest`，本机可继续使用 `.github/scripts/download-latest-ipa.ps1` 覆盖到固定路径。
+所有第三方 Action 固定到完整 commit；Socket.IO Client Swift 与 GLTFKit2 固定精确版本。两个 iOS job 固定使用 Xcode 26.3。仓库目前仍缺少 `Package.resolved`，Homebrew 安装的 XcodeGen/SwiftLint 也没有锁定 formula revision，因此还不能完全复现历史依赖图。质量验证只在失败时上传诊断；IPA artifact 保留 14 天，本机下载必须提供完整 commit SHA：
 
 ```powershell
-# 自动下载最近一次成功构建，并覆盖固定文件
-.\.github\scripts\download-latest-ipa.ps1
+$Sha = (git rev-parse HEAD).Trim()
+.\.github\scripts\download-unsigned-ipa.ps1 -Commit $Sha
 
-# 如需回取指定历史构建
-.\.github\scripts\download-latest-ipa.ps1 -RunId 123456789
+# 如需限定某次重跑
+.\.github\scripts\download-unsigned-ipa.ps1 -Commit $Sha -RunId 123456789
+
+# 如需覆盖默认的桌面 CoupleChat-IPA 目录
+.\.github\scripts\download-unsigned-ipa.ps1 -Commit $Sha `
+  -OutputDirectory 'D:\Desktop\CoupleChat-IPA'
 ```
 
 生成的 `.xcodeproj`、`build/` 和 `build-artifacts/` 不提交。
 
-下载脚本不传 `-RunId` 时选择仓库中最近一次成功的 `build-ipa.yml`，代码没有自动限定分支。准备安装 `main` 时，应先用 `gh run list --workflow build-ipa.yml --branch main --status success` 核对运行，再把对应 ID 传给脚本；同时确认 `headSha` 是目标提交，不能用仍在运行或失败的 artifact 覆盖当前可安装包。脚本下载后会校验 artifact 内的 SHA-256，再覆盖固定文件。
+下载脚本按完整 SHA 查询成功运行，并交叉校验 workflow 文件/数据库 ID、run ID/attempt、metadata、两个 SHA-256、IPA 实际 `Info.plist`、必需资源和签名残留；全部通过后才从安全 staging 原子发布到当前用户桌面的 `CoupleChat-IPA`（本机为 `D:\Desktop\CoupleChat-IPA`），失败时保留上一份已验证目录。完整的免费签名、三台设备刷新和数据连续性流程见 [IOS_SIDELOAD.md](../operations/IOS_SIDELOAD.md)。
 
-### 本地 3D 模型
+### 3D 模型资源
 
-`Sources/Resources/cute_cat.glb` 被 `.gitignore` 排除，需由受信开发机本地提供。XcodeGen 会在文件存在时把它随 `Sources` 收入 App；文件缺失或 GLTFKit2 加载失败时仍可编译运行，但大橘页只显示占位。不要把原始模型或其副本提交到仓库。
+`Sources/Resources/cute_cat.glb` 已受 Git 版本控制，XcodeGen 会把它随 `Sources` 收入 App；授权见 `Sources/Resources/ThirdPartyNotices.txt`，不需要额外的本地注入步骤。文件缺失或 GLTFKit2 加载失败时仍应可运行，并结束加载动画后显示占位。
 
 ### 本地 `build-artifacts/` 保留策略
 
 该目录只服务本机安装与排障，不进入 Git。建议只保留：
 
-- 固定路径的当前 IPA：`CoupleChat-latest.ipa`
+- 当前准备侧载的 `ipa/<完整SHA>/` 目录及其 metadata/checksum
 - 与生产对应的 server 镜像 tar / 回滚相关包
 - 如需对照，最多保留 1 份最近 GitHub run 下载物
 
@@ -138,13 +153,14 @@ GitHub Actions 按职责拆成两条互不依赖的流程：
 
 ### 设计系统约定
 
+- 产品视觉方向是温暖、成熟、克制地使用材质；聊天发送、键盘、贴底和媒体手势的可靠性优先于装饰效果。
 - 颜色、圆角、间距、字体、动画、阴影只从 `Sources/DesignSystem/DS.swift` 取值；页面内不要再写散落魔法数。
 - 常规文案用 `DS.Typo.body/secondary/caption/button/sectionLabel/micro`；大数字用 `displayHero/displayMetric/displayNumber`；装饰性巨型图标可保留固定字号。
 - 内容卡片用 `dsCard()` / `AppCard`；浮动层（Tab 栏、输入栏、浮钮）用 `dsGlass` / `dsGlassInteractive`。
 - 动画优先 `DS.Anim.*`，需要尊重「减少动态效果」时用 `DS.Anim.withMotion` 或 `DS.Anim.motion`。
 - 语义组件放在 `AppSemanticComponents.swift`：`RootPageHeader`、`AppSectionHeader`、`AppPrimaryButton`、`StatusBanner`、`AppEmptyState` 等；重复样式先抽组件再改页面。
 - 聊天 UIKit 路径需要同一数值时读 `DS.UIKitToken`，避免 SwiftUI / UIKit 各写一套。
-- Apple 设计上下文见 `.claude/apple-design-context.md`（气质：温暖、成熟、克制地使用材质；聊天发送、键盘、贴底和媒体手势可靠性优先）。
+- 新界面必须检查深色模式、Dynamic Type、VoiceOver、Reduce Motion 和非颜色状态提示；iPad 还需检查横竖屏、Split View、Stage Manager、指针与键盘操作。当前未完成的 iPad 能力以 [PROJECT.md](../current/PROJECT.md) 为准。
 
 ## 提交前检查
 

@@ -7,11 +7,14 @@ protocol ChatPersistenceProtocol: Actor {
     func databaseSizeBytes() -> Int64
     func messageCount(channel: String) -> Int
     func mediaURLs(channel: String, types: [String]) -> [String]
-    func insertMessage(_ message: ChatMessage)
+    @discardableResult
+    func insertMessage(_ message: ChatMessage) -> Bool
     func insertMessages(_ messages: [ChatMessage]) -> Int
     func oldestMessageTimestamp(channel: String) -> Double?
-    func deleteMessages(channel: String?)
-    func deleteMessage(id: String)
+    @discardableResult
+    func deleteMessages(channel: String?) -> Bool
+    @discardableResult
+    func deleteMessage(id: String, channel: String) -> Bool
     func fetchMessages(channel: String, beforeTimestamp: Double, limit: Int) -> [ChatMessage]
     func fetchMessages(channel: String, fromTimestamp: Double, toTimestamp: Double) -> [ChatMessage]
     func fetchMessagesAround(
@@ -33,12 +36,15 @@ protocol ChatPersistenceProtocol: Actor {
     func upsertPendingOutbound(_ item: PendingOutboundMessage) -> Bool
     func pendingOutbound(clientId: String) -> PendingOutboundMessage?
     func loadPendingOutbounds() -> [PendingOutboundMessage]
-    func deletePendingOutbound(clientId: String)
+    @discardableResult
+    func deletePendingOutbound(clientId: String) -> Bool
     func fetchLatestMessages(channel: String, limit: Int) -> [ChatMessage]
     func searchMessages(query: String, channel: String) -> [ChatMessage]
-    func saveReadReceipt(channel: String, username: String, ts: Double, updatedAt: Double)
+    @discardableResult
+    func saveReadReceipt(channel: String, username: String, ts: Double, updatedAt: Double) -> Bool
     func loadReadReceipts(channel: String) -> [String: Double]
-    func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double)
+    @discardableResult
+    func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double) -> Bool
     func loadSharedState() -> [String: Any]
 }
 
@@ -57,13 +63,18 @@ actor ChatPersistence: ChatPersistenceProtocol {
     func mediaURLs(channel: String, types: [String]) -> [String] {
         database.mediaURLs(channel: channel, types: types)
     }
-    func insertMessage(_ message: ChatMessage) { database.insertMessage(message) }
+    @discardableResult
+    func insertMessage(_ message: ChatMessage) -> Bool { database.insertMessage(message) }
     func insertMessages(_ messages: [ChatMessage]) -> Int { database.insertMessages(messages) }
     func oldestMessageTimestamp(channel: String) -> Double? {
         database.oldestMessageTimestamp(channel: channel)
     }
-    func deleteMessages(channel: String? = nil) { database.deleteMessages(channel: channel) }
-    func deleteMessage(id: String) { database.deleteMessage(id: id) }
+    @discardableResult
+    func deleteMessages(channel: String? = nil) -> Bool { database.deleteMessages(channel: channel) }
+    @discardableResult
+    func deleteMessage(id: String, channel: String) -> Bool {
+        database.deleteMessage(id: id, channel: channel)
+    }
     func fetchMessages(channel: String, beforeTimestamp: Double, limit: Int) -> [ChatMessage] {
         database.fetchMessages(channel: channel, beforeTimestamp: beforeTimestamp, limit: limit)
     }
@@ -113,7 +124,8 @@ actor ChatPersistence: ChatPersistenceProtocol {
         database.pendingOutbound(clientId: clientId)
     }
     func loadPendingOutbounds() -> [PendingOutboundMessage] { database.loadPendingOutbounds() }
-    func deletePendingOutbound(clientId: String) {
+    @discardableResult
+    func deletePendingOutbound(clientId: String) -> Bool {
         database.deletePendingOutbound(clientId: clientId)
     }
     func fetchLatestMessages(channel: String, limit: Int) -> [ChatMessage] {
@@ -122,13 +134,15 @@ actor ChatPersistence: ChatPersistenceProtocol {
     func searchMessages(query: String, channel: String) -> [ChatMessage] {
         database.searchMessages(query: query, channel: channel)
     }
-    func saveReadReceipt(channel: String, username: String, ts: Double, updatedAt: Double) {
+    @discardableResult
+    func saveReadReceipt(channel: String, username: String, ts: Double, updatedAt: Double) -> Bool {
         database.saveReadReceipt(channel: channel, username: username, ts: ts, updatedAt: updatedAt)
     }
     func loadReadReceipts(channel: String) -> [String: Double] {
         database.loadReadReceipts(channel: channel)
     }
-    func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double) {
+    @discardableResult
+    func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double) -> Bool {
         database.saveSharedState(key: key, valueJson: valueJson, updatedBy: updatedBy, updatedAt: updatedAt)
     }
     func loadSharedState() -> [String: Any] { database.loadSharedState() }

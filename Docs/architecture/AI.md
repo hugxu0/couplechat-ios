@@ -134,7 +134,8 @@ AI_VISION_API_KEY=
 AI_VISION_MODEL=
 AI_VISION_API_MODE=
 
-AI_MCP_URL=http://127.0.0.1:8080/api/ai-mcp
+# 通常留空；服务端会按当前 PORT 派生 loopback /api/ai-mcp
+AI_MCP_URL=
 AI_TRIGGER_ALIASES=@大橘
 
 TAVILY_MCP_URL=
@@ -156,7 +157,7 @@ EMBEDDING_DIM=1024
 
 ## 本机调试
 
-仅在迁移到当前 schema v31 的隔离恢复库运行调试服务后打开 `http://127.0.0.1:8080/ai-debug`。不得用 `npm run dev:cloud-db` 直接写生产库。调试页支持：
+仅在迁移到当前 schema v31 的隔离恢复库运行调试服务后打开本地 `http://127.0.0.1:8080/ai-debug`（若本地修改 `PORT`，地址随之变化）。连接生产库启动本地调试服务的入口已移除。调试页支持：
 
 - 两位账号与公聊/私聊切换；
 - 查看 Agent instructions、输入、工具调用、输出和耗时；
@@ -165,3 +166,5 @@ EMBEDDING_DIM=1024
 - 有明确确认步骤地清除当前频道最近消息。
 
 调试页只在非生产环境且 loopback 请求下可访问。它必须连接隔离恢复库，不能连接生产数据库。
+
+生产 Trace 的关闭、脱敏、权限、轮换和保留策略尚未达到验收要求，见 [AI-001](../current/KNOWN_ISSUES.md)。修复前不得在生产主动启用诊断，也不得把 `.data/ai_logs` 纳入普通构建产物、备份分享或日志上传。
