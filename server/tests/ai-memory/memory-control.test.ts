@@ -5,7 +5,7 @@ import { withTestDatabase } from "../support/postgresHarness";
 test("memory control routes isolate private scope and support review actions", async () => {
   await withTestDatabase(async () => {
     const { get, run } = await import("../../src/db");
-    const { addMemory } = await import("../../src/ai/memory/store");
+    const { addMemory, findActiveMemoryByKey } = await import("../../src/ai/memory/store");
     const now = Date.now();
     await run(
       `INSERT INTO accounts
@@ -44,6 +44,22 @@ test("memory control routes isolate private scope and support review actions", a
       speakers: ["xu"], content: "较晚发生的事情", occurredAt: now - 24 * 60 * 60 * 1000,
     });
     assert.ok(shared && privateItem && olderEvent && newerEvent);
+    assert.equal((await findActiveMemoryByKey({
+      scope: "couple",
+      layer: "fact",
+      perspective: "people",
+      kind: "standard",
+      memoryKey: "likes.seaside",
+      subjects: ["both"],
+    }))?.id, shared.id);
+    assert.equal(await findActiveMemoryByKey({
+      scope: "ai:si",
+      layer: "plan",
+      perspective: "people",
+      kind: "standard",
+      memoryKey: "surprise",
+      subjects: ["xu"],
+    }), null);
 
     const { buildApp } = await import("../../src/app");
     const { createToken } = await import("../../src/auth/token");

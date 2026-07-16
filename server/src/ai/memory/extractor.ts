@@ -8,11 +8,12 @@ import {
   addMemory,
   advanceMemoryCursor,
   archiveSiblingMemories,
+  findActiveMemoryByKey,
   initializeMemoryCursor,
-  listActiveMemoryContext,
   memoryCursor,
   normalizedMemorySubjects,
   reconcileMemoryLifecycle,
+  searchMemory,
   transitionMemory,
   type MemoryCandidate,
   type MemoryItem,
@@ -21,7 +22,6 @@ import {
 
 interface ExtractedMemory {
   operation?: "upsert" | "append" | "retract" | "complete" | "cancel";
-  targetMemoryId?: string;
   layer?: string;
   kind?: "observation";
   memoryKey?: string;
@@ -31,7 +31,7 @@ interface ExtractedMemory {
   confidence?: number;
   importance?: number;
   validHours?: number;
-  sourceMemoryIds?: string[];
+  sourceMemoryKeys?: string[];
   metadata?: Record<string, unknown>;
   reason?: string;
 }
@@ -99,7 +99,7 @@ export function shouldExtractMemoryBatch(
 function systemPrompt(includeEngagement: boolean): string {
   const people = accounts().map((account) => `${account.username}=${account.name}`).join("、");
   return [
-    "你是 CoupleChat 的基础记忆整理器。输入包含当前有效基础记忆和一段连续聊天；基础 changes 只提取事实、经历、计划、近况四类。关系与理解由另一阶段根据这些卡片生成，基础 changes 禁止输出 relationship/insight。",
+    "你是 CoupleChat 的基础记忆整理器。输入只有一段连续新聊天；基础 changes 只提取事实、经历、计划、近况四类。不要假设输入外的旧记忆内容。关系与理解由另一阶段根据写入后的基础卡生成，基础 changes 禁止输出 relationship/insight。",
     `人物 username：${people}。subjects 必须且只能是单个逻辑主体：xu、si 或 both。`,
     "subjects 表示内容是谁的，不表示谁说了这句话，也不表示卡片是否双方可见。只属于小旭的事情用 xu，只属于小偲的事情用 si；只有两个人共同参与、共同承担或整体状态才用 both。双方只是讨论某一个人的事，仍归这个人。",
     "fact：稳定、将来可直接查询的个人或共同事实，例如身份、偏好、习惯、健康禁忌和重要人物。事实应原子化。",
@@ -107,16 +107,16 @@ function systemPrompt(includeEngagement: boolean): string {
     "plan：未来安排、承诺和准备做的事。按实际执行者归属；只有两个人都要执行才用 both。必须给 validHours，未明确期限默认 720 小时。",
     "state：近三天的滚动近况，可以事无巨细地记录有用细节，包括上午/下午做了什么、健康与情绪、讨论主题、双方观点和意见不同。每个主体本批最多一张，内容尽量 300~800 字，必须给 validHours，默认 72 小时。",
     "operation：upsert 新增/更新 fact、plan、state；append 追加 event；retract 表示明确否定旧记忆；complete/cancel 只用于计划。",
-    "更新、否定、完成或取消已有事实/计划时，使用输入中的 targetMemoryId 并复用 memoryKey；近况由代码按主体维护固定滚动键，不必引用旧近况 id。",
-    "根据整段新消息与当前记忆直接生成变更，不要输出或引用原始消息 ID；不得编造日期。",
+    "更新、否定、完成或取消已有事实/计划时复用稳定 memoryKey；不要输出 targetMemoryId，服务端会按 scope、layer、memoryKey 和主体查找旧卡。近况由代码按主体维护固定滚动键。",
+    "根据整段新消息生成变更，不要输出或引用原始消息 ID；不得编造日期。",
     "连续的同一次经历合成一张 event；近况中的琐碎活动不要再重复生成 event，除非它具有长期回忆或检索价值。",
     "confidence 0~1，importance 1~5。玩笑、问句、AI 回复、未确认猜测、辱骂中的人格判断均不保存。",
-    "同时整理大橘基于现有记忆形成的观察，放入 dajuChanges：只允许 kind=observation，只保存基于至少两张当前基础记忆卡的谨慎观察，layer 固定为 insight，并列出实际使用的 sourceMemoryIds。大橘观察不是主人事实，默认有效 30 天。主人对大橘的行为指令由对话 Agent 直接处理，这里不得生成 instruction，也不得把这类要求改写成 changes 中的人物事实或偏好。subjects 表示观察涉及哪位主人或两个人。",
+    "同时整理大橘基于本批基础 changes 形成的观察，放入 dajuChanges：只允许 kind=observation，只保存基于至少两张本批基础卡的谨慎观察，layer 固定为 insight，并列出 sourceMemoryKeys。大橘观察不是主人事实，默认有效 30 天。主人对大橘的行为指令由对话 Agent 直接处理，这里不得生成 instruction，也不得把这类要求改写成 changes 中的人物事实或偏好。subjects 表示观察涉及哪位主人或两个人。",
     ...(includeEngagement ? [
       "同时判断公聊 engagement，但不要回复用户：明显冲突才用 conflict；无冲突但确有情侣专属价值可补充时用 interject；普通闲聊用 none。",
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"observation","memoryKey":"daju.observation.interaction","subjects":["both"],"content":"...","sourceMemoryIds":["mem_1","mem_2"],"validHours":720}],"engagement":{"kind":"none","confidence":0,"reason":""}}',
+      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"observation","memoryKey":"daju.observation.interaction","subjects":["both"],"content":"...","sourceMemoryKeys":["fact.xu.preference","event.both.example"],"validHours":720}],"engagement":{"kind":"none","confidence":0,"reason":""}}',
     ] : [
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"observation","memoryKey":"daju.observation.interaction","subjects":["xu"],"content":"...","sourceMemoryIds":["mem_1","mem_2"],"validHours":720}]}',
+      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"observation","memoryKey":"daju.observation.interaction","subjects":["xu"],"content":"...","sourceMemoryKeys":["fact.xu.preference","event.xu.example"],"validHours":720}]}',
     ]),
     "changes 最多 40 条。没有变更时 changes 为空数组。",
   ].join("\n");
@@ -125,10 +125,6 @@ function systemPrompt(includeEngagement: boolean): string {
 function messageLine(message: LogMessage): string {
   const body = message.type === "text" ? message.text.replace(/\s+/g, " ").trim() : `[${message.type}]`;
   return `[${beijingDateTime(message.ts)}] [${message.sender}/${message.senderName}] ${body.slice(0, 1000)}`;
-}
-
-function memoryContextLine(memory: MemoryItem): string {
-  return `[${memory.id}] layer=${memory.layer} key=${memory.memoryKey} subject=${memory.subjects[0] ?? "unknown"} content=${memory.content.slice(0, 700)}`;
 }
 
 const BASE_MEMORY_LAYERS = new Set<MemoryLayer>(["fact", "event", "plan", "state"]);
@@ -157,22 +153,10 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     }
 
     const nextCursor = { ts: sourceMessages.at(-1)!.ts, id: sourceMessages.at(-1)!.id };
-    const allActiveMemories = await listActiveMemoryContext(channel, 220);
-    const activeMemories = allActiveMemories
-      .filter((memory) => BASE_MEMORY_LAYERS.has(memory.layer));
-    const activeDajuMemories = allActiveMemories.filter(
-      (memory) => memory.perspective === "daju" && memory.kind === "observation",
-    );
-    const activeById = new Map(activeMemories.map((memory) => [memory.id, memory]));
-    const activeDajuById = new Map(activeDajuMemories.map((memory) => [memory.id, memory]));
     const output = await chat({
       profile: "task",
       system: systemPrompt(channel === "couple"),
-      user: [
-        `【当前有效基础记忆，频道=${channel}】\n${activeMemories.map(memoryContextLine).join("\n") || "（空）"}`,
-        `【当前大橘自己的记忆】\n${activeDajuMemories.map(memoryContextLine).join("\n") || "（空）"}`,
-        `【本批新消息】\n${sourceMessages.map(messageLine).join("\n")}`,
-      ].join("\n\n"),
+      user: `【本批新消息，频道=${channel}】\n${sourceMessages.map(messageLine).join("\n")}`,
       gen: GEN.extractFacts,
     });
     if (!output) throw new Error("基础记忆模型无输出");
@@ -185,10 +169,26 @@ async function scanChannel(channel: string, force = false): Promise<void> {
 
     let saved = 0;
     const stateSubjects = new Set<string>();
+    const savedBaseByKey = new Map<string, MemoryItem>();
     for (const item of parsed.changes.slice(0, 40)) {
       const operation = item.operation ?? "upsert";
-      const target = item.targetMemoryId ? activeById.get(item.targetMemoryId) : undefined;
+      if (!item.layer || !BASE_MEMORY_LAYERS.has(item.layer as MemoryLayer)) continue;
+      const layer = item.layer as MemoryLayer;
+      const subjects = normalizedMemorySubjects(item.subjects ?? []);
+      if (subjects.length !== 1) continue;
+      const subject = subjects[0];
+      const memoryKey = layer === "state" ? `state.${subject}.recent` : item.memoryKey;
+      if (!memoryKey) continue;
+
       if (["retract", "complete", "cancel"].includes(operation)) {
+        const target = await findActiveMemoryByKey({
+          scope: channel,
+          layer,
+          perspective: "people",
+          kind: "standard",
+          memoryKey,
+          subjects,
+        });
         if (!target) continue;
         if ((operation === "complete" || operation === "cancel") && target.layer !== "plan") continue;
         const status = operation === "complete" ? "completed" : operation === "cancel" ? "cancelled" : "retracted";
@@ -201,14 +201,8 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         continue;
       }
 
-      if (!item.content || !item.layer || !BASE_MEMORY_LAYERS.has(item.layer as MemoryLayer)) continue;
-      const subjects = normalizedMemorySubjects(item.subjects ?? []);
-      if (subjects.length !== 1) continue;
-      const subject = subjects[0];
-      const layer = item.layer as MemoryLayer;
-      if (target && target.layer !== layer) continue;
+      if (!item.content) continue;
       if (layer === "state" && stateSubjects.has(subject)) continue;
-      if (layer !== "state" && !item.memoryKey) continue;
       if (layer === "state") stateSubjects.add(subject);
 
       const baseTime = sourceMessages.at(-1)?.ts ?? Date.now();
@@ -216,13 +210,36 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       const validHours = Number.isFinite(suppliedValidHours) && suppliedValidHours > 0
         ? Math.min(24 * 365, suppliedValidHours)
         : layer === "state" ? 72 : layer === "plan" ? 24 * 30 : null;
-      const targetForUpdate = layer === "state" ? undefined : target;
+      let targetForUpdate: MemoryItem | undefined;
+      if (layer === "fact" || layer === "plan") {
+        targetForUpdate = await findActiveMemoryByKey({
+          scope: channel,
+          layer,
+          perspective: "people",
+          kind: "standard",
+          memoryKey,
+          subjects,
+        }) ?? undefined;
+        if (!targetForUpdate) {
+          const candidate = (await searchMemory({
+            query: item.content,
+            layers: [layer],
+            scopes: [channel],
+            perspectives: ["people"],
+            kinds: ["standard"],
+            subjects,
+            subjectMode: "exact",
+            limit: 1,
+          }))[0];
+          if (candidate && (candidate.lexicalHits >= 2 || candidate.score >= 0.82)) {
+            targetForUpdate = candidate;
+          }
+        }
+      }
       const candidate: MemoryCandidate = {
         layer,
         scope: channel,
-        memoryKey: layer === "state"
-          ? `state.${subject}.recent`
-          : targetForUpdate?.memoryKey ?? item.memoryKey!,
+        memoryKey: targetForUpdate?.memoryKey ?? memoryKey,
         subjects,
         speakers: [],
         content: item.content,
@@ -240,13 +257,24 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       const stored = await addMemory(candidate);
       if (stored) {
         saved += 1;
+        savedBaseByKey.set(memoryKey, stored);
+        savedBaseByKey.set(stored.memoryKey, stored);
         if (layer === "state") await archiveSiblingMemories(stored.id, true);
       }
     }
 
     for (const item of (parsed.dajuChanges ?? []).slice(0, 20)) {
       const operation = item.operation ?? "upsert";
-      const target = item.targetMemoryId ? activeDajuById.get(item.targetMemoryId) : undefined;
+      const subjects = normalizedMemorySubjects(item.subjects ?? []);
+      if (!item.memoryKey || subjects.length !== 1) continue;
+      const target = await findActiveMemoryByKey({
+        scope: channel,
+        layer: "insight",
+        perspective: "daju",
+        kind: "observation",
+        memoryKey: item.memoryKey,
+        subjects,
+      });
       if (["retract", "complete", "cancel"].includes(operation)) {
         if (!target) continue;
         const status = operation === "complete" ? "completed" : operation === "cancel" ? "cancelled" : "retracted";
@@ -262,10 +290,9 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       const kind = item.kind;
       if (!item.content || !item.memoryKey || kind !== "observation") continue;
       const layer = "insight";
-      const subjects = normalizedMemorySubjects(item.subjects ?? []);
-      if (subjects.length !== 1 || (target && (target.kind !== kind || target.layer !== layer))) continue;
-      const sourceMemoryIds = [...new Set(item.sourceMemoryIds ?? [])]
-        .filter((id) => activeById.has(id))
+      const sourceMemoryIds = [...new Set(item.sourceMemoryKeys ?? [])]
+        .map((key) => savedBaseByKey.get(key)?.id)
+        .filter((id): id is string => Boolean(id))
         .slice(0, 20);
       if (sourceMemoryIds.length < 2) continue;
 

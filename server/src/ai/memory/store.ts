@@ -440,6 +440,51 @@ export async function listActiveMemoryContext(
   return rows.map(mapItem);
 }
 
+export interface ActiveMemoryKeyLookup {
+  scope: string;
+  memoryKey: string;
+  layer?: MemoryLayer;
+  perspective?: MemoryPerspective;
+  kind?: MemoryKind;
+  subjects?: string[];
+}
+
+export async function findActiveMemoryByKey(
+  input: ActiveMemoryKeyLookup,
+): Promise<MemoryItem | null> {
+  const owner = await resolveMemoryOwner(input.scope);
+  if (!owner) return null;
+  const ownerSQL = memoryOwnerSQL(owner);
+  const clauses = ["scope = ?", "memory_key = ?", "status = 'active'", ownerSQL.clause];
+  const params: Array<string | number> = [
+    input.scope,
+    input.memoryKey.trim().toLowerCase().replace(/[^a-z0-9_.:\-\u4e00-\u9fff]+/g, "_").slice(0, 160),
+    ownerSQL.value,
+  ];
+  if (input.layer) {
+    clauses.push("layer = ?");
+    params.push(input.layer);
+  }
+  if (input.perspective) {
+    clauses.push("perspective = ?");
+    params.push(input.perspective);
+  }
+  if (input.kind) {
+    clauses.push("memory_kind = ?");
+    params.push(input.kind);
+  }
+  if (input.subjects?.length) {
+    clauses.push("subjects_json::jsonb = CAST(? AS jsonb)");
+    params.push(JSON.stringify(input.subjects));
+  }
+  const row = await get<AiMemoryRow>(
+    `SELECT * FROM ai_memory WHERE ${clauses.join(" AND ")}
+     ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1`,
+    params,
+  );
+  return row ? mapItem(row) : null;
+}
+
 export async function repairMissingMemoryEmbeddings(limit = 25): Promise<number> {
   if (!embeddingEnabled()) return 0;
   const rows = await all<AiMemoryRow>(
