@@ -6,8 +6,7 @@
 
 ```powershell
 npm ci
-npm test
-npm run build
+npm run check
 ```
 
 开发必须使用隔离数据库和非生产 `.env`。生产 Web 进程设置 `RUN_MIGRATIONS=false`，migration 由发布流程中的独立 migrator 执行。

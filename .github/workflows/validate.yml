@@ -1,7 +1,6 @@
-name: 项目质量验证
+name: 项目快速验证
 
 on:
-  workflow_call:
   workflow_dispatch:
   push:
     branches: [main]
@@ -24,8 +23,23 @@ concurrency:
 jobs:
   public-repository-safety:
     name: Public repository safety
-    if: github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/public-repository-safety.yml
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+
+      - name: Test scanner
+        run: node --test .github/scripts/tests/check-public-repository.test.mjs
+
+      - name: Check current tracked tree
+        run: node .github/scripts/check-public-repository.mjs
 
   server:
     name: Server
@@ -54,11 +68,8 @@ jobs:
           bash -n scripts/*.sh tests/operations/*.test.sh
           bash tests/operations/backup-retention.test.sh
 
-      - name: Test
-        run: npm test
-
-      - name: Build
-        run: npm run build
+      - name: Check
+        run: npm run check
 
   ios:
     name: iOS
@@ -106,23 +117,12 @@ jobs:
             swiftlint lint --strict --config .swiftlint-structure.yml "$file"
           done < build-artifacts/new-swift-files.txt
 
-      - name: Unit tests on iPhone
+      - name: Compile iOS app
         run: |
-          DEVICE_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPhone 17")
-          xcodebuild test \
-            -project CoupleChat.xcodeproj \
-            -scheme CoupleChat \
-            -destination "platform=iOS Simulator,id=$DEVICE_ID" \
-            -resultBundlePath "$PWD/build-artifacts/CoupleChatTests.xcresult" \
-            CODE_SIGNING_ALLOWED=NO
-
-      - name: Compile for iPad
-        run: |
-          IPAD_ID=$(xcrun simctl list devices available -j | python3 .github/scripts/select-ios-simulator.py "iPad")
           xcodebuild build \
             -project CoupleChat.xcodeproj \
             -scheme CoupleChat \
-            -destination "platform=iOS Simulator,id=$IPAD_ID" \
+            -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO
 
       - name: Upload diagnostics

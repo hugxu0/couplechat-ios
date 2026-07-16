@@ -78,11 +78,6 @@ final class ChatGlassView: UIView {
         tintView.backgroundColor = color.withAlphaComponent(alpha)
     }
 
-    func setGradientAlpha(_ alpha: CGFloat) {
-        guard !usesSystemLiquidGlass else { return }
-        gradientLayer.opacity = Float(alpha)
-    }
-
     /// iOS 26 的原生玻璃自行完成材质采样，不能再叠加我们自己的 tint 或高光层；
     /// 旧系统才使用兼容的模糊、渐变和色调。
     func setGlassTone(dark: Bool, tintAlpha: CGFloat, borderAlpha: CGFloat = 0.16) {

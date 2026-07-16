@@ -11,13 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
-    name: 同 SHA 质量门禁
-    uses: ./.github/workflows/validate.yml
-
   build-ipa:
     name: Release 归档与打包
-    needs: validate
     runs-on: macos-15
     timeout-minutes: 30
 

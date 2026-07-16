@@ -31,7 +31,7 @@ final class AIMemoryRepositoryTests: XCTestCase {
             "importance": 4, "occurredAt": null, "occurredEndAt": null,
             "validFrom": null, "validUntil": null, "status": "active",
             "supersedesId": null, "createdAt": 1000, "updatedAt": 2000,
-            "evidenceCount": 2, "version": 7
+            "version": 7
           }],
           "stats": { "total": 1, "shared": 1, "private": 0, "byLayer": { "event": 1 } },
           "nextCursor": "cursor-2", "hasMore": true
@@ -80,7 +80,7 @@ final class AIMemoryRepositoryTests: XCTestCase {
         "speakers":["xu"],"content":"另一台设备的新内容","category":"travel",
         "confidence":0.9,"importance":5,"occurredAt":null,"occurredEndAt":null,
         "validFrom":null,"validUntil":null,"status":"active","supersedesId":null,
-        "createdAt":1000,"updatedAt":3000,"evidenceCount":2,"version":8}}
+        "createdAt":1000,"updatedAt":3000,"version":8}}
         """#.utf8)
         let repository = AIMemoryRepository(
             httpClient: AIMemoryHTTPClient(data: body, statusCode: 409))

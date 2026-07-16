@@ -51,14 +51,6 @@ export function imageUrls(message: Pick<LogMessage, "type" | "url" | "attachment
   return [...new Set(urls)].slice(0, 9);
 }
 
-// 查找最近一条图片消息。
-export function latestImage(messages: LogMessage[]): LogMessage | undefined {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (imageUrls(messages[i]).length) return messages[i];
-  }
-  return undefined;
-}
-
 /** 找到最近一组连续图片消息，保留每条消息内的多附件顺序。 */
 export function latestImageGroup(messages: LogMessage[], maxImages = 9): { messages: LogMessage[]; urls: string[] } {
   const selected: LogMessage[] = [];
@@ -102,14 +94,6 @@ export async function recentConversationMessages(
       : [storedChannel, limit],
   );
   return rows.reverse().map(mapRow);
-}
-
-export async function messagesBetween(storedChannel: string, start: number, end: number): Promise<LogMessage[]> {
-  const rows = await all<MessageRow>(
-    "SELECT * FROM messages WHERE channel = ? AND ts >= ? AND ts < ? ORDER BY ts ASC",
-    [storedChannel, start, end],
-  );
-  return rows.map(mapRow);
 }
 
 export async function messagesAfter(storedChannel: string, cursor: LogCursor, limit: number): Promise<LogMessage[]> {

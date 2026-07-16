@@ -46,7 +46,7 @@ export async function initAi(): Promise<void> {
     console.log("[ai] 大橘已就位（AI 模型已配置）");
     console.log(`[ai] Agent + MCP ${agentRuntimeEnabled() ? "已就绪" : "不可用，请检查模型兼容性"}`);
   } else {
-    console.log("[ai] 未配置 AI_* 环境变量，大橘走本地兜底回复");
+    console.log("[ai] 未配置 AI_* 环境变量，大橘只返回不可用提示");
   }
 }
 
@@ -58,19 +58,7 @@ export function shutdownAi(): void {
   pendingEngagement = null;
 }
 
-// 未配置模型时的本地兜底（保持 ai 频道基本可用）。
-const FALLBACK_REPLIES = [
-  "喵，我在。你慢慢说，我会认真听。",
-  "先抱一下。这个小空间里，你不用急着把话说完。",
-  "大橘收到啦。等真正的模型接上，我就能更聪明地陪你聊天。",
-  "我先把这句话放在爪子下面保管好。",
-];
-
-function fallbackReply(text: string): string {
-  if (!text) return FALLBACK_REPLIES[0];
-  const index = Math.abs([...text].reduce((sum, char) => sum + char.charCodeAt(0), 0)) % FALLBACK_REPLIES.length;
-  return FALLBACK_REPLIES[index];
-}
+const AI_UNAVAILABLE_REPLY = "大橘现在没有连接 AI 模型，请检查服务端配置。";
 
 function stripTrigger(text: string): string {
   let result = text;
@@ -195,11 +183,11 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
         };
         sink.activity?.(trigger, "accepted");
         sink.activity?.(trigger, "generating");
-        void sink.emit(storedChannel, fallbackReply(trigger.question), true)
+        void sink.emit(storedChannel, AI_UNAVAILABLE_REPLY, true)
           .then(() => sink.activity?.(trigger, "finished"))
           .catch((error) => {
             sink.activity?.(trigger, "failed");
-            console.warn("[ai] couple 本地兜底发送失败:", error instanceof Error ? error.message : error);
+            console.warn("[ai] couple 不可用提示发送失败:", error instanceof Error ? error.message : error);
           });
       }
       return;
@@ -232,7 +220,7 @@ export function handleUserMessage(io: Server, user: AuthUser, message: ClientMes
       sink.activity?.(trigger, "generating");
       sink.typing(storedChannel, true);
       await new Promise((resolve) => setTimeout(resolve, 550));
-      await sink.emit(storedChannel, fallbackReply(isText ? message.text.trim() : ""), true);
+      await sink.emit(storedChannel, AI_UNAVAILABLE_REPLY, true);
       sink.typing(storedChannel, false);
       sink.activity?.(trigger, "finished");
     })().catch(() => {});

@@ -105,18 +105,6 @@ export async function registerMemoryRoutes(app: FastifyInstance) {
   });
 
   app.get<{ Params: { id: string } }>(
-    "/api/me/memory/:id/evidence",
-    { preHandler: requireAuth },
-    async (request, reply) => {
-      if (!request.user) return reply.code(401).send({ error: "unauthorized" });
-      const identity = await activeIdentity(request.user);
-      if (!identity) return reply.code(401).send({ error: "unauthorized" });
-      // 兼容尚未升级的旧客户端；新系统不再保存或返回原始消息证据。
-      return { ok: true, evidence: [] };
-    },
-  );
-
-  app.get<{ Params: { id: string } }>(
     "/api/me/memory/:id/sources",
     { preHandler: requireAuth },
     async (request, reply) => {

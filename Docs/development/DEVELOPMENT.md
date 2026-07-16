@@ -38,17 +38,9 @@ npm start
 
 当前工作树要求 schema v31；生产发布必须先备份并使用独立 migrator 升级，Web 进程保持 `RUN_MIGRATIONS=false`。连接生产库启动本地调试服务的入口已经移除；版本不匹配时也不能用开发进程“试一下”。
 
-`scripts/dev-cloud-db.ps1` 已改为安全失效：没有默认主机，只接受仓库外 SSH alias，只允许 `-CheckOnly`，并要求目标 `.env` 提供专用 `READONLY_DATABASE_URL`；查询还会开启 read-only transaction。私有运维环境尚未完成只读角色和 SSH alias 的现场验收，因此当前不要把它用于生产结论。配置并验收后才可运行：
-
-```powershell
-cd server
-npm run check:cloud-db -- -RemoteTarget <private-ssh-alias>
-```
-
-功能调试只能使用从备份恢复的隔离 PostgreSQL，再显式运行 `npm run migrate`。隔离调试服务应固定使用：
+功能调试只能使用本地临时 PostgreSQL，或从备份恢复的隔离 PostgreSQL，再显式运行 `npm run migrate`。隔离调试服务应固定使用：
 
 ```env
-CLOUD_DB_DEBUG=true
 RUN_MIGRATIONS=false
 SCHEDULED_JOBS_ENABLED=false
 UPLOADS_WRITABLE=false
@@ -73,13 +65,11 @@ http://127.0.0.1:8080/ai-debug
 
 ```powershell
 cd server
-npm test
-npm run build
+npm run check
 npm run healthcheck -- https://hoo66.top
 ```
 
-- `npm test`：TypeScript 主代码/脚本类型检查、串行 Node 测试套件和 embedded PostgreSQL 冒烟测试。
-- `npm run build`：生成 `dist/`，验证生产编译。
+- `npm run check`：一次完成 TypeScript 类型检查、快速纯逻辑测试、一次 embedded PostgreSQL 当前行为烟测和生产编译。
 - `npm run healthcheck`：依次检查 `/health`、`/ready` 和固定账号列表 `xu,si`。
 
 测试必须使用临时数据库或只读生产检查。不要在自动测试中删除、批量修改生产数据或写入生产媒体。
@@ -94,11 +84,10 @@ xcodebuild test -project CoupleChat.xcodeproj -scheme CoupleChat \
   -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
-GitHub Actions 按职责拆成可复用质量门禁与手动 IPA 流程：
+GitHub Actions 只保留一条默认快速验证链和一个手动 IPA 流程：
 
-- `公开仓库安全检查`：独立覆盖所有 `main` push 和面向 `main` 的 pull request，包括只改文档的提交；只报告风险类别和路径，不回显匹配内容。手动质量验证和 reusable IPA 门禁也会执行同一检查。
-- `项目质量验证`：在 `main` push、面向 `main` 的 pull request 或手动触发时运行，但根 `README.md` 与 `Docs/**` 被 `paths-ignore` 排除；其他 Markdown（例如 `AGENTS.md`、`server/README.md`）仍会触发。服务端执行 test/build；客户端执行 SwiftLint、新 Swift 文件结构护栏、iPhone 单元测试和 iPad 编译。它不归档、不生成 IPA。
-- `构建 unsigned IPA`：仅手动触发，先调用上述 reusable workflow 验证同一 commit；全部通过后才执行 Release unsigned Archive。artifact 名称包含完整 SHA、run ID 和 attempt，并带相同证据的 `BUILD-METADATA.json` 与 `SHA256SUMS`。它不进行 Apple 签名，也不替代真机视觉/手势验证。
+- `项目快速验证`：在 `main` push、面向 `main` 的 pull request 或手动触发时运行，并在同一条流水线中完成公开仓库安全扫描。服务端执行 `npm run check`；客户端执行 SwiftLint、新 Swift 文件结构护栏和 generic iOS 编译，不启动模拟器跑 XCTest，也不重复做 iPad 编译。
+- `构建 unsigned IPA`：仅手动触发，直接对当前精确 commit 执行 Release unsigned Archive，不再先重复调用快速验证。artifact 名称包含完整 SHA、run ID 和 attempt，并带 `BUILD-METADATA.json` 与 `SHA256SUMS`。它不进行 Apple 签名，也不替代真机视觉/手势验证。
 
 所有第三方 Action 固定到完整 commit；Socket.IO Client Swift 与 GLTFKit2 固定精确版本。两个 iOS job 固定使用 Xcode 26.3。仓库目前仍缺少 `Package.resolved`，Homebrew 安装的 XcodeGen/SwiftLint 也没有锁定 formula revision，因此还不能完全复现历史依赖图。质量验证只在失败时上传诊断；IPA artifact 保留 14 天，本机下载必须提供完整 commit SHA：
 
@@ -155,7 +144,7 @@ $Sha = (git rev-parse HEAD).Trim()
 
 - 产品视觉方向是温暖、成熟、克制地使用材质；聊天发送、键盘、贴底和媒体手势的可靠性优先于装饰效果。
 - 颜色、圆角、间距、字体、动画、阴影只从 `Sources/DesignSystem/DS.swift` 取值；页面内不要再写散落魔法数。
-- 常规文案用 `DS.Typo.body/secondary/caption/button/sectionLabel/micro`；大数字用 `displayHero/displayMetric/displayNumber`；装饰性巨型图标可保留固定字号。
+- 常规文案用 `DS.Typo.body/secondary/caption/button/sectionLabel/micro`；大数字用 `displayNumber`；装饰性巨型图标可保留固定字号。
 - 内容卡片用 `dsCard()` / `AppCard`；浮动层（Tab 栏、输入栏、浮钮）用 `dsGlass` / `dsGlassInteractive`。
 - 动画优先 `DS.Anim.*`，需要尊重「减少动态效果」时用 `DS.Anim.withMotion` 或 `DS.Anim.motion`。
 - 语义组件放在 `AppSemanticComponents.swift`：`RootPageHeader`、`AppSectionHeader`、`AppPrimaryButton`、`StatusBanner`、`AppEmptyState` 等；重复样式先抽组件再改页面。
@@ -168,8 +157,7 @@ $Sha = (git rev-parse HEAD).Trim()
 git status --short
 git diff --check
 cd server
-npm test
-npm run build
+npm run check
 ```
 
 iOS 改动还需确认对应 GitHub Actions 通过。

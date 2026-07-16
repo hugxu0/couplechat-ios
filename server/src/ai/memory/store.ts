@@ -654,7 +654,6 @@ export async function memoryStats(): Promise<Record<string, number>> {
 }
 
 export type MemoryControlItem = Omit<MemoryItem, "vector"> & {
-  evidenceCount: number;
   derivedFromCount: number;
 };
 
@@ -702,8 +701,7 @@ function addControlOwnership(
 
 function controlItem(row: AiMemoryRow, derivedFromCount = 0): MemoryControlItem {
   const { vector: _vector, ...item } = mapItem(row);
-  // evidenceCount 暂留为兼容旧客户端的恒定字段；新系统不再保存原始消息证据。
-  return { ...item, evidenceCount: 0, derivedFromCount };
+  return { ...item, derivedFromCount };
 }
 
 export async function listMemoryForControl(input: MemoryControlFilter): Promise<MemoryControlItem[]> {

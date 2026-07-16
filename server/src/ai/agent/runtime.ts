@@ -60,8 +60,7 @@ function instructions(trigger: Trigger): string {
     "如果主人说‘不是他/你说错了’，立即废弃之前答案，不能再用旧答案当查询依据。最多先查一次结构化记忆、再查两次原始聊天；仍无明确主人原话就直接说暂时无法确认，并请主人提供名字或大致时间。",
     "搜索原始聊天时，query 只放核心概念；需要语义发散时由你根据当前问题生成少量 alternatives。不要把人物名字和大量泛词混进查询；人物用 sender 约束。默认使用 hybrid，只有验证同一条原话时才用 all。",
     "工具每次只返回有限候选，不代表扫描了全部历史。回复中不能说‘查了所有聊天记录/从来没有说过’，只能说‘目前找到的记录里没有明确证据’。搜索命中问题本身也不等于找到了答案。",
-    "联网原则：只有最新或外部信息才联网；私人经历不能用联网代替本地证据。优先使用 Responses 原生 web_search。原生结果不足或不可用时再调用 fallback_web_search；兜底 source 由你判断：国内政策、本地生活和中文平台内容用 domestic，国际新闻、海外机构、国际体育赛事和英文资料用 global，主人明确要求多方核实或比较国内外来源时用 crosscheck，无法判断才用 auto。",
-    "网页读取原则：主人给出具体网页并要求阅读、总结或提取时调用 web_extract；不要为了普通搜索批量读取网页。",
+    "联网原则：只有最新或外部信息才联网；私人经历不能用联网代替本地证据。只使用 Responses 原生 web_search；如果当前模型不支持或结果不足，就明确说明无法可靠联网，不能改走另一套搜索服务。主人给出具体网页时也使用原生 web_search 尝试读取。",
     "图片原则：当前消息带一张或多张图片时，所有图片都已按发送顺序直接提供，必须结合当前问题逐张观察，比较类问题不能漏图，也不要重复调用工具。当前文字问题结合最近聊天明显在指代前面一组图片（例如刚发图后问‘这些是什么、比较一下’），或你无法读取当前图片时，才调用 inspect_recent_images。根据完整上下文自主判断，不要因为最近记录里碰巧有旧图片就擅自识图。",
     "提醒/备忘原则：先按需 list_personal_items 取得准确 id；新增、完成、修改或删除提醒/备忘都必须调用 draft_personal_item_action。主人说‘放进/写进/记到/保存到我的备忘录’也属于新增备忘，必须把当前或上文刚生成的完整内容（保留 Markdown）放进 action.text，并单独给 action.title 一个简短列表标题；正文开头不要再重复标题。不能只在文字里说‘请确认’却不调用工具。该工具只生成确认草案，回复必须请主人确认，不能声称已经执行。",
     "事项范围：personal 是当前说话人自己的私人提醒/备忘，shared 是两位主人共同可见的共享事项。出现‘我的/我自己/私人/个人’必须选 personal；出现‘我们的/一起/共同/共享/给我们俩’必须选 shared。AI 私聊未说明时默认 personal，公聊未说明时默认 shared；仍有歧义就先问清楚，绝不能混用。查询时也按同一规则给 list_personal_items 传 scope。",
@@ -274,21 +273,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
       }
     };
 
-    const preferResponses = providerSettings.apiMode === "responses";
-    let execution: Awaited<ReturnType<typeof runWithMode>>;
-    try {
-      execution = await runWithMode(preferResponses);
-    } catch (error) {
-      if (!preferResponses || controller.signal.aborted) throw error;
-      trace.agent.fallbackReason = `Responses 失败，已回退 Chat Completions：${error instanceof Error ? error.message : String(error)}`;
-      console.warn("[ai] Agent Responses 失败，回退 Chat Completions");
-      trace.agent.toolCalls = [];
-      toolRun.actions.length = 0;
-      toolRun.citations.length = 0;
-      toolRun.usedVision = false;
-      toolRun.toolCounts = {};
-      execution = await runWithMode(false);
-    }
+    const execution = await runWithMode(providerSettings.apiMode === "responses");
     const { result, workerRawResponses } = execution;
     const rawOutput = typeof result.finalOutput === "string"
       ? result.finalOutput

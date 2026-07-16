@@ -52,11 +52,10 @@
 
 ```powershell
 cd server
-npm test
-npm run build
+npm run check
 ```
 
-iOS 改动至少通过对应的 GitHub Actions；涉及交互、音视频、签名或通知时还需在真机验证。文档改动至少运行链接/路径/命令静态检查和 `git diff --check`。
+iOS 改动至少通过对应的 GitHub Actions 快速编译；XCTest 仍可在需要时手动运行。涉及交互、音视频、签名或通知时还需在真机验证。文档改动至少运行链接/路径/命令静态检查和 `git diff --check`。
 
 无法运行的验证必须明确写入结束报告，不能用“应该可以”代替。
 

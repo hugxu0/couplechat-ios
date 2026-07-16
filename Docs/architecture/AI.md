@@ -138,9 +138,6 @@ AI_VISION_API_MODE=
 AI_MCP_URL=
 AI_TRIGGER_ALIASES=@大橘
 
-TAVILY_MCP_URL=
-TAVILY_API_KEY=
-
 EMBEDDING_VOYAGE_PROVIDER=
 EMBEDDING_VOYAGE_BASE_URL=
 EMBEDDING_VOYAGE_API_KEYS=
@@ -151,9 +148,9 @@ EMBEDDING_MODEL=voyage-4
 EMBEDDING_DIM=1024
 ```
 
-`AI_CHAT_*` 用于直接回复，`AI_TASK_*` 用于整理、摘要和后台内容；未单独配置时回退到 `AI_*`。`*_API_MODE` 支持 `responses/chat_completions/anthropic`，未声明时 Claude 模型自动走 Anthropic，其余默认 Chat Completions；Responses 调用失败会在未超时的情况下回退 Chat Completions。`*_REASONING_EFFORT` 支持 `none/minimal/low/medium/high/xhigh`。
+`AI_CHAT_*` 用于直接回复，`AI_TASK_*` 用于整理、摘要和后台内容；未单独配置时使用 `AI_*`。`*_API_MODE` 支持 `responses/chat_completions/anthropic`，未声明时 Claude 模型自动走 Anthropic，其余默认 Chat Completions。服务端只执行配置指定的协议，不在失败后切换另一套模型协议。`*_REASONING_EFFORT` 支持 `none/minimal/low/medium/high/xhigh`。
 
-当前图片可一次把最多 9 张送入模型。联网优先使用 Responses 原生 `web_search`；MCP fallback 可按国内/国际/交叉核实路由，并可配置 Tavily 做全球搜索和指定网页提取。向量检索支持 Voyage、MongoDB 两个多 key 池顺序 failover，也兼容旧的 `EMBEDDING_BASE_URL/API_KEY` 单 key 配置；向量服务不可用时仍可做字面、时间、主体与高重要度兜底检索。完整生产示例以 `server/.env.production.example` 为准。
+当前图片可一次把最多 9 张送入模型；当前消息直接交给主模型，`inspect_recent_images` 只负责用户明确追问前一组图片的场景。联网只使用 Responses 原生 `web_search`，不再维护 MiMo/Tavily 搜索主备、来源分流和网页提取工具。向量检索支持 Voyage、MongoDB 两个多 key 池顺序 failover，也兼容旧的 `EMBEDDING_BASE_URL/API_KEY` 单 key 配置；向量服务不可用时仍可做字面、时间、主体与高重要度检索。完整生产示例以 `server/.env.production.example` 为准。
 
 ## 本机调试
 
@@ -165,6 +162,4 @@ EMBEDDING_DIM=1024
 - 手动整理当前频道的新消息；
 - 有明确确认步骤地清除当前频道最近消息。
 
-调试页只在非生产环境且 loopback 请求下可访问。它必须连接隔离恢复库，不能连接生产数据库。
-
-生产 Trace 的关闭、脱敏、权限、轮换和保留策略尚未达到验收要求，见 [AI-001](../current/KNOWN_ISSUES.md)。修复前不得在生产主动启用诊断，也不得把 `.data/ai_logs` 纳入普通构建产物、备份分享或日志上传。
+调试页只在非生产环境且 loopback 请求下可访问。它必须连接隔离恢复库，不能连接生产数据库。Trace 最多保留当前进程内最近 100 条，进程退出即清空，不写入磁盘。

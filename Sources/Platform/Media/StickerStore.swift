@@ -209,23 +209,6 @@ final class StickerStore: ObservableObject {
         saveAndSync(stickersChanged: true, groupsChanged: true, tombstonesChanged: true)
     }
 
-    func moveGroup(_ group: StickerGroup, to destinationIndex: Int) {
-        var ordered = sortedGroups
-        guard let sourceIndex = ordered.firstIndex(where: { $0.id == group.id }),
-              !ordered.isEmpty else { return }
-        let destination = min(max(destinationIndex, 0), ordered.count - 1)
-        guard sourceIndex != destination else { return }
-        let revision = nextRevision()
-        let moved = ordered.remove(at: sourceIndex)
-        ordered.insert(moved, at: destination)
-        for index in ordered.indices where ordered[index].order != index {
-            ordered[index].order = index
-            ordered[index].updatedAt = revision
-        }
-        groups = ordered
-        saveAndSync(groupsChanged: true)
-    }
-
     // MARK: - 服务端同步与迁移
 
     /// 注入完整 bootstrap 后调用。优先读取账号独立数据；若不存在则复制旧情侣共享库。

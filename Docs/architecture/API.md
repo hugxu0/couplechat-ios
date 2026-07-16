@@ -84,7 +84,6 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `GET` | `/api/me/memory?scope=&layer=&perspective=&kind=&status=&subject=&q=&limit=&cursor=` | 查询当前用户可见的 Memory、统计和下一页 cursor |
-| `GET` | `/api/me/memory/:id/evidence` | 旧客户端兼容接口，固定返回空数组 |
 | `GET` | `/api/me/memory/:id/sources` | 查询关系/理解卡引用的基础记忆 |
 | `PATCH` | `/api/me/memory/:id` | 手动纠正内容或重要程度 |
 | `DELETE` | `/api/me/memory/:id` | 彻底删除 Memory |

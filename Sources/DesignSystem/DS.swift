@@ -23,10 +23,6 @@ enum DS {
         static let control: CGFloat = 14
         /// 状态条、小标签
         static let chip: CGFloat = 10
-        /// 输入框、胶囊按钮
-        static let pill: CGFloat = 999
-        /// 底部标签栏
-        static let tabBar: CGFloat = 32
     }
 
     // MARK: - 颜色
@@ -77,10 +73,6 @@ enum DS {
         static let innerSurface = adaptive(
             light: UIColor(white: 1, alpha: 0.65),
             dark: UIColor(white: 0.22, alpha: 0.6))
-        /// 悬浮控件底（标签栏、输入栏的非玻璃回退）
-        static let floatSurface = adaptive(
-            light: UIColor(white: 1, alpha: 0.80),
-            dark: UIColor(white: 0.14, alpha: 0.86))
         /// 表单字段底（登录密码框等，比卡片略实一点）
         static let fieldSurface = adaptive(
             light: UIColor(white: 1, alpha: 0.88),
@@ -111,12 +103,8 @@ enum DS {
         static let shadow = Color.black.opacity(0.06)
         static let shadowRadius: CGFloat = 14
         static let shadowY: CGFloat = 6
-        /// 更轻的抬升（小 tile）
-        static let softShadow = Color.black.opacity(0.04)
         static let softShadowRadius: CGFloat = 10
         static let softShadowY: CGFloat = 4
-        /// 遮罩（弹层背景）
-        static let scrim = Color.black.opacity(0.35)
     }
 
     // MARK: - 间距
@@ -129,7 +117,6 @@ enum DS {
         static let tight: CGFloat = 4
         static let bubbleGapSame: CGFloat = 3   // 同一人连续消息
         static let bubbleGapOther: CGFloat = 10 // 不同人之间
-        static let tabBarVertical: CGFloat = 8
         static let controlVertical: CGFloat = 14
         static let fieldHorizontal: CGFloat = 16
         static let fieldVertical: CGFloat = 12
@@ -139,10 +126,6 @@ enum DS {
     enum Typo {
         /// 登录大标题等展示用
         static let display = Font.system(.largeTitle, design: .rounded).weight(.bold)
-        /// 记录页「在一起」天数等主数字
-        static let displayHero = Font.system(size: 68, weight: .heavy, design: .rounded)
-        /// 纪念日格子、统计大数字
-        static let displayMetric = Font.system(size: 38, weight: .heavy, design: .rounded)
         /// 次级大数字（存储总量、统计卡标题数）
         static let displayNumber = Font.system(size: 26, weight: .heavy, design: .rounded)
         /// 根页标题
@@ -163,8 +146,6 @@ enum DS {
         static let button = Font.system(.body, design: .default).weight(.semibold)
         /// Tab 标签（底栏空间有限，固定档）
         static let tab = Font.system(size: 11, weight: .medium)
-        /// Tab 图标
-        static let tabIcon = Font.system(size: 20)
     }
 
     // MARK: - 动画（手感统一从这里取）

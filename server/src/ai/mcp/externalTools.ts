@@ -3,7 +3,6 @@ import { z } from "zod";
 import { latestImageGroup, recentMessages } from "../conversation/log";
 import { GEN } from "../settings";
 import { describeImages } from "../provider";
-import { extractWebPages, routedWebSearch } from "../search/router";
 import { recordAgentTool, type AgentToolRun } from "./runContext";
 import { jsonResult } from "./toolSupport";
 
@@ -49,45 +48,4 @@ export function registerExternalTools(server: McpServer, run: AgentToolRun): voi
     })),
   );
 
-  server.registerTool(
-    "fallback_web_search",
-    {
-      description: "原生 web_search 结果不足或不可用时的联网兜底。根据完整语义选择国内、国际、交叉核实或自动；服务端负责 MiMo/Tavily 主备与合并。",
-      inputSchema: z.object({
-        query: z.string().min(1).max(500),
-        source: z.enum(["domestic", "global", "crosscheck", "auto"]).optional(),
-      }),
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    async (args) => jsonResult(await recordAgentTool(run, "fallback_web_search", args, async () => {
-      const result = await routedWebSearch(args.query, args.source ?? "auto", GEN.search);
-      if (result?.annotations?.length) {
-        for (const citation of result.annotations) {
-          if (!run.citations.some((existing) => existing.url === citation.url)) run.citations.push(citation);
-        }
-      }
-      return result ?? { content: "", annotations: [], unavailable: true };
-    })),
-  );
-
-  server.registerTool(
-    "web_extract",
-    {
-      description: "读取主人明确指定的网页正文，用于总结或提取信息。最多读取 3 个 URL；普通搜索应先用原生 web_search。",
-      inputSchema: z.object({
-        urls: z.array(z.string().url()).min(1).max(3),
-        query: z.string().max(300).optional(),
-      }),
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    async (args) => jsonResult(await recordAgentTool(run, "web_extract", args, async () => {
-      const result = await extractWebPages(args.urls, args.query);
-      for (const page of result.pages) {
-        if (!run.citations.some((existing) => existing.url === page.url)) {
-          run.citations.push({ url: page.url, title: page.title || page.url, summary: page.content.slice(0, 500) });
-        }
-      }
-      return result;
-    })),
-  );
 }

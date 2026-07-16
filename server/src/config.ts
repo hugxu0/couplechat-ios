@@ -115,14 +115,11 @@ export const config = {
       .filter(Boolean),
   },
   aiMcpUrl: process.env.AI_MCP_URL ?? `http://127.0.0.1:${port}/api/ai-mcp`,
-  tavilyMcpUrl: (process.env.TAVILY_MCP_URL ?? "").trim(),
-  tavilyApiKey: (process.env.TAVILY_API_KEY ?? "").trim(),
   // 图片识图（多模态）：只有消息带图片时才调用，未配置则直接跳过图片。
   aiVision: providerFromEnv("AI_VISION"),
   embeddingPools,
   embeddingModel: process.env.EMBEDDING_MODEL ?? fallbackEmbedding?.model ?? "voyage-4",
   embeddingDim: Number(process.env.EMBEDDING_DIM ?? 1024),
-  cloudDatabaseDebug: booleanEnv("CLOUD_DB_DEBUG", false),
   scheduledJobsEnabled: booleanEnv("SCHEDULED_JOBS_ENABLED", true),
   // 生产默认只校验 schema，不在普通 Web 进程启动时执行不可逆迁移。
   // 发布流程使用 `npm run migrate` 的单独 migrator。

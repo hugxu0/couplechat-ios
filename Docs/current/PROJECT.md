@@ -1,6 +1,6 @@
 # 悄悄话当前项目
 
-> 更新时间：2026-07-16。本文是产品现状的唯一入口，不记录开发过程与历史版本。
+> 更新时间：2026-07-17。本文是产品现状的唯一入口，不记录开发过程与历史版本。
 
 本文把源码、测试、构建产物和生产环境分开记录。详细缺陷与验收条件见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。
 
@@ -8,9 +8,9 @@
 
 | 层级 | 最后核验 | 结论 |
 |---|---|---|
-| 本次审查基线 | `ee419a4ec26f54676543db8b0a392a6e7c798034` | 单仓库重构、发布脚本和 plist 校验修复已提交并推送到 `main`；schema 仍为 v31 |
-| 服务端验证 | 2026-07-16 | 对当前本地工作树执行 `npm test`（58/58，含 PostgreSQL 18 smoke）、`npm run build` 和生产依赖审计，均通过且审计为 0 个已知漏洞 |
-| iOS 当前改动 | `ee419a4ec26f54676543db8b0a392a6e7c798034` / Actions run `29487714361` | macOS Xcode 26.3 的 SwiftLint、177 个 iPhone XCTest、iPad 编译、unsigned archive 和 artifact 校验全部通过；产物已下载到固定本地目录 |
+| 本次审查基线 | `74ecbd3361cbaab519b4aa2c3f6aa84e65b48c62` + 当前未提交工作树 | 单仓库与生产拓扑保持不变；本轮精简验证链、无调用方代码、AI 备用搜索/Trace、废弃脚本和重复数据库测试；schema 仍为 v31 |
+| 服务端验证 | 2026-07-17 | 对当前本地工作树执行 `npm run check`：32 个快速测试、一次 PostgreSQL 18 当前行为烟测和生产编译全部通过，耗时约 15.3 秒；未连接生产环境 |
+| 最近一次 iOS 远程验证 | `ee419a4ec26f54676543db8b0a392a6e7c798034` / Actions run `29487714361` | macOS Xcode 26.3 的 SwiftLint、177 个 iPhone XCTest、iPad 编译、unsigned archive 和 artifact 校验全部通过；本轮工作流已改为单条快速验证链，新的远程运行尚未执行 |
 | 生产环境 | 2026-07-17 | 美国唯一可写源站已部署 `f82c29f2f05678b82d0fe04f46c5d130ad4faccd`，schema v31。Memory 基础提取只输入最多 80 条新消息，`fact/plan` 按 key 与同层同主体向量候选更新，`event` 追加幂等，后台使用低推理强度和 120 秒上限；历史积压已追平到 0，六层均有本轮正常写入。发布前 quiesced 备份、临时库真实恢复、51 张策略表、关键序列、媒体抽样和离机 checksum 均通过，本机、私有 origin、公开入口与 Socket.IO transport 均通过 |
 
 本机旧 IPA、tar、展开的 release 或备份目录不属于上述任何生产证据。
@@ -68,8 +68,8 @@
 - 清空 App 数据后，已经丢失本地文件的失败媒体无法继续重传。
 - iOS 自动验证依赖 GitHub Actions 或 Mac；真机仍需检查视觉、手势、蓝牙音频和双设备行为。
 - GitHub 当前只生成 unsigned IPA；免费账号签名 7 天到期，三台设备需要定期刷新。完整流程见 [IOS_SIDELOAD.md](../operations/IOS_SIDELOAD.md)。
-- 备份与恢复脚本已共享 v1–v31 全表策略、校验关键序列，并保护最后一份 `quiesced + RESTORE-VERIFIED`；本次已在真实生产副本完成一次 v31 恢复验证，但仍不会自动确认加密离机副本，失败注入也待补。`best_effort` 备份不能作为 migration 发布门禁，边界见 [DEPLOYMENT.md](../operations/DEPLOYMENT.md)。
-- Sync 提交顺序、SQLite 失败传播、频道隔离、Sync 协议版本、3D 加载状态和生产端口的代码修复已进入当前工作树；iOS/macOS CI、混合版本部署禁令、账号切换竞态和安全问题仍以 [KNOWN_ISSUES.md](KNOWN_ISSUES.md) 为准。
+- 备份与恢复脚本仍共享 v1–v31 全表策略并校验关键序列；日常发布只创建当前基线备份，旧备份和旧发布物在确认当前基线后清理，恢复演练与离机副本由私有运维资料维护，边界见 [DEPLOYMENT.md](../operations/DEPLOYMENT.md)。
+- Sync 提交顺序、SQLite 失败传播、频道隔离、Sync 协议版本、3D 加载状态和生产端口的代码修复已进入当前工作树；账号切换竞态、媒体 I/O、分页、生产安全和备份状态仍以 [KNOWN_ISSUES.md](KNOWN_ISSUES.md) 为准。
 
 ## 架构保护边界
 
@@ -99,11 +99,10 @@
 
 ```powershell
 cd server
-npm test
-npm run build
+npm run check
 ```
 
-iOS 质量 workflow 已在 run `29487714361` 对同一 SHA 验证公开仓库安全、SwiftLint、结构护栏、177 个 iPhone 单测、iPad build，并归档 unsigned IPA；metadata、run/attempt、SHA-256、实际 `Info.plist` 和签名残留校验均通过。仍需在三台真实设备验证视觉、手势、蓝牙音频和通知。
+iOS 快速验证 workflow 当前执行公开仓库安全、SwiftLint、结构护栏和 generic iOS 编译；XCTest 保留在 `CoupleChatTests`，需要时可按 [DEVELOPMENT.md](../development/DEVELOPMENT.md) 手动运行。unsigned IPA workflow 直接归档当前精确 commit，并继续校验 metadata、run/attempt、SHA-256、实际 `Info.plist` 和签名残留。仍需在三台真实设备验证视觉、手势、蓝牙音频和通知。
 
 ## 文档与完成定义
 

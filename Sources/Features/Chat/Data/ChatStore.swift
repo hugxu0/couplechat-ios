@@ -83,18 +83,10 @@ final class ChatStore: ObservableObject {
     @Published private(set) var visibleChatChannel: ChatChannel?
     @Published private(set) var localCacheAvailable = true
 
-    // 便捷访问（保持向后兼容）
+    // 便捷访问
     var session: Session? { auth.session }
     var loggedIn: Bool { auth.loggedIn }
     var partner: Account? { auth.partner }
-    var messagesByChannel: [String: [ChatMessage]] { messageStore.messagesByChannel }
-    var readStates: [String: [String: Double]] { messageStore.readStates }
-    var sharedState: [String: Any] { shared.sharedState }
-    var aiTyping: Bool { messageStore.aiTyping }
-    var aiReplying: Bool { messageStore.aiReplying }
-
-    /// 向后兼容：store.messages 返回 couple 频道消息数组
-    var messages: [ChatMessage] { messageStore.messages(for: .couple) }
 
     lazy var realtime = RealtimeConnectionCoordinator(
         sessionProvider: { [weak self] in self?.auth.session },

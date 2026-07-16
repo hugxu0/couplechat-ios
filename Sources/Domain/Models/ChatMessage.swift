@@ -285,7 +285,6 @@ struct ChatAttachment: Identifiable, Codable, Equatable {
     }
 
     var mediaURL: URL? { ServerConfig.resolveMediaURL(url) }
-    var isPairedVideo: Bool { role == "pairedVideo" }
 }
 
 struct ActionConfirm: Codable, Equatable {

@@ -16,33 +16,6 @@ enum AIMemoryScopeFilter: String, CaseIterable, Identifiable {
     }
 }
 
-enum AIMemorySubjectFilter: String, CaseIterable, Identifiable {
-    case all
-    case mine
-    case partner
-    case both
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .all: return "全部人物"
-        case .mine: return "我的事情"
-        case .partner: return "对方的事情"
-        case .both: return "两个人的事情"
-        }
-    }
-
-    func apiValue(for username: String) -> String? {
-        switch self {
-        case .all: return nil
-        case .mine: return username
-        case .partner: return username == "xu" ? "si" : "xu"
-        case .both: return "both"
-        }
-    }
-}
-
 enum AIMemoryPerspective: String, Codable, CaseIterable, Identifiable {
     case all
     case people

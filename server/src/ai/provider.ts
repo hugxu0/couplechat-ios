@@ -1,5 +1,5 @@
-// LLM 客户端：OpenAI 兼容 /chat/completions + Anthropic 原生 /messages 双协议。
-// 失败/未配置一律返回 null，调用方自行兜底——用户永远不该看到堆栈。
+// LLM 客户端：按配置使用 Responses、Chat Completions 或 Anthropic Messages。
+// 失败/未配置一律返回 null，由调用方给出明确失败提示。
 
 import { config, type AiProvider } from "../config";
 import { responsesReasoningSettings, type GenProfile } from "./settings";
@@ -156,10 +156,7 @@ export async function chat(args: ChatArgs): Promise<string | null> {
       return await chatAnthropic(provider, args, controller.signal);
     }
     if (provider.apiMode === "responses") {
-      const primary = await chatOpenAiResponses(provider, args, controller.signal);
-      if (primary) return primary;
-      if (controller.signal.aborted) return null;
-      console.warn(`[ai] ${args.profile} Responses 不可用，回退 Chat Completions`);
+      return await chatOpenAiResponses(provider, args, controller.signal);
     }
     return await chatOpenAi(provider, args, controller.signal);
   } catch (error) {
@@ -245,79 +242,11 @@ export async function describeImages(
   }
 }
 
-export async function describeImage(
-  imageUrl: string,
-  gen: GenProfile,
-  prompt = "用一两句话简短描述这张图片的内容，中文回答。",
-): Promise<string | null> {
-  return describeImages([imageUrl], gen, prompt);
-}
-
-// 联网搜索：复用 AI_VISION_*（同一个 MiMo 账号既能识图也能联网），
-// tools:[{type:"web_search",...}] 是 MiMo 私有格式，文档：
-// https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/tool-calling/web-search
-// 未配置/调用失败都返回 null，调用方按「如实说查不到」兜底，不编造内容。
-// 返回 { content, annotations }，annotations 是 MiMo 返回的来源引用列表（供前端展示来源卡片）。
-
 export interface Citation {
   url: string;
   title: string;
   site_name?: string;
   summary?: string;
-}
-
-export interface SearchResult {
-  content: string;
-  annotations: Citation[];
-}
-
-export async function webSearch(query: string, gen: GenProfile): Promise<SearchResult | null> {
-  const p = config.aiVision;
-  if (!p) return null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), gen.timeoutMs ?? 45_000);
-  try {
-    const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
-      body: JSON.stringify({
-        model: p.model,
-        max_tokens: gen.maxTokens,
-        temperature: gen.temperature,
-        messages: [{ role: "user", content: query }],
-        tools: [{ type: "web_search", max_keyword: 3, force_search: true, limit: 3 }],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      await logHttpFailure("search", res);
-      return null;
-    }
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      annotations?: Array<{ url?: string; title?: string; cite_url?: string }>;
-    };
-    const content = data.choices?.[0]?.message?.content;
-    const content2 = content ? String(content).trim() || null : null;
-    // MiMo 把 annotations 放在 choices 之外；也兼容放在 message.annotations 里的实现。
-    const rawAnnotations = data.annotations ?? [];
-    const annotations: Citation[] = rawAnnotations
-      .map((a) => ({
-        url: String(a.url ?? a.cite_url ?? ""),
-        title: String(a.title ?? a.url ?? ""),
-        site_name: undefined,
-        summary: undefined,
-      }))
-      .filter((a) => a.url);
-    if (!content2 && annotations.length === 0) return null;
-    return { content: content2 ?? "", annotations };
-  } catch (error) {
-    const name = error instanceof Error ? error.name : "";
-    console.warn(`[ai] search ${name === "AbortError" ? "超时" : `失败: ${error instanceof Error ? error.message : error}`}`);
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 // 从模型输出里抽出 JSON（容忍 ```json 包裹或前后多余文字）。

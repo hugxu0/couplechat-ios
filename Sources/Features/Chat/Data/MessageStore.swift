@@ -106,8 +106,6 @@ final class MessageStore: ObservableObject {
         outboxProcessor = OutboxProcessor(persistence: persistence)
     }
 
-    var messages: [ChatMessage] { messages(for: .couple) }
-
     // MARK: - 消息读写
 
     func messages(for channel: ChatChannel) -> [ChatMessage] {
@@ -1167,7 +1165,6 @@ final class MessageStore: ObservableObject {
 
 }
 
-extension MessageStore: ChatRepositoryProtocol, OutboxProcessing {}
 
 private extension Data {
     mutating func append(_ string: String) {
