@@ -23,6 +23,7 @@
 - [数据同步与可靠性设计](Docs/architecture/DATA_SYNC.md)
 - [生产拓扑](Docs/operations/PRODUCTION_TOPOLOGY.md)
 - [服务端部署](Docs/operations/DEPLOYMENT.md)
+- [AI 接手与服务器连接](Docs/operations/AI_HANDOFF.md)
 - [免费账号签名与侧载](Docs/operations/IOS_SIDELOAD.md)
 - [给 AI/开发者的工作规则](AGENTS.md)
 

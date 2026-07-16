@@ -6,6 +6,7 @@
 
 1. 执行 `git rev-parse --show-toplevel`、`git status --short --branch` 和 `git rev-parse HEAD`，确认仓库、分支、提交与用户已有改动。
 2. 依次阅读 `Docs/README.md`、`Docs/current/PROJECT.md`、`Docs/current/KNOWN_ISSUES.md`，再按任务读取架构、契约或运维文档。
+   涉及生产连接、两台 VPS 或交接时，还必须阅读 `Docs/operations/AI_HANDOFF.md`。
 3. 先确认事实属于哪一层：源码、自动测试、GitHub Actions、IPA artifact，还是生产环境。不得由上一层推断下一层。
 4. 保留用户已有改动。未经明确要求，不重置、不覆盖、不删除、不部署。
 

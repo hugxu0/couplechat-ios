@@ -21,6 +21,7 @@
 | AI、Memory、MCP | [architecture/AI.md](architecture/AI.md) |
 | 本地开发、测试和 CI | [development/DEVELOPMENT.md](development/DEVELOPMENT.md) |
 | 日本入口与美国源站拓扑 | [operations/PRODUCTION_TOPOLOGY.md](operations/PRODUCTION_TOPOLOGY.md) |
+| AI 接手、私有连接资料与两台服务器 preflight | [operations/AI_HANDOFF.md](operations/AI_HANDOFF.md) |
 | 服务端首次安装、发布、备份和回滚 | [operations/DEPLOYMENT.md](operations/DEPLOYMENT.md) |
 | unsigned IPA、免费签名与三台设备侧载 | [operations/IOS_SIDELOAD.md](operations/IOS_SIDELOAD.md) |
 | 已接受的长期取舍 | [decisions/](decisions/) |
