@@ -1,4 +1,4 @@
-# 大橘 AI 系统
+# 大橘 AI
 
 > 系统只服务 `xu/si`。配置兼容的非 Claude 对话模型时，两位用户使用 OpenAI Agents SDK、MCP、历史检索与自动 Memory；直接生成任务同时支持 Responses、Chat Completions 和 Anthropic Messages。数据通过 conversation/account/couple ownership 约束，Memory 还区分“关于主人”和“大橘自己”的动态记忆。
 

@@ -54,7 +54,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | `around` | 获取某个时间附近的消息 |
 | `limit` | `1...300`，默认 `80` |
 
-响应为 `{ ok, list, total }`。`after` 与 `before` 可以组合，服务端返回半开区间 `[after,before)`，当前客户端用它做有界核对；`around`、`since` 与方向分页不要组合。现有边界只有毫秒时间戳，同毫秒多消息的稳定游标问题见 [DATA_SYNC.md](DATA_SYNC.md)。
+响应为 `{ ok, list, total }`。`after` 与 `before` 可以组合，服务端返回半开区间 `[after,before)`，当前客户端用它做有界核对；`around`、`since` 与方向分页不要组合。现有边界只有毫秒时间戳，同毫秒多消息的稳定游标问题见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ### 上传与媒体
 
@@ -240,5 +240,5 @@ io("https://hoo66.top", { auth: { token } })
 1. 修改 `server/src/contracts/realtime.ts` 的事件和 Zod schema。
 2. 修改 `Sources/Platform/Networking/SocketContract.swift` 的事件和请求结构。
 3. 更新服务端处理与 iOS 调用点。
-4. 补充 `SocketContractTests` 或后端冒烟断言。
+4. 补充静态契约检查或后端冒烟断言。
 5. 更新本文档。

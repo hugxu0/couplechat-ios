@@ -1,49 +1,42 @@
-# 文档索引
+# 文档入口
 
-本目录只维护当前有效的设计、契约和操作说明。仓库采用单仓库结构；同一事实只能有一个权威位置，其他文档只链接，不复制长命令。
+`Docs/` 只保留当前有效的 8 份权威文档，全部平铺在本目录。历史状态、阶段报告和已废弃方案由 Git 记录，不再建立日期文件、ADR 目录或第二份接口说明。
 
-## 必读顺序
+## 阅读顺序
 
-1. [当前项目](current/PROJECT.md)：产品边界、版本、源码与生产状态。
-2. [已知问题](current/KNOWN_ISSUES.md)：已确认缺陷、优先级和验收条件。
-3. [系统架构](architecture/SYSTEM_ARCHITECTURE.md)：端到端模块和所有权边界。
-4. 按任务继续阅读下表中的权威文档。
+1. [PROJECT.md](PROJECT.md)：先确认产品边界、版本、当前状态和已知问题。
+2. [ARCHITECTURE.md](ARCHITECTURE.md)：理解客户端、服务端和数据同步边界。
+3. 按任务阅读契约、开发、服务器或 iOS 文档。
 
-## 事实的权威位置
+## 权威位置
 
-| 事实 | 权威文档 |
+| 文档 | 唯一负责的事实 |
 |---|---|
-| 当前功能、版本、限制、最后验证证据 | [current/PROJECT.md](current/PROJECT.md) |
-| 活跃缺陷与修复顺序 | [current/KNOWN_ISSUES.md](current/KNOWN_ISSUES.md) |
-| 端到端系统与模块所有权 | [architecture/SYSTEM_ARCHITECTURE.md](architecture/SYSTEM_ARCHITECTURE.md) |
-| 消息、outbox、Socket、Sync V2、游标 | [architecture/DATA_SYNC.md](architecture/DATA_SYNC.md) |
-| REST 与 Socket.IO 契约 | [architecture/API.md](architecture/API.md) |
-| AI、Memory、MCP | [architecture/AI.md](architecture/AI.md) |
-| 本地开发、测试和 CI | [development/DEVELOPMENT.md](development/DEVELOPMENT.md) |
-| 日本入口与美国源站拓扑 | [operations/PRODUCTION_TOPOLOGY.md](operations/PRODUCTION_TOPOLOGY.md) |
-| AI 接手、私有连接资料与两台服务器 preflight | [operations/AI_HANDOFF.md](operations/AI_HANDOFF.md) |
-| 服务端首次安装、发布、备份和回滚 | [operations/DEPLOYMENT.md](operations/DEPLOYMENT.md) |
-| unsigned IPA、免费签名与三台设备侧载 | [operations/IOS_SIDELOAD.md](operations/IOS_SIDELOAD.md) |
-| 已接受的长期取舍 | [decisions/](decisions/) |
+| [PROJECT.md](PROJECT.md) | 产品基础、功能、限制、已知问题、最后验证和生产状态 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | iOS、服务端、数据库、Socket、outbox 和 Sync 的结构与不变量 |
+| [API.md](API.md) | REST、Socket.IO、Sync 字段、返回值、错误和兼容规则 |
+| [AI.md](AI.md) | 大橘 Agent、Memory、MCP、转写、推荐和数据隔离 |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | 仓库目录、关键文件、开发环境、构建验证和代码约定 |
+| [SERVER.md](SERVER.md) | 生产拓扑、私有 VPS 资料定位、SSH 连接、服务器内容、部署、备份、恢复和交接 |
+| [IOS.md](IOS.md) | XcodeGen、CI、unsigned IPA、免费签名、侧载和设备刷新 |
+| [README.md](README.md) | 文档导航、证据等级和维护规则 |
 
 ## 证据等级
 
-文档必须明确区分：
-
-- **代码事实**：能从当前 commit 的配置或实现直接看到；
-- **本地验证**：本机实际运行过的测试与命令；
-- **CI 验证**：某个精确 commit 的 GitHub Actions 结果；
-- **构建产物**：某个精确 commit 的 artifact、metadata 与 SHA-256；
-- **生产事实**：在目标主机或公开入口实际核验的 `RELEASE`、schema、健康状态；
+- **代码事实**：能从当前 commit 的配置或实现直接看到。
+- **本地验证**：本机实际运行过的命令及结果。
+- **CI 验证**：某个精确 commit 的 GitHub Actions 结果。
+- **构建产物**：某个精确 commit 的 artifact、metadata 与 SHA-256。
+- **生产事实**：在目标主机或公开入口实际核验的 `RELEASE`、schema 和健康状态。
 - **目标设计**：尚未实现，不能写成当前能力。
 
-测试通过不能证明 IPA 属于同一 commit，IPA 存在不能证明已经签名，签名成功也不能证明线上服务端已经升级。
+本地验证、CI、构建产物、签名和生产部署是不同层级，不能互相推断。
 
 ## 维护规则
 
-- API、Socket、数据库、端口、命令或部署流程变化时，在同一提交更新对应权威文档。
-- README、故障说明和 AI 交付只链接权威步骤，不复制另一套命令。
-- 未实现内容必须标记“目标设计”或“待实现”；修复完成后更新已知问题状态。
-- 不创建日期报告、阶段交接文档、发布快照或第二份 API 文档；需要追溯时使用 Git 历史和 CI。
-- 代码与文档冲突时，先以实现和可复现证据定位事实，再在同一改动中修正文档。
-- 生产 IP、密码、token、数据库 dump、代理参数、Apple 凭据和 UDID 永远不进入仓库。
+- 同一事实只在一份文档详细说明，其他地方只链接。
+- API、Socket、数据库、端口、构建或部署流程变化时，同一提交更新对应文档。
+- 只介绍重要目录和关键入口，不维护逐文件清单。
+- 当前状态只写入 `PROJECT.md`；部署与恢复方法只写入 `SERVER.md`。
+- 未实现内容必须标记“目标设计”或列入当前限制。
+- 生产 IP、密码、token、数据库连接串、dump、代理参数、Apple 凭据和 UDID 永远不进入仓库。

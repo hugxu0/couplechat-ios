@@ -13,11 +13,10 @@ npm run check
 
 ## 文档
 
-- [系统架构](../Docs/architecture/SYSTEM_ARCHITECTURE.md)
-- [API 契约](../Docs/architecture/API.md)
-- [数据同步](../Docs/architecture/DATA_SYNC.md)
-- [生产拓扑](../Docs/operations/PRODUCTION_TOPOLOGY.md)
-- [部署与恢复](../Docs/operations/DEPLOYMENT.md)
-- [已知问题](../Docs/current/KNOWN_ISSUES.md)
+- [项目现状与已知问题](../Docs/PROJECT.md)
+- [系统架构与数据同步](../Docs/ARCHITECTURE.md)
+- [API 契约](../Docs/API.md)
+- [服务器、部署与恢复](../Docs/SERVER.md)
+- [开发指南与文件地图](../Docs/DEVELOPMENT.md)
 
 生产 Node 端口是 `3000`；`.env.production.example`、Compose、Dockerfile 与健康检查的生产默认值已经统一。`8080` 只保留为显式的本地开发端口。普通代码发布使用 `deploy/publish-server.ps1`；首次安装仍需按私有运维资料人工准备。

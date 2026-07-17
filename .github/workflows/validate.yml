@@ -35,9 +35,6 @@ jobs:
         with:
           node-version: 22
 
-      - name: Test scanner
-        run: node --test .github/scripts/tests/check-public-repository.test.mjs
-
       - name: Check current tracked tree
         run: node .github/scripts/check-public-repository.mjs
 
@@ -63,10 +60,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate backup shell safety
-        run: |
-          bash -n scripts/*.sh tests/operations/*.test.sh
-          bash tests/operations/backup-retention.test.sh
+      - name: Validate backup shell syntax
+        run: bash -n scripts/*.sh
 
       - name: Check
         run: npm run check

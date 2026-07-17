@@ -5,14 +5,14 @@
 ## 开工前
 
 1. 执行 `git rev-parse --show-toplevel`、`git status --short --branch` 和 `git rev-parse HEAD`，确认仓库、分支、提交与用户已有改动。
-2. 依次阅读 `Docs/README.md`、`Docs/current/PROJECT.md`、`Docs/current/KNOWN_ISSUES.md`，再按任务读取架构、契约或运维文档。
-   涉及生产连接、两台 VPS 或交接时，还必须阅读 `Docs/operations/AI_HANDOFF.md`。
+2. 依次阅读 `Docs/README.md`、`Docs/PROJECT.md`，再按任务读取架构、契约或运维文档。
+   涉及生产连接、两台 VPS、部署或交接时，还必须阅读 `Docs/SERVER.md`；若受信工作站存在桌面 `vps` 私有目录，再按其中 `00-阅读入口.md` 最小读取对应资料，凭据值不得进入仓库、日志或回答。
 3. 先确认事实属于哪一层：源码、自动测试、GitHub Actions、IPA artifact，还是生产环境。不得由上一层推断下一层。
 4. 保留用户已有改动。未经明确要求，不重置、不覆盖、不删除、不部署。
 
 ## 仓库事实
 
-- 这是一个单仓库：`Sources/` 与 `CoupleChatTests/` 是客户端，`server/` 是服务端。
+- 这是一个单仓库：`Sources/` 是客户端，`server/` 是服务端。
 - iOS/iPadOS 最低版本为 26；设备范围是两台 iPhone 17 和一台 iPad，均使用最新稳定系统。
 - 生产客户端只连接 `https://hoo66.top`。日本是入口，美国是唯一可写源站。
 - CI IPA 未签名；Apple 免费账号的签名和侧载只能在用户自己的受信设备上完成。
@@ -28,13 +28,13 @@
 
 | 改动 | 必须同时检查 |
 |---|---|
-| REST / Socket / Sync | 两端契约、调用方、协议测试、`Docs/architecture/API.md` 与 `DATA_SYNC.md` |
-| 消息 / 已读 / outbox | SQLite、服务端事务、Socket 重连、Sync V2、幂等与多设备测试 |
+| REST / Socket / Sync | 两端契约、调用方、验证入口、`Docs/API.md` 与 `Docs/ARCHITECTURE.md` |
+| 消息 / 已读 / outbox | SQLite、服务端事务、Socket 重连、Sync V2、幂等与多设备验证 |
 | 数据库 | 只追加 migration；备份/恢复、当前与上一服务版本兼容性 |
 | 上传 / 媒体 | 大小限制、流式 I/O、Range、签名 URL、清理、备份、两层 Nginx |
 | iOS 构建 / 依赖 | `project.yml`、workflow、真机签名说明、版本与 artifact metadata |
 | 服务端部署 | `server/` 发布包、固定 SHA、3000 端口、三层健康检查、失败回滚 |
-| 生产拓扑 | `PRODUCTION_TOPOLOGY.md`；不得写入秘密值或真实凭据 |
+| 生产拓扑 | `Docs/SERVER.md`；不得写入秘密值或真实凭据 |
 
 设计目标不能写成已实现。当前行为、已验证结果、生产最后记录和计划必须使用明确标签。
 
@@ -55,7 +55,7 @@ cd server
 npm run check
 ```
 
-iOS 改动至少通过对应的 GitHub Actions 快速编译；XCTest 仍可在需要时手动运行。涉及交互、音视频、签名或通知时还需在真机验证。文档改动至少运行链接/路径/命令静态检查和 `git diff --check`。
+iOS 改动至少通过对应的 GitHub Actions 快速编译；仓库不再保留 XCTest target，涉及交互、音视频、签名或通知时仍需在真机验证。文档改动至少运行链接/路径/命令静态检查和 `git diff --check`。
 
 无法运行的验证必须明确写入结束报告，不能用“应该可以”代替。
 

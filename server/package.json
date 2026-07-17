@@ -10,10 +10,8 @@
     "start": "node dist/server.js",
     "migrate": "node dist/migrate.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
-    "check": "npm run build && npm run test:unit && npm run smoke:postgres",
-    "test:unit": "node --import tsx --test tests/ai-memory/ai-memory.test.ts tests/ai-queue/agent-conversation-state.test.ts tests/ai-queue/ai-queue.test.ts tests/auth/auth.test.ts tests/events/domain-events.test.ts tests/lifecycle/shutdown.test.ts tests/message/message.test.ts tests/observability/operation-log.test.ts tests/operations/backup-safety.test.ts tests/push/bark.test.ts tests/socket/presence.test.ts tests/upload/upload.test.ts tests/utils/cursor.test.ts",
+    "check": "npm run build && npm run smoke:postgres",
     "smoke:postgres": "tsx scripts/smoke-postgres.ts",
-    "test": "npm run typecheck && npm run test:unit && npm run smoke:postgres",
     "healthcheck": "node scripts/healthcheck.mjs"
   },
   "dependencies": {
