@@ -7,7 +7,6 @@ enum ChatHomeAvatarArt {
 
 struct ChatHomeCoupleAvatarColumn: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let name: String
     let avatar: String
     var avatarURL: URL? = nil
@@ -98,10 +97,10 @@ struct ChatHomeCoupleAvatarColumn: View {
                 }
             }
             Text(title)
-                .font(DS.Typo.secondary.weight(.bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(status == nil ? DS.Palette.textSecondary : DS.Palette.textPrimary)
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                .multilineTextAlignment(.center)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
             if showsMenuIndicator {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))

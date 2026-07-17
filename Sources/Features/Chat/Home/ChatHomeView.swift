@@ -465,12 +465,7 @@ struct ChatHomeView: View {
     }
 
     private var actionStrip: some View {
-        LazyVGrid(
-            columns: Array(
-                repeating: GridItem(.flexible(), spacing: DS.Spacing.compact),
-                count: dynamicTypeSize.isAccessibilitySize ? 2 : 4),
-            spacing: DS.Spacing.compact
-        ) {
+        HStack(spacing: DS.Spacing.compact) {
             ForEach(ChatHomeCatalog.actions) { action in
                 ChatHomeActionButton(
                     action: action,

@@ -22,7 +22,6 @@ struct ChatHomeSectionDivider: View {
 
 struct ChatHomeActionButton: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let action: ChatHomeQuickAction
     let sent: Bool
     let disabled: Bool
@@ -35,13 +34,13 @@ struct ChatHomeActionButton: View {
                     .font(.system(size: 30))
                     .contentTransition(.numericText())
                 Text(action.title)
-                    .font(DS.Typo.micro.weight(.bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(DS.Palette.textPrimary)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                    .multilineTextAlignment(.center)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
             }
             .frame(maxWidth: .infinity)
-            .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 104 : 84)
+            .frame(height: 84)
             .background(
                 LinearGradient(
                     colors: colorScheme == .dark

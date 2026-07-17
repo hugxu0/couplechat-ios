@@ -183,7 +183,7 @@ struct AccountView: View {
         .popover(
             isPresented: avatarMenuPresented(for: .profileAvatar),
             attachmentAnchor: .rect(.bounds),
-            arrowEdge: .bottom
+            arrowEdge: .top
         ) {
             avatarActionMenu(for: .me)
                 .presentationCompactAdaptation(.popover)
@@ -206,7 +206,7 @@ struct AccountView: View {
         .popover(
             isPresented: avatarMenuPresented(for: .profileCamera),
             attachmentAnchor: .rect(.bounds),
-            arrowEdge: .bottom
+            arrowEdge: .top
         ) {
             avatarActionMenu(for: .me)
                 .presentationCompactAdaptation(.popover)
@@ -279,7 +279,7 @@ struct AccountView: View {
             .popover(
                 isPresented: avatarMenuPresented(for: .dajuAvatar),
                 attachmentAnchor: .rect(.bounds),
-                arrowEdge: .bottom
+                arrowEdge: .top
             ) {
                 avatarActionMenu(for: .daju)
                     .presentationCompactAdaptation(.popover)

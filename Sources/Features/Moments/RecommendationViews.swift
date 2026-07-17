@@ -83,7 +83,7 @@ struct TodayRecommendationCard: View {
         let category = normalizedCategory(item.category)
         let symbol = recommendationSymbol(for: category)
 
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 8) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: DS.Spacing.compact) {
                     categoryBadge(category, symbol: symbol)
@@ -99,16 +99,16 @@ struct TodayRecommendationCard: View {
             Text(item.content)
                 .font(.system(.body, design: .rounded).weight(.medium))
                 .foregroundStyle(DS.Palette.textPrimary)
-                .lineSpacing(3)
+                .lineSpacing(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
                 .textSelection(.enabled)
 
             Label("大橘根据你们昨天的共同经历挑选", systemImage: AccountPresentation.dajuIconName)
                 .font(DS.Typo.caption)
                 .foregroundStyle(DS.Palette.textSecondary)
         }
-        .padding(15)
+        .padding(14)
         .background {
             ZStack(alignment: .bottomTrailing) {
                 LinearGradient(
@@ -134,9 +134,10 @@ struct TodayRecommendationCard: View {
             .font(DS.Typo.caption.weight(.semibold))
             .foregroundStyle(DS.Palette.accent)
             .padding(.horizontal, 9)
-            .padding(.vertical, 5)
+            .padding(.vertical, 4)
             .background(DS.Palette.accent.opacity(0.11), in: Capsule())
-            .fixedSize(horizontal: false, vertical: true)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: true)
             .accessibilityLabel("推荐分类：\(category)")
     }
 
@@ -155,11 +156,11 @@ struct TodayRecommendationCard: View {
             }
             .font(DS.Typo.caption.weight(.medium))
             .foregroundStyle(DS.Palette.accent)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
             .background(DS.Palette.cardSurface, in: Capsule())
             .contentShape(Capsule())
-            .frame(minHeight: 44)
+            .fixedSize(horizontal: true, vertical: true)
         }
         .buttonStyle(.plain)
         .disabled(refreshing)

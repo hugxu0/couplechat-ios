@@ -197,7 +197,7 @@ struct MomentsView: View {
                     .font(DS.Typo.secondary.weight(.medium))
                     .foregroundStyle(.white.opacity(0.82))
                 Text(togetherNumber)
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold).monospacedDigit())
+                    .font(.system(size: 64, weight: .bold, design: .rounded).monospacedDigit())
                     .foregroundStyle(.white)
                     .contentTransition(.numericText())
                 Text(togetherNumber == "等待设置" ? "" : "天")
@@ -261,7 +261,7 @@ struct MomentsView: View {
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
             Text(entry.days.map { "\($0)\(entry.direction == .up ? " 天" : " 天后")" } ?? "未设置")
-                .font(DS.Typo.cardTitle.monospacedDigit())
+                .font(.system(size: 26, weight: .heavy, design: .rounded).monospacedDigit())
                 .foregroundStyle(DS.Palette.textPrimary)
         }
         .padding(14)
