@@ -1208,27 +1208,28 @@ final class MessageStore: ObservableObject {
             print("[MessageStore] ⚠️ 发送确认消息频道或格式无效 clientId=\(clientId)")
             return false
         }
-        var messageToPersist: ChatMessage?
-        updateMessages(channel) { list in
-            guard ChatMessageCollection.index(matchingClientId: clientId, in: list) != nil else {
-                ChatMessageCollection.upsert(acknowledgedMessage, into: &list)
-                messageToPersist = acknowledgedMessage
-                return
-            }
-            ChatMessageCollection.replacePending(
-                clientId: clientId,
-                with: acknowledgedMessage,
-                in: &list)
-            messageToPersist = acknowledgedMessage
-        }
-        guard let messageToPersist else {
-            print("[MessageStore] ⚠️ 发送确认缺少可持久化消息 clientId=\(clientId)")
-            return false
-        }
-        guard await persistence.insertMessage(messageToPersist) else {
+        // ACK 只有在完整消息落入 SQLite 后才可以替换 UI pending。否则本次
+        // messages 发布会先把已确认消息放到旧 latest anchor 后面，时间线随即
+        // 把它误判为历史窗口并显示“回到最新”。
+        guard await persistence.insertMessage(acknowledgedMessage) else {
             print("[MessageStore] ⚠️ 发送确认未能持久化 clientId=\(clientId)")
             return false
         }
+
+        var next = messages(for: channel)
+        if ChatMessageCollection.index(matchingClientId: clientId, in: next) == nil {
+            ChatMessageCollection.upsert(acknowledgedMessage, into: &next)
+        } else {
+            ChatMessageCollection.replacePending(
+                clientId: clientId,
+                with: acknowledgedMessage,
+                in: &next)
+        }
+        if next.last(where: { !$0.pending && !$0.failed })?.id == acknowledgedMessage.id {
+            // 必须先推进 anchor 再发布 messages，让同一轮 UI 刷新看到一致状态。
+            latestPersistedMessageIDs[channel.rawValue] = acknowledgedMessage.id
+        }
+        updateMessages(channel) { $0 = next }
         return true
     }
 
