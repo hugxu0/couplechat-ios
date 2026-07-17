@@ -124,6 +124,7 @@ PostgreSQL 访问集中在 `server/src/db`。当前 schema 为 v31；v1–v31 mi
 - outbox 是待发消息唯一持久事实源；pending/failed 不写入正式 messages 表。
 - outbox 保存成功后才能调度网络发送。
 - `message:send` ACK 返回的完整消息必须先写入 SQLite，再替换 UI pending 并推进最新窗口锚点；三者属于同一次有序提交，不能先发布成功消息后补锚点。
+- 若用户在最新底部，pending 的临时 id 被 ACK 服务端 id 替换时即使消息总数不变，时间线也必须继续贴底；键盘或贴底动画进行中以已有跟随意图为准，不能用变化中的瞬时 offset 判定离底。只有真实历史窗口或用户主动离底才保留旧可视锚点。
 - 服务端不信任客户端媒体 URL，只接受归属正确且未被占用的 `uploadId`。
 - ack 丢失允许重试；服务端必须返回同一条完整消息，不能创建重复记录。
 - 客户端监听网络路径变化；Wi-Fi、蜂窝或可达性切换时废弃旧 socket，重连成功后自动重放 outbox。

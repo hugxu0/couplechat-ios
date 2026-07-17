@@ -40,7 +40,6 @@ enum ChatTimelineReloadDecision: Equatable {
         wasNearLatestBottom: Bool,
         lastMessageChanged: Bool,
         messageCountIncreased: Bool,
-        wasShowingAIActivity: Bool,
         isHistoricalWindow: Bool = false
     ) -> ChatTimelineReloadDecision {
         // 历史窗口的 reload（搜索定位/向下分页）只允许恢复锚点；即使旧
@@ -61,9 +60,10 @@ enum ChatTimelineReloadDecision: Equatable {
         if !hasPendingAnchor, !wasNearLatestBottom, hasValidVisibleAnchor {
             return .restoreVisibleAnchor
         }
-        if wasNearLatestBottom,
-           lastMessageChanged,
-           messageCountIncreased || wasShowingAIActivity {
+        // pending 被 ACK 完整消息替换时，临时 id 会变成服务端 id，但消息总数
+        // 不会增加。用户在替换前已经贴底，就必须继续跟随新的最后一项；否则
+        // reloadData 保留旧 offset 后会错误出现“回到最新”，后续来信也不再上推。
+        if wasNearLatestBottom, lastMessageChanged {
             return .followLatest
         }
         return .preservePosition

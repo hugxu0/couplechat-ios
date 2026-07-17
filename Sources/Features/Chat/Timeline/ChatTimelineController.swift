@@ -111,9 +111,11 @@ final class ChatTimelineController: NSObject {
             if case .message(let id) = item { return id }
             return nil
         }.first
-        let wasNearLatestBottom = isNearBottom() && isNearLatestWindow()
+        // 键盘、输入栏与上一轮 followLatest 可能正在改变几何；此时旧 offset
+        // 暂时不满足 44pt 阈值，但逻辑上仍在跟随最新，不能把它当成用户离底。
+        let wasFollowingLatest = maintainsLatestPosition || suppressesJumpToLatest
+        let wasNearLatestBottom = (isNearBottom() || wasFollowingLatest) && isNearLatestWindow()
         let oldAnchor = visibleAnchor()
-        let wasShowingActivity = items.contains { $0.id.hasPrefix("__ai_activity__") }
         let oldLast = lastMessageId(in: items)
         let oldCount = messageCount(in: items)
         for message in messages where message.type == "voice" {
@@ -166,7 +168,6 @@ final class ChatTimelineController: NSObject {
             wasNearLatestBottom: wasNearLatestBottom,
             lastMessageChanged: oldLast != lastMessageId(in: items),
             messageCountIncreased: messageCount(in: items) > oldCount,
-            wasShowingAIActivity: wasShowingActivity,
             isHistoricalWindow: browsingHistoricalWindow)
         execute(decision, oldAnchor: oldAnchor, animated: animated)
         scheduleInitialPositioning()
@@ -201,7 +202,10 @@ final class ChatTimelineController: NSObject {
             scrollState.hasNewMessagesBelow = true
             return
         }
-        scrollState.isNearBottom = isNearBottom()
+        // 收消息可能恰好发生在键盘/ACK 的贴底动画中。保留既有跟随意图，
+        // 否则这条来信会被放到输入栏后面，并错误显示“有新消息”。
+        let wasFollowingLatest = maintainsLatestPosition || suppressesJumpToLatest
+        scrollState.isNearBottom = isNearBottom() || wasFollowingLatest
         scrollState.isAtLatestWindow = isNearLatestWindow()
         let commands = ChatScrollReducer.reduce(
             state: &scrollState,
