@@ -665,6 +665,8 @@ async function main() {
   }
   console.log(failureCount > 0 ? `冒烟测试有 ${failureCount} 个失败项 ✗` : "冒烟测试全部通过 ✓");
   if (failureCount > 0) throw new Error(`冒烟测试有 ${failureCount} 个失败项`);
+  // 冒烟会拉起 Fastify / 定时器 / 嵌入式 PG；显式退出避免 Node 事件循环挂住卡死 publish。
+  process.exit(0);
 }
 
 main().catch((error) => {
