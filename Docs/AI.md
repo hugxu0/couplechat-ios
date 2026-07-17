@@ -11,7 +11,7 @@ messages 落库
   ├─ 1 day-context   scheduleContextCatchUp（微段 + 作息日总览）
   │                    └─ 公聊微段提交后 → engagement 本地门闩 → 可选分类模型 → 可选后台 Agent
   ├─ 2 long-memory   onMemoryMessage（批处理；寒暄跳过模型仍推进游标）
-  └─ 3 reply         公聊仅 AI_TRIGGER_ALIASES；私聊每条文字/图
+  └─ 3 reply         公聊仅 AI_TRIGGER_ALIASES；私聊仅有文字时答（纯图不答）
                        → ReplyQueue（同频道串行，pending≤5 后 coalesce 最新）
                        → ensureContextCaughtUp → Agent + MCP
                        → createAiMessage + Socket 广播
@@ -191,9 +191,10 @@ EMBEDDING_DIM=1024
 
 | 场景 | 行为 |
 |---|---|
-| 本条消息带图 | 图与问题作为 `input_image` 一并进主模型 |
-| 公聊先发图再 @（问题像在问图） | 开跑前预附着频道最近一组连续图片（≤9）+ 问题 |
-| 预判未附着但 Agent 仍要看图 | `inspect_recent_images` 解析 URL 后 **多模态重跑**（问题+图），不生成旁路描述 |
+| 纯图、无文字说明 | **不自动回复**（公聊/私聊都等用户再发文字提问） |
+| 本条有图且有文字 | 图与问题作为 `input_image` 一并进主模型 |
+| 先发图再发文字（问题明确在问图） | 开跑前预附着最近一组图（≤9）+ 问题；预判已收紧，避免闲聊误带图 |
+| 预判未附着但 Agent 仍要看图 | `inspect_recent_images` 解析 URL 后 **多模态重跑**（问题+图） |
 
 联网只使用 Responses 原生 `web_search`。向量检索支持 Voyage、MongoDB 多 key 池 failover；向量不可用时仍可字面检索。完整示例见 `server/.env.production.example`。
 

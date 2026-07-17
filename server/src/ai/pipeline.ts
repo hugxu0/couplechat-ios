@@ -2,7 +2,7 @@
 //
 //   ┌─ 1. day-context   微段 + 作息日总览（接「今天聊了啥」）
 //   ├─ 2. long-memory   结构化 Memory 批处理（接长期事实）
-//   └─ 3. reply         公聊召唤 / 私聊每条 → Agent 队列
+//   └─ 3. reply         公聊召唤 / 私聊有文字（纯图不答，等用户提问）
 //
 // 公聊 engagement（冲突/搭话）挂在 day-context 微段提交之后，不在本文件。
 
@@ -118,6 +118,11 @@ export function dispatchAfterOwnerMessage(
   const isPrivate = storedChannel.startsWith("ai:");
   const triggered = hasCaption && isTriggered(message.text);
 
+  // 纯图、无说明文字：只落库/上下文，不自动分析（私聊与公聊一致等用户再问）。
+  if (isImage && !hasCaption) {
+    return { queuedReply: false };
+  }
+
   if (!isPrivate) {
     // 公聊：仅明确召唤才答；无召唤时日上下文与 Memory 仍继续。
     if (!triggered) return { queuedReply: false };
@@ -132,22 +137,26 @@ export function dispatchAfterOwnerMessage(
       );
       return { queuedReply: false };
     }
-    const question = stripTrigger(message.text)
-      || (isImage ? "（看图）" : "（只是喊了你）");
+    // 有图必须带说明/召唤文字才会走到这里；无图召唤则只传文字。
+    const question = stripTrigger(message.text) || "（只是喊了你）";
     const trigger = buildUserTrigger(storedChannel, user, message, question, imageUrls);
     sink.activity?.(trigger, "accepted");
     queueRespond(trigger, sink);
     return { queuedReply: true };
   }
 
-  // 私聊：每条文字/图都答
+  // 私聊：有文字才答（可带图说明）；纯图已在上方 return。
+  if (!isText && !(isImage && hasCaption)) {
+    return { queuedReply: false };
+  }
+
   if (!aiEnabled()) {
     void emitUnavailable(
       sink,
       storedChannel,
       user,
       message.id,
-      isText ? message.text.trim() : "",
+      message.text.trim(),
       true,
     );
     return { queuedReply: false };
