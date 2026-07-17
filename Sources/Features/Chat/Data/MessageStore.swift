@@ -8,12 +8,6 @@ enum OutboxRetryResult: Equatable {
     case notFound
 }
 
-enum SendAckMessageValidation: Equatable {
-    case absent
-    case valid(ChatMessage)
-    case invalid
-}
-
 /// 消息 CRUD、发送、搜索、历史同步，从 ChatStore 拆出。
 /// 通过 SocketProvider 访问 socket，不直接依赖 ChatStore。
 @MainActor
@@ -65,15 +59,14 @@ final class MessageStore: ObservableObject {
         ChatMessageMapper.parse(rows, context: context)
     }
 
-    nonisolated static func validateSendAckMessage(
+    nonisolated static func parseSendAckMessage(
         _ payload: [String: Any],
         expectedChannel: ChatChannel
-    ) -> SendAckMessageValidation {
-        guard payload.keys.contains("message") else { return .absent }
+    ) -> ChatMessage? {
         guard let dictionary = payload["message"] as? [String: Any],
               let message = parseMessage(dictionary, context: "message:send ack"),
-              message.channel == expectedChannel.rawValue else { return .invalid }
-        return .valid(message)
+              message.channel == expectedChannel.rawValue else { return nil }
+        return message
     }
 
     private var lastLoadOlderAt: [String: Date] = [:]
@@ -1077,61 +1070,27 @@ final class MessageStore: ObservableObject {
     @discardableResult
     private func handleSendAck(_ data: [Any], clientId: String, channel: ChatChannel) async -> Bool {
         guard let payload = data.first as? [String: Any] else { return false }
-        let succeeded = payload["ok"] as? Bool == true
-        let validation = Self.validateSendAckMessage(payload, expectedChannel: channel)
-        guard validation != .invalid else {
+        guard payload["ok"] as? Bool == true else { return false }
+        guard let acknowledgedMessage = Self.parseSendAckMessage(
+            payload,
+            expectedChannel: channel
+        ) else {
             print("[MessageStore] ⚠️ 发送确认消息频道或格式无效 clientId=\(clientId)")
-            return false
-        }
-        let acknowledgedMessage: ChatMessage?
-        switch validation {
-        case let .valid(message):
-            acknowledgedMessage = message
-        case .absent:
-            acknowledgedMessage = nil
-        case .invalid:
             return false
         }
         var messageToPersist: ChatMessage?
         updateMessages(channel) { list in
-            guard let i = ChatMessageCollection.index(matchingClientId: clientId, in: list) else {
-                if let acknowledgedMessage {
-                    ChatMessageCollection.upsert(acknowledgedMessage, into: &list)
-                    messageToPersist = acknowledgedMessage
-                }
+            guard ChatMessageCollection.index(matchingClientId: clientId, in: list) != nil else {
+                ChatMessageCollection.upsert(acknowledgedMessage, into: &list)
+                messageToPersist = acknowledgedMessage
                 return
             }
-            if succeeded, let realId = payload["id"] as? String {
-                if let acknowledgedMessage {
-                    ChatMessageCollection.replacePending(
-                        clientId: clientId,
-                        with: acknowledgedMessage,
-                        in: &list)
-                    messageToPersist = acknowledgedMessage
-                    return
-                }
-                var old = list[i]
-                old.pending = false
-                old.clientId = clientId
-                var payload: [String: Any] = [
-                    "id": realId, "sender": old.sender, "senderName": old.senderName,
-                    "kind": old.kind, "type": old.type, "text": old.text,
-                    "url": old.url as Any, "channel": old.channel, "ts": old.ts, "clientId": clientId,
-                ]
-                if let replyTo = old.replyTo {
-                    payload["replyTo"] = replyTo
-                    payload["replyPreview"] = old.replyPreview ?? ""
-                    payload["reply"] = ["id": replyTo, "preview": old.replyPreview ?? ""]
-                }
-                let confirmed = ChatMessage(dict: payload) ?? old
-                ChatMessageCollection.replacePending(clientId: clientId, with: confirmed, in: &list)
-                messageToPersist = confirmed
-            } else {
-                list[i].pending = false
-                list[i].failed = true
-            }
+            ChatMessageCollection.replacePending(
+                clientId: clientId,
+                with: acknowledgedMessage,
+                in: &list)
+            messageToPersist = acknowledgedMessage
         }
-        guard succeeded else { return false }
         guard let messageToPersist else {
             print("[MessageStore] ⚠️ 发送确认缺少可持久化消息 clientId=\(clientId)")
             return false

@@ -30,7 +30,7 @@ PostgreSQL 是消息、已读、共享状态和业务实体的唯一事实源。
 - outbox 是待发消息的唯一持久事实源，`pending/failed/tmp` 不写入正式 messages 表；重启后从 outbox 重新投影 UI pending；
 - outbox 保存成功后才允许调度网络发送；客户端只有确认本地事务成功后才推进 cursor 或清理 outbox；
 - 服务端不信任客户端媒体 URL，只接受已存在且归属正确的 `uploadId`；
-- ack 丢失允许重试，服务端必须返回同一个逻辑结果而不是创建第二条消息。
+- ack 丢失允许重试，服务端必须返回同一个完整消息而不是创建第二条消息；客户端不再根据旧式 `id` 确认自行拼装服务端消息。
 
 ## 客户端接收
 
@@ -89,7 +89,7 @@ PostgreSQL 是消息、已读、共享状态和业务实体的唯一事实源。
 ## 协议兼容
 
 - 当前 Sync protocol 为 `2`；客户端必须建模并只接受明确支持的版本范围。
-- REST/Socket 字段只增不删时仍需两端容错测试；删除或改变语义需要版本化端点/事件。
+- 这个私人项目只维护同一发布线上的当前客户端与当前服务端；REST/Socket 字段删除必须两端、测试和文档在同一提交完成，不保留长期旧格式兼容层。
 - Socket 事件名以 `server/src/contracts/realtime.ts` 和 `Sources/Platform/Networking/SocketContract.swift` 为两端代码契约；文档是人类入口，测试负责防漂移。
 
 ## 必须覆盖的测试

@@ -1,29 +1,23 @@
 import PhotosUI
 import UIKit
 
-/// 合并图片消息的原生状态层。iOS 26 把页码和 Live Photo 标识放进同一个
-/// UIGlassContainerEffect，两个胶囊会按系统规则自然融合；旧系统保持低调的深色胶囊。
+/// 合并图片消息的原生状态层。页码和 Live Photo 标识放进同一个
+/// UIGlassContainerEffect，两个胶囊会按系统规则自然融合。
 final class ChatAlbumIndicatorView: UIView {
-    private let containerView: UIView
-    private let pageHost: UIView
-    private let liveHost: UIView
+    private let containerView: UIVisualEffectView
+    private let pageHost: UIVisualEffectView
+    private let liveHost: UIVisualEffectView
     private let stack = UIStackView()
     private let pageLabel = UILabel()
     private let liveImageView = UIImageView(
         image: PHLivePhotoView.livePhotoBadgeImage(options: .overContent))
 
     override init(frame: CGRect) {
-        if #available(iOS 26.0, *) {
-            let containerEffect = UIGlassContainerEffect()
-            containerEffect.spacing = 7
-            containerView = UIVisualEffectView(effect: containerEffect)
-            pageHost = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
-            liveHost = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
-        } else {
-            containerView = UIView()
-            pageHost = UIView()
-            liveHost = UIView()
-        }
+        let containerEffect = UIGlassContainerEffect()
+        containerEffect.spacing = 7
+        containerView = UIVisualEffectView(effect: containerEffect)
+        pageHost = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+        liveHost = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
         super.init(frame: frame)
 
         isUserInteractionEnabled = false
@@ -31,15 +25,15 @@ final class ChatAlbumIndicatorView: UIView {
         containerView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(containerView)
 
-        let containerContent = (containerView as? UIVisualEffectView)?.contentView ?? containerView
+        let containerContent = containerView.contentView
         stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
         containerContent.addSubview(stack)
 
-        configureHost(pageHost, fallbackColor: UIColor.black.withAlphaComponent(0.54))
-        configureHost(liveHost, fallbackColor: UIColor.black.withAlphaComponent(0.42))
+        configureHost(pageHost)
+        configureHost(liveHost)
         stack.addArrangedSubview(liveHost)
         stack.addArrangedSubview(pageHost)
 
@@ -86,16 +80,13 @@ final class ChatAlbumIndicatorView: UIView {
         liveHost.isHidden = !isLivePhoto
     }
 
-    private func configureHost(_ view: UIView, fallbackColor: UIColor) {
+    private func configureHost(_ view: UIVisualEffectView) {
         view.layer.cornerCurve = .continuous
         view.layer.cornerRadius = 12
         view.clipsToBounds = true
-        if #unavailable(iOS 26.0) {
-            view.backgroundColor = fallbackColor
-        }
     }
 
-    private func hostContent(_ view: UIView) -> UIView {
-        (view as? UIVisualEffectView)?.contentView ?? view
+    private func hostContent(_ view: UIVisualEffectView) -> UIView {
+        view.contentView
     }
 }

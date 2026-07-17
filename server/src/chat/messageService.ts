@@ -48,7 +48,6 @@ function mapMessage(row: MessageRow, clientChannel?: ClientChannel): ClientMessa
     url: row.url ?? undefined,
     replyTo: typeof replyObject?.id === "string" ? replyObject.id : undefined,
     replyPreview: typeof replyObject?.preview === "string" ? replyObject.preview : undefined,
-    reply,
     meta: readJson(row.meta_json),
     attachments: (readJson(row.attachments_json) as ClientMessageAttachment[] | undefined) ?? undefined,
     recalledText: row.recalled_text ?? undefined,
@@ -75,7 +74,6 @@ const messageProjection = `message.*,
   transcript.version AS transcript_version`;
 
 function normalizedReply(input: SendMessageInput): unknown {
-  if (input.reply !== undefined) return input.reply;
   if (!input.replyTo) return undefined;
   return {
     id: input.replyTo,

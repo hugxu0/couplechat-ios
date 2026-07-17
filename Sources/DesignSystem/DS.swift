@@ -217,15 +217,7 @@ extension View {
     }
 
     /// 可交互液态玻璃：圆形小按钮用
-    @ViewBuilder
     func dsGlassInteractive<S: Shape>(in shape: S) -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: shape)
-        } else {
-            self
-                .background(.ultraThinMaterial)
-                .clipShape(shape)
-                .shadow(color: DS.Surface.shadow, radius: DS.Surface.shadowRadius, y: DS.Surface.shadowY)
-        }
+        glassEffect(.regular.interactive(), in: shape)
     }
 }

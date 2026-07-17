@@ -8,7 +8,7 @@ struct Sticker: Codable, Identifiable, Equatable {
     var url: String
     var groupId: String
     var addedAt: Double
-    /// v3 冲突合并修订时间；v1/v2 缺失时回退 addedAt。
+    /// 冲突合并修订时间；缺失时回退 addedAt。
     var updatedAt: Double? = nil
 
     var mediaURL: URL? { ServerConfig.resolveMediaURL(url) }
@@ -19,7 +19,7 @@ struct StickerGroup: Codable, Identifiable, Equatable {
     let id: String
     var name: String
     var order: Int
-    /// v3 冲突合并修订时间；旧分组缺失时按 0 处理。
+    /// 冲突合并修订时间；缺失时按 0 处理。
     var updatedAt: Double? = nil
 
     var revision: Double { updatedAt ?? 0 }
@@ -62,8 +62,6 @@ final class StickerStore: ObservableObject {
     }
 
     private let defaults: UserDefaults
-    private let legacyStickersKey = "sticker_library_v1"
-    private let legacyGroupsKey = "sticker_groups_v1"
     private let storagePrefix = "sticker_library_v2"
     private let groupsStoragePrefix = "sticker_groups_v2"
     private let tombstonesStoragePrefix = "sticker_tombstones_v3"
@@ -209,37 +207,24 @@ final class StickerStore: ObservableObject {
         saveAndSync(stickersChanged: true, groupsChanged: true, tombstonesChanged: true)
     }
 
-    // MARK: - 服务端同步与迁移
+    // MARK: - 服务端同步
 
-    /// 注入完整 bootstrap 后调用。优先读取账号独立数据；若不存在则复制旧情侣共享库。
-    /// 复制而非搬移，可确保两个账号升级后都不丢失旧表情，之后的数据互不覆盖。
-    func completeInitialSync(
-        personalLibrary: [String: Any]?,
-        legacySharedLibrary: [String: Any]?
-    ) {
+    /// 注入完整 bootstrap 后调用。当前版本只读取账号独立的表情库。
+    func completeInitialSync(personalLibrary: [String: Any]?) {
         // Socket 可能先于 bootstrap 返回。此时实时数据更新、更新后的本地缓存都比
         // 较早发出的 bootstrap snapshot 新，不能再用旧快照覆盖。
         guard activeUsername != nil, !initialSyncCompleted else { return }
         if let personalLibrary {
             applySyncedLibrary(personalLibrary)
-        } else if let legacySharedLibrary {
-            applySyncedLibrary(legacySharedLibrary, forceRepublish: true)
         } else {
             initialSyncCompleted = true
             publishCurrentLibrary()
         }
     }
 
-    /// Socket 收到本账号的共享状态更新时调用。初次同步会与尚未上传的本地迁移数据合并，
+    /// Socket 收到本账号的共享状态更新时调用。初次同步会与尚未上传的本地数据合并，
     /// 后续更新则以服务端为事实源，从而让同账号多设备及时一致。
     func applySyncedLibrary(_ value: [String: Any]) {
-        applySyncedLibrary(value, forceRepublish: false)
-    }
-
-    private func applySyncedLibrary(
-        _ value: [String: Any],
-        forceRepublish: Bool
-    ) {
         guard activeUsername != nil,
               let remoteItems = value["items"] as? [[String: Any]] else { return }
 
@@ -261,8 +246,7 @@ final class StickerStore: ObservableObject {
             itemTombstones: Self.mergedTombstones(remoteItemTombstones, itemTombstones),
             groupTombstones: Self.mergedTombstones(remoteGroupTombstones, groupTombstones))
 
-        let remoteVersion = (value["version"] as? NSNumber)?.intValue ?? 1
-        let shouldPublish = forceRepublish || remoteVersion < 3 || mergedState != remoteState
+        let shouldPublish = mergedState != remoteState
         let localChanged = mergedState.stickers != stickers
             || mergedState.groups != groups
             || mergedState.itemTombstones != itemTombstones
@@ -281,7 +265,7 @@ final class StickerStore: ObservableObject {
         }
         initialSyncCompleted = true
 
-        // 仅当本机记录/墓碑让合并结果超出远端，或需要升级旧协议时回写。
+        // 仅当本机记录/墓碑让合并结果超出远端时回写。
         // 服务端回显相同 v3 payload 时不会再写，避免多设备形成同步风暴。
         if shouldPublish { publishCurrentLibrary() }
     }
@@ -304,9 +288,8 @@ final class StickerStore: ObservableObject {
             itemTombstones = tombstones.items
             groupTombstones = tombstones.groups
         } else {
-            // v1 未区分账号。为每个首次登录账号复制一份，不能删除旧键，否则第二个账号会丢数据。
-            stickers = decode([Sticker].self, key: legacyStickersKey) ?? []
-            groups = Self.normalizedGroups(decode([StickerGroup].self, key: legacyGroupsKey) ?? [])
+            stickers = []
+            groups = []
             itemTombstones = [:]
             groupTombstones = [:]
         }

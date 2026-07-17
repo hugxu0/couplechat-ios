@@ -6,7 +6,6 @@ import Security
 enum Keychain {
     private static let service = "com.hugxu0.couplechat.session"
     private static let account = "current"
-    private static let defaultsKey = "com.hugxu0.couplechat.session.backup"
     private static let installationService = "com.hugxu0.couplechat.installation"
     private static let barkService = "com.hugxu0.couplechat.bark"
 
@@ -28,45 +27,7 @@ enum Keychain {
     }
 
     static func loadSession() -> Session? {
-        if let session = loadFromKeychain(query: Self.query) {
-            // 旧版本曾把完整 Session 复制到 defaults。钥匙串已有有效值时立即清掉明文副本。
-            UserDefaults.standard.removeObject(forKey: defaultsKey)
-            return session
-        }
-
-        // 迁移旧版本：旧 query 没有 account，升级后读到就重存成新格式。
-        let legacyQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-        ]
-        if let session = loadFromKeychain(query: legacyQuery) {
-            if saveSession(session) {
-                UserDefaults.standard.removeObject(forKey: defaultsKey)
-            }
-            return session
-        }
-
-        if let data = UserDefaults.standard.data(forKey: defaultsKey),
-           let session = try? JSONDecoder().decode(Session.self, from: data) {
-            // 只做一次向钥匙串迁移；确认写入成功后才删除旧值，失败则留待下次重试。
-            if saveSession(session) {
-                UserDefaults.standard.removeObject(forKey: defaultsKey)
-            }
-            return session
-        }
-
-        return nil
-    }
-
-    /// 安装标记首次出现时只探测旧 defaults 会话，避免把“版本升级”误判为重装
-    /// 而在迁移发生前清掉它。钥匙串写入失败时保留 defaults，供下次启动重试。
-    static func migrateLegacyDefaultsSessionIfPresent() -> Session? {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey),
-              let session = try? JSONDecoder().decode(Session.self, from: data) else { return nil }
-        if saveSession(session) {
-            UserDefaults.standard.removeObject(forKey: defaultsKey)
-        }
-        return session
+        loadFromKeychain(query: Self.query)
     }
 
     private static func loadFromKeychain(query baseQuery: [String: Any]) -> Session? {
@@ -93,13 +54,12 @@ enum Keychain {
     }
 
     static func clearSession() {
-        UserDefaults.standard.removeObject(forKey: defaultsKey)
-        // service 级删除同时覆盖 current 与历史上没有 account 属性的旧条目。
-        let legacyQuery: [String: Any] = [
+        // service 级删除确保登出和首次安装不会保留任何会话条目。
+        let serviceQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
         ]
-        SecItemDelete(legacyQuery as CFDictionary)
+        SecItemDelete(serviceQuery as CFDictionary)
     }
 
     // MARK: - Bark secret

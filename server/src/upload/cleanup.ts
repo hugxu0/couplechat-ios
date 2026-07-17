@@ -20,11 +20,7 @@ export async function drainFileCleanupQueue(): Promise<number> {
     `SELECT id, path, attempt_count FROM file_cleanup_queue
       WHERE completed_at IS NULL ORDER BY created_at ASC LIMIT ?`,
     [BATCH_SIZE],
-  ).catch((error) => {
-    // 兼容尚未应用 v11 的受控迁移/测试阶段。
-    if (error instanceof Error && error.message.includes("file_cleanup_queue")) return [];
-    throw error;
-  });
+  );
   let completed = 0;
   for (const row of rows) {
     try {

@@ -9,11 +9,11 @@ final class StickerStoreTests: XCTestCase {
         let store = StickerStore(defaults: defaults)
 
         store.activate(username: "xu")
-        store.completeInitialSync(personalLibrary: nil, legacySharedLibrary: nil)
+        store.completeInitialSync(personalLibrary: nil)
         store.add(url: "/uploads/xu.gif")
 
         store.activate(username: "yu")
-        store.completeInitialSync(personalLibrary: nil, legacySharedLibrary: nil)
+        store.completeInitialSync(personalLibrary: nil)
         XCTAssertTrue(store.library.isEmpty)
         store.add(url: "/uploads/yu.gif")
 
@@ -26,7 +26,7 @@ final class StickerStoreTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
         let store = StickerStore(defaults: defaults)
         store.activate(username: "xu")
-        store.completeInitialSync(personalLibrary: nil, legacySharedLibrary: nil)
+        store.completeInitialSync(personalLibrary: nil)
         let group = store.createGroup(name: "猫猫")
         store.add(url: "/uploads/cat.gif", groupId: group.id)
 
@@ -37,53 +37,6 @@ final class StickerStoreTests: XCTestCase {
         XCTAssertTrue(store.sortedGroups.isEmpty)
     }
 
-    func testLegacyFavoriteFieldMigratesIntoFixedLibrary() throws {
-        let defaults = try makeDefaults()
-        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
-        let legacy: [[String: Any]] = [[
-            "id": "legacy-1",
-            "url": "/uploads/legacy.gif",
-            "groupId": "default",
-            "favorite": false,
-            "addedAt": 100,
-        ]]
-        defaults.set(
-            try JSONSerialization.data(withJSONObject: legacy),
-            forKey: "sticker_library_v1")
-
-        let store = StickerStore(defaults: defaults)
-        store.activate(username: "xu")
-
-        XCTAssertEqual(store.library.map(\.url), ["/uploads/legacy.gif"])
-    }
-
-    func testLegacySharedLibraryPublishesAccountPayloadWithoutFavoriteField() throws {
-        let defaults = try makeDefaults()
-        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
-        let store = StickerStore(defaults: defaults)
-        var published: [String: Any]?
-        store.configureSync { published = $0 }
-        store.activate(username: "xu")
-
-        store.completeInitialSync(
-            personalLibrary: nil,
-            legacySharedLibrary: [
-                "version": 1,
-                "items": [[
-                    "id": "legacy-remote",
-                    "url": "/uploads/remote.gif",
-                    "groupId": "default",
-                    "favorite": true,
-                    "addedAt": 200,
-                ]],
-                "groups": [["id": "default", "name": "我的表情", "order": 0]],
-            ])
-
-        let items = try XCTUnwrap(published?["items"] as? [[String: Any]])
-        XCTAssertEqual(items.first?["url"] as? String, "/uploads/remote.gif")
-        XCTAssertNil(items.first?["favorite"])
-    }
-
     func testOlderBootstrapDoesNotOverwriteSocketLibrary() throws {
         let defaults = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
@@ -92,8 +45,7 @@ final class StickerStoreTests: XCTestCase {
         store.applySyncedLibrary(payload(id: "socket", url: "/uploads/new.gif", addedAt: 20))
 
         store.completeInitialSync(
-            personalLibrary: payload(id: "bootstrap", url: "/uploads/old.gif", addedAt: 10),
-            legacySharedLibrary: nil)
+            personalLibrary: payload(id: "bootstrap", url: "/uploads/old.gif", addedAt: 10))
 
         XCTAssertEqual(store.library.map(\.url), ["/uploads/new.gif"])
     }
@@ -114,8 +66,8 @@ final class StickerStoreTests: XCTestCase {
 
         storeA.activate(username: "xu")
         storeB.activate(username: "xu")
-        storeA.completeInitialSync(personalLibrary: nil, legacySharedLibrary: nil)
-        storeB.completeInitialSync(personalLibrary: nil, legacySharedLibrary: nil)
+        storeA.completeInitialSync(personalLibrary: nil)
+        storeB.completeInitialSync(personalLibrary: nil)
         storeA.add(url: "/uploads/a.gif")
         storeB.add(url: "/uploads/b.gif")
 
@@ -161,20 +113,6 @@ final class StickerStoreTests: XCTestCase {
         XCTAssertEqual(tombstones.first?["url"] as? String, "/uploads/shared.gif")
     }
 
-    func testVersionTwoPayloadIsRepublishedAsVersionThree() throws {
-        let defaults = try makeDefaults()
-        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
-        let store = StickerStore(defaults: defaults)
-        var published: [String: Any]?
-        store.configureSync { published = $0 }
-        store.activate(username: "xu")
-
-        store.applySyncedLibrary(payload(id: "legacy", url: "/uploads/legacy.webp", addedAt: 100))
-
-        XCTAssertEqual((published?["version"] as? NSNumber)?.intValue, 3)
-        XCTAssertEqual(store.library.map(\.url), ["/uploads/legacy.webp"])
-    }
-
     private var defaultsSuiteName: String {
         "StickerStoreTests.\(name)"
     }
@@ -198,7 +136,7 @@ final class StickerStoreTests: XCTestCase {
 
     private func payload(id: String, url: String, addedAt: Double) -> [String: Any] {
         [
-            "version": 2,
+            "version": 3,
             "items": [[
                 "id": id,
                 "url": url,

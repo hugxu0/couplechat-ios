@@ -47,25 +47,11 @@ export function verifyToken(token: string): AuthUser | null {
   }
 }
 
-/** 校验签名后再核对账号、设备和 session 状态；旧 token 仅用于兼容迁移期。 */
+/** 校验签名后再核对账号、设备和 session 状态。当前客户端只使用设备绑定的 session token。 */
 export async function verifyActiveToken(token: string): Promise<AuthUser | null> {
   const user = verifyToken(token);
   if (!user) return null;
-  if (!user.sessionId || !user.deviceId || !user.accountId || user.tokenVersion === undefined) {
-    const account = await get<{ id: string; status: string; couple_id: string | null; member_id: string | null }>(
-      `SELECT account.id, account.status, member.couple_id, member.id AS member_id
-         FROM accounts account
-         LEFT JOIN couple_members member ON member.account_id = account.id AND member.state = 'active'
-        WHERE account.username = ?`,
-      [user.username],
-    );
-    return account?.status === "active" ? {
-      ...user,
-      accountId: account.id,
-      coupleId: account.couple_id ?? undefined,
-      memberId: account.member_id ?? undefined,
-    } : null;
-  }
+  if (!user.sessionId || !user.deviceId || !user.accountId || user.tokenVersion === undefined) return null;
   const row = await get<{
     username: string;
     display_name: string;

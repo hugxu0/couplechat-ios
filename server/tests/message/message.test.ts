@@ -13,6 +13,28 @@ test("message schema requires server-owned media references", () => {
   }).success, true);
 });
 
+test("message schema keeps only the current flattened reply fields", () => {
+  const current = sendMessageSchema.parse({
+    channel: "couple",
+    type: "text",
+    text: "reply",
+    replyTo: "msg_source",
+    replyPreview: "hello",
+  });
+  assert.equal(current.replyTo, "msg_source");
+  assert.equal(current.replyPreview, "hello");
+
+  const old = sendMessageSchema.parse({
+    channel: "couple",
+    type: "text",
+    text: "reply",
+    reply: { id: "msg_source", preview: "hello" },
+  });
+  assert.equal(old.replyTo, undefined);
+  assert.equal(old.replyPreview, undefined);
+  assert.equal("reply" in old, false);
+});
+
 test("album attachments allow photos and reject duplicate upload references", () => {
   const valid = {
     channel: "couple",

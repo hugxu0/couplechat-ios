@@ -256,8 +256,7 @@ final class ChatStore: ObservableObject {
     private func completeStickerInitialSync(for session: Session) {
         StickerStore.shared.completeInitialSync(
             personalLibrary: shared.sharedValue(
-                StickerStore.sharedKey(for: session.username)),
-            legacySharedLibrary: shared.sharedValue("stickers"))
+                StickerStore.sharedKey(for: session.username)))
     }
 
     private func fetchBootstrap(session: Session) async throws -> AppBootstrapSnapshot {

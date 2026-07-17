@@ -32,21 +32,15 @@ final class AuthStore: ObservableObject {
     // MARK: - 启动
 
     func savedSession() -> Session? {
-        // Keychain 可能跨卸载保留，而 UserDefaults 会随 App 删除。
-        // 全新安装必须清掉残留会话，保证从账号选择与密码登录开始。
+        // Keychain 可能跨卸载保留；全新安装必须清掉残留会话，保证从账号选择与密码登录开始。
         let installMarker = "clean_install_generation_v2"
         guard UserDefaults.standard.bool(forKey: installMarker) else {
-            let upgradedSession = Keychain.migrateLegacyDefaultsSessionIfPresent()
-            if upgradedSession == nil { Keychain.clearSession() }
+            Keychain.clearSession()
             UserDefaults.standard.set(true, forKey: installMarker)
-            guard upgradedSession?.deviceId?.isEmpty == false else {
-                Keychain.clearSession()
-                return nil
-            }
-            return upgradedSession
+            return nil
         }
         guard let session = Keychain.loadSession() else { return nil }
-        // V2 token 必须绑定 installation/session；旧 90 天账号 token 无法可靠撤销。
+        // 当前 token 必须绑定设备；旧账号 token 无法可靠撤销。
         guard session.deviceId?.isEmpty == false else {
             Keychain.clearSession()
             return nil

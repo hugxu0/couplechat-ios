@@ -69,7 +69,8 @@ npm run check
 npm run healthcheck -- https://hoo66.top
 ```
 
-- `npm run check`：一次完成 TypeScript 类型检查、快速纯逻辑测试、一次 embedded PostgreSQL 当前行为烟测和生产编译。
+- `npm run check`：一次完成服务端生产编译（编译本身会检查 `src/` 类型）、快速纯逻辑测试和一次 embedded PostgreSQL 当前行为烟测；生产源码不再先 `tsc --noEmit` 再重复编译一遍。
+- `npm run typecheck`：需要单独检查迁移脚本等非生产 `scripts/` 时使用；普通代码发布不必为此重复执行。
 - `npm run healthcheck`：依次检查 `/health`、`/ready` 和固定账号列表 `xu,si`。
 
 普通服务端代码发布不再重复人工打包和远程命令；在工作树干净且 `HEAD` 已推送到 `origin/main` 后运行：
@@ -83,6 +84,8 @@ npm run healthcheck -- https://hoo66.top
 测试必须使用临时数据库或只读生产检查。不要在自动测试中删除、批量修改生产数据或写入生产媒体。
 
 ## iOS 构建
+
+当前客户端只读取账号隔离后的收藏、贴纸、主题、状态、Bark 和结构化纪念日数据；早期未分账号的本地键、旧共享贴纸键、旧自定义状态键和旧日期字段不再迁移。后续若再次改变本地存储格式，应新增一次性迁移并在确认设备完成升级后再移除，而不是把旧键继续堆进当前启动路径。
 
 Mac 本地：
 

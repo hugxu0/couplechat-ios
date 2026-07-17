@@ -29,7 +29,7 @@ final class ChatStickerPanelView: UIView {
     private let store: StickerStore
     private var accentColor: UIColor
     private var usesLightContent = false
-    private let backgroundGlass = ChatGlassView(style: .systemThinMaterial, cornerRadius: 30)
+    private let backgroundGlass = ChatGlassView(cornerRadius: 30)
     private let tabScrollView = UIScrollView()
     private let tabStack = UIStackView()
     private let collectionView: UICollectionView
@@ -68,8 +68,7 @@ final class ChatStickerPanelView: UIView {
         overrideUserInterfaceStyle = usesLightContent ? .dark : .light
         backgroundGlass.setGlassTone(
             dark: usesLightContent,
-            tintAlpha: usesLightContent ? 0.30 : 0.18,
-            borderAlpha: usesLightContent ? 0.18 : 0.20)
+            tintAlpha: usesLightContent ? 0.30 : 0.18)
         collectionView.indicatorStyle = usesLightContent ? .white : .black
         updateTabSelection()
         collectionView.reloadData()
@@ -84,7 +83,7 @@ final class ChatStickerPanelView: UIView {
         isOpaque = false
 
         backgroundGlass.translatesAutoresizingMaskIntoConstraints = false
-        backgroundGlass.update(cornerRadius: 30, tintAlpha: 0.05, borderAlpha: 0.10)
+        backgroundGlass.update(cornerRadius: 30)
         addSubview(backgroundGlass)
 
         tabScrollView.showsHorizontalScrollIndicator = false

@@ -26,7 +26,7 @@ Authorization: Bearer <token>
 | `GET` | `/api/accounts` | 未登录时返回 `xu/si` 快捷账号；带 token 时返回当前共享空间成员 |
 | `POST` | `/api/v2/login` | 使用 `username/password/device` 登录并绑定当前设备 |
 
-登录成功返回 `token`、`username`、`name` 和 `deviceId`。`device` 必须包含 `installationId/platform`，并可带 `deviceName/appVersion/buildNumber/locale/timezone`；字段与设备 Bark PUT 使用的安装信息一致。服务端只认证 `xu/si`；注册、情侣空间创建/加入、邀请码和配对状态接口均不存在。
+登录成功返回 `token`、`username`、`name` 和 `deviceId`。token 必须绑定当前设备和有效 session；没有设备/session 绑定的旧 token 不再接受。`device` 必须包含 `installationId/platform`，并可带 `deviceName/appVersion/buildNumber/locale/timezone`；字段与设备 Bark PUT 使用的安装信息一致。服务端只认证 `xu/si`；注册、情侣空间创建/加入、邀请码和配对状态接口均不存在。
 
 ### 当前用户与同步
 
@@ -190,6 +190,8 @@ io("https://hoo66.top", { auth: { token } })
 | `read` | `{ channel, ts }` | 广播已读状态 |
 | `shared:set` | `{ key, value }` | 写共享 JSON 对象 |
 | `action:confirm` | `{ messageId, decision }` | 确认或取消 AI 操作 |
+
+`message:send` 成功确认固定返回完整的当前消息；iOS 直接用 `message` 替换本地 pending，不支持只返回 `id` 的旧确认格式。引用消息只使用扁平字段 `replyTo/replyPreview`，不接受或返回旧的嵌套 `reply`。
 
 `message:send` 主要字段：
 

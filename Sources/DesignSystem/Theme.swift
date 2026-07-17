@@ -449,20 +449,8 @@ final class ThemeManager: ObservableObject {
             defaults.set(accent.rawValue, forKey: "\(prefix).accent")
             defaults.set(appearance.rawValue, forKey: "\(prefix).appearance")
             defaults.set(wallpapers, forKey: "\(prefix).wallpapers")
-            let legacyKeys = defaults.stringArray(forKey: "theme.customWallpapers") ?? []
-            defaults.set(legacyKeys, forKey: "\(prefix).customWallpapers")
-            for channel in legacyKeys {
-                let oldURL = customDir.appendingPathComponent("\(channel).jpg")
-                let newURL = customDir.appendingPathComponent("\(account).\(channel).jpg")
-                if FileManager.default.fileExists(atPath: oldURL.path),
-                   !FileManager.default.fileExists(atPath: newURL.path) {
-                    try? FileManager.default.copyItem(at: oldURL, to: newURL)
-                }
-            }
             defaults.set(true, forKey: initializedKey)
         }
-
-        migrateLegacyCustomWallpapers(account: account, prefix: prefix, defaults: defaults)
 
         activeAccount = account
         accent = AccentChoice(rawValue: defaults.string(forKey: "\(prefix).accent") ?? "") ?? .sakura
@@ -476,8 +464,7 @@ final class ThemeManager: ObservableObject {
 
     func wallpaper(for channel: ChatChannel, appearance: WallpaperAppearance) -> WallpaperChoice {
         let scoped = wallpapers[wallpaperScopeKey(channel, appearance: appearance)]
-        let legacyLight = appearance == .light ? wallpapers[channel.rawValue] : nil
-        return WallpaperChoice(rawValue: scoped ?? legacyLight ?? "")
+        return WallpaperChoice(rawValue: scoped ?? "")
             ?? (appearance == .dark ? .night : .aurora)
     }
 
@@ -623,42 +610,11 @@ final class ThemeManager: ObservableObject {
     private func customWallpaperURL(
         id: String,
         for channel: ChatChannel,
-        appearance: WallpaperAppearance,
-        account: String? = nil
+        appearance: WallpaperAppearance
     ) -> URL {
-        let owner = account ?? activeAccount ?? "default"
+        let owner = activeAccount ?? "default"
         let filename = "\(owner).\(channel.rawValue).\(appearance.rawValue).\(id).jpg"
         return customDir.appendingPathComponent(filename)
-    }
-
-    private func migrateLegacyCustomWallpapers(account: String, prefix: String, defaults: UserDefaults) {
-        let migrationKey = "\(prefix).customWallpaperLibraryMigrated"
-        guard !defaults.bool(forKey: migrationKey) else { return }
-        var libraries = defaults.dictionary(forKey: "\(prefix).customWallpaperLibraries") as? [String: [String]] ?? [:]
-        var selected = defaults.dictionary(forKey: "\(prefix).selectedCustomWallpapers") as? [String: String] ?? [:]
-        let legacyChannels = defaults.stringArray(forKey: "\(prefix).customWallpapers") ?? []
-        for rawChannel in legacyChannels {
-            guard let channel = ChatChannel(rawValue: rawChannel) else { continue }
-            let oldURL = customDir.appendingPathComponent("\(account).\(rawChannel).jpg")
-            guard FileManager.default.fileExists(atPath: oldURL.path) else { continue }
-            for appearance in WallpaperAppearance.allCases {
-                let id = "legacy"
-                let scope = "\(rawChannel).\(appearance.rawValue)"
-                let newURL = customWallpaperURL(
-                    id: id,
-                    for: channel,
-                    appearance: appearance,
-                    account: account)
-                if !FileManager.default.fileExists(atPath: newURL.path) {
-                    try? FileManager.default.copyItem(at: oldURL, to: newURL)
-                }
-                libraries[scope] = [id]
-                selected[scope] = id
-            }
-        }
-        defaults.set(libraries, forKey: "\(prefix).customWallpaperLibraries")
-        defaults.set(selected, forKey: "\(prefix).selectedCustomWallpapers")
-        defaults.set(true, forKey: migrationKey)
     }
 
     private static func regionLuminance(of image: UIImage, region: WallpaperSurfaceRegion) -> CGFloat {

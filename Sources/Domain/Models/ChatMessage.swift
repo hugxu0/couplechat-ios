@@ -48,13 +48,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         }
         clientId = dict["clientId"] as? String
         recalledText = dict["recalledText"] as? String
-        if let reply = dict["reply"] as? [String: Any] {
-            replyTo = reply["id"] as? String ?? reply["replyTo"] as? String
-            replyPreview = reply["preview"] as? String ?? reply["replyPreview"] as? String
-        } else {
-            replyTo = dict["replyTo"] as? String
-            replyPreview = dict["replyPreview"] as? String
-        }
+        replyTo = dict["replyTo"] as? String
+        replyPreview = dict["replyPreview"] as? String
         if let metaDict = dict["meta"] as? [String: Any] {
             self.meta = ChatMessageMeta(dict: metaDict)
         } else {

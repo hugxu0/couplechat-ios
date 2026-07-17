@@ -55,7 +55,6 @@ export const sendMessageSchema = z.object({
   uploadId: z.string().regex(/^up_[A-Za-z0-9_-]{8,}$/).optional(),
   replyTo: z.string().min(1).max(128).optional(),
   replyPreview: z.string().max(500).optional(),
-  reply: z.unknown().optional(),
   meta: messageMetaSchema.optional(),
   attachments: z.array(messageAttachmentSchema).min(1).max(18).optional(),
   clientId: z.string().min(1).max(128).optional(),

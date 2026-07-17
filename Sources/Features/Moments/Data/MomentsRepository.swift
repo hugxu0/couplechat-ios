@@ -85,7 +85,7 @@ struct MomentsRepository {
         if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
         let data = try await request(path: "api/v2/albums/\(id)/items", query: query, token: token)
         let payload = try JSONDecoder().decode(AlbumDetailEnvelope.self, from: data)
-        return (payload.album, MomentPage(values: payload.assets ?? payload.items ?? [], nextCursor: payload.nextCursor))
+        return (payload.album, MomentPage(values: payload.items ?? [], nextCursor: payload.nextCursor))
     }
 
     func addMessage(
@@ -221,7 +221,6 @@ private extension MomentsRepository {
     struct AlbumConflictEnvelope: Decodable { let album: MomentAlbum }
     struct AlbumDetailEnvelope: Decodable {
         let album: MomentAlbum
-        let assets: [MomentAsset]?
         let items: [MomentAsset]?
         let nextCursor: String?
     }

@@ -27,7 +27,6 @@ export interface ClientMessage {
   url?: string;
   replyTo?: string;
   replyPreview?: string;
-  reply?: unknown;
   meta?: unknown;
   attachments?: ClientMessageAttachment[];
   recalledText?: string;

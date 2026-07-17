@@ -31,7 +31,6 @@ struct ChatHomeView: View {
     @State private var connectionNotice: ConnectionNotice?
     @State private var connectionNoticeToken = UUID()
     @AppStorage("chat_home_statuses_v2") private var statusesJSON = ""
-    @AppStorage("chat_home_custom_statuses") private var legacyCustomStatusData = ""
 
     private var myName: String { store.session?.name ?? "小旭" }
     private var myUsername: String { store.session?.username ?? "xu" }
@@ -62,7 +61,7 @@ struct ChatHomeView: View {
            !decoded.isEmpty {
             return decoded
         }
-        return migratedDefaultStatuses()
+        return ChatHomeCatalog.defaultStatuses
     }
 
     private var statusOptions: [ChatHomeStatusOption] {
@@ -650,21 +649,6 @@ struct ChatHomeView: View {
         guard let data = try? JSONEncoder().encode(list),
               let json = String(data: data, encoding: .utf8) else { return }
         statusesJSON = json
-    }
-
-    private func migratedDefaultStatuses() -> [ChatHomeStoredStatus] {
-        var list = ChatHomeCatalog.defaultStatuses
-        let legacy = legacyCustomStatusData
-            .split(separator: "\n")
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        for title in legacy {
-            let trimmed = String(title.prefix(8))
-            guard !list.contains(where: { $0.title == trimmed }) else { continue }
-            list.append(ChatHomeStoredStatus(id: UUID().uuidString, title: trimmed))
-        }
-        saveStatuses(list)
-        return list
     }
 
 }

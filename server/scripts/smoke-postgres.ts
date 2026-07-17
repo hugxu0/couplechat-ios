@@ -221,6 +221,15 @@ async function main() {
     const created = await createMessage(user, { channel: "couple", type: "text", text: "PG 冒烟测试", clientId: "smoke-1" });
     const dup = await createMessage(user, { channel: "couple", type: "text", text: "PG 冒烟测试重复", clientId: "smoke-1" });
     assertOk("clientId 幂等（重发返回同一条）", created.id === dup.id);
+    const replied = await createMessage(user, {
+      channel: "couple", type: "text", text: "PG 引用测试",
+      replyTo: created.id, replyPreview: "PG 冒烟测试",
+      clientId: "smoke-reply-1",
+    });
+    assertOk(
+      "消息响应只含扁平引用字段",
+      replied.replyTo === created.id && replied.replyPreview === "PG 冒烟测试" && !("reply" in replied),
+    );
 
     // 媒体附件：消息只能绑定当前用户未使用过的 uploadId，绑定和消息写入必须一起提交。
     const uploadId = "up_smoke_media_123";
@@ -354,10 +363,30 @@ async function main() {
         `https://example.com/uploads/${compatibleRouteFilename}`, "image/jpeg", 16, Date.now(), "legacy",
       ],
     );
-    const { buildApp } = await import("../src/app");
+    const { createDeviceSession } = await import("../src/auth/devices");
     const { createToken } = await import("../src/auth/token");
+    const currentUser = await createDeviceSession({
+      ...user,
+      accountId: `acc_legacy_${user.username}`,
+      coupleId: "cpl_legacy_xusi",
+      memberId: `mem_legacy_${user.username}`,
+    }, {
+      installationId: "smoke-installation-123",
+      platform: "ios",
+      deviceName: "smoke",
+      appVersion: "0.2.0",
+      buildNumber: "11",
+      locale: "zh_CN",
+      timezone: "Asia/Shanghai",
+    });
+    assertOk("当前登录生成设备绑定 session", Boolean(currentUser?.sessionId && currentUser.deviceId));
+    const { buildApp } = await import("../src/app");
     const app = await buildApp();
-    const authorization = `Bearer ${createToken(user)}`;
+    const authorization = `Bearer ${createToken(currentUser!)}`;
+    const oldAuthorization = await app.inject({
+      method: "GET", url: "/api/me", headers: { authorization: `Bearer ${createToken(user)}` },
+    });
+    assertOk("旧无设备 token 被拒绝", oldAuthorization.statusCode === 401);
     const healthResponse = await app.inject({ method: "GET", url: "/health" });
     const liveResponse = await app.inject({ method: "GET", url: "/live" });
     const readyResponse = await app.inject({ method: "GET", url: "/ready" });

@@ -93,13 +93,7 @@ final class MessageStoreParseTests: XCTestCase {
         XCTAssertTrue(result.isEmpty)
     }
 
-    func testSendAckUsesLegacyFallbackOnlyWhenMessageKeyIsAbsent() {
-        XCTAssertEqual(
-            MessageStore.validateSendAckMessage(
-                ["ok": true, "id": "server-id"],
-                expectedChannel: .couple),
-            .absent)
-
+    func testSendAckRequiresCurrentServerMessageContract() {
         let validMessage: [String: Any] = [
             "id": "server-id",
             "sender": "xu",
@@ -108,7 +102,7 @@ final class MessageStoreParseTests: XCTestCase {
             "channel": "couple",
             "ts": 100,
         ]
-        guard case let .valid(message) = MessageStore.validateSendAckMessage(
+        guard let message = MessageStore.parseSendAckMessage(
             ["message": validMessage],
             expectedChannel: .couple)
         else {
@@ -124,15 +118,14 @@ final class MessageStoreParseTests: XCTestCase {
         wrongChannel["channel"] = "ai"
 
         let invalidPayloads: [[String: Any]] = [
+            ["ok": true, "id": "server-id"],
             ["message": NSNull()],
             ["message": missingChannel],
             ["message": unknownChannel],
             ["message": wrongChannel],
         ]
         for payload in invalidPayloads {
-            XCTAssertEqual(
-                MessageStore.validateSendAckMessage(payload, expectedChannel: .couple),
-                .invalid)
+            XCTAssertNil(MessageStore.parseSendAckMessage(payload, expectedChannel: .couple))
         }
     }
 }

@@ -23,7 +23,7 @@ final class ChatViewController: UIViewController {
     var collectionView: UICollectionView!
     let bottomStack = UIStackView()
     let panelContainer = UIView()
-    let jumpToBottomBackground = ChatGlassView(style: .systemThinMaterial, cornerRadius: 21)
+    let jumpToBottomBackground = ChatGlassView(cornerRadius: 21)
     let jumpToBottomButton = UIButton(type: .system)
     let bottomRefreshIndicator = UIActivityIndicatorView(style: .medium)
     var jumpToBottomWidthConstraint: NSLayoutConstraint!
@@ -448,7 +448,7 @@ final class ChatViewController: UIViewController {
         jumpToBottomBackground.translatesAutoresizingMaskIntoConstraints = false
         jumpToBottomBackground.alpha = 0
         jumpToBottomBackground.isHidden = true
-        jumpToBottomBackground.update(cornerRadius: 21, tintAlpha: 0.22, borderAlpha: 0.24)
+        jumpToBottomBackground.update(cornerRadius: 21)
         jumpToBottomBackground.clipsToBounds = true
         view.addSubview(jumpToBottomBackground)
         bottomRefreshIndicator.translatesAutoresizingMaskIntoConstraints = false

@@ -2,8 +2,6 @@ import Foundation
 
 struct CoupleDates: Equatable {
     var together: String?
-    var lastMeet: String?
-    var lastFight: String?
 
     private static var shanghaiCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)

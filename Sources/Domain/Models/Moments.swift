@@ -13,28 +13,22 @@ struct MomentAlbum: Identifiable, Decodable, Equatable, Hashable {
     var previewItems: [MomentAsset]
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, note, caption, summary, coverURL, coverUrl, cover, coverAssetId
-        case itemCount, assetCount, createdAt, updatedAt, version, previewItems, items
+        case id, title, summary, coverURL, coverAssetId
+        case itemCount, createdAt, updatedAt, version, previewItems
     }
 
     init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         id = try box.decode(String.self, forKey: .id)
         title = try box.decodeIfPresent(String.self, forKey: .title) ?? "未命名相册"
-        note = try box.decodeIfPresent(String.self, forKey: .note)
-            ?? (try box.decodeIfPresent(String.self, forKey: .caption))
-            ?? (try box.decodeIfPresent(String.self, forKey: .summary))
+        note = try box.decodeIfPresent(String.self, forKey: .summary)
         coverURL = try box.decodeIfPresent(String.self, forKey: .coverURL)
-            ?? (try box.decodeIfPresent(String.self, forKey: .coverUrl))
-            ?? (try box.decodeIfPresent(String.self, forKey: .cover))
         coverAssetId = try box.decodeIfPresent(String.self, forKey: .coverAssetId)
-        itemCount = try box.decodeIfPresent(Int.self, forKey: .itemCount)
-            ?? (try box.decodeIfPresent(Int.self, forKey: .assetCount)) ?? 0
+        itemCount = try box.decodeIfPresent(Int.self, forKey: .itemCount) ?? 0
         createdAt = box.decodeMilliseconds(for: .createdAt)
         updatedAt = box.decodeMilliseconds(for: .updatedAt)
         version = try box.decodeIfPresent(Int.self, forKey: .version) ?? 0
-        previewItems = try box.decodeIfPresent([MomentAsset].self, forKey: .previewItems)
-            ?? (try box.decodeIfPresent([MomentAsset].self, forKey: .items)) ?? []
+        previewItems = try box.decodeIfPresent([MomentAsset].self, forKey: .previewItems) ?? []
     }
 
     init(
@@ -180,7 +174,7 @@ struct OnThisDayMoment: Identifiable, Decodable, Equatable {
     let assets: [MomentAsset]
 
     private enum CodingKeys: String, CodingKey {
-        case id, yearsAgo, title, date, assets, items
+        case id, yearsAgo, title, date, assets
     }
 
     init(from decoder: Decoder) throws {
@@ -188,8 +182,7 @@ struct OnThisDayMoment: Identifiable, Decodable, Equatable {
         yearsAgo = try box.decodeIfPresent(Int.self, forKey: .yearsAgo) ?? 1
         title = try box.decodeIfPresent(String.self, forKey: .title) ?? "那年今日"
         date = try box.decodeIfPresent(String.self, forKey: .date) ?? ""
-        assets = try box.decodeIfPresent([MomentAsset].self, forKey: .assets)
-            ?? (try box.decodeIfPresent([MomentAsset].self, forKey: .items)) ?? []
+        assets = try box.decodeIfPresent([MomentAsset].self, forKey: .assets) ?? []
         id = try box.decodeIfPresent(String.self, forKey: .id)
             ?? "\(date)-\(yearsAgo)-\(assets.first?.id ?? "moment")"
     }

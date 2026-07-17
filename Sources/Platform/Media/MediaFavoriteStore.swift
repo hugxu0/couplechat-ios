@@ -54,7 +54,6 @@ final class MediaFavoriteStore: ObservableObject {
 
     @Published private(set) var items: [MediaBrowserItem] = []
     private let storagePrefix = "media_favorites_v2"
-    private let legacyStorageKey = "media_favorites_v1"
     private var activeUsername: String?
 
     private init() {}
@@ -68,16 +67,7 @@ final class MediaFavoriteStore: ObservableObject {
             items = saved
             return
         }
-        // 旧版本未分账号。只迁移明确属于双方公共频道的收藏；AI/未知频道可能
-        // 暴露另一账号的私有内容，因此升级时直接丢弃。
-        if let legacy = UserDefaults.standard.data(forKey: legacyStorageKey) {
-            let decoded = (try? JSONDecoder().decode([MediaBrowserItem].self, from: legacy)) ?? []
-            items = Self.legacyItemsEligibleForMigration(decoded)
-            save()
-            UserDefaults.standard.removeObject(forKey: legacyStorageKey)
-        } else {
-            items = []
-        }
+        items = []
     }
 
     func deactivate() {
@@ -122,9 +112,4 @@ final class MediaFavoriteStore: ObservableObject {
         "\(storagePrefix).\(username)"
     }
 
-    nonisolated static func legacyItemsEligibleForMigration(
-        _ items: [MediaBrowserItem]
-    ) -> [MediaBrowserItem] {
-        items.filter { $0.channel == ChatChannel.couple.rawValue }
-    }
 }

@@ -4,7 +4,6 @@ set -Eeuo pipefail
 # 备份校验不是只做“能列目录”：本脚本会恢复到随机临时数据库、比对 migration/
 # 核心表计数，并从 uploads 归档中均匀抽样媒体哈希。任何阶段失败都会尝试删库。
 # VERIFY_DATABASE_URL 应指向同集群的受限 CREATEDB 账号；默认拒绝超级用户执行归档 SQL。
-# 旧 format v2 只能完成降级验证，成功完成有限检查后固定退出 3，绝不以 0 冒充完整验证。
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 SERVER_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
@@ -12,7 +11,6 @@ source "$SCRIPT_DIR/backup-table-policy.sh"
 VERIFY_ALLOWED_PREFIX="${VERIFY_ALLOWED_PREFIX:-${BACKUP_ALLOWED_PREFIX:-/var/backups}}"
 VERIFY_MEDIA_SAMPLE_SIZE="${VERIFY_MEDIA_SAMPLE_SIZE:-20}"
 VERIFY_ALLOW_SUPERUSER="${VERIFY_ALLOW_SUPERUSER:-0}"
-readonly VERIFY_EXIT_DEGRADED_LEGACY_V2=3
 
 readonly -a REQUIRED_FILES=("${BACKUP_CHECKSUM_FILES[@]}")
 die() {
@@ -123,26 +121,24 @@ metadata_sync_sequence_last="$(metadata_value sync_event_seq_last_value)"
 metadata_sync_sequence_called="$(metadata_value sync_event_seq_is_called)"
 metadata_sync_events_seq_max="$(metadata_value sync_events_seq_max)"
 
-[[ "$format_version" == "2" || "$format_version" == "3" ]] || die "不支持的备份格式版本: $format_version"
+[[ "$format_version" == "3" ]] || die "不支持的备份格式版本: $format_version"
 [[ "$backup_id" =~ ^20[0-9]{6}T[0-9]{6}Z-[A-Za-z0-9]+$ ]] || die "METADATA backup_id 不合法"
 [[ "$(basename -- "$backup")" == "$backup_id" ]] || die "目录名与 METADATA backup_id 不一致"
 [[ "$schema_version" =~ ^[1-9][0-9]*$ && -n "$schema_name" ]] || die "schema migration 元数据不合法"
-if [[ "$format_version" == "3" ]]; then
-  [[ "$table_policy_version" == "$BACKUP_TABLE_POLICY_VERSION" ]] || \
-    die "不支持的表策略版本: ${table_policy_version:-缺失}"
-  [[ "$sequence_validation_version" == "1" ]] || die "缺少受支持的序列证据版本"
-  case "$revision_source" in
-    release|git)
-      [[ "$git_revision" =~ ^[0-9a-f]{40}$ ]] || die "源码版本证据必须是完整小写 commit SHA"
-      ;;
-    unknown)
-      [[ "$git_revision" == "unknown" ]] || die "unknown 版本来源不能携带伪 SHA"
-      ;;
-    *)
-      die "不支持的源码版本来源: ${revision_source:-缺失}"
-      ;;
-  esac
-fi
+[[ "$table_policy_version" == "$BACKUP_TABLE_POLICY_VERSION" ]] || \
+  die "不支持的表策略版本: ${table_policy_version:-缺失}"
+[[ "$sequence_validation_version" == "1" ]] || die "缺少受支持的序列证据版本"
+case "$revision_source" in
+  release|git)
+    [[ "$git_revision" =~ ^[0-9a-f]{40}$ ]] || die "源码版本证据必须是完整小写 commit SHA"
+    ;;
+  unknown)
+    [[ "$git_revision" == "unknown" ]] || die "unknown 版本来源不能携带伪 SHA"
+    ;;
+  *)
+    die "不支持的源码版本来源: ${revision_source:-缺失}"
+    ;;
+esac
 backup_policy_validate_schema "$schema_version" || \
   die "schema v$schema_version 超出恢复校验策略支持范围（最高 v$BACKUP_TABLE_POLICY_MAX_SCHEMA）"
 if ! expected_core_tables_output="$(backup_policy_expected_tables "$schema_version")"; then
@@ -158,27 +154,25 @@ mapfile -t expected_core_tables <<< "$expected_core_tables_output"
 [[ "$config_includes_env" =~ ^[01]$ ]] || die "config_includes_plaintext_env 元数据不合法"
 [[ "$consistency_mode" == "quiesced" || "$consistency_mode" == "best_effort" ]] || \
   die "consistency_mode 元数据不合法"
-if [[ "$format_version" == "3" ]]; then
-  if ((schema_version >= 16)); then
-    sequence_state_values_are_safe "$metadata_message_sequence_last" \
-      "$metadata_message_sequence_called" "$metadata_messages_server_seq_max" || \
-      die "METADATA 中 message_server_seq_seq 状态不安全"
-  else
-    [[ "$metadata_message_sequence_last" == "not_applicable" && \
-        "$metadata_message_sequence_called" == "not_applicable" && \
-        "$metadata_messages_server_seq_max" == "not_applicable" ]] || \
-      die "schema v$schema_version 不应包含 message_server_seq_seq 证据"
-  fi
-  if ((schema_version >= 17)); then
-    sequence_state_values_are_safe "$metadata_sync_sequence_last" \
-      "$metadata_sync_sequence_called" "$metadata_sync_events_seq_max" || \
-      die "METADATA 中 sync_event_seq 状态不安全"
-  else
-    [[ "$metadata_sync_sequence_last" == "not_applicable" && \
-        "$metadata_sync_sequence_called" == "not_applicable" && \
-        "$metadata_sync_events_seq_max" == "not_applicable" ]] || \
-      die "schema v$schema_version 不应包含 sync_event_seq 证据"
-  fi
+if ((schema_version >= 16)); then
+  sequence_state_values_are_safe "$metadata_message_sequence_last" \
+    "$metadata_message_sequence_called" "$metadata_messages_server_seq_max" || \
+    die "METADATA 中 message_server_seq_seq 状态不安全"
+else
+  [[ "$metadata_message_sequence_last" == "not_applicable" && \
+      "$metadata_message_sequence_called" == "not_applicable" && \
+      "$metadata_messages_server_seq_max" == "not_applicable" ]] || \
+    die "schema v$schema_version 不应包含 message_server_seq_seq 证据"
+fi
+if ((schema_version >= 17)); then
+  sequence_state_values_are_safe "$metadata_sync_sequence_last" \
+    "$metadata_sync_sequence_called" "$metadata_sync_events_seq_max" || \
+    die "METADATA 中 sync_event_seq 状态不安全"
+else
+  [[ "$metadata_sync_sequence_last" == "not_applicable" && \
+      "$metadata_sync_sequence_called" == "not_applicable" && \
+      "$metadata_sync_events_seq_max" == "not_applicable" ]] || \
+    die "schema v$schema_version 不应包含 sync_event_seq 证据"
 fi
 
 pg_restore --list "$backup/couplechat.dump" >/dev/null
@@ -410,17 +404,10 @@ while IFS=$'\t' read -r table expected_count extra || [[ -n "${table:-}" ]]; do
   [[ -z "${expected_counts[$table]+x}" ]] || die "core-table-counts.tsv 含重复表: $table"
   expected_counts["$table"]="$expected_count"
 done < "$backup/core-table-counts.tsv"
-if [[ "$format_version" == "3" ]]; then
-  (( ${#expected_counts[@]} == ${#expected_core_tables[@]} )) || die "核心表计数清单与 schema 策略不一致"
-  for table in "${expected_core_tables[@]}"; do
-    [[ -n "${expected_counts[$table]+x}" ]] || die "核心表计数缺少策略要求的表: $table"
-  done
-else
-  readonly -a legacy_required_tables=(accounts messages uploads)
-  for table in "${legacy_required_tables[@]}"; do
-    [[ -n "${expected_counts[$table]+x}" ]] || die "旧版核心表计数缺少最低要求表: $table"
-  done
-fi
+(( ${#expected_counts[@]} == ${#expected_core_tables[@]} )) || die "核心表计数清单与 schema 策略不一致"
+for table in "${expected_core_tables[@]}"; do
+  [[ -n "${expected_counts[$table]+x}" ]] || die "核心表计数缺少策略要求的表: $table"
+done
 
 for table in "${!expected_counts[@]}"; do
   restored_count="$(restore_psql_value "SELECT count(*)::text FROM public.\"$table\";")"
@@ -449,7 +436,7 @@ if ((schema_version >= 17)); then
   IFS=$'\t' read -r restored_sync_sequence_last restored_sync_sequence_called \
     restored_sync_events_seq_max <<< "$restored_sync_state"
 fi
-if [[ "$format_version" == "3" && "$consistency_mode" == "quiesced" ]]; then
+if [[ "$consistency_mode" == "quiesced" ]]; then
   [[ "$restored_message_sequence_last" == "$metadata_message_sequence_last" && \
       "$restored_message_sequence_called" == "$metadata_message_sequence_called" && \
       "$restored_messages_server_seq_max" == "$metadata_messages_server_seq_max" ]] || \
@@ -461,13 +448,6 @@ if [[ "$format_version" == "3" && "$consistency_mode" == "quiesced" ]]; then
 fi
 
 drop_temp_database || die "临时数据库清理失败: $temp_database"
-
-if [[ "$format_version" == "2" ]]; then
-  echo "[verify] 旧版 v2 备份已通过真实数据库恢复与已有计数校验，但旧格式未覆盖全部表，不写 RESTORE-VERIFIED" >&2
-  echo "verification_status=degraded_legacy_v2"
-  echo "[verify] schema=v$schema_version，旧版计数表=${#expected_counts[@]}，媒体抽样=$sampled_count/$manifest_count，一致性=$consistency_mode"
-  exit "$VERIFY_EXIT_DEGRADED_LEGACY_V2"
-fi
 
 # 只有完成真实 restore、schema/全表计数、序列安全性、媒体抽样并成功删掉临时库后才写标记。
 # 标记不参与原始归档哈希，它是供后续轮转识别“已实际恢复验证”的本机操作证明。

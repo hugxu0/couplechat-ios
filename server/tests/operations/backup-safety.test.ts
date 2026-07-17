@@ -101,9 +101,8 @@ test("restore verification writes its marker only after the temporary database i
   assert.match(source, /sha256sums_sha256=\$sha256sums_hash/);
   assert.match(source, /message_server_seq_seq[\s\S]*messages[\s\S]*server_seq/);
   assert.match(source, /sync_event_seq[\s\S]*sync_events[\s\S]*seq/);
-  assert.match(source, /format_version" == "2"[\s\S]*不写 RESTORE-VERIFIED[\s\S]*exit "\$VERIFY_EXIT_DEGRADED_LEGACY_V2"/);
-  assert.match(source, /VERIFY_EXIT_DEGRADED_LEGACY_V2=3/);
-  assert.match(source, /verification_status=degraded_legacy_v2/);
+  assert.match(source, /format_version" == "3"/);
+  assert.doesNotMatch(source, /degraded_legacy_v2|VERIFY_EXIT_DEGRADED_LEGACY_V2/);
 });
 
 test("backup metadata is portable and records release plus sequence evidence", () => {

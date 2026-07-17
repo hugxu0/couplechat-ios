@@ -47,17 +47,17 @@ final class ChatComposerView: UIView, UITextViewDelegate {
 
     private let stack = UIStackView()
     private let typingLabel = UILabel()
-    private let replyContainer = ChatGlassView(style: .systemThinMaterial, cornerRadius: 16)
+    private let replyContainer = ChatGlassView(cornerRadius: 16)
     private let replyTitleLabel = UILabel()
     private let replyBodyLabel = UILabel()
     private let mediaPreviewContainer = UIStackView()
     private let mediaScrollView = UIScrollView()
     private let mediaStack = UIStackView()
     private let inputRow = UIStackView()
-    private let inputCapsule = ChatGlassView(style: .systemThinMaterial, cornerRadius: 22)
+    private let inputCapsule = ChatGlassView(cornerRadius: 22)
     private let inputCapsuleRow = UIStackView()
-    private let catBackgroundView = ChatGlassView(style: .systemThinMaterial, cornerRadius: 22)
-    private let actionBackgroundView = ChatGlassView(style: .systemThinMaterial, cornerRadius: 22)
+    private let catBackgroundView = ChatGlassView(cornerRadius: 22)
+    private let actionBackgroundView = ChatGlassView(cornerRadius: 22)
 
     private let catButton = UIButton(type: .system)
     private let emojiButton = UIButton(type: .system)
@@ -120,10 +120,10 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         }
         // 与所有内部文字、图标共用 usesLightContent：暗背景只能是偏暗玻璃 + 白字，
         // 亮背景只能是偏亮玻璃 + 黑字，避免面板和占位文案同时发白。
-        replyContainer.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18, borderAlpha: usesLightContent ? 0.14 : 0.20)
-        catBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18, borderAlpha: usesLightContent ? 0.14 : 0.20)
-        inputCapsule.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.16 : 0.20, borderAlpha: usesLightContent ? 0.14 : 0.20)
-        actionBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18, borderAlpha: usesLightContent ? 0.14 : 0.20)
+        replyContainer.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18)
+        catBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18)
+        inputCapsule.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.16 : 0.20)
+        actionBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18)
         updateWaveBars(level: 0.35, cancelled: recordingCancelled)
         updateActionButton()
     }
@@ -364,7 +364,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         emojiButton.addAction(UIAction { [weak self] _ in self?.delegate?.composerDidTapEmoji() }, for: .touchUpInside)
 
         inputCapsule.translatesAutoresizingMaskIntoConstraints = false
-        inputCapsule.update(cornerRadius: 22, tintAlpha: 0.22, borderAlpha: 0.22)
+        inputCapsule.update(cornerRadius: 22)
 
         inputCapsuleRow.axis = .horizontal
         inputCapsuleRow.alignment = .center
@@ -475,7 +475,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     }
 
     private func configureCatButton() {
-        catBackgroundView.update(cornerRadius: 22, tintAlpha: 0.20, borderAlpha: 0.22)
+        catBackgroundView.update(cornerRadius: 22)
         catBackgroundView.translatesAutoresizingMaskIntoConstraints = false
 
         catButton.setImage(UIImage(systemName: AccountPresentation.dajuIconName), for: .normal)
@@ -498,7 +498,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     }
 
     private func configureActionButton() {
-        actionBackgroundView.update(cornerRadius: 22, tintAlpha: 0.20, borderAlpha: 0.22)
+        actionBackgroundView.update(cornerRadius: 22)
         actionBackgroundView.translatesAutoresizingMaskIntoConstraints = false
 
         actionButton.backgroundColor = .clear

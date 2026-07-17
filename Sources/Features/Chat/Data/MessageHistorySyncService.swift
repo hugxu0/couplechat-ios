@@ -30,9 +30,6 @@ struct MessageHistorySyncService {
         var localCount = await persistence.messageCount(channel: channel.rawValue)
         let defaults = UserDefaults.standard
         let keys = Self.checkpointKeys(username: session.username, channel: channel)
-        // v1 断点只保存时间，不知道它对应的是不是当前 SQLite 文件。一旦本地库被
-        // 清理、恢复或出现中间缺口，继续使用它就会永远绕过缺失区间。
-        defaults.removeObject(forKey: keys.legacyCursor)
         var cursor = defaults.object(forKey: keys.cursor) as? Double
         let checkpointLocalCount = defaults.object(forKey: keys.localCount) as? Int
         if cursor != nil,
@@ -140,20 +137,18 @@ struct MessageHistorySyncService {
     private static func checkpointKeys(
         username: String,
         channel: ChatChannel
-    ) -> (cursor: String, localCount: String, legacyCursor: String) {
+    ) -> (cursor: String, localCount: String) {
         let suffix = "\(username).\(channel.rawValue)"
         return (
             cursor: "history.sync.v2.cursor.\(suffix)",
-            localCount: "history.sync.v2.local-count.\(suffix)",
-            legacyCursor: "history.sync.cursor.\(suffix)")
+            localCount: "history.sync.v2.local-count.\(suffix)")
     }
 
     private static func clearCheckpoint(
-        _ keys: (cursor: String, localCount: String, legacyCursor: String),
+        _ keys: (cursor: String, localCount: String),
         defaults: UserDefaults
     ) {
         defaults.removeObject(forKey: keys.cursor)
         defaults.removeObject(forKey: keys.localCount)
-        defaults.removeObject(forKey: keys.legacyCursor)
     }
 }

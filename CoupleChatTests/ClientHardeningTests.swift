@@ -65,18 +65,6 @@ final class ClientHardeningTests: XCTestCase {
         }
     }
 
-    func testLegacyFavoritesOnlyMigrateCoupleChannel() {
-        let couple = MediaBrowserItem(message: message(id: "couple", channel: "couple"))!
-        let ai = MediaBrowserItem(message: message(id: "ai", channel: "ai"))!
-        var legacyUnknownMessage = message(id: "unknown", channel: "couple")
-        legacyUnknownMessage.channel = "private-x"
-        let unknown = MediaBrowserItem(message: legacyUnknownMessage)!
-
-        XCTAssertEqual(
-            MediaFavoriteStore.legacyItemsEligibleForMigration([ai, couple, unknown]).map(\.id),
-            ["couple"])
-    }
-
     func testMemoryImportanceIsPreservedWhenToggleMeaningDidNotChange() {
         XCTAssertEqual(AIMemoryDetailView.resolvedImportance(original: 1, isImportant: false), 1)
         XCTAssertEqual(AIMemoryDetailView.resolvedImportance(original: 4, isImportant: true), 4)

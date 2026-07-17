@@ -134,7 +134,6 @@ struct BarkSettingsSheet: View {
 
             let defaults = UserDefaults.standard
             defaults.set(snapshot.enabled, forKey: enabledStorageKey(snapshot.username))
-            removeLegacySecrets(for: snapshot.username, defaults: defaults)
             busy = false
             saveTask = nil
             savedKey = snapshot.enabled ? snapshot.key : ""
@@ -149,27 +148,12 @@ struct BarkSettingsSheet: View {
         if let saved = Keychain.loadBarkKey(for: username) {
             keyInput = saved
             savedKey = saved
-            removeLegacySecrets(for: username, defaults: defaults)
-        } else if let legacy = legacySecret(for: username, defaults: defaults),
-                  !legacy.isEmpty,
-                  Keychain.saveBarkKey(legacy, for: username) {
-            keyInput = legacy
-            savedKey = legacy
-            removeLegacySecrets(for: username, defaults: defaults)
         } else {
             keyInput = ""
             savedKey = ""
         }
         let accountEnabledKey = enabledStorageKey(username)
-        if defaults.object(forKey: accountEnabledKey) != nil {
-            enabled = defaults.bool(forKey: accountEnabledKey)
-        } else if defaults.object(forKey: "bark.enabled") != nil {
-            enabled = defaults.bool(forKey: "bark.enabled")
-            defaults.set(enabled, forKey: accountEnabledKey)
-            defaults.removeObject(forKey: "bark.enabled")
-        } else {
-            enabled = false
-        }
+        enabled = defaults.bool(forKey: accountEnabledKey)
     }
 
     private var trimmedKey: String {
@@ -197,17 +181,4 @@ struct BarkSettingsSheet: View {
         "bark.enabled.\(username)"
     }
 
-    private func legacySecretStorageKey(_ username: String) -> String {
-        "bark.key.\(username)"
-    }
-
-    private func legacySecret(for username: String, defaults: UserDefaults) -> String? {
-        defaults.string(forKey: legacySecretStorageKey(username))
-            ?? defaults.string(forKey: "bark.key")
-    }
-
-    private func removeLegacySecrets(for username: String, defaults: UserDefaults) {
-        defaults.removeObject(forKey: legacySecretStorageKey(username))
-        defaults.removeObject(forKey: "bark.key")
-    }
 }

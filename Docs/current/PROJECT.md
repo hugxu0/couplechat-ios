@@ -26,6 +26,7 @@
 - 客户端版本 `0.2.0 (11)`，Bundle ID `com.hugxu0.couplechat.native`，最低 iOS/iPadOS 26，Swift 5.9；工程由 XcodeGen 的 `project.yml` 生成。
 - 客户端依赖精确版本 Socket.IO Client Swift `16.1.0` 和 GLTFKit2 `0.5.15`；3D 模型 `Sources/Resources/cute_cat.glb` 已受 Git 版本控制并随 IPA 发布，授权见同目录 `ThirdPartyNotices.txt`。
 - 服务端使用 Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL，生产公开基地址为 `https://hoo66.top`。
+- 客户端和服务端只维护当前发布线的同一份 REST/Socket 契约，不保留已完成升级的旧确认或重复字段兼容层。
 - 目标设备固定为两台 iPhone 17 和一台 iPad，均运行最新稳定 iOS/iPadOS 26；签名使用免费 Apple Personal Team，不支持 TestFlight/App Store。
 
 ## 已实现
@@ -68,7 +69,7 @@
 - 清空 App 数据后，已经丢失本地文件的失败媒体无法继续重传。
 - iOS 自动验证依赖 GitHub Actions 或 Mac；真机仍需检查视觉、手势、蓝牙音频和双设备行为。
 - GitHub 当前只生成 unsigned IPA；免费账号签名 7 天到期，三台设备需要定期刷新。完整流程见 [IOS_SIDELOAD.md](../operations/IOS_SIDELOAD.md)。
-- 备份与恢复脚本仍共享 v1–v31 全表策略并校验关键序列；定时任务维护现行基线，普通代码发布不重复完整备份/恢复，只有 migration、数据修复、媒体结构变化或恢复切换才走 quiesced 备份路径。旧备份和旧发布物在确认现行基线后清理，边界见 [DEPLOYMENT.md](../operations/DEPLOYMENT.md)。
+- 备份与恢复脚本仍共享 v1–v31 全表策略并校验关键序列，但只接受当前备份格式 v3；定时任务维护现行基线，普通代码发布不重复完整备份/恢复，只有 migration、数据修复、媒体结构变化或恢复切换才走 quiesced 备份路径。旧备份和旧发布物在确认现行基线后清理，边界见 [DEPLOYMENT.md](../operations/DEPLOYMENT.md)。
 - Sync 提交顺序、SQLite 失败传播、频道隔离、Sync 协议版本、3D 加载状态和生产端口的代码修复已进入当前工作树；账号切换竞态、媒体 I/O、分页、生产安全和备份状态仍以 [KNOWN_ISSUES.md](KNOWN_ISSUES.md) 为准。
 
 ## 架构保护边界

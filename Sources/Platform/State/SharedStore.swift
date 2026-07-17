@@ -76,33 +76,18 @@ final class SharedStore: ObservableObject {
 
     var coupleDates: CoupleDates {
         let v = sharedValue("dates")
-        return CoupleDates(
-            together: v?["together"] as? String,
-            lastMeet: v?["lastMeet"] as? String,
-            lastFight: v?["lastFight"] as? String)
+        return CoupleDates(together: v?["together"] as? String)
     }
 
     func saveCoupleDates(_ dates: CoupleDates, session: Session?) {
         var value: [String: Any] = [:]
         if let t = dates.together { value["together"] = t }
-        if let m = dates.lastMeet { value["lastMeet"] = m }
-        if let f = dates.lastFight { value["lastFight"] = f }
         setShared("dates", value: value, session: session)
     }
 
     var anniversaries: [AnniversaryEntry] {
-        if let raw = sharedValue("anniversaries")?["items"] as? [[String: Any]] {
-            return raw.compactMap { AnniversaryEntry(dict: $0) }
-        }
-        var legacy: [AnniversaryEntry] = []
-        let dates = coupleDates
-        if let m = dates.lastMeet {
-            legacy.append(AnniversaryEntry(id: "legacy-meet", title: "距离上次见面", date: m, direction: .up, icon: "figure.2.arms.open"))
-        }
-        if let f = dates.lastFight {
-            legacy.append(AnniversaryEntry(id: "legacy-fight", title: "距离上次吵架", date: f, direction: .up, icon: "cloud.sun"))
-        }
-        return legacy
+        guard let raw = sharedValue("anniversaries")?["items"] as? [[String: Any]] else { return [] }
+        return raw.compactMap { AnniversaryEntry(dict: $0) }
     }
 
     func saveAnniversaries(_ items: [AnniversaryEntry], session: Session?) {
