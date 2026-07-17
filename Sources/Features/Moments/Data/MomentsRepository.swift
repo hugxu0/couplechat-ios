@@ -33,41 +33,6 @@ struct MomentsRepository {
         return MomentPage(values: payload.albums ?? [], nextCursor: payload.nextCursor)
     }
 
-    func onThisDay(token: String) async throws -> [OnThisDayMoment] {
-        var assets: [MomentAsset] = []
-        var cursor: String?
-        var stableDate: String?
-        var pageCount = 0
-        repeat {
-            var query = [
-                URLQueryItem(name: "timezone", value: TimeZone.current.identifier),
-                URLQueryItem(name: "limit", value: "100"),
-            ]
-            if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
-            if let stableDate { query.append(URLQueryItem(name: "date", value: stableDate)) }
-            let data = try await request(
-                path: "api/v2/media/on-this-day", query: query, token: token)
-            let payload = try JSONDecoder().decode(OnThisDayEnvelope.self, from: data)
-            stableDate = payload.date
-            assets.append(contentsOf: payload.assets)
-            cursor = payload.hasMore ? payload.nextCursor : nil
-            pageCount += 1
-        } while cursor != nil && pageCount < 100
-        let currentYear = Calendar.current.component(.year, from: Date())
-        let grouped = Dictionary(grouping: assets) { asset in
-            max(1, currentYear - Calendar.current.component(.year, from: asset.date))
-        }
-        return grouped.keys.sorted().compactMap { yearsAgo in
-            guard let assets = grouped[yearsAgo], !assets.isEmpty else { return nil }
-            return OnThisDayMoment(
-                id: "\(stableDate ?? "today")-\(yearsAgo)",
-                yearsAgo: yearsAgo,
-                title: "\(yearsAgo) 年前的今天",
-                date: stableDate ?? "",
-                assets: assets)
-        }
-    }
-
     func chatStats(token: String) async throws -> ChatStatsRows {
         let data = try await request(path: "api/v2/chat/stats", token: token)
         let payload = try JSONDecoder().decode(ChatStatsEnvelope.self, from: data)
@@ -206,13 +171,6 @@ private extension MomentsRepository {
         let nextCursor: String?
         let hasMore: Bool?
     }
-    struct OnThisDayEnvelope: Decodable {
-        let date: String
-        let timezone: String
-        let assets: [MomentAsset]
-        let nextCursor: String?
-        let hasMore: Bool
-    }
     struct ChatStatsEnvelope: Decodable {
         let days: [ChatStatsRow]
         let months: [ChatStatsRow]
@@ -257,8 +215,4 @@ struct ChatStatsRow: Decodable, Equatable {
     let bucket: String
     let sender: String
     let count: Int
-}
-
-private extension MomentAsset {
-    var date: Date { Date(timeIntervalSince1970: Double(takenAt) / 1_000) }
 }

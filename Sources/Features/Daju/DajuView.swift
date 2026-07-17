@@ -67,11 +67,10 @@ struct DajuView: View {
                     StatusBanner(text: message, kind: .warning)
                 }
             }
-            .frame(maxWidth: 820)
             .padding(.horizontal, DS.Spacing.page)
             .padding(.top, 8)
             .padding(.bottom, 96)
-            .frame(maxWidth: .infinity)
+            .appReadableWidth(820)
         }
         .scrollIndicators(.hidden)
     }

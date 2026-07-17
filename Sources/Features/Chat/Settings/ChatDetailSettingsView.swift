@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - 聊天详情 / 管理页
 
 struct ChatDetailSettingsView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let channel: ChatChannel
     let partnerName: String
     let partnerAvatar: String
@@ -48,13 +49,16 @@ struct ChatDetailSettingsView: View {
                 onJump: onJumpToMessage,
                 onJumpDate: onJumpToDate
             )
+            .presentationSizing(.form)
         }
         .sheet(isPresented: $showMedia) {
             MediaGallerySheet(channel: channel)
+                .presentationSizing(.form)
         }
         .sheet(isPresented: $showWallpaper) {
             WallpaperPickerSheet(channel: channel)
                 .presentationDetents([.medium, .large])
+                .presentationSizing(.form)
         }
         .alert("设置备注", isPresented: $showAliasPrompt) {
             TextField("备注名（最多 12 字）", text: $aliasText)
@@ -84,10 +88,10 @@ struct ChatDetailSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(displayName)
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .font(DS.Typo.body.weight(.semibold))
                         .foregroundStyle(DS.Palette.textPrimary)
                     Text(partnerOnline ? "在线" : "离线")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.Typo.caption.weight(.medium))
                         .foregroundStyle(partnerOnline ? DS.Palette.green : DS.Palette.textSecondary)
                 }
 
@@ -148,9 +152,9 @@ struct ChatDetailSettingsView: View {
                         .foregroundStyle(DS.Palette.textPrimary)
                     Spacer()
                     Text(displayName)
-                        .font(.system(size: 14))
+                        .font(DS.Typo.secondary)
                         .foregroundStyle(DS.Palette.textSecondary)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(DS.Palette.textSecondary.opacity(0.4))
@@ -177,7 +181,7 @@ struct ChatDetailSettingsView: View {
                     .foregroundStyle(DS.Palette.textPrimary)
                 Spacer()
                 Text("\(mediaItemCount) 项")
-                    .font(.system(size: 14))
+                    .font(DS.Typo.secondary)
                     .foregroundStyle(DS.Palette.textSecondary)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))

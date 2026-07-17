@@ -4,6 +4,7 @@ import PhotosUI
 // 我的页：身份卡 + 外观（主题色/深浅模式）+ 日期设置 + 离线通知 + 退出登录。
 
 struct AccountView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
 
@@ -13,7 +14,7 @@ struct AccountView: View {
 
     // 头像更换
     @State private var customAvatar: UIImage?
-    @State private var showAvatarActionSheet = false
+    @State private var avatarMenuSource: AvatarMenuSource?
     @State private var showCamera = false
     @State private var showPhotoPicker = false
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -35,6 +36,7 @@ struct AccountView: View {
                 }
                 .padding(.horizontal, DS.Spacing.page)
                 .padding(.bottom, 90)
+                .appReadableWidth(760)
             }
             .scrollIndicators(.hidden)
             .background(AppPageBackground())
@@ -42,29 +44,16 @@ struct AccountView: View {
             .sheet(isPresented: $showDateEditor) {
                 DateEditorSheet()
                     .presentationDetents([.medium])
+                    .presentationSizing(.form)
             }
             .sheet(isPresented: $showBarkSheet) {
                 BarkSettingsSheet()
                     .presentationDetents([.medium])
+                    .presentationSizing(.form)
             }
             .fullScreenCover(isPresented: $showCamera) {
                 AccountCameraPicker(image: $customAvatar)
                     .ignoresSafeArea()
-            }
-            .confirmationDialog("更换头像", isPresented: $showAvatarActionSheet, titleVisibility: .visible) {
-                if avatarTarget == .daju {
-                    Button("使用默认大橘头像") {
-                        useDefaultDajuAvatar()
-                    }
-                }
-                Button("从手机相册选择") {
-                    showPhotoPicker = true
-                }
-                Button("拍照") {
-                    pendingCameraUpload = true
-                    showCamera = true
-                }
-                Button("取消", role: .cancel) {}
             }
             .confirmationDialog("确定退出登录吗？", isPresented: $showLogoutConfirm, titleVisibility: .visible) {
                 Button("退出登录", role: .destructive) {
@@ -115,10 +104,23 @@ struct AccountView: View {
         }
     }
 
-    private func openAvatarPicker(for target: AvatarTarget) {
-        avatarTarget = target
+    private func openAvatarMenu(from source: AvatarMenuSource) {
+        avatarTarget = source.target
         customAvatar = nil
-        showAvatarActionSheet = true
+        avatarMenuSource = source
+    }
+
+    private func avatarMenuPresented(for source: AvatarMenuSource) -> Binding<Bool> {
+        Binding(
+            get: { avatarMenuSource == source },
+            set: { isPresented in
+                if !isPresented, avatarMenuSource == source { avatarMenuSource = nil }
+            })
+    }
+
+    private func deferAvatarPresentation(_ action: @escaping () -> Void) {
+        avatarMenuSource = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: action)
     }
 
     private func useDefaultDajuAvatar() {
@@ -146,49 +148,87 @@ struct AccountView: View {
 
     // MARK: - 身份横栏
     private var header: some View {
-        HStack(spacing: DS.Spacing.card - 4) {
-            avatarView
-                .onTapGesture {
-                    Haptics.light()
-                    openAvatarPicker(for: .me)
-                }
-
-            VStack(alignment: .leading, spacing: DS.Spacing.tight) {
-                Text(store.session?.name ?? "未登录")
-                    .font(DS.Typo.button)
-                    .foregroundStyle(DS.Palette.textPrimary)
-                if let partner = store.partner {
-                    HStack(spacing: DS.Spacing.tight) {
-                        Text("和")
-                        Text(partner.name).fontWeight(.semibold).foregroundStyle(theme.accent.color)
-                        Text("在一起")
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: DS.Spacing.gap) {
+                    HStack {
+                        profileAvatarButton
+                        Spacer()
+                        profileCameraButton
                     }
-                    .font(DS.Typo.secondary)
-                    .foregroundStyle(DS.Palette.textSecondary)
+                    identityBlock
                 }
-                Text(store.connected ? "已连接 · hoo66.top" : (store.lastConnectionError ?? "未连接"))
-                    .font(DS.Typo.caption.weight(.medium))
-                    .foregroundStyle(store.connected ? DS.Palette.textSecondary : DS.Palette.red)
+            } else {
+                HStack(spacing: DS.Spacing.card - 4) {
+                    profileAvatarButton
+                    identityBlock
+                    Spacer()
+                    profileCameraButton
+                }
             }
-
-            Spacer()
-
-            Button {
-                Haptics.light()
-                openAvatarPicker(for: .me)
-            } label: {
-                Image(systemName: "camera.fill")
-                    .font(DS.Typo.secondary.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 34, height: 34)
-                    .background(theme.accent.color, in: Circle())
-            }
-            .buttonStyle(PressableStyle())
-            .accessibilityLabel("更换头像")
         }
         .padding(.horizontal, DS.Spacing.card)
         .padding(.vertical, DS.Spacing.card - 4)
         .dsCard()
+    }
+
+    private var profileAvatarButton: some View {
+        Button {
+            Haptics.light()
+            openAvatarMenu(from: .profileAvatar)
+        } label: {
+            avatarView
+        }
+        .buttonStyle(.plain)
+        .popover(
+            isPresented: avatarMenuPresented(for: .profileAvatar),
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            avatarActionMenu(for: .me)
+                .presentationCompactAdaptation(.popover)
+        }
+        .accessibilityLabel("更换我的头像")
+    }
+
+    private var profileCameraButton: some View {
+        Button {
+            Haptics.light()
+            openAvatarMenu(from: .profileCamera)
+        } label: {
+            Image(systemName: "camera.fill")
+                .font(DS.Typo.secondary.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(theme.accent.color, in: Circle())
+        }
+        .buttonStyle(PressableStyle())
+        .popover(
+            isPresented: avatarMenuPresented(for: .profileCamera),
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            avatarActionMenu(for: .me)
+                .presentationCompactAdaptation(.popover)
+        }
+        .accessibilityLabel("更换头像")
+    }
+
+    private var identityBlock: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.tight) {
+            Text(store.session?.name ?? "未登录")
+                .font(DS.Typo.button)
+                .foregroundStyle(DS.Palette.textPrimary)
+            if let partner = store.partner {
+                Text("和 \(partner.name) 在一起")
+                    .font(DS.Typo.secondary)
+                    .foregroundStyle(DS.Palette.textSecondary)
+            }
+            Text(store.connected ? "已连接 · hoo66.top" : (store.lastConnectionError ?? "未连接"))
+                .font(DS.Typo.caption.weight(.medium))
+                .foregroundStyle(store.connected ? DS.Palette.textSecondary : DS.Palette.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder
@@ -234,7 +274,15 @@ struct AccountView: View {
                 avatarURL: store.avatarURL(for: "ai"),
                 avatarText: store.avatarText(for: "ai")
             ) {
-                openAvatarPicker(for: .daju)
+                openAvatarMenu(from: .dajuAvatar)
+            }
+            .popover(
+                isPresented: avatarMenuPresented(for: .dajuAvatar),
+                attachmentAnchor: .rect(.bounds),
+                arrowEdge: .bottom
+            ) {
+                avatarActionMenu(for: .daju)
+                    .presentationCompactAdaptation(.popover)
             }
             divider
             NavigationLink {
@@ -327,6 +375,7 @@ struct AccountView: View {
                 Text(subtitle)
                     .font(DS.Typo.caption)
                     .foregroundStyle(DS.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             Image(systemName: "chevron.right")
@@ -362,6 +411,7 @@ struct AccountView: View {
                     Text(subtitle)
                         .font(DS.Typo.caption)
                         .foregroundStyle(DS.Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 AvatarBadge(
@@ -380,9 +430,74 @@ struct AccountView: View {
         }
         .buttonStyle(PressableStyle())
     }
+
+    private func avatarActionMenu(for target: AvatarTarget) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(target == .daju ? "更换大橘头像" : "更换头像")
+                .font(DS.Typo.caption.weight(.semibold))
+                .foregroundStyle(DS.Palette.textSecondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+
+            if target == .daju {
+                avatarMenuButton("使用默认大橘头像", systemImage: AccountPresentation.dajuIconName) {
+                    avatarMenuSource = nil
+                    useDefaultDajuAvatar()
+                }
+            }
+
+            avatarMenuButton("从手机相册选择", systemImage: "photo.on.rectangle") {
+                deferAvatarPresentation { showPhotoPicker = true }
+            }
+            avatarMenuButton("拍照", systemImage: "camera") {
+                deferAvatarPresentation {
+                    pendingCameraUpload = true
+                    showCamera = true
+                }
+            }
+            Divider().padding(.horizontal, 8)
+            avatarMenuButton("取消", systemImage: "xmark") {
+                avatarMenuSource = nil
+            }
+        }
+        .padding(6)
+        .frame(
+            minWidth: 230,
+            idealWidth: dynamicTypeSize.isAccessibilitySize ? 320 : 250,
+            maxWidth: 360)
+    }
+
+    private func avatarMenuButton(
+        _ title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(DS.Typo.body)
+                .foregroundStyle(DS.Palette.textPrimary)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+    }
 }
 
 private enum AvatarTarget: Equatable {
     case me
     case daju
+}
+
+private enum AvatarMenuSource: Equatable {
+    case profileAvatar
+    case profileCamera
+    case dajuAvatar
+
+    var target: AvatarTarget {
+        switch self {
+        case .profileAvatar, .profileCamera: return .me
+        case .dajuAvatar: return .daju
+        }
+    }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - 聊天统计卡（近30天 / 月度，数据来自本地聊天缓存，支持横向滚动）
 
 struct ChatStatsCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var theme: ThemeManager
 
@@ -61,12 +62,28 @@ struct ChatStatsCard: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("聊天时光")
-                .font(DS.Typo.cardTitle)
-                .foregroundStyle(DS.Palette.textPrimary)
-            Spacer()
-            let (label, total, delta) = headline()
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                headerTitle
+                Spacer()
+                headlineView
+            }
+            VStack(alignment: .leading, spacing: DS.Spacing.tight) {
+                headerTitle
+                headlineView
+            }
+        }
+    }
+
+    private var headerTitle: some View {
+        Text("聊天时光")
+            .font(DS.Typo.cardTitle)
+            .foregroundStyle(DS.Palette.textPrimary)
+    }
+
+    private var headlineView: some View {
+        let (label, total, delta) = headline()
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(label)
                 .font(DS.Typo.caption)
                 .foregroundStyle(DS.Palette.textSecondary)
@@ -139,7 +156,7 @@ struct ChatStatsCard: View {
                 .onAppear { proxy.scrollTo("day-latest", anchor: .trailing) }
                 .onChange(of: buckets.days.count) { _, _ in proxy.scrollTo("day-latest", anchor: .trailing) }
             }
-            .frame(height: 92)
+            .frame(height: dynamicTypeSize.isAccessibilitySize ? 116 : 92)
         case .months:
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -149,7 +166,7 @@ struct ChatStatsCard: View {
                 .onAppear { proxy.scrollTo("month-latest", anchor: .trailing) }
                 .onChange(of: buckets.months.count) { _, _ in proxy.scrollTo("month-latest", anchor: .trailing) }
             }
-            .frame(height: 92)
+            .frame(height: dynamicTypeSize.isAccessibilitySize ? 116 : 92)
         }
     }
 
@@ -172,12 +189,12 @@ struct ChatStatsCard: View {
                     }
                     .frame(height: 64)
                     .frame(width: barWidth)
-                    .background(DS.Palette.innerSurface.opacity(0.72))
+                    .background(DS.Palette.textPrimary.opacity(0.075))
                     .clipShape(Capsule())
                     .overlay {
                         Capsule()
                             .strokeBorder(
-                                selected ? theme.accent.color : .white.opacity(0.15),
+                                selected ? theme.accent.color : DS.Palette.textPrimary.opacity(0.12),
                                 lineWidth: selected ? 1.5 : 0.7)
                     }
                     Text(bar.label)
@@ -216,14 +233,23 @@ struct ChatStatsCard: View {
         let me = store.session
         let partner = store.partner
 
-        HStack(spacing: 18) {
+        let content = Group {
             if let me {
                 legend(color: DS.Palette.member(me.username), name: me.name, count: counts[me.username] ?? 0)
             }
             if let partner {
                 legend(color: DS.Palette.member(partner.username), name: partner.name, count: counts[partner.username] ?? 0)
             }
-            Spacer()
+        }
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: DS.Spacing.compact) { content }
+            } else {
+                HStack(spacing: 18) {
+                    content
+                    Spacer()
+                }
+            }
         }
     }
 

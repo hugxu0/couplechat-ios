@@ -8,7 +8,6 @@ import {
   deleteAlbum,
   listAlbumItems,
   listAlbums,
-  onThisDay,
   removeAlbumItem,
   updateAlbum,
   upsertMediaNote,
@@ -27,22 +26,6 @@ const albumPatch = z.object({
 const versionBody = z.object({ baseVersion: z.number().int().min(0) });
 const pageQuery = z.object({ cursor: z.string().max(500).optional(), limit: z.coerce.number().int().min(1).max(100).default(30) });
 const noteBody = z.object({ text: z.string().trim().max(2_000), baseVersion: z.number().int().min(0).optional() });
-const onThisDayQuery = pageQuery.extend({
-  timezone: z.string().min(1).max(80).default("Asia/Shanghai"),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-});
-
-function validTimezone(timezone: string): boolean {
-  try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(); return true; } catch { return false; }
-}
-
-function localDate(timezone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts();
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${value.year}-${value.month}-${value.day}`;
-}
 
 export async function registerAlbumRoutes(app: FastifyInstance) {
   app.get("/api/v2/albums", { preHandler: requireAuth }, async (request, reply) => {
@@ -143,20 +126,5 @@ export async function registerAlbumRoutes(app: FastifyInstance) {
     if (!result) return reply.code(404).send({ error: "not_found" });
     if (result.conflict) return reply.code(409).send({ error: "version_conflict", version: result.version });
     return { note: result.note };
-  });
-
-  app.get("/api/v2/media/on-this-day", { preHandler: requireAuth }, async (request, reply) => {
-    if (!request.user) return reply.code(401).send({ error: "unauthorized" });
-    const query = onThisDayQuery.safeParse(request.query);
-    if (!query.success || !validTimezone(query.data.timezone)) {
-      return reply.code(400).send({ error: "invalid_request" });
-    }
-    const date = query.data.date ?? localDate(query.data.timezone);
-    const parsedDate = new Date(`${date}T00:00:00Z`);
-    if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
-      return reply.code(400).send({ error: "invalid_request" });
-    }
-    const result = await onThisDay(request.user, { ...query.data, date });
-    return result ?? reply.code(409).send({ error: "couple_required" });
   });
 }

@@ -44,8 +44,6 @@ final class ChatViewController: UIViewController {
     var topOverlayInset: CGFloat = 96
     var composerUsesLightContent = false
     var wallpaperAppearance: WallpaperAppearance
-    var dynamicallySamplesComposerTone = false
-    var lastComposerSampleFrame: CGRect = .null
     var usesDarkChatSurface = false
     var timelineUsesLightContent = false
     var appliedAccent: AccentChoice?
@@ -66,6 +64,8 @@ final class ChatViewController: UIViewController {
     var hasCompletedEntryBootstrap = false
     var entryBootstrapTask: Task<Void, Never>?
     var jumpTask: Task<Void, Never>?
+    var filePreviewTask: Task<Void, Never>?
+    var filePreviewSource: ChatFilePreviewSource?
 
     var voicePlayer: AVAudioPlayer?
     var voicePlaybackTimer: Timer?
@@ -94,7 +94,6 @@ final class ChatViewController: UIViewController {
         theme: ThemeManager,
         composerUsesLightContent: Bool,
         wallpaperAppearance: WallpaperAppearance,
-        dynamicallySamplesComposerTone: Bool,
         usesDarkChatSurface: Bool,
         timelineUsesLightContent: Bool
     ) {
@@ -103,7 +102,6 @@ final class ChatViewController: UIViewController {
         self.theme = theme
         self.composerUsesLightContent = composerUsesLightContent
         self.wallpaperAppearance = wallpaperAppearance
-        self.dynamicallySamplesComposerTone = dynamicallySamplesComposerTone
         self.usesDarkChatSurface = usesDarkChatSurface
         self.timelineUsesLightContent = timelineUsesLightContent
         super.init(nibName: nil, bundle: nil)
@@ -125,6 +123,7 @@ final class ChatViewController: UIViewController {
         voicePlaybackTimer?.invalidate()
         entryBootstrapTask?.cancel()
         jumpTask?.cancel()
+        filePreviewTask?.cancel()
     }
 
     override func viewDidLoad() {
@@ -239,30 +238,30 @@ final class ChatViewController: UIViewController {
         if !keyboardLayoutAnimationActive {
             applyInputLayout(duration: 0, curve: .curveEaseOut)
         }
-        refreshComposerSurfaceTone()
         timelineController.scheduleInitialPositioning()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
+        let styleChanged = previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle
+        let contentSizeChanged = previousTraitCollection?.preferredContentSizeCategory
+            != traitCollection.preferredContentSizeCategory
+        if contentSizeChanged {
+            timelineController.invalidateAppearance()
+            applyInputLayout(duration: 0, curve: .curveEaseOut)
+        }
+        guard styleChanged else { return }
         wallpaperAppearance = traitCollection.userInterfaceStyle == .dark ? .dark : .light
         let wallpaper = theme.wallpaper(for: channel, appearance: wallpaperAppearance)
-        let timelineLuminance = theme.customWallpaperLuminance(
+        let surfaceLuminance = theme.customWallpaperLuminance(
             for: channel,
             appearance: wallpaperAppearance,
-            region: .timelineCenter
+            region: .wholeChat
         ) ?? wallpaper.fallbackSurfaceLuminance(for: wallpaperAppearance)
-        let timelineTone = ChatSurfaceTone(luminance: timelineLuminance).usesLightContent
-        usesDarkChatSurface = timelineTone
-        timelineUsesLightContent = timelineTone
-
-        let composerLuminance = theme.customWallpaperLuminance(
-            for: channel,
-            appearance: wallpaperAppearance,
-            region: .composerCenter
-        ) ?? wallpaper.fallbackSurfaceLuminance(for: wallpaperAppearance)
-        composerUsesLightContent = ChatSurfaceTone(luminance: composerLuminance).usesLightContent
+        let surfaceTone = ChatSurfaceTone(luminance: surfaceLuminance).usesLightContent
+        usesDarkChatSurface = surfaceTone
+        timelineUsesLightContent = surfaceTone
+        composerUsesLightContent = surfaceTone
         composer.applyTheme(theme, usesLightContent: composerUsesLightContent)
         stickerPanel?.applyTheme(
             accentColor: theme.accent.uiColor,
@@ -278,35 +277,27 @@ final class ChatViewController: UIViewController {
         topOverlayInset: CGFloat,
         composerUsesLightContent: Bool,
         wallpaperAppearance: WallpaperAppearance,
-        dynamicallySamplesComposerTone: Bool,
         usesDarkChatSurface: Bool,
         timelineUsesLightContent: Bool
     ) {
         let storeChanged = self.store !== store
         let themeChanged = self.theme !== theme
         let composerToneChanged = self.composerUsesLightContent != composerUsesLightContent
-        let dynamicToneChanged = self.dynamicallySamplesComposerTone != dynamicallySamplesComposerTone
         let wallpaperAppearanceChanged = self.wallpaperAppearance != wallpaperAppearance
         let surfaceChanged = self.usesDarkChatSurface != usesDarkChatSurface
         let timelineChanged = self.timelineUsesLightContent != timelineUsesLightContent
         self.store = store
         self.theme = theme
         self.wallpaperAppearance = wallpaperAppearance
-        self.dynamicallySamplesComposerTone = dynamicallySamplesComposerTone
-        if !dynamicallySamplesComposerTone || dynamicToneChanged {
-            self.composerUsesLightContent = composerUsesLightContent
-        }
+        self.composerUsesLightContent = composerUsesLightContent
         self.usesDarkChatSurface = usesDarkChatSurface
         self.timelineUsesLightContent = timelineUsesLightContent
-        if themeChanged || composerToneChanged || dynamicToneChanged || wallpaperAppearanceChanged || appliedAccent != theme.accent {
+        if themeChanged || composerToneChanged || wallpaperAppearanceChanged || appliedAccent != theme.accent {
             composer.applyTheme(theme, usesLightContent: self.composerUsesLightContent)
             stickerPanel?.applyTheme(
                 accentColor: theme.accent.uiColor,
                 usesLightContent: self.composerUsesLightContent)
             applyAccentColor()
-        }
-        if dynamicallySamplesComposerTone, isViewLoaded {
-            refreshComposerSurfaceTone(force: true)
         }
         if surfaceChanged || timelineChanged, collectionView != nil {
             timelineController.updatePresentation(makeTimelinePresentation())

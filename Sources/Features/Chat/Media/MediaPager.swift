@@ -62,7 +62,7 @@ struct MediaPagerView: View {
 
             if items.isEmpty {
                 Text("暂无媒体")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(DS.Typo.body.weight(.medium))
                     .foregroundStyle(.white.opacity(0.72))
             } else {
                 // 保持稳定的完整页序列；之前在手势中动态增删相邻页，会让 PageViewController
@@ -91,7 +91,7 @@ struct MediaPagerView: View {
                 VStack {
                     Spacer()
                     Text(toast)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DS.Typo.secondary.weight(.semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
@@ -238,7 +238,7 @@ private struct MediaPage: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 34))
             Text("加载失败")
-                .font(.system(size: 14, weight: .semibold))
+                .font(DS.Typo.secondary.weight(.semibold))
         }
         .foregroundStyle(.white.opacity(0.72))
     }
@@ -352,36 +352,63 @@ private struct ZoomableRemoteImage: View {
     }
 }
 
-private struct MediaViewerVideoPage: View {
+struct StreamingVideoPlayer: View {
     let url: URL
+    @State private var item: AVPlayerItem
     @State private var player: AVPlayer
     @State private var resumeAfterCancellation = false
-    @State private var showsPoster = true
+    @State private var showsLoading = true
+    @State private var failed = false
 
     init(url: URL) {
         self.url = url
-        _player = State(initialValue: AVPlayer(url: url))
+        let asset = AVURLAsset(
+            url: url,
+            options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
+        let item = AVPlayerItem(asset: asset, automaticallyLoadedAssetKeys: ["playable"])
+        // 服务端支持 Range；只预取短缓冲即可开始，不等待整段视频下载。
+        item.preferredForwardBufferDuration = 2
+        let player = AVPlayer(playerItem: item)
+        player.automaticallyWaitsToMinimizeStalling = true
+        _item = State(initialValue: item)
+        _player = State(initialValue: player)
     }
 
     var body: some View {
         ZStack {
+            Color.black
             VideoPlayer(player: player)
-            if showsPoster {
-                ZStack {
-                    VideoThumbnailView(url: url)
-                        .scaledToFit()
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 56, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
+            if failed {
+                VStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle")
+                    Text("视频加载失败")
                 }
-                .transition(.opacity)
+                .font(DS.Typo.secondary.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.8))
                 .allowsHitTesting(false)
+            } else if showsLoading {
+                ProgressView()
+                    .tint(.white)
+                    .allowsHitTesting(false)
             }
         }
+            .onReceive(item.publisher(for: \.status)) { status in
+                switch status {
+                case .readyToPlay:
+                    showsLoading = false
+                case .failed:
+                    showsLoading = false
+                    failed = true
+                default:
+                    break
+                }
+            }
             .onReceive(player.publisher(for: \.timeControlStatus)) { status in
-                guard status == .playing, showsPoster else { return }
-                withAnimation(.easeOut(duration: 0.2)) { showsPoster = false }
+                if status == .playing {
+                    showsLoading = false
+                } else if status == .waitingToPlayAtSpecifiedRate, !failed {
+                    showsLoading = true
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .mediaViewerPauseVideo)) { _ in
                 resumeAfterCancellation = player.timeControlStatus == .playing
@@ -394,6 +421,8 @@ private struct MediaViewerVideoPage: View {
             .onDisappear { player.pause() }
     }
 }
+
+private typealias MediaViewerVideoPage = StreamingVideoPlayer
 
 enum MediaSaver {
     static func saveImage(from url: URL) async -> Bool {

@@ -137,6 +137,24 @@ async function main() {
       "媒体消息要求 uploadId",
       !sendMessageSchema.safeParse({ channel: "couple", type: "image", text: "[图片]" }).success,
     );
+    const {
+      fallbackRecommendation,
+      recommendationsAreSimilar,
+    } = await import("../src/daily/recommendationService");
+    const previousRecommendation = {
+      category: "电影",
+      content: "一起看《海街日记》吧，四姐妹的日常很适合安静看完。",
+    };
+    const rewrittenRecommendation = {
+      category: "电影",
+      content: "今晚推荐《海街日记》，在细碎日常里感受温柔的陪伴。",
+    };
+    const rotatedFallback = fallbackRecommendation("2026-07-17", [previousRecommendation]);
+    assertOk(
+      "推荐刷新会识别同一具体对象并轮换兜底",
+      recommendationsAreSimilar(previousRecommendation, rewrittenRecommendation) &&
+        !recommendationsAreSimilar(previousRecommendation, rotatedFallback),
+    );
 
     // AI 可靠性：超时必须发兜底；队列过载必须保留最新请求而不是静默丢弃。
     const { ReplyQueue, runReplyTaskWithTimeout } = await import("../src/ai/agent/replyQueue");
@@ -196,10 +214,12 @@ async function main() {
     // 消息：分页 / since / after+before / around / 搜索 / LIKE
     const { subscribeMemoryDomainEvents } = await import("../src/ai/memory/events");
     const stopMemoryEvents = subscribeMemoryDomainEvents();
-    const { fetchMessages, searchMessages, createMessage, recallMessage, upsertReadReceipt, getReadReceipts } = await import("../src/chat/messageService");
+    const { fetchMessageById, fetchMessages, searchMessages, createMessage, recallMessage, upsertReadReceipt, getReadReceipts } = await import("../src/chat/messageService");
     const user = { username: accounts[0].username, name: accounts[0].name };
     const latest = await fetchMessages(user, { channel: "couple", limit: 50 });
     assertOk(`fetchMessages latest → ${latest.length} 条`, latest.length === 50);
+    const referenced = await fetchMessageById(user, "couple", latest[0].id);
+    assertOk("fetchMessageById 只返回当前会话原消息", referenced?.id === latest[0].id);
     assertOk("ts 是 number", typeof latest[0].ts === "number" && latest[0].ts > 1e12);
     const before = await fetchMessages(user, { channel: "couple", before: latest[0].ts, limit: 20 });
     assertOk(`fetchMessages before → ${before.length} 条且时序正确`, before.length === 20 && before[19].ts <= latest[0].ts);
@@ -215,7 +235,17 @@ async function main() {
         range.every((message) => message.ts >= latest[0].ts && message.ts < latest[latest.length - 1].ts + 1),
     );
     const found = await searchMessages(user, "couple", "喵", 10);
-    assertOk(`searchMessages "喵" → ${found.length} 条`, found.length > 0);
+    assertOk(`searchMessages "喵" → ${found.list.length} 条`, found.list.length > 0);
+    const nextSearchPage = found.nextCursor
+      ? await searchMessages(user, "couple", "喵", 10, found.nextCursor)
+      : null;
+    const firstSearchIds = new Set(found.list.map((message) => message.id));
+    assertOk(
+      "searchMessages 使用 (ts,id) 游标继续加载且不重复",
+      found.hasMore && nextSearchPage !== null &&
+        nextSearchPage.list.length > 0 &&
+        nextSearchPage.list.every((message) => !firstSearchIds.has(message.id)),
+    );
 
     // 写入一条新消息（含 reply/meta JSON + clientId 幂等）
     const created = await createMessage(user, { channel: "couple", type: "text", text: "PG 冒烟测试", clientId: "smoke-1" });
@@ -335,7 +365,7 @@ async function main() {
       cleaned === 1 && !fs.existsSync(abandonedPath) && fs.existsSync(avatarPath) && keptAvatar?.id === "up_avatar_keep_123",
     );
 
-    const { signedMediaURL, signMediaId, verifyMediaSignature } = await import("../src/upload/mediaAccess");
+    const { signedMediaURL, signMediaId, verifyMediaSignature, parseRequestedByteRange } = await import("../src/upload/mediaAccess");
     const signedURL = new URL(signedMediaURL("up_signature_123"));
     const signature = signedURL.searchParams.get("sig") ?? "";
     assertOk(
@@ -344,6 +374,11 @@ async function main() {
         signature === signMediaId("up_signature_123") &&
         verifyMediaSignature("up_signature_123", signature) &&
         !verifyMediaSignature("up_signature_456", signature),
+    );
+    const suffixRange = parseRequestedByteRange("bytes=-500", 10_000);
+    assertOk(
+      "媒体 suffix Range 指向文件尾部（支持视频分段读取）",
+      suffixRange?.start === 9_500 && suffixRange.end === 9_999,
     );
     const routeMediaId = "up_signed_route_123";
     const routeMediaPath = path.join(dataDir, `${routeMediaId}.txt`);
@@ -396,6 +431,21 @@ async function main() {
     const messagePageResponse = await app.inject({
       method: "GET", url: "/api/messages?channel=couple&limit=20", headers: { authorization },
     });
+    const referencedMessageResponse = await app.inject({
+      method: "GET",
+      url: `/api/messages/${encodeURIComponent(referenced!.id)}?channel=couple`,
+      headers: { authorization },
+    });
+    const wrongChannelReferenceResponse = await app.inject({
+      method: "GET",
+      url: `/api/messages/${encodeURIComponent(referenced!.id)}?channel=ai`,
+      headers: { authorization },
+    });
+    const retiredOnThisDayResponse = await app.inject({
+      method: "GET",
+      url: "/api/v2/media/on-this-day?timezone=Asia%2FShanghai",
+      headers: { authorization },
+    });
     const signedResponse = await app.inject({ method: "GET", url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search });
     const rangeResponse = await app.inject({
       method: "GET",
@@ -414,6 +464,13 @@ async function main() {
         messagePageResponse.json().list.length <= 20 &&
         typeof messagePageResponse.json().total === "number",
     );
+    assertOk(
+      "REST 引用消息查询按当前会话隔离",
+      referencedMessageResponse.statusCode === 200 &&
+        referencedMessageResponse.json().message.id === referenced!.id &&
+        wrongChannelReferenceResponse.statusCode === 404,
+    );
+    assertOk("那年今日接口已完整退役", retiredOnThisDayResponse.statusCode === 404);
     assertOk(
       "签名媒体路由拒绝伪造签名和裸路径旁路",
       healthResponse.statusCode === 200 && healthResponse.json().database === "ok" &&

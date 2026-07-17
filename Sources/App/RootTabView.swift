@@ -75,7 +75,7 @@ struct RootTabView: View {
                     .tag(MainTab.chat)
                 MomentsView()
                     .tabItem { Label(MainTab.records.rawValue, systemImage: MainTab.records.icon) }
-                    .badge(recommendationBadge)
+                    .badge(badges.recommendationCount)
                     .tag(MainTab.records)
                 DajuView()
                     .tabItem { Label(MainTab.pet.rawValue, systemImage: MainTab.pet.icon) }
@@ -180,10 +180,6 @@ struct RootTabView: View {
                 && message.ts > readAt
         }
         .count
-    }
-
-    private var recommendationBadge: Text? {
-        badges.hasUnreadRecommendation ? Text("•") : nil
     }
 
     private func handleIncomingNote() {

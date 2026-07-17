@@ -15,6 +15,7 @@ protocol ChatPersistenceProtocol: Actor {
     func deleteMessages(channel: String?) -> Bool
     @discardableResult
     func deleteMessage(id: String, channel: String) -> Bool
+    func fetchMessage(id: String, channel: String) -> ChatMessage?
     func fetchMessages(channel: String, beforeTimestamp: Double, limit: Int) -> [ChatMessage]
     func fetchMessages(channel: String, fromTimestamp: Double, toTimestamp: Double) -> [ChatMessage]
     func fetchMessagesAround(
@@ -74,6 +75,9 @@ actor ChatPersistence: ChatPersistenceProtocol {
     @discardableResult
     func deleteMessage(id: String, channel: String) -> Bool {
         database.deleteMessage(id: id, channel: channel)
+    }
+    func fetchMessage(id: String, channel: String) -> ChatMessage? {
+        database.fetchMessage(id: id, channel: channel)
     }
     func fetchMessages(channel: String, beforeTimestamp: Double, limit: Int) -> [ChatMessage] {
         database.fetchMessages(channel: channel, beforeTimestamp: beforeTimestamp, limit: limit)

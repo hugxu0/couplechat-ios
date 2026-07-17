@@ -4,8 +4,7 @@ struct FavoriteMediaView: View {
     @EnvironmentObject private var favorites: MediaFavoriteStore
     @EnvironmentObject private var theme: ThemeManager
     @State private var selectedId: String?
-
-    private let columns = [GridItem(.adaptive(minimum: 108), spacing: 3)]
+    @State private var mediaSourceRegistry = MediaViewerSourceRegistry()
 
     var body: some View {
         Group {
@@ -17,7 +16,10 @@ struct FavoriteMediaView: View {
                 }
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 3) {
+                    LazyVGrid(
+                        columns: MediaCollectionGrid.columns,
+                        spacing: MediaCollectionGrid.spacing
+                    ) {
                         ForEach(favorites.items) { item in
                             favoriteTile(item)
                         }
@@ -29,7 +31,10 @@ struct FavoriteMediaView: View {
         .background(AppPageBackground())
         .navigationTitle("收藏")
         .navigationBarTitleDisplayMode(.inline)
-        .background(MediaViewerPresenter(items: favorites.items, selectedId: $selectedId))
+        .background(MediaViewerPresenter(
+            items: favorites.items,
+            selectedId: $selectedId,
+            sourceProvider: { mediaSourceRegistry.view(for: $0) }))
     }
 
     private func favoriteTile(_ item: MediaBrowserItem) -> some View {
@@ -37,7 +42,10 @@ struct FavoriteMediaView: View {
             selectedId = item.id
         } label: {
             ZStack(alignment: .bottomTrailing) {
-                if let url = item.mediaURL {
+                if item.isVideo, let url = item.mediaURL {
+                    VideoThumbnailView(url: url)
+                        .aspectRatio(contentMode: .fill)
+                } else if let url = item.mediaURL {
                     CachedImage(url: url) {
                         Color.gray.opacity(0.16)
                             .overlay(ProgressView().tint(theme.accent.color))
@@ -50,16 +58,19 @@ struct FavoriteMediaView: View {
                 }
 
                 if item.isVideo {
-                    Image(systemName: "play.fill")
-                        .font(DS.Typo.micro.weight(.bold))
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 30))
                         .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(.black.opacity(0.48), in: Circle())
-                        .padding(DS.Spacing.compact - 1)
+                        .shadow(radius: 4)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 }
             }
             .aspectRatio(1, contentMode: .fit)
             .contentShape(Rectangle())
+            .overlay {
+                MediaViewerSourceAnchor(id: item.id, registry: mediaSourceRegistry)
+                    .allowsHitTesting(false)
+            }
         }
         .buttonStyle(.plain)
         .contextMenu {

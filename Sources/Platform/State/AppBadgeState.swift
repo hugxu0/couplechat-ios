@@ -5,7 +5,7 @@ final class AppBadgeState: ObservableObject {
     static let shared = AppBadgeState()
 
     @Published private(set) var reminderCount = 0
-    @Published private(set) var hasUnreadRecommendation = false
+    @Published private(set) var recommendationCount = 0
 
     private let repository = PersonalItemsRepository()
     private let recommendationRepository = RecommendationRepository()
@@ -26,11 +26,11 @@ final class AppBadgeState: ObservableObject {
 
     func refreshRecommendations(token: String) async {
         guard let count = try? await recommendationRepository.unreadCount(token: token) else { return }
-        hasUnreadRecommendation = count > 0
+        recommendationCount = max(0, count)
     }
 
     func reset() {
         reminderCount = 0
-        hasUnreadRecommendation = false
+        recommendationCount = 0
     }
 }

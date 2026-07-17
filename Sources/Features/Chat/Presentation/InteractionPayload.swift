@@ -76,6 +76,7 @@ struct IncomingInteractionOverlay: View {
     var duration: Double = 2.1
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var appeared = false
     @State private var torn = false
@@ -134,10 +135,10 @@ struct IncomingInteractionOverlay: View {
                     .scaleEffect(appeared ? 1 : 0.6)
                     .shadow(color: effectColor.opacity(0.24), radius: 22, y: 12)
                 Text(effectTitle)
-                    .font(.system(size: 24, weight: .heavy, design: .rounded))
+                    .font(DS.Typo.displayNumber)
                     .foregroundStyle(DS.Palette.textPrimary)
                 Text(senderName)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(DS.Typo.secondary.weight(.bold))
                     .foregroundStyle(DS.Palette.textSecondary)
             }
             .padding(.horizontal, 34)
@@ -194,27 +195,27 @@ struct IncomingInteractionOverlay: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("贴条")
-                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .font(DS.Typo.button)
                     Spacer()
                     Image(systemName: "pin.fill")
                         .foregroundStyle(Color(red: 0.92, green: 0.54, blue: 0.30))
                 }
 
                 Text(noteText)
-                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .font(DS.Typo.pageTitle)
                     .foregroundStyle(DS.Palette.textPrimary)
-                    .lineLimit(4)
-                    .minimumScaleFactor(0.72)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 4)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Text("向外一撕，才能继续看屏幕")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(DS.Typo.caption.weight(.bold))
                     .foregroundStyle(DS.Palette.textSecondary)
 
                 Button {
                     tearAway()
                 } label: {
                     Text("撕掉")
-                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .font(DS.Typo.button)
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)

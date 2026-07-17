@@ -4,7 +4,6 @@ import Foundation
 final class MomentsViewModel: ObservableObject {
     static let albumsChanged = Notification.Name("v2AlbumsChanged")
     @Published private(set) var albums: [MomentAlbum] = []
-    @Published private(set) var onThisDay: [OnThisDayMoment] = []
     @Published private(set) var loading = false
     @Published private(set) var loadingMore = false
     @Published var errorMessage: String?
@@ -22,11 +21,8 @@ final class MomentsViewModel: ObservableObject {
         loading = true
         errorMessage = nil
         do {
-            async let albumPage = repository.albums(token: token)
-            async let memories = repository.onThisDay(token: token)
-            let (page, moments) = try await (albumPage, memories)
+            let page = try await repository.albums(token: token)
             albums = page.values
-            onThisDay = moments
             nextCursor = page.nextCursor
             loaded = true
         } catch {

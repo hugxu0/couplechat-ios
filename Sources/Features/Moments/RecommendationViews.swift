@@ -67,12 +67,13 @@ struct TodayRecommendationCard: View {
             action()
         } label: {
             Image(systemName: systemName)
-                .font(.body.weight(.semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(emphasized ? Color.white : DS.Palette.accent)
-                .frame(width: 44, height: 44)
+                .frame(width: 38, height: 38)
                 .background(
                     emphasized ? DS.Palette.accent : DS.Palette.accent.opacity(0.10),
                     in: Circle())
+                .frame(width: 44, height: 44)
         }
         .buttonStyle(PressableStyle())
         .accessibilityLabel(accessibilityLabel)
@@ -82,7 +83,7 @@ struct TodayRecommendationCard: View {
         let category = normalizedCategory(item.category)
         let symbol = recommendationSymbol(for: category)
 
-        return VStack(alignment: .leading, spacing: 14) {
+        return VStack(alignment: .leading, spacing: 12) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: DS.Spacing.compact) {
                     categoryBadge(category, symbol: symbol)
@@ -96,9 +97,9 @@ struct TodayRecommendationCard: View {
             }
 
             Text(item.content)
-                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .font(.system(.body, design: .rounded).weight(.medium))
                 .foregroundStyle(DS.Palette.textPrimary)
-                .lineSpacing(4)
+                .lineSpacing(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -107,7 +108,7 @@ struct TodayRecommendationCard: View {
                 .font(DS.Typo.caption)
                 .foregroundStyle(DS.Palette.textSecondary)
         }
-        .padding(16)
+        .padding(15)
         .background {
             ZStack(alignment: .bottomTrailing) {
                 LinearGradient(
@@ -115,7 +116,7 @@ struct TodayRecommendationCard: View {
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing)
                 Image(systemName: symbol)
-                    .font(.system(size: 78, weight: .regular))
+                    .font(.system(size: 70, weight: .regular))
                     .foregroundStyle(DS.Palette.accent.opacity(0.055))
                     .offset(x: 13, y: 13)
                     .accessibilityHidden(true)
@@ -130,12 +131,12 @@ struct TodayRecommendationCard: View {
 
     private func categoryBadge(_ category: String, symbol: String) -> some View {
         Label(category, systemImage: symbol)
-            .font(DS.Typo.sectionLabel)
+            .font(DS.Typo.caption.weight(.semibold))
             .foregroundStyle(DS.Palette.accent)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
             .background(DS.Palette.accent.opacity(0.11), in: Capsule())
-            .lineLimit(1)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel("推荐分类：\(category)")
     }
 
@@ -152,12 +153,13 @@ struct TodayRecommendationCard: View {
                 }
                 Text(refreshing ? "在挑选" : "换一个")
             }
-            .font(DS.Typo.caption.weight(.semibold))
+            .font(DS.Typo.caption.weight(.medium))
             .foregroundStyle(DS.Palette.accent)
-            .padding(.horizontal, 11)
-            .frame(minHeight: 44)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .background(DS.Palette.cardSurface, in: Capsule())
             .contentShape(Capsule())
+            .frame(minHeight: 44)
         }
         .buttonStyle(.plain)
         .disabled(refreshing)

@@ -12,6 +12,7 @@ protocol ChatTimelineControllerDelegate: AnyObject {
     func timelineDidTapLink(_ url: URL)
     func timelineDidTapRetry(cell: ChatNativeMessageCell, message: ChatMessage)
     func timelineDidTapTranscript(message: ChatMessage)
+    func timelineDidTapReply(message: ChatMessage)
     func timelineDidDecideConfirm(message: ChatMessage, decision: String)
     func timelineDidRequestReedit(recalledMessageId: String)
 }

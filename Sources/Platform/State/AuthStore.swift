@@ -110,10 +110,13 @@ final class AuthStore: ObservableObject {
 
     func fetchAccounts() async -> [Account] {
         var req = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/accounts"))
+        req.timeoutInterval = 6
         if let token = session?.token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        guard let (data, _) = try? await httpClient.data(for: req) else {
+        guard let (data, response) = try? await httpClient.data(for: req),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
             print("[AuthStore] ⚠️ fetchAccounts 网络请求失败")
             return []
         }

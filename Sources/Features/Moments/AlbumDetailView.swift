@@ -233,7 +233,7 @@ struct AlbumDetailView: View {
         return HStack(alignment: .top, spacing: spacing) {
             VStack(spacing: 4) {
                 Text(post.day)
-                    .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
+                    .font(DS.Typo.displayNumber.monospacedDigit())
                     .foregroundStyle(DS.Palette.textPrimary)
                 Text(post.month)
                     .font(DS.Typo.micro.weight(.semibold))

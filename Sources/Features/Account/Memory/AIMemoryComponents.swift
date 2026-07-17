@@ -25,6 +25,7 @@ extension AIMemoryLayer {
 }
 
 struct AIMemoryOverviewCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let stats: AIMemoryStats
     let isRefreshing: Bool
 
@@ -44,12 +45,20 @@ struct AIMemoryOverviewCard: View {
                 if isRefreshing { ProgressView().controlSize(.small) }
             }
 
-            HStack(spacing: 0) {
-                metric("全部", value: stats.total)
-                Divider().frame(height: 30)
-                metric("两人可见", value: stats.shared)
-                Divider().frame(height: 30)
-                metric("仅自己", value: stats.privateCount)
+            if dynamicTypeSize.isAccessibilitySize {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
+                    metric("全部", value: stats.total)
+                    metric("两人可见", value: stats.shared)
+                    metric("仅自己", value: stats.privateCount)
+                }
+            } else {
+                HStack(spacing: 0) {
+                    metric("全部", value: stats.total)
+                    Divider().frame(height: 30)
+                    metric("两人可见", value: stats.shared)
+                    Divider().frame(height: 30)
+                    metric("仅自己", value: stats.privateCount)
+                }
             }
         }
         .padding(.vertical, 8)

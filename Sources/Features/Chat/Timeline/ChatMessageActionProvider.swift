@@ -4,7 +4,7 @@ enum ChatMessageAction: Equatable {
     case copy
     case reply
     case addToStickers
-    case addToAlbum
+    case toggleFavorite
     case recall
     case retry
     case discard
@@ -26,8 +26,8 @@ enum ChatMessageActionProvider {
         if message.type == "sticker", message.mediaURL != nil {
             actions.append(.addToStickers)
         }
-        if message.channel == "couple", message.type == "image" || message.type == "video" {
-            actions.append(.addToAlbum)
+        if message.type == "image" || message.type == "video" {
+            actions.append(.toggleFavorite)
         }
         if message.sender == currentUsername, nowMilliseconds - message.ts < 120_000 {
             actions.append(.recall)

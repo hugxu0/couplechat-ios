@@ -1,36 +1,6 @@
 import UIKit
 
 extension ChatViewController {
-    func refreshComposerSurfaceTone(force: Bool = false) {
-        guard dynamicallySamplesComposerTone,
-              force || !keyboardLayoutAnimationActive,
-              view.bounds.width > 0,
-              view.bounds.height > 0 else { return }
-        // 输入框、左右按钮和面板必须共用同一个取色区域。
-        // 只采输入胶囊会让同一排控件在横向明暗变化的壁纸上各自“翻色”。
-        let dockFrame = bottomStack.convert(bottomStack.bounds, to: view).integral
-        guard !dockFrame.isEmpty, !dockFrame.isNull else { return }
-        guard force || !dockFrame.equalTo(lastComposerSampleFrame) else { return }
-        lastComposerSampleFrame = dockFrame
-        let samplingFrame = dockFrame.insetBy(dx: 8, dy: -6)
-        let normalizedFrame = CGRect(
-            x: samplingFrame.minX / view.bounds.width,
-            y: samplingFrame.minY / view.bounds.height,
-            width: samplingFrame.width / view.bounds.width,
-            height: samplingFrame.height / view.bounds.height)
-        guard let luminance = theme.customWallpaperLuminance(
-            for: channel,
-            appearance: wallpaperAppearance,
-            normalizedRect: normalizedFrame) else { return }
-        let usesLightContent = ChatSurfaceTone(luminance: luminance).usesLightContent
-        guard composerUsesLightContent != usesLightContent else { return }
-        composerUsesLightContent = usesLightContent
-        composer.applyTheme(theme, usesLightContent: usesLightContent)
-        stickerPanel?.applyTheme(
-            accentColor: theme.accent.uiColor,
-            usesLightContent: usesLightContent)
-    }
-
     func installStickerPanel() {
         let panel = ChatStickerPanelView(store: StickerStore.shared, accentColor: theme.accent.uiColor)
         panel.applyTheme(accentColor: theme.accent.uiColor, usesLightContent: composerUsesLightContent)
@@ -181,7 +151,6 @@ extension ChatViewController {
                     self.keyboardTransitionMaintainsLatest = nil
                     self.keyboardLayoutAnimationActive = false
                 }
-                self.refreshComposerSurfaceTone(force: true)
             })
     }
 
@@ -206,7 +175,6 @@ extension ChatViewController {
             channel: channel,
             replyTo: target?.id,
             replyPreview: target?.replyPreviewText)
-        reloadTimeline(animated: false)
         hidePanel(animated: true)
     }
 
@@ -214,7 +182,6 @@ extension ChatViewController {
         Haptics.light()
         stickToLatestAfterNextReload = true
         store.sendSticker(url: sticker.url, channel: channel)
-        reloadTimeline(animated: false)
     }
 
     func summonDaju() {

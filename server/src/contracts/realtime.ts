@@ -105,8 +105,12 @@ export const readReceiptSchema = z.object({
 
 export const searchMessagesSchema = z.object({
   channel: clientChannelSchema.default("couple"),
-  query: z.string().min(1),
+  query: z.string().trim().min(1).max(200),
   limit: z.number().int().min(1).max(100).optional(),
+  cursor: z.object({
+    ts: z.number().finite().positive().transform((value) => Math.round(value)),
+    id: z.string().min(1).max(128),
+  }).optional(),
 });
 
 export const sharedSetSchema = z.object({

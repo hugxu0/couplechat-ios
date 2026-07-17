@@ -22,6 +22,7 @@ struct ChatHomeSectionDivider: View {
 
 struct ChatHomeActionButton: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let action: ChatHomeQuickAction
     let sent: Bool
     let disabled: Bool
@@ -36,11 +37,11 @@ struct ChatHomeActionButton: View {
                 Text(action.title)
                     .font(DS.Typo.micro.weight(.bold))
                     .foregroundStyle(DS.Palette.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                    .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 84)
+            .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 104 : 84)
             .background(
                 LinearGradient(
                     colors: colorScheme == .dark
@@ -69,6 +70,7 @@ struct ChatHomeActionButton: View {
 }
 
 struct ChatHomeLatestRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let message: ChatMessage
     let mine: Bool
     let avatarURL: URL?
@@ -81,13 +83,13 @@ struct ChatHomeLatestRow: View {
             if !mine {
                 avatar
             } else {
-                Spacer(minLength: 54)
+                Spacer(minLength: dynamicTypeSize.isAccessibilitySize ? 20 : 54)
             }
 
             Text(preview)
                 .font(DS.Typo.secondary.weight(.bold))
                 .foregroundStyle(DS.Palette.textPrimary)
-                .lineLimit(2)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
                 .padding(.horizontal, 16)
                 .padding(.vertical, DS.Spacing.compact)
                 .background(
@@ -102,7 +104,7 @@ struct ChatHomeLatestRow: View {
             if mine {
                 avatar
             } else {
-                Spacer(minLength: 54)
+                Spacer(minLength: dynamicTypeSize.isAccessibilitySize ? 20 : 54)
             }
         }
     }

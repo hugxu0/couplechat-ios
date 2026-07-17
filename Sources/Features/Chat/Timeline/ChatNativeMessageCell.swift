@@ -27,6 +27,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     private var aiActivityDots: [UIView] = []
     private let mediaImageView = UIImageView()
     private let mediaIconView = UIImageView()
+    private let fileMetaLabel = UILabel()
+    private let fileActionView = UIImageView(image: UIImage(systemName: "chevron.right"))
     private let albumScrollView = UIScrollView()
     private let albumIndicator = ChatAlbumIndicatorView()
     private let liveBadge = UIImageView(image: PHLivePhotoView.livePhotoBadgeImage(options: .overContent))
@@ -75,27 +77,37 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         replyView.layer.cornerRadius = 9
         replyView.clipsToBounds = true
         replyMarker.backgroundColor = .secondaryLabel
-        replyLabel.font = .systemFont(ofSize: 13)
+        replyLabel.font = .preferredFont(forTextStyle: .footnote)
+        replyLabel.adjustsFontForContentSizeCategory = true
         replyLabel.textColor = .secondaryLabel
-        replyLabel.numberOfLines = 1
+        replyLabel.numberOfLines = 2
+        replyLabel.lineBreakMode = .byTruncatingTail
         replyView.addSubview(replyMarker)
         replyView.addSubview(replyLabel)
+        replyView.isUserInteractionEnabled = true
+        replyView.addGestureRecognizer(
+            UITapGestureRecognizer(target: self, action: #selector(handleReplyTap)))
 
-        bodyLabel.font = .systemFont(ofSize: 17)
+        bodyLabel.font = .preferredFont(forTextStyle: .body)
+        bodyLabel.adjustsFontForContentSizeCategory = true
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byWordWrapping
         bodyLabel.isUserInteractionEnabled = true
         bodyLabel.addGestureRecognizer(
             UITapGestureRecognizer(target: self, action: #selector(handleBodyLabelTap(_:))))
 
-        confirmTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
-        confirmItemsLabel.font = .systemFont(ofSize: 14)
+        confirmTitleLabel.font = .preferredFont(forTextStyle: .subheadline)
+        confirmTitleLabel.adjustsFontForContentSizeCategory = true
+        confirmItemsLabel.font = .preferredFont(forTextStyle: .subheadline)
+        confirmItemsLabel.adjustsFontForContentSizeCategory = true
         confirmItemsLabel.numberOfLines = 0
-        confirmStatusLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        confirmStatusLabel.font = .preferredFont(forTextStyle: .footnote)
+        confirmStatusLabel.adjustsFontForContentSizeCategory = true
         confirmCancelButton.setTitle("取消", for: .normal)
         confirmButton.setTitle("确认", for: .normal)
         for button in [confirmCancelButton, confirmButton] {
-            button.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+            button.titleLabel?.font = .preferredFont(forTextStyle: .body)
+            button.titleLabel?.adjustsFontForContentSizeCategory = true
             button.layer.cornerCurve = .continuous
             button.layer.cornerRadius = 10
         }
@@ -114,12 +126,12 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         interactionIconBackground.layer.cornerRadius = 17
         interactionEmojiLabel.font = .systemFont(ofSize: 19)
         interactionEmojiLabel.textAlignment = .center
-        interactionTitleLabel.font = .systemFont(ofSize: 15, weight: .bold)
+        interactionTitleLabel.font = .preferredFont(forTextStyle: .subheadline)
+        interactionTitleLabel.adjustsFontForContentSizeCategory = true
         interactionTitleLabel.numberOfLines = 1
-        interactionSubtitleLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        interactionSubtitleLabel.font = .preferredFont(forTextStyle: .caption2)
+        interactionSubtitleLabel.adjustsFontForContentSizeCategory = true
         interactionSubtitleLabel.numberOfLines = 1
-        interactionSubtitleLabel.adjustsFontSizeToFitWidth = true
-        interactionSubtitleLabel.minimumScaleFactor = 0.78
 
         aiActivityStack.axis = .horizontal
         aiActivityStack.alignment = .center
@@ -145,6 +157,13 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         mediaIconView.tintColor = .secondaryLabel
         mediaIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
         mediaIconView.isAccessibilityElement = false
+
+        fileMetaLabel.font = .preferredFont(forTextStyle: .caption2)
+        fileMetaLabel.adjustsFontForContentSizeCategory = true
+        fileMetaLabel.numberOfLines = 1
+        fileActionView.contentMode = .scaleAspectFit
+        fileActionView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        fileActionView.isAccessibilityElement = false
 
         albumScrollView.isPagingEnabled = true
         albumScrollView.showsHorizontalScrollIndicator = false
@@ -358,13 +377,15 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         let bounds = contentView.bounds
         let topGap = grouped ? ChatTimelineMetrics.sameSenderTopGap : ChatTimelineMetrics.otherSenderTopGap
         let avatarSize = ChatTimelineMetrics.avatarSize
-        let maxBubbleWidth = bounds.width * ChatTimelineMetrics.bubbleMaxWidthRatio
+        let contentInset = ChatTimelineMetrics.contentInset(for: bounds.width)
+        let maxBubbleWidth = ChatTimelineMetrics.readableWidth(for: bounds.width)
+            * ChatTimelineMetrics.bubbleMaxWidthRatio
         let bubbleWidth = bubbleWidth(for: message, maxWidth: maxBubbleWidth)
         let bubbleHeight = bounds.height - topGap - 2
         let avatarY = topGap + max(0, bubbleHeight - avatarSize)
 
         if mine {
-            let avatarX = bounds.width - ChatTimelineMetrics.horizontalInset - avatarSize
+            let avatarX = bounds.width - contentInset - avatarSize
             avatarView.frame = CGRect(x: avatarX, y: avatarY, width: avatarSize, height: avatarSize)
             // 统一“内容右边线”：文字、图片与贴纸都止于回执左侧。
             // 回执永远外置，头像在最右，避免媒体遮挡勾选也避免内容左右跳线。
@@ -382,8 +403,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             statusLabel.layer.cornerRadius = 8
             retryButton.frame = CGRect(x: bubbleView.frame.minX - 34, y: bubbleView.frame.midY - 15, width: 30, height: 30)
         } else {
-            avatarView.frame = CGRect(x: ChatTimelineMetrics.horizontalInset, y: avatarY, width: avatarSize, height: avatarSize)
-            let leading = ChatTimelineMetrics.horizontalInset + avatarSize + ChatTimelineMetrics.avatarGap
+            avatarView.frame = CGRect(x: contentInset, y: avatarY, width: avatarSize, height: avatarSize)
+            let leading = contentInset + avatarSize + ChatTimelineMetrics.avatarGap
             bubbleView.frame = CGRect(x: leading, y: topGap, width: bubbleWidth, height: bubbleHeight)
             statusLabel.frame = .zero
             retryButton.frame = CGRect(x: bubbleView.frame.maxX + 4, y: bubbleView.frame.midY - 15, width: 30, height: 30)
@@ -398,12 +419,20 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     }
 
     private func installContent(for message: ChatMessage, counterpartName: String) {
-        bodyLabel.font = .systemFont(ofSize: 17)
+        bodyLabel.font = .preferredFont(forTextStyle: .body)
+        bodyLabel.adjustsFontForContentSizeCategory = true
         bodyLabel.numberOfLines = 0
+        bodyLabel.lineBreakMode = .byWordWrapping
         bodyLabel.textAlignment = .natural
         if let reply = message.replyPreview, !reply.isEmpty {
             replyLabel.text = reply
+            replyView.isAccessibilityElement = true
+            replyView.accessibilityTraits = .button
+            replyView.accessibilityLabel = "引用消息，\(reply)"
+            replyView.accessibilityHint = "轻点跳转到原消息"
             bubbleView.addSubview(replyView)
+        } else {
+            replyView.isAccessibilityElement = false
         }
 
         if message.id.hasPrefix("__ai_activity__") {
@@ -431,7 +460,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 configureAlbum(message)
                 if ChatTimelineMetrics.mediaCaption(for: message) != nil {
                     bodyLabel.text = ChatTimelineMetrics.mediaCaption(for: message)
-                    bodyLabel.font = .systemFont(ofSize: 15)
+                    bodyLabel.font = .preferredFont(forTextStyle: .subheadline)
                     bubbleView.addSubview(bodyLabel)
                 }
                 return
@@ -451,11 +480,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             bubbleView.addSubview(mediaIconView)
             if let caption = ChatTimelineMetrics.mediaCaption(for: message) {
                 bodyLabel.text = caption
-                bodyLabel.font = .systemFont(ofSize: 15)
+                bodyLabel.font = .preferredFont(forTextStyle: .subheadline)
                 bodyLabel.textColor = mine ? .white : incomingBubblePalette.primaryTextColor
                 bubbleView.addSubview(bodyLabel)
             } else {
-                bodyLabel.font = .systemFont(ofSize: 17)
+                bodyLabel.font = .preferredFont(forTextStyle: .body)
             }
             configureMedia(message)
         case "voice":
@@ -473,6 +502,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         case "file":
             bubbleView.addSubview(mediaIconView)
             bubbleView.addSubview(bodyLabel)
+            bubbleView.addSubview(fileMetaLabel)
+            bubbleView.addSubview(fileActionView)
             configureAttachment(message)
         default:
             bodyLabel.attributedText = ChatMarkdownRenderer.attributedString(
@@ -658,6 +689,13 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         case "file":
             let text = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
             bodyLabel.text = text.isEmpty ? "文件" : text
+            bodyLabel.font = .preferredFont(forTextStyle: .subheadline)
+            bodyLabel.adjustsFontForContentSizeCategory = true
+            bodyLabel.numberOfLines = 1
+            bodyLabel.lineBreakMode = .byTruncatingMiddle
+            fileMetaLabel.text = message.pending ? "正在上传" : "文件 · 轻点预览"
+            fileMetaLabel.textColor = foreground.withAlphaComponent(0.68)
+            fileActionView.tintColor = foreground.withAlphaComponent(0.72)
         default:
             bodyLabel.text = message.displayText
         }
@@ -724,10 +762,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         let contentWidth = bubbleView.bounds.width - paddingX * 2
 
         if replyView.superview != nil {
-            replyView.frame = CGRect(x: paddingX, y: y, width: contentWidth, height: 36)
-            replyMarker.frame = CGRect(x: 8, y: 8, width: 3, height: 20)
-            replyLabel.frame = CGRect(x: 18, y: 0, width: replyView.bounds.width - 26, height: 36)
-            y += 43
+            let height = ChatTimelineMetrics.replyPreviewHeight
+            replyView.frame = CGRect(x: paddingX, y: y, width: contentWidth, height: height)
+            replyMarker.frame = CGRect(x: 8, y: 8, width: 3, height: height - 16)
+            replyLabel.frame = CGRect(x: 18, y: 4, width: replyView.bounds.width - 26, height: height - 8)
+            y += height + ChatTimelineMetrics.replyPreviewGap
         }
 
         if message.id.hasPrefix("__ai_activity__") {
@@ -742,13 +781,21 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         if message.interactionPayload != nil {
             let iconSize: CGFloat = 30
             let iconX: CGFloat = 12
+            let titleHeight = ceil(interactionTitleLabel.font.lineHeight)
+            let subtitleHeight = ceil(interactionSubtitleLabel.font.lineHeight)
+            let textHeight = titleHeight + subtitleHeight + 2
             let iconY = (bubbleView.bounds.height - iconSize) / 2
+            let textY = (bubbleView.bounds.height - textHeight) / 2
             interactionIconBackground.frame = CGRect(x: iconX, y: iconY, width: iconSize, height: iconSize)
             interactionEmojiLabel.frame = interactionIconBackground.frame
             let textX = interactionIconBackground.frame.maxX + 9
             let textWidth = max(0, bubbleView.bounds.width - textX - 12)
-            interactionTitleLabel.frame = CGRect(x: textX, y: iconY - 1, width: textWidth, height: 19)
-            interactionSubtitleLabel.frame = CGRect(x: textX, y: iconY + 18, width: textWidth, height: 16)
+            interactionTitleLabel.frame = CGRect(x: textX, y: textY, width: textWidth, height: titleHeight)
+            interactionSubtitleLabel.frame = CGRect(
+                x: textX,
+                y: textY + titleHeight + 2,
+                width: textWidth,
+                height: subtitleHeight)
             return
         }
 
@@ -761,7 +808,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 captionHeight = ceil((caption as NSString).boundingRect(
                     with: CGSize(width: contentWidth, height: .greatestFiniteMagnitude),
                     options: [.usesLineFragmentOrigin, .usesFontLeading],
-                    attributes: [.font: UIFont.systemFont(ofSize: 15)],
+                    attributes: [.font: UIFont.preferredFont(forTextStyle: .subheadline)],
                     context: nil
                 ).height) + 14
             } else {
@@ -821,8 +868,29 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 transcriptLabel.frame = CGRect(x: paddingX, y: labelY, width: labelWidth, height: labelHeight)
             }
         case "file":
-            mediaIconView.frame = CGRect(x: paddingX, y: y + 6, width: 28, height: 28)
-            bodyLabel.frame = CGRect(x: paddingX + 38, y: y, width: contentWidth - 38, height: bubbleView.bounds.height - y - paddingY)
+            let titleHeight = ceil(bodyLabel.font.lineHeight)
+            let metaHeight = ceil(fileMetaLabel.font.lineHeight)
+            let contentHeight = titleHeight + metaHeight + 2
+            let contentY = y + max(0, (ChatTimelineMetrics.fileHeight - contentHeight) / 2)
+            mediaIconView.frame = CGRect(
+                x: paddingX,
+                y: y + (ChatTimelineMetrics.fileHeight - 28) / 2,
+                width: 28,
+                height: 28)
+            let textX = paddingX + 38
+            let actionWidth: CGFloat = 14
+            let textWidth = max(0, bubbleView.bounds.width - textX - paddingX - actionWidth - 7)
+            bodyLabel.frame = CGRect(x: textX, y: contentY, width: textWidth, height: titleHeight)
+            fileMetaLabel.frame = CGRect(
+                x: textX,
+                y: contentY + titleHeight + 2,
+                width: textWidth,
+                height: metaHeight)
+            fileActionView.frame = CGRect(
+                x: bubbleView.bounds.width - paddingX - actionWidth,
+                y: y + (ChatTimelineMetrics.fileHeight - 18) / 2,
+                width: actionWidth,
+                height: 18)
         default:
             let confirmHeight = message.meta?.confirm.map {
                 ChatTimelineMetrics.confirmationHeight($0, width: contentWidth) + 12
@@ -842,12 +910,21 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         let height = ChatTimelineMetrics.confirmationHeight(confirm, width: contentWidth)
         let originY = bubbleView.bounds.height - ChatTimelineMetrics.bubbleVerticalPadding - height
         confirmDivider.frame = CGRect(x: paddingX, y: originY - 12, width: contentWidth, height: 1)
-        confirmTitleLabel.frame = CGRect(x: paddingX, y: originY, width: contentWidth, height: 22)
+        let titleHeight = ceil(confirmTitleLabel.font.lineHeight)
+        confirmTitleLabel.frame = CGRect(
+            x: paddingX,
+            y: originY,
+            width: contentWidth,
+            height: titleHeight)
         let itemsHeight = ceil((confirmItemsLabel.attributedText ?? NSAttributedString(string: "")).boundingRect(
             with: CGSize(width: contentWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil).height)
-        confirmItemsLabel.frame = CGRect(x: paddingX, y: originY + 29, width: contentWidth, height: itemsHeight)
+        confirmItemsLabel.frame = CGRect(
+            x: paddingX,
+            y: originY + titleHeight + 7,
+            width: contentWidth,
+            height: itemsHeight)
         let actionY = confirmItemsLabel.frame.maxY + (confirm.status == "pending" ? 10 : 8)
         if confirm.status == "pending" {
             let gap: CGFloat = 8
@@ -864,7 +941,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 height: ChatTimelineMetrics.confirmButtonHeight)
             confirmStatusLabel.frame = .zero
         } else {
-            confirmStatusLabel.frame = CGRect(x: paddingX, y: actionY, width: contentWidth, height: 20)
+            confirmStatusLabel.frame = CGRect(
+                x: paddingX,
+                y: actionY,
+                width: contentWidth,
+                height: ceil(confirmStatusLabel.font.lineHeight))
             confirmCancelButton.frame = .zero
             confirmButton.frame = .zero
         }
@@ -1019,6 +1100,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         }
     }
 
+    @objc private func handleReplyTap() {
+        guard message?.replyTo?.isEmpty == false else { return }
+        delegate?.chatCellDidTapReply(self)
+    }
+
     private func installBodyLinkAccessibilityActions() {
         guard let attributedText = bodyLabel.attributedText else {
             bodyLabel.accessibilityCustomActions = nil
@@ -1047,6 +1133,11 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer.view === bubbleView,
+           replyView.superview != nil,
+           replyView.frame.contains(touch.location(in: bubbleView)) {
+            return false
+        }
         if gestureRecognizer.view === bubbleView,
            bodyLabel.superview != nil,
            bodyLabel.frame.contains(touch.location(in: bubbleView)) {

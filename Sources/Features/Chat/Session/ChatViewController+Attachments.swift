@@ -17,8 +17,10 @@ extension ChatViewController {
             self?.inputState = .idle
         })
         if let popover = sheet.popoverPresentationController {
-            popover.sourceView = composer
-            popover.sourceRect = composer.bounds
+            let source = composer.attachmentMenuSourceView
+            popover.sourceView = source
+            popover.sourceRect = source.bounds
+            popover.permittedArrowDirections = .down
         }
         present(sheet, animated: true)
     }
@@ -67,7 +69,6 @@ extension ChatViewController {
             // 输入区里的文字是一条独立消息，不作为首张图片的说明拼进媒体气泡。
             sendText(text)
         }
-        reloadTimeline(animated: false)
     }
 
     func sendSingleMedia(_ item: ChatPendingMedia) {
@@ -93,7 +94,6 @@ extension ChatViewController {
             localPreviewURL: nil,
             channel: channel,
             displayText: url.lastPathComponent)
-        reloadTimeline(animated: false)
     }
 
     func addStickerData(_ data: Data, mimeType: String, to groupId: String) {

@@ -71,6 +71,8 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private let recordingWaveStack = UIStackView()
     let textView = UITextView()
 
+    var attachmentMenuSourceView: UIView { attachmentButton }
+
     private var previewItems: [ChatPendingMedia] = []
     private var isRecording = false
     private var recordingCancelled = false
@@ -224,7 +226,8 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         addSubview(stack)
 
         typingLabel.text = "大橘正在输入…"
-        typingLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        typingLabel.font = .preferredFont(forTextStyle: .caption1)
+        typingLabel.adjustsFontForContentSizeCategory = true
         typingLabel.textColor = .secondaryLabel
         typingLabel.isHidden = true
         typingLabel.setContentHuggingPriority(.required, for: .vertical)
@@ -236,7 +239,8 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         buildMediaPreview()
         stack.addArrangedSubview(mediaPreviewContainer)
 
-        recordingHintLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        recordingHintLabel.font = .preferredFont(forTextStyle: .footnote)
+        recordingHintLabel.adjustsFontForContentSizeCategory = true
         recordingHintLabel.textAlignment = .center
         recordingHintLabel.isHidden = true
         recordingHintLabel.setContentHuggingPriority(.required, for: .vertical)
@@ -263,13 +267,13 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     }
 
     private func recalculateHeight() {
-        let textHeight = textHeightConstraint?.constant ?? 34
+        let textHeight = textHeightConstraint?.constant ?? minimumTextHeight
         let inputHeight = max(CGFloat(44), textHeight + 10)
         var height: CGFloat = 12 + inputHeight
-        if typingVisible { height += 18 + stack.spacing }
-        if replyVisible { height += 50 + stack.spacing }
+        if typingVisible { height += auxiliaryHeight(for: typingLabel) + stack.spacing }
+        if replyVisible { height += replyBarHeight + stack.spacing }
         if mediaVisible { height += (mediaPreviewHeightConstraint?.constant ?? 84) + stack.spacing }
-        if isRecording { height += 18 + stack.spacing }
+        if isRecording { height += auxiliaryHeight(for: recordingHintLabel) + stack.spacing }
         height = ceil(height)
         guard abs(preferredHeight - height) > 0.5 else { return }
         preferredHeight = height
@@ -286,10 +290,12 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         marker.translatesAutoresizingMaskIntoConstraints = false
 
         replyTitleLabel.text = "引用回复"
-        replyTitleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        replyTitleLabel.font = .preferredFont(forTextStyle: .caption1)
+        replyTitleLabel.adjustsFontForContentSizeCategory = true
         replyTitleLabel.textColor = .secondaryLabel
 
-        replyBodyLabel.font = .systemFont(ofSize: 13)
+        replyBodyLabel.font = .preferredFont(forTextStyle: .footnote)
+        replyBodyLabel.adjustsFontForContentSizeCategory = true
         replyBodyLabel.textColor = .label
         replyBodyLabel.lineBreakMode = .byTruncatingTail
 
@@ -374,18 +380,20 @@ final class ChatComposerView: UIView, UITextViewDelegate {
 
         textView.delegate = self
         textView.backgroundColor = .clear
-        textView.font = .systemFont(ofSize: 17)
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
         textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         textView.textContainer.lineFragmentPadding = 0
         textView.isScrollEnabled = false
         textView.textColor = .label
         textView.returnKeyType = .default
         textView.translatesAutoresizingMaskIntoConstraints = false
-        textHeightConstraint = textView.heightAnchor.constraint(equalToConstant: 34)
+        textHeightConstraint = textView.heightAnchor.constraint(equalToConstant: minimumTextHeight)
         textHeightConstraint?.isActive = true
 
         placeholderLabel.text = "输入消息"
         placeholderLabel.font = textView.font
+        placeholderLabel.adjustsFontForContentSizeCategory = true
         placeholderLabel.textColor = .secondaryLabel
         placeholderLabel.isUserInteractionEnabled = false
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -427,7 +435,8 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private func buildRecordingOverlay() {
         recordingContainer.isHidden = true
         recordingContainer.translatesAutoresizingMaskIntoConstraints = false
-        recordingLabel.font = .systemFont(ofSize: 15, weight: .medium)
+        recordingLabel.font = .preferredFont(forTextStyle: .subheadline)
+        recordingLabel.adjustsFontForContentSizeCategory = true
         recordingLabel.textColor = .secondaryLabel
         recordingLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -635,11 +644,37 @@ final class ChatComposerView: UIView, UITextViewDelegate {
 
     func textViewDidChange(_ textView: UITextView) {
         let fitting = CGSize(width: textView.bounds.width, height: CGFloat.greatestFiniteMagnitude)
-        let height = min(108, max(34, textView.sizeThatFits(fitting).height))
+        let height = min(
+            maximumTextHeight,
+            max(minimumTextHeight, textView.sizeThatFits(fitting).height))
         textHeightConstraint?.constant = height
-        textView.isScrollEnabled = height >= 108
+        textView.isScrollEnabled = height >= maximumTextHeight
         updateActionButton()
         recalculateHeight()
         updatePlaceholder()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.preferredContentSizeCategory
+                != traitCollection.preferredContentSizeCategory else { return }
+        textViewDidChange(textView)
+        recalculateHeight()
+    }
+
+    private var minimumTextHeight: CGFloat {
+        max(34, ceil((textView.font ?? UIFont.preferredFont(forTextStyle: .body)).lineHeight + 12))
+    }
+
+    private var maximumTextHeight: CGFloat {
+        ceil((textView.font ?? UIFont.preferredFont(forTextStyle: .body)).lineHeight * 4 + 12)
+    }
+
+    private var replyBarHeight: CGFloat {
+        max(50, ceil(replyTitleLabel.font.lineHeight + replyBodyLabel.font.lineHeight + 18))
+    }
+
+    private func auxiliaryHeight(for label: UILabel) -> CGFloat {
+        max(18, ceil(label.font.lineHeight + 2))
     }
 }

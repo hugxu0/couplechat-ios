@@ -108,12 +108,7 @@ final class ImageCache {
         }
 
         // 网络：下载后仍在后台解码
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 20
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode),
-              Int64(data.count) <= Self.maxDownloadBytes else { return nil }
+        guard let data = await downloadImageData(for: url) else { return nil }
         let prepared = await Task.detached(priority: .utility) { () -> UIImage? in
             Self.decodeForDisplay(data)
         }.value
@@ -127,6 +122,30 @@ final class ImageCache {
             }
         }
         return prepared
+    }
+
+    private func downloadImageData(for url: URL) async -> Data? {
+        for attempt in 0..<2 {
+            guard !Task.isCancelled else { return nil }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 20
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { return nil }
+                if (200..<300).contains(http.statusCode),
+                   Int64(data.count) <= Self.maxDownloadBytes {
+                    return data
+                }
+                // 签名或资源本身无效，重复请求不会恢复。
+                if (400..<500).contains(http.statusCode) { return nil }
+            } catch {
+                guard !Task.isCancelled else { return nil }
+            }
+            if attempt == 0 {
+                try? await Task.sleep(for: .milliseconds(350))
+            }
+        }
+        return nil
     }
 
     /// 已经拿到 Data（比如自己刚上传的图）时直接落缓存，省一次下载。

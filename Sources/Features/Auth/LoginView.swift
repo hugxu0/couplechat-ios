@@ -7,6 +7,8 @@ struct LoginView: View {
     @State private var password = ""
     @State private var error: String?
     @State private var busy = false
+    @State private var accountsLoading = false
+    @State private var accountsError: String?
     @FocusState private var pwFocused: Bool
 
     var body: some View {
@@ -23,31 +25,55 @@ struct LoginView: View {
                     .foregroundStyle(DS.Palette.textSecondary)
             }
 
-            HStack(spacing: 14) {
-                ForEach(accounts, id: \.username) { acc in
-                    Button {
-                        Haptics.selection()
-                        DS.Anim.withMotion(DS.Anim.springFast) { selected = acc }
-                        pwFocused = true
-                    } label: {
-                        VStack(spacing: 6) {
-                            AvatarBadge(
-                                url: AccountPresentation.mediaURL(acc.avatar),
-                                fallbackEmoji: AccountPresentation.avatarText(acc.avatar, for: acc.username),
-                                size: 72)
-                                .clipShape(Circle())
-                                .overlay {
-                                    Circle().strokeBorder(
-                                        selected == acc ? DS.Palette.accent : .clear, lineWidth: 3)
-                                }
-                            Text(acc.name)
-                                .font(DS.Typo.button)
-                                .foregroundStyle(selected == acc ? DS.Palette.accent : DS.Palette.textPrimary)
+            Group {
+                if accounts.isEmpty {
+                    VStack(spacing: 10) {
+                        if accountsLoading || accountsError == nil {
+                            ProgressView()
+                            Text("正在加载账号…")
+                                .font(DS.Typo.secondary)
+                                .foregroundStyle(DS.Palette.textSecondary)
+                        } else {
+                            StatusBanner(
+                                text: accountsError ?? "暂时没有读取到账号，请重试",
+                                kind: .warning)
+                            Button("重新加载") {
+                                Task { await loadAccounts() }
+                            }
+                            .font(DS.Typo.button)
+                            .foregroundStyle(DS.Palette.accent)
                         }
                     }
-                    .buttonStyle(PressableStyle())
-                    .accessibilityLabel("选择 \(acc.name)")
-                    .accessibilityAddTraits(selected == acc ? .isSelected : [])
+                    .frame(minHeight: 102)
+                } else {
+                    HStack(spacing: 14) {
+                        ForEach(accounts, id: \.username) { acc in
+                            Button {
+                                Haptics.selection()
+                                DS.Anim.withMotion(DS.Anim.springFast) { selected = acc }
+                                pwFocused = true
+                            } label: {
+                                VStack(spacing: 6) {
+                                    AvatarBadge(
+                                        url: AccountPresentation.mediaURL(acc.avatar),
+                                        fallbackEmoji: AccountPresentation.avatarText(acc.avatar, for: acc.username),
+                                        size: 72)
+                                        .clipShape(Circle())
+                                        .overlay {
+                                            Circle().strokeBorder(
+                                                selected == acc ? DS.Palette.accent : .clear, lineWidth: 3)
+                                        }
+                                    Text(acc.name)
+                                        .font(DS.Typo.button)
+                                        .foregroundStyle(
+                                            selected == acc ? DS.Palette.accent : DS.Palette.textPrimary)
+                                }
+                            }
+                            .buttonStyle(PressableStyle())
+                            .accessibilityLabel("选择 \(acc.name)")
+                            .accessibilityAddTraits(selected == acc ? .isSelected : [])
+                        }
+                    }
                 }
             }
 
@@ -86,8 +112,31 @@ struct LoginView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppPageBackground())
         .task {
-            accounts = await store.auth.fetchAccounts()
+            await loadAccounts()
         }
+    }
+
+    private func loadAccounts() async {
+        guard !accountsLoading else { return }
+        accountsLoading = true
+        accountsError = nil
+        defer { accountsLoading = false }
+
+        if !store.auth.accounts.isEmpty {
+            accounts = store.auth.accounts
+            return
+        }
+        for attempt in 0..<3 {
+            let fetched = await store.auth.fetchAccounts()
+            guard fetched.isEmpty else {
+                accounts = fetched
+                return
+            }
+            if attempt < 2 {
+                try? await Task.sleep(for: .milliseconds(400 * (attempt + 1)))
+            }
+        }
+        accountsError = "账号加载失败，请检查网络后重试"
     }
 
     private func submit() {

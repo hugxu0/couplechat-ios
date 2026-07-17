@@ -1,40 +1,7 @@
 import SwiftUI
 
-struct OnThisDayCard: View {
-    let moment: OnThisDayMoment
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.gap) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Label("那年今日", systemImage: "clock.arrow.circlepath")
-                        .font(DS.Typo.cardTitle)
-                    Text(moment.title)
-                        .font(DS.Typo.secondary)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                }
-                Spacer()
-                Text("\(moment.yearsAgo) 年前")
-                    .font(DS.Typo.caption.weight(.semibold))
-                    .foregroundStyle(DS.Palette.purple)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(DS.Palette.purple.opacity(0.12), in: Capsule())
-            }
-            MomentMosaic(assets: Array(moment.assets.prefix(4)))
-                .frame(height: 190)
-            Text(moment.date)
-                .font(DS.Typo.caption)
-                .foregroundStyle(DS.Palette.textSecondary)
-        }
-        .padding(DS.Spacing.card)
-        .dsCard()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("那年今日，\(moment.yearsAgo)年前，\(moment.title)，共\(moment.assets.count)项")
-    }
-}
-
 struct MomentAlbumCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let album: MomentAlbum
 
     var body: some View {
@@ -47,12 +14,12 @@ struct MomentAlbumCard: View {
                     Text(album.title)
                         .font(DS.Typo.cardTitle)
                         .foregroundStyle(DS.Palette.textPrimary)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                     if let note = album.note, !note.isEmpty {
                         Text(note)
                             .font(DS.Typo.caption)
                             .foregroundStyle(DS.Palette.textSecondary)
-                            .lineLimit(1)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                     }
                 }
                 Spacer(minLength: 8)
@@ -122,72 +89,6 @@ private struct MomentAlbumPreview: View {
                     .padding(8)
                     .background(.black.opacity(0.38), in: Circle())
                     .padding(7)
-            }
-        }
-    }
-}
-
-struct MomentMosaic: View {
-    let assets: [MomentAsset]
-    var fallbackURL: URL? = nil
-
-    var body: some View {
-        GeometryReader { proxy in
-            let gap: CGFloat = 3
-            let width = proxy.size.width
-            if assets.count >= 3 {
-                HStack(spacing: gap) {
-                    tile(assets[0], width: width * 0.62)
-                    VStack(spacing: gap) {
-                        tile(assets[1], width: width * 0.38 - gap)
-                        tile(assets[2], width: width * 0.38 - gap)
-                    }
-                }
-            } else if assets.count == 2 {
-                HStack(spacing: gap) {
-                    tile(assets[0], width: (width - gap) / 2)
-                    tile(assets[1], width: (width - gap) / 2)
-                }
-            } else {
-                tile(assets.first, fallbackURL: fallbackURL, width: width)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
-    }
-
-    private func tile(_ asset: MomentAsset?, fallbackURL: URL? = nil, width: CGFloat) -> some View {
-        media(asset, fallbackURL: fallbackURL, contentMode: .fill)
-        .frame(width: width)
-        .frame(maxHeight: .infinity)
-        .clipped()
-        .overlay(alignment: .bottomTrailing) {
-            if asset?.isVideo == true {
-                Image(systemName: "play.fill")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(8)
-                    .background(.black.opacity(0.36), in: Circle())
-                    .padding(7)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func media(
-        _ asset: MomentAsset?,
-        fallbackURL: URL?,
-        contentMode: ContentMode
-    ) -> some View {
-        if let asset, asset.isVideo, let url = asset.resolvedOriginalURL {
-            VideoThumbnailView(url: url, contentMode: contentMode)
-        } else {
-            CachedImage(url: asset?.resolvedURL ?? fallbackURL, contentMode: contentMode) {
-                ZStack {
-                    DS.Palette.innerSurface
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.title2)
-                        .foregroundStyle(DS.Palette.textTertiary)
-                }
             }
         }
     }

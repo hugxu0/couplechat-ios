@@ -435,6 +435,25 @@ final class ChatLocalDatabase {
         transactionOpen = false
         return true
     }
+
+    func fetchMessage(id: String, channel: String) -> ChatMessage? {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        guard ChatChannel(rawValue: channel) != nil else { return nil }
+        let sql = """
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText, attachmentsJson
+        FROM messages
+        WHERE id = ? AND channel = ?
+        LIMIT 1;
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, channel, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return parseMessageRow(stmt)
+    }
     
     func fetchMessages(channel: String, beforeTimestamp: Double, limit: Int) -> [ChatMessage] {
         databaseLock.lock()

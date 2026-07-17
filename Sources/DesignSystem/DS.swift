@@ -122,12 +122,12 @@ enum DS {
         static let fieldVertical: CGFloat = 12
     }
 
-    // MARK: - 字体（优先系统 Text Style；大数字/底栏保留固定档）
+    // MARK: - 字体（全部绑定系统 Text Style，随「更大字体」等辅助功能缩放）
     enum Typo {
         /// 登录大标题等展示用
         static let display = Font.system(.largeTitle, design: .rounded).weight(.bold)
         /// 次级大数字（存储总量、统计卡标题数）
-        static let displayNumber = Font.system(size: 26, weight: .heavy, design: .rounded)
+        static let displayNumber = Font.system(.title2, design: .rounded).weight(.heavy)
         /// 根页标题
         static let pageTitle = Font.title2.weight(.bold)
         /// 卡片主标题
@@ -139,13 +139,13 @@ enum DS {
         /// 更弱说明 / 时间
         static let caption = Font.caption
         /// 分区小标签（卡片内「主题色」「预览」等）
-        static let sectionLabel = Font.system(size: 13, weight: .semibold)
+        static let sectionLabel = Font.caption.weight(.semibold)
         /// 最小标签（色名、底栏旁注）
-        static let micro = Font.system(size: 11, weight: .medium)
+        static let micro = Font.caption2.weight(.medium)
         /// 按钮主文案
         static let button = Font.system(.body, design: .default).weight(.semibold)
-        /// Tab 标签（底栏空间有限，固定档）
-        static let tab = Font.system(size: 11, weight: .medium)
+        /// Tab 标签
+        static let tab = Font.caption2.weight(.medium)
     }
 
     // MARK: - 动画（手感统一从这里取）

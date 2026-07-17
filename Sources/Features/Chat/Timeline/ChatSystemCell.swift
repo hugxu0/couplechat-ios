@@ -9,13 +9,15 @@ final class ChatSystemCell: UICollectionViewCell {
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.backgroundColor = .clear
-        label.font = .systemFont(ofSize: 12)
+        label.font = .preferredFont(forTextStyle: .caption1)
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = .secondaryLabel
         label.textAlignment = .center
         label.numberOfLines = 0
         contentView.addSubview(label)
         reeditButton.setTitle("重新编辑", for: .normal)
-        reeditButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
+        reeditButton.titleLabel?.font = .preferredFont(forTextStyle: .caption1)
+        reeditButton.titleLabel?.adjustsFontForContentSizeCategory = true
         reeditButton.addAction(UIAction { [weak self] _ in self?.onReedit?() }, for: .touchUpInside)
         contentView.addSubview(reeditButton)
     }
@@ -53,9 +55,17 @@ final class ChatSystemCell: UICollectionViewCell {
         text: String,
         showsReedit: Bool,
         accentColor: UIColor,
+        usesLightContent: Bool,
         onReedit: (() -> Void)?
     ) {
         label.text = text
+        label.textColor = usesLightContent
+            ? UIColor.white.withAlphaComponent(0.72)
+            : UIColor.black.withAlphaComponent(0.46)
+        label.shadowColor = usesLightContent
+            ? UIColor.black.withAlphaComponent(0.34)
+            : UIColor.white.withAlphaComponent(0.40)
+        label.shadowOffset = CGSize(width: 0, height: 1)
         reeditButton.isHidden = !showsReedit
         reeditButton.tintColor = accentColor
         self.onReedit = onReedit

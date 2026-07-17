@@ -7,10 +7,15 @@ struct WallpaperPickerSheet: View {
     @EnvironmentObject private var theme: ThemeManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var customPickerItem: PhotosPickerItem?
     @State private var wallpaperAppearance: WallpaperAppearance = .light
 
-    private let columns = [GridItem(.adaptive(minimum: 96), spacing: 14)]
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(
+            minimum: dynamicTypeSize.isAccessibilitySize ? 140 : 96,
+            maximum: 180), spacing: 14)]
+    }
 
     var body: some View {
         NavigationStack {
@@ -84,7 +89,7 @@ struct WallpaperPickerSheet: View {
                             .foregroundStyle(DS.Palette.accent)
                     }
                     Text(choice.name)
-                        .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                        .font(DS.Typo.caption.weight(selected ? .semibold : .regular))
                         .foregroundStyle(selected ? DS.Palette.accent : DS.Palette.textSecondary)
                 }
             }
@@ -124,7 +129,7 @@ struct WallpaperPickerSheet: View {
                         .stroke(selected ? DS.Palette.accent : .clear, lineWidth: 3)
                 )
                 Label(selected ? "使用中" : "已保存", systemImage: selected ? "checkmark.circle.fill" : "photo")
-                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .font(DS.Typo.caption.weight(selected ? .semibold : .regular))
                     .foregroundStyle(selected ? DS.Palette.accent : DS.Palette.textSecondary)
             }
         }
@@ -154,7 +159,8 @@ struct WallpaperPickerSheet: View {
                 .frame(height: 120)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 Text("添加到\(wallpaperAppearance.name)图库")
-                    .font(.system(size: 13))
+                    .font(DS.Typo.caption)
+                    .multilineTextAlignment(.center)
                     .foregroundStyle(DS.Palette.textSecondary)
             }
         }

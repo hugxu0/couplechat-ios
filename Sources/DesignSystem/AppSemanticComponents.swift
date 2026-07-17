@@ -7,6 +7,8 @@ struct AppPageBackground: View {
 }
 
 struct RootPageHeader<Trailing: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let title: String
     let subtitle: String?
     private let trailing: Trailing
@@ -22,25 +24,41 @@ struct RootPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: DS.Spacing.gap) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(DS.Typo.pageTitle)
-                    .foregroundStyle(DS.Palette.textPrimary)
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(DS.Typo.secondary)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                        .lineLimit(1)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: DS.Spacing.compact) {
+                    titleBlock
+                    trailing
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            } else {
+                HStack(alignment: .center, spacing: DS.Spacing.gap) {
+                    titleBlock
+                    Spacer(minLength: DS.Spacing.compact)
+                    trailing
                 }
             }
-            Spacer(minLength: DS.Spacing.compact)
-            trailing
         }
         .padding(.horizontal, DS.Spacing.page)
         .padding(.top, 10)
         .padding(.bottom, DS.Spacing.compact)
         .accessibilityElement(children: .combine)
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(DS.Typo.pageTitle)
+                .foregroundStyle(DS.Palette.textPrimary)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(DS.Typo.secondary)
+                    .foregroundStyle(DS.Palette.textSecondary)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -193,5 +211,22 @@ struct CoupleEchoIndicator: View {
             Circle().fill(DS.Palette.pink).frame(width: 6, height: 6)
         }
         .accessibilityHidden(true)
+    }
+}
+
+private struct AppReadableWidthModifier: ViewModifier {
+    let maxWidth: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: maxWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+
+extension View {
+    /// iPad、横屏和分屏下限制正文行宽；窄屏仍自动占满可用空间。
+    func appReadableWidth(_ maxWidth: CGFloat = 760) -> some View {
+        modifier(AppReadableWidthModifier(maxWidth: maxWidth))
     }
 }

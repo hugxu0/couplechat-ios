@@ -44,15 +44,28 @@ struct MessagePageRequest {
     }
 }
 
+struct MessageSearchCursor: Codable, Equatable {
+    let ts: Double
+    let id: String
+}
+
+struct MessageSearchPage {
+    let messages: [ChatMessage]
+    let nextCursor: MessageSearchCursor?
+    let hasMore: Bool
+}
+
 struct MessageSearchRequest: Encodable {
     let channel: String
     let query: String
     let limit: Int
+    let cursor: MessageSearchCursor?
 
-    init(channel: ChatChannel, query: String, limit: Int) {
+    init(channel: ChatChannel, query: String, limit: Int, cursor: MessageSearchCursor? = nil) {
         self.channel = channel.rawValue
         self.query = query
         self.limit = limit
+        self.cursor = cursor
     }
 }
 

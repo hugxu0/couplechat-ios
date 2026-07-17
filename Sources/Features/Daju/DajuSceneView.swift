@@ -9,11 +9,12 @@ struct DajuSceneView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var reactionID = UUID()
     @State private var reactionKind = PetInteractionKind.stroke
 
     private var isNight: Bool {
-        colorScheme == .dark || !(6..<19).contains(Calendar.current.component(.hour, from: Date()))
+        colorScheme == .dark
     }
 
     var body: some View {
@@ -46,14 +47,19 @@ struct DajuSceneView: View {
                 .padding(.bottom, 12)
 
             DajuModelView(reactionID: reactionID, reaction: reactionKind)
-                .frame(maxWidth: .infinity, minHeight: 250, maxHeight: 285)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: dynamicTypeSize.isAccessibilitySize ? 285 : 250,
+                    maxHeight: dynamicTypeSize.isAccessibilitySize ? 340 : 285)
                 .contentShape(Rectangle())
                 .onTapGesture { perform(.stroke) }
 
             feedbackBubble
                 .frame(maxWidth: 250)
         }
-        .frame(minHeight: 270, maxHeight: 300)
+        .frame(
+            minHeight: dynamicTypeSize.isAccessibilitySize ? 315 : 270,
+            maxHeight: dynamicTypeSize.isAccessibilitySize ? 370 : 300)
     }
 
     @ViewBuilder
@@ -95,7 +101,8 @@ struct DajuSceneView: View {
         Text(feedbackText)
             .font(DS.Typo.secondary.weight(.medium))
             .foregroundStyle(isNight ? Color.white.opacity(0.92) : DS.Palette.textPrimary)
-            .lineLimit(2)
+            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
             .background(.ultraThinMaterial, in: Capsule())
@@ -109,7 +116,19 @@ struct DajuSceneView: View {
     }
 
     private var growthRow: some View {
-        HStack(spacing: 12) {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: DS.Spacing.compact) { growthContent }
+            } else {
+                HStack(spacing: 12) { growthContent }
+            }
+        }
+        .foregroundStyle(isNight ? Color.white.opacity(0.78) : DS.Palette.textSecondary)
+        .padding(.horizontal, 4)
+    }
+
+    private var growthContent: some View {
+        Group {
             Text("Lv.\(pet.level)")
                 .font(DS.Typo.caption.weight(.bold).monospacedDigit())
                 .foregroundStyle(DS.Palette.orange)
@@ -122,8 +141,6 @@ struct DajuSceneView: View {
             Text("经验 \(pet.experience % 100)%")
                 .font(DS.Typo.micro.weight(.semibold).monospacedDigit())
         }
-        .foregroundStyle(isNight ? Color.white.opacity(0.78) : DS.Palette.textSecondary)
-        .padding(.horizontal, 4)
     }
 
     private var needsCard: some View {
@@ -149,7 +166,7 @@ struct DajuSceneView: View {
             Text(title)
                 .font(DS.Typo.caption.weight(.medium))
                 .foregroundStyle(isNight ? Color.white.opacity(0.8) : DS.Palette.textSecondary)
-                .frame(width: 38, alignment: .leading)
+                .frame(width: dynamicTypeSize.isAccessibilitySize ? 58 : 38, alignment: .leading)
             petProgress(value: value, color: color)
             Text("\(value)")
                 .font(DS.Typo.caption.weight(.semibold).monospacedDigit())
@@ -177,9 +194,22 @@ struct DajuSceneView: View {
 
     private var interactionBar: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            HStack(spacing: 7) {
-                ForEach(PetInteractionKind.allCases) { kind in
-                    interactionButton(kind, now: context.date)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 140), spacing: 7)],
+                        spacing: 7
+                    ) {
+                        ForEach(PetInteractionKind.allCases) { kind in
+                            interactionButton(kind, now: context.date)
+                        }
+                    }
+                } else {
+                    HStack(spacing: 7) {
+                        ForEach(PetInteractionKind.allCases) { kind in
+                            interactionButton(kind, now: context.date)
+                        }
+                    }
                 }
             }
         }
@@ -197,12 +227,11 @@ struct DajuSceneView: View {
                     .background(color.opacity(isNight ? 0.2 : 0.12), in: Circle())
                 Text(kind.title)
                     .font(DS.Typo.sectionLabel)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 Text(kind.cooldownLabel(remaining: remaining))
                     .font(DS.Typo.micro.monospacedDigit())
                     .foregroundStyle(remaining > 0 ? DS.Palette.textTertiary : DS.Palette.orange)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
             }
             .foregroundStyle(isNight ? Color.white.opacity(0.9) : DS.Palette.textPrimary)
             .frame(maxWidth: .infinity, minHeight: 94)
@@ -231,7 +260,10 @@ struct DajuSceneView: View {
                         endPoint: .bottomTrailing), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
                     Text("和大橘聊聊").font(DS.Typo.button)
-                    Text("它会记得只属于你的悄悄话").font(DS.Typo.micro).foregroundStyle(DS.Palette.textSecondary)
+                    Text("它会记得只属于你的悄悄话")
+                        .font(DS.Typo.micro)
+                        .foregroundStyle(DS.Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")

@@ -54,27 +54,12 @@ struct ChatSessionScreen: View {
         WallpaperAppearance(colorScheme: colorScheme)
     }
 
-    /// 顶栏和输入栏是两块独立的“表面”：它们应该由实际壁纸采样决定，
-    /// 而不是受系统深浅模式或同一段渐变的偶然观感影响。
-    private var composerSurfaceLuminance: CGFloat {
+    /// 整个聊天控制层共用一次明暗判定，避免输入栏、按钮和消息区各自翻色。
+    private var chatSurfaceUsesLightContent: Bool {
         if let luminance = theme.customWallpaperLuminance(
             for: channel,
             appearance: wallpaperAppearance,
-            region: .composerCenter) {
-            return luminance
-        }
-        return displayedWallpaper.fallbackSurfaceLuminance(for: wallpaperAppearance)
-    }
-
-    private var composerChromeTone: ChatSurfaceTone {
-        ChatSurfaceTone(luminance: composerSurfaceLuminance)
-    }
-
-    private var timelineUsesLightContent: Bool {
-        if let luminance = theme.customWallpaperLuminance(
-            for: channel,
-            appearance: wallpaperAppearance,
-            region: .timelineCenter) {
+            region: .wholeChat) {
             return ChatSurfaceTone(luminance: luminance).usesLightContent
         }
         return ChatSurfaceTone(
@@ -83,8 +68,7 @@ struct ChatSessionScreen: View {
     }
 
     private var usesDarkChatSurface: Bool {
-        // 接收气泡只由消息区本身决定，不能再混用顶栏和输入栏的采样值。
-        timelineUsesLightContent
+        chatSurfaceUsesLightContent
     }
 
     private var headerModel: ChatHeaderModel {
@@ -132,13 +116,10 @@ struct ChatSessionScreen: View {
                 ChatUIKitHost(
                     channel: channel,
                     topOverlayInset: topOverlayInset,
-                    composerUsesLightContent: composerChromeTone.usesLightContent,
+                    composerUsesLightContent: chatSurfaceUsesLightContent,
                     wallpaperAppearance: wallpaperAppearance,
-                    dynamicallySamplesComposerTone: theme.hasCustomWallpaper(
-                        for: channel,
-                        appearance: wallpaperAppearance),
                     usesDarkChatSurface: usesDarkChatSurface,
-                    timelineUsesLightContent: timelineUsesLightContent,
+                    timelineUsesLightContent: chatSurfaceUsesLightContent,
                     jumpCommand: $jumpCommand
                 )
                 .frame(width: stableWidth, height: stableHeight)
@@ -233,7 +214,6 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
     let topOverlayInset: CGFloat
     let composerUsesLightContent: Bool
     let wallpaperAppearance: WallpaperAppearance
-    let dynamicallySamplesComposerTone: Bool
     let usesDarkChatSurface: Bool
     let timelineUsesLightContent: Bool
     @Binding var jumpCommand: ChatSessionJumpCommand?
@@ -248,7 +228,6 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             theme: theme,
             composerUsesLightContent: composerUsesLightContent,
             wallpaperAppearance: wallpaperAppearance,
-            dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
             timelineUsesLightContent: timelineUsesLightContent
         )
@@ -263,7 +242,6 @@ private struct ChatUIKitHost: UIViewControllerRepresentable {
             topOverlayInset: topOverlayInset,
             composerUsesLightContent: composerUsesLightContent,
             wallpaperAppearance: wallpaperAppearance,
-            dynamicallySamplesComposerTone: dynamicallySamplesComposerTone,
             usesDarkChatSurface: usesDarkChatSurface,
             timelineUsesLightContent: timelineUsesLightContent
         )

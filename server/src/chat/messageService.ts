@@ -384,18 +384,63 @@ export async function countMessages(user: AuthUser, channel: ClientChannel) {
   return Number(row?.count ?? 0);
 }
 
-export async function searchMessages(user: AuthUser, channel: ClientChannel, query: string, limit = 50) {
+export async function fetchMessageById(user: AuthUser, channel: ClientChannel, id: string) {
   const identity = await conversationIdentity(user, channel);
-  if (!identity) return [];
+  if (!identity) return null;
+  const row = await get<MessageRow>(
+    `SELECT ${messageProjection} FROM messages message
+     LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
+     WHERE message.conversation_id = ? AND message.id = ?
+     LIMIT 1`,
+    [identity.conversationId, id],
+  );
+  return row ? mapMessage(row, channel) : null;
+}
+
+export interface MessageSearchCursor {
+  ts: number;
+  id: string;
+}
+
+export interface MessageSearchPage {
+  list: ClientMessage[];
+  hasMore: boolean;
+  nextCursor: MessageSearchCursor | null;
+}
+
+export async function searchMessages(
+  user: AuthUser,
+  channel: ClientChannel,
+  query: string,
+  limit = 50,
+  cursor?: MessageSearchCursor,
+): Promise<MessageSearchPage> {
+  const identity = await conversationIdentity(user, channel);
+  if (!identity) return { list: [], hasMore: false, nextCursor: null };
+  const pageSize = Math.min(Math.max(limit, 1), 100);
+  const cursorClause = cursor
+    ? "AND (message.ts < ? OR (message.ts = ? AND message.id < ?))"
+    : "";
+  const params: unknown[] = [identity.conversationId, `%${query}%`, `%${query}%`];
+  if (cursor) params.push(cursor.ts, cursor.ts, cursor.id);
+  params.push(pageSize + 1);
   const rows = await all<MessageRow>(
     `SELECT ${messageProjection} FROM messages message
      LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
      WHERE message.conversation_id = ?
        AND (message.text ILIKE ? OR COALESCE(transcript.corrected_text, transcript.text, '') ILIKE ?)
-     ORDER BY message.ts DESC LIMIT ?`,
-    [identity.conversationId, `%${query}%`, `%${query}%`, Math.min(limit, 100)],
+       ${cursorClause}
+     ORDER BY message.ts DESC, message.id DESC LIMIT ?`,
+    params,
   );
-  return rows.map((row) => mapMessage(row, channel));
+  const hasMore = rows.length > pageSize;
+  const pageRows = rows.slice(0, pageSize);
+  const last = pageRows.at(-1);
+  return {
+    list: pageRows.map((row) => mapMessage(row, channel)),
+    hasMore,
+    nextCursor: hasMore && last ? { ts: last.ts, id: last.id } : null,
+  };
 }
 
 export async function recallMessage(user: AuthUser, id: string) {

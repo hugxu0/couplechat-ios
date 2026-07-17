@@ -574,12 +574,20 @@ final class ChatStore: ObservableObject {
 
     func confirmAction(messageId: String, decision: String) { messageStore.confirmAction(messageId: messageId, decision: decision) }
 
-    func searchMessages(_ query: String, channel: ChatChannel) async -> [ChatMessage] {
-        await messageStore.searchMessages(query, channel: channel)
+    func searchMessages(
+        _ query: String,
+        channel: ChatChannel,
+        cursor: MessageSearchCursor? = nil
+    ) async -> MessageSearchPage {
+        await messageStore.searchMessages(query, channel: channel, cursor: cursor)
     }
 
     func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) async -> Bool {
         await messageStore.ensureMessageLoaded(target, channel: channel)
+    }
+
+    func loadReferencedMessage(id: String, channel: ChatChannel) async -> ChatMessage? {
+        await messageStore.loadReferencedMessage(id: id, channel: channel)
     }
 
     func ensureDateLoaded(_ date: Date, channel: ChatChannel) async -> ChatMessage? {

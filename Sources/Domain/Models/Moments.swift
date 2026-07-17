@@ -166,36 +166,6 @@ struct MomentAsset: Identifiable, Decodable, Equatable, Hashable {
     }
 }
 
-struct OnThisDayMoment: Identifiable, Decodable, Equatable {
-    let id: String
-    let yearsAgo: Int
-    let title: String
-    let date: String
-    let assets: [MomentAsset]
-
-    private enum CodingKeys: String, CodingKey {
-        case id, yearsAgo, title, date, assets
-    }
-
-    init(from decoder: Decoder) throws {
-        let box = try decoder.container(keyedBy: CodingKeys.self)
-        yearsAgo = try box.decodeIfPresent(Int.self, forKey: .yearsAgo) ?? 1
-        title = try box.decodeIfPresent(String.self, forKey: .title) ?? "那年今日"
-        date = try box.decodeIfPresent(String.self, forKey: .date) ?? ""
-        assets = try box.decodeIfPresent([MomentAsset].self, forKey: .assets) ?? []
-        id = try box.decodeIfPresent(String.self, forKey: .id)
-            ?? "\(date)-\(yearsAgo)-\(assets.first?.id ?? "moment")"
-    }
-
-    init(id: String, yearsAgo: Int, title: String, date: String, assets: [MomentAsset]) {
-        self.id = id
-        self.yearsAgo = yearsAgo
-        self.title = title
-        self.date = date
-        self.assets = assets
-    }
-}
-
 struct MomentNote: Decodable, Equatable, Hashable {
     let id: String
     let text: String

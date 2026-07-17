@@ -242,7 +242,11 @@ async function recommendationMemories(
   return [...events, ...supporting];
 }
 
-function recommendationPrompt(memories: RecommendationMemoryRow[], currentCycleDate: string): string {
+function recommendationPrompt(
+  memories: RecommendationMemoryRow[],
+  currentCycleDate: string,
+  excluded: readonly GeneratedRecommendation[],
+): string {
   const grouped = new Map<string, RecommendationMemoryRow[]>();
   for (const memory of memories) {
     const values = grouped.get(memory.layer) ?? [];
@@ -255,12 +259,18 @@ function recommendationPrompt(memories: RecommendationMemoryRow[], currentCycleD
       ? `【${title}】\n${values.map((item) => `- ${item.content}`).join("\n")}`
       : `【${title}】\n- 无`;
   };
+  const recent = excluded.slice(0, 8);
   return [
     `今天的作息日是 ${currentCycleDate}。`,
     section("event", "昨天的共同经历卡片（首要依据）"),
     section("state", "近期共同近况（只作补充）"),
     section("plan", "尚在进行的计划（只作补充）"),
     section("fact", "稳定偏好与事实（只作补充）"),
+    recent.length
+      ? `【最近已经推荐过，必须避开这些具体对象】\n${recent
+        .map((item) => `- ${item.category}：${item.content}`)
+        .join("\n")}`
+      : "【最近已经推荐过】\n- 无",
   ].join("\n\n");
 }
 
@@ -281,6 +291,58 @@ const fallbackRecommendations: readonly GeneratedRecommendation[] = [
   { category: "电视剧", content: "一起重温《请回答1988》吧，它不靠大起大落，却把家人、朋友和喜欢一个人的心情写得很暖。" },
   { category: "桌游", content: "推荐双人桌游《拼布艺术》，一局不长、规则也轻巧，很适合饭后坐下来慢慢拼一张被子。" },
 ] as const;
+
+function normalizedRecommendationText(value: string): string {
+  return value
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s，。！？、；：,.!?;:'"“”‘’《》【】（）()\[\]{}·—-]/g, "");
+}
+
+function explicitRecommendationObject(content: string): string | null {
+  const match = content.match(/[《“"「『]([^》”"」』]{2,40})[》”"」』]/);
+  return match ? normalizedRecommendationText(match[1]) : null;
+}
+
+function bigramSimilarity(left: string, right: string): number {
+  const pairs = (value: string) => {
+    const characters = [...value];
+    return new Set(characters.slice(0, -1).map((character, index) => character + characters[index + 1]));
+  };
+  const leftPairs = pairs(left);
+  const rightPairs = pairs(right);
+  if (leftPairs.size === 0 || rightPairs.size === 0) return left === right ? 1 : 0;
+  let overlap = 0;
+  for (const pair of leftPairs) if (rightPairs.has(pair)) overlap += 1;
+  return (2 * overlap) / (leftPairs.size + rightPairs.size);
+}
+
+export function recommendationsAreSimilar(
+  left: GeneratedRecommendation,
+  right: GeneratedRecommendation,
+): boolean {
+  const leftObject = explicitRecommendationObject(left.content);
+  const rightObject = explicitRecommendationObject(right.content);
+  if (leftObject && rightObject && leftObject === rightObject) return true;
+  const normalizedLeft = normalizedRecommendationText(`${left.category}${left.content}`);
+  const normalizedRight = normalizedRecommendationText(`${right.category}${right.content}`);
+  return normalizedLeft === normalizedRight || bigramSimilarity(normalizedLeft, normalizedRight) >= 0.64;
+}
+
+async function recentDajuRecommendations(
+  coupleId: string,
+  limit = 12,
+): Promise<GeneratedRecommendation[]> {
+  const rows = await all<{ category: string | null; content: string }>(
+    `SELECT category, content FROM recommendations
+      WHERE couple_id = ? AND source_kind = 'daju'
+      ORDER BY created_at DESC, id DESC LIMIT ?`,
+    [coupleId, limit],
+  );
+  return rows.map((row) => ({
+    category: row.category?.trim() || "推荐",
+    content: row.content,
+  }));
+}
 
 export function parseGeneratedRecommendation(value: string | null): GeneratedRecommendation | null {
   if (!value) return null;
@@ -311,31 +373,49 @@ export function parseGeneratedRecommendation(value: string | null): GeneratedRec
   }
 }
 
-function fallbackRecommendation(currentCycleDate: string): GeneratedRecommendation {
+export function fallbackRecommendation(
+  currentCycleDate: string,
+  excluded: readonly GeneratedRecommendation[] = [],
+): GeneratedRecommendation {
   const seed = [...currentCycleDate].reduce((sum, character) => sum + character.charCodeAt(0), 0);
-  return fallbackRecommendations[seed % fallbackRecommendations.length];
+  const start = (seed + excluded.length) % fallbackRecommendations.length;
+  for (let offset = 0; offset < fallbackRecommendations.length; offset += 1) {
+    const candidate = fallbackRecommendations[(start + offset) % fallbackRecommendations.length];
+    if (!excluded.some((item) => recommendationsAreSimilar(candidate, item))) return candidate;
+  }
+  return fallbackRecommendations[start];
 }
 
 async function generateRecommendation(
   memories: RecommendationMemoryRow[],
   currentCycleDate: string,
+  excluded: readonly GeneratedRecommendation[],
 ): Promise<GeneratedRecommendation> {
-  const generated = await chat({
-    profile: "task",
-    gen: GEN.dailyRecommendation,
-    system: [
-      "你是悄悄话里的大橘，要给小旭和小偲挑一个今天值得一起体验的具体东西。",
-      "这是内容与体验推荐，不是日程规划、效率建议或待办整理。必须点名一个明确对象，不能只说‘散散步’‘聊聊天’‘整理照片’之类的泛泛行动。",
-      "推荐范围完全开放，包括但不限于电影、电视剧、纪录片、动画、音乐、专辑、播客、书、漫画、游戏、桌游、美食、饮品、店、旅行目的地、路线、展览、演出、活动、运动、应用或新鲜体验；这些只是例子，不是固定分类表。",
-      "昨天的 event 经历卡片是首要口味线索；state、plan、fact 只能帮助理解背景。用记忆判断他们可能喜欢什么，不要把记忆里的任务重新包装成推荐。",
-      "不要使用 relationship 或 insight 层，不做心理分析，不暴露记忆系统、卡片名称或私人聊天。",
-      "优先推荐长期有效、确实存在的作品、食物或体验；不确定实时营业、上架或展期时不要编造。不要假定他们所在的城市。",
-      "只输出一个 JSON 对象：category 是你自由概括的 2～8 字分类；content 是 30～110 个中文字符的推荐正文，要包含具体名称和一句贴合两个人的理由。",
-      "格式示例仅说明结构：{\"category\":\"电影\",\"content\":\"一起看《海街日记》吧……\"}。不要输出 Markdown、链接、列表或额外解释。",
-    ].join("\n"),
-    user: recommendationPrompt(memories, currentCycleDate),
-  });
-  return parseGeneratedRecommendation(generated) ?? fallbackRecommendation(currentCycleDate);
+  const rejected = [...excluded];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const generated = await chat({
+      profile: "task",
+      gen: GEN.dailyRecommendation,
+      system: [
+        "你是悄悄话里的大橘，要给小旭和小偲挑一个今天值得一起体验的具体东西。",
+        "这是内容与体验推荐，不是日程规划、效率建议或待办整理。必须点名一个明确对象，不能只说‘散散步’‘聊聊天’‘整理照片’之类的泛泛行动。",
+        "推荐范围完全开放，包括但不限于电影、电视剧、纪录片、动画、音乐、专辑、播客、书、漫画、游戏、桌游、美食、饮品、店、旅行目的地、路线、展览、演出、活动、运动、应用或新鲜体验；这些只是例子，不是固定分类表。",
+        "昨天的 event 经历卡片是首要口味线索；state、plan、fact 只能帮助理解背景。用记忆判断他们可能喜欢什么，不要把记忆里的任务重新包装成推荐。",
+        "不要使用 relationship 或 insight 层，不做心理分析，不暴露记忆系统、卡片名称或私人聊天。",
+        "优先推荐长期有效、确实存在的作品、食物或体验；不确定实时营业、上架或展期时不要编造。不要假定他们所在的城市。",
+        "必须避开用户输入里列出的近期推荐，不能只改写句子或理由；即使继续使用相同分类，也要换成完全不同的具体对象。",
+        "只输出一个 JSON 对象：category 是你自由概括的 2～8 字分类；content 是 30～110 个中文字符的推荐正文，要包含具体名称和一句贴合两个人的理由。",
+        "JSON 必须且只含 category 与 content 两个字符串字段。不要输出 Markdown、链接、列表、示例占位词或额外解释。",
+      ].join("\n"),
+      user: recommendationPrompt(memories, currentCycleDate, rejected),
+    });
+    if (!generated) break;
+    const candidate = parseGeneratedRecommendation(generated);
+    if (!candidate) continue;
+    if (!rejected.some((item) => recommendationsAreSimilar(candidate, item))) return candidate;
+    rejected.unshift(candidate);
+  }
+  return fallbackRecommendation(currentCycleDate, rejected);
 }
 
 async function createDajuRecommendation(
@@ -345,8 +425,11 @@ async function createDajuRecommendation(
   const identity = await activeIdentity(user);
   if (!identity?.coupleId) return null;
   const date = cycleDate();
-  const memories = await recommendationMemories(identity.coupleId, date);
-  const recommendation = await generateRecommendation(memories, date);
+  const [memories, recent] = await Promise.all([
+    recommendationMemories(identity.coupleId, date),
+    recentDajuRecommendations(identity.coupleId),
+  ]);
+  const recommendation = await generateRecommendation(memories, date, recent);
   return insertRecommendation(user, {
     sourceKind: "daju",
     sourceAccountId: null,
@@ -366,8 +449,11 @@ async function upgradeLegacyDajuRecommendation(
   const identity = await activeIdentity(user);
   if (!identity?.coupleId) return null;
   const date = cycleDate();
-  const memories = await recommendationMemories(identity.coupleId, date);
-  const recommendation = await generateRecommendation(memories, date);
+  const [memories, recent] = await Promise.all([
+    recommendationMemories(identity.coupleId, date),
+    recentDajuRecommendations(identity.coupleId),
+  ]);
+  const recommendation = await generateRecommendation(memories, date, recent);
   await transaction(async (db) => {
     const now = Date.now();
     const updated = await db.run(

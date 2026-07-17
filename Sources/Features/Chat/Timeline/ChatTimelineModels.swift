@@ -118,6 +118,7 @@ struct ChatMessageLayout: Hashable {
 
 enum ChatTimelineMetrics {
     static let horizontalInset: CGFloat = 7
+    static let readableConversationWidth: CGFloat = 820
     static let avatarSize: CGFloat = 36
     static let avatarGap: CGFloat = 5
     static let bubbleHorizontalPadding: CGFloat = 14
@@ -129,10 +130,27 @@ enum ChatTimelineMetrics {
     static let statusOutsideWidth: CGFloat = 22
     static let statusOutsideGap: CGFloat = 2
     static let mediaSize = CGSize(width: 200, height: 230)
-    static let fileHeight: CGFloat = 58
+    static var fileHeight: CGFloat {
+        max(54, ceil(UIFont.preferredFont(forTextStyle: .subheadline).lineHeight
+            + UIFont.preferredFont(forTextStyle: .caption2).lineHeight + 14))
+    }
+    static var replyPreviewHeight: CGFloat {
+        max(44, ceil(UIFont.preferredFont(forTextStyle: .footnote).lineHeight * 2 + 8))
+    }
+    static let replyPreviewGap: CGFloat = 7
     static let voiceHeight: CGFloat = 32
     static let stickerSize = CGSize(width: 132, height: 132)
-    static let confirmButtonHeight: CGFloat = 38
+    static var confirmButtonHeight: CGFloat {
+        max(38, ceil(UIFont.preferredFont(forTextStyle: .body).lineHeight + 16))
+    }
+
+    static func readableWidth(for containerWidth: CGFloat) -> CGFloat {
+        min(containerWidth, readableConversationWidth)
+    }
+
+    static func contentInset(for containerWidth: CGFloat) -> CGFloat {
+        max(horizontalInset, (containerWidth - readableWidth(for: containerWidth)) / 2 + horizontalInset)
+    }
 
     static func messageHeight(
         for message: ChatMessage,
@@ -142,19 +160,22 @@ enum ChatTimelineMetrics {
         transcriptExpanded: Bool = false
     ) -> CGFloat {
         let topGap = groupedWithPrevious ? sameSenderTopGap : otherSenderTopGap
-        let maxBubbleWidth = max(180, containerWidth * bubbleMaxWidthRatio)
+        let maxBubbleWidth = max(180, readableWidth(for: containerWidth) * bubbleMaxWidthRatio)
         let contentWidth = maxBubbleWidth - bubbleHorizontalPadding * 2
         var contentHeight: CGFloat
 
         if message.id.hasPrefix("__ai_activity__") {
             contentHeight = 20
         } else if message.interactionPayload != nil {
-            contentHeight = 42
+            contentHeight = max(
+                42,
+                ceil(UIFont.preferredFont(forTextStyle: .subheadline).lineHeight
+                    + UIFont.preferredFont(forTextStyle: .caption2).lineHeight + 6))
         } else { switch message.type {
         case "image", "video":
             contentHeight = mediaContentHeight(for: message)
             if let caption = mediaCaption(for: message) {
-                contentHeight += measureText(caption, font: .systemFont(ofSize: 15), width: contentWidth) + 14
+                contentHeight += measureText(caption, font: .preferredFont(forTextStyle: .subheadline), width: contentWidth) + 14
             }
         case "sticker":
             contentHeight = stickerSize.height
@@ -168,7 +189,7 @@ enum ChatTimelineMetrics {
         default:
             let bodyHeight = ChatMarkdownRenderer.boundingSize(
                 for: message.displayText.isEmpty ? " " : message.displayText,
-                font: .systemFont(ofSize: 17),
+                font: .preferredFont(forTextStyle: .body),
                 width: contentWidth).height
             contentHeight = bodyHeight
         } }
@@ -178,7 +199,7 @@ enum ChatTimelineMetrics {
         }
 
         if let reply = message.replyPreview, !reply.isEmpty {
-            contentHeight += 36 + 7
+            contentHeight += replyPreviewHeight + replyPreviewGap
         }
 
         let extraPadding: CGFloat
@@ -193,7 +214,7 @@ enum ChatTimelineMetrics {
     }
 
     static func textBubbleWidth(for message: ChatMessage, containerWidth: CGFloat) -> CGFloat {
-        let maxBubbleWidth = max(180, containerWidth * bubbleMaxWidthRatio)
+        let maxBubbleWidth = max(180, readableWidth(for: containerWidth) * bubbleMaxWidthRatio)
         let minBubbleWidth: CGFloat = 58
         let available = maxBubbleWidth - bubbleHorizontalPadding * 2
         let text = message.displayText.isEmpty ? " " : message.displayText
@@ -204,9 +225,12 @@ enum ChatTimelineMetrics {
             return ceil(min(maxBubbleWidth, 196))
         }
         if message.meta?.confirm != nil { return ceil(min(maxBubbleWidth, 300)) }
-        let bodyWidth = measureTextWidth(text, font: .systemFont(ofSize: 17), maxWidth: available)
-        let replyWidth = measureTextWidth(message.replyPreview ?? "", font: .systemFont(ofSize: 13), maxWidth: available)
-        let contentWidth = min(maxBubbleWidth, max(bodyWidth, replyWidth) + bubbleHorizontalPadding * 2)
+        let bodyWidth = measureTextWidth(text, font: .preferredFont(forTextStyle: .body), maxWidth: available)
+        let replyWidth = measureTextWidth(message.replyPreview ?? "", font: .preferredFont(forTextStyle: .footnote), maxWidth: available)
+        let replyMinimumWidth = message.replyPreview?.isEmpty == false ? min(available, 176) : 0
+        let contentWidth = min(
+            maxBubbleWidth,
+            max(bodyWidth, max(replyWidth, replyMinimumWidth)) + bubbleHorizontalPadding * 2)
         return ceil(max(minBubbleWidth, contentWidth))
     }
 
@@ -217,7 +241,7 @@ enum ChatTimelineMetrics {
     ) -> CGFloat {
         switch type {
         case "sticker": return stickerSize.width
-        case "file": return min(containerWidth * bubbleMaxWidthRatio, 250)
+        case "file": return min(readableWidth(for: containerWidth) * bubbleMaxWidthRatio, 300)
         // 转写只向下展开；气泡宽度始终与未展开的语音保持一致。
         case "voice": return min(containerWidth * bubbleMaxWidthRatio, 218)
         default: return mediaSize.width
@@ -262,9 +286,12 @@ enum ChatTimelineMetrics {
     static func confirmationHeight(_ confirm: ActionConfirm, width: CGFloat) -> CGFloat {
         let itemsHeight = ChatMarkdownRenderer.boundingSize(
             for: confirmationMarkdown(confirm),
-            font: .systemFont(ofSize: 14),
+            font: .preferredFont(forTextStyle: .subheadline),
             width: width).height
-        return 22 + 7 + itemsHeight + (confirm.status == "pending" ? 10 + confirmButtonHeight : 8 + 20)
+        let titleHeight = ceil(UIFont.preferredFont(forTextStyle: .subheadline).lineHeight)
+        let statusHeight = ceil(UIFont.preferredFont(forTextStyle: .footnote).lineHeight)
+        return titleHeight + 7 + itemsHeight
+            + (confirm.status == "pending" ? 10 + confirmButtonHeight : 8 + statusHeight)
     }
 
     static func confirmationMarkdown(_ confirm: ActionConfirm) -> String {

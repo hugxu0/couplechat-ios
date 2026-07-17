@@ -28,17 +28,25 @@ export function signedMediaURL(id: string): string {
   return `${config.publicBaseURL}/media/${id}?sig=${signMediaId(id)}`;
 }
 
-function requestedByteRange(request: FastifyRequest, size: number): { start: number; end: number } | null {
-  const value = request.headers.range;
+export function parseRequestedByteRange(value: string | undefined, size: number): { start: number; end: number } | null {
   if (!value) return null;
   const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
   if (!match) return null;
-  const start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2] || 0));
+  if (!match[1]) {
+    const suffixLength = Number(match[2]);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return null;
+    return { start: Math.max(0, size - suffixLength), end: size - 1 };
+  }
+  const start = Number(match[1]);
   const end = match[2] ? Number(match[2]) : size - 1;
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= size) {
     return null;
   }
   return { start, end: Math.min(end, size - 1) };
+}
+
+function requestedByteRange(request: FastifyRequest, size: number): { start: number; end: number } | null {
+  return parseRequestedByteRange(request.headers.range, size);
 }
 
 function sendUpload(request: FastifyRequest, reply: FastifyReply, upload: UploadRow) {

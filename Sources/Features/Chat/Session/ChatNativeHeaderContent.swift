@@ -1,18 +1,22 @@
 import SwiftUI
 
 struct ChatNativeHeaderTitle: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let model: ChatHeaderModel
 
     var body: some View {
         VStack(spacing: 1) {
             Text(model.title)
                 .font(.headline)
-            Text(model.subtitle)
-                .font(.caption2)
-                .foregroundStyle(statusColor)
+            if !dynamicTypeSize.isAccessibilitySize {
+                Text(model.subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(statusColor)
+            }
         }
         .lineLimit(1)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(model.title)，\(model.subtitle)")
     }
 
     private var statusColor: Color {

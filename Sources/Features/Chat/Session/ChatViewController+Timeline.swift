@@ -1,7 +1,22 @@
 import AVFoundation
 import Combine
+import QuickLook
 import SafariServices
 import UIKit
+
+final class ChatFilePreviewSource: NSObject, QLPreviewControllerDataSource {
+    let url: URL
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+        url as NSURL
+    }
+}
 
 extension ChatViewController {
     func bindStore() {
@@ -229,7 +244,7 @@ extension ChatViewController {
         if message.type == "voice" {
             toggleVoicePlayback(message)
         } else if message.type == "file", let url = message.mediaURL {
-            UIApplication.shared.open(url)
+            presentFilePreview(message: message, remoteURL: url)
         } else {
             Task { [weak self] in
                 guard let self else { return }
@@ -244,6 +259,60 @@ extension ChatViewController {
                     })
             }
         }
+    }
+
+    func presentFilePreview(message: ChatMessage, remoteURL: URL) {
+        filePreviewTask?.cancel()
+        let loading = UIAlertController(
+            title: "正在准备文件",
+            message: "下载完成后会在应用内打开",
+            preferredStyle: .alert)
+        loading.addAction(UIAlertAction(title: "取消", style: .cancel) { [weak self] _ in
+            self?.filePreviewTask?.cancel()
+        })
+        present(loading, animated: true)
+
+        filePreviewTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.filePreviewTask = nil }
+            do {
+                let localURL = try await FilePreviewCache.localURL(
+                    for: remoteURL,
+                    messageID: message.id,
+                    displayName: fileTitle(for: message))
+                guard !Task.isCancelled else { return }
+                let source = ChatFilePreviewSource(url: localURL)
+                let preview = QLPreviewController()
+                preview.dataSource = source
+                filePreviewSource = source
+                loading.dismiss(animated: true) { [weak self] in
+                    self?.present(preview, animated: true)
+                }
+            } catch is CancellationError {
+                loading.dismiss(animated: true)
+            } catch {
+                guard !Task.isCancelled else {
+                    loading.dismiss(animated: true)
+                    return
+                }
+                loading.dismiss(animated: true) { [weak self] in
+                    let alert = UIAlertController(
+                        title: "文件打开失败",
+                        message: "请检查网络后重试。",
+                        preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "知道了", style: .default))
+                    self?.present(alert, animated: true)
+                }
+            }
+        }
+    }
+
+    private func fileTitle(for message: ChatMessage) -> String {
+        let title = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, title != "[文件]" else {
+            return message.mediaURL?.lastPathComponent ?? "文件"
+        }
+        return title
     }
 }
 
@@ -299,8 +368,10 @@ extension ChatViewController: ChatTimelineControllerDelegate {
             guard let url = message.url, !url.isEmpty else { return }
             StickerStore.shared.add(url: url)
             Haptics.light()
-        case .addToAlbum:
-            presentAlbumPicker(for: message)
+        case .toggleFavorite:
+            guard let item = MediaBrowserItem(message: message) else { return }
+            _ = MediaFavoriteStore.shared.toggle(item)
+            Haptics.light()
         case .recall:
             store.recallMessage(message, channel: channel)
         case .retry:
@@ -332,6 +403,33 @@ extension ChatViewController: ChatTimelineControllerDelegate {
 
     func timelineDidTapTranscript(message: ChatMessage) {
         handleTranscriptTap(message)
+    }
+
+    func timelineDidTapReply(message: ChatMessage) {
+        guard let referencedID = message.replyTo, !referencedID.isEmpty else { return }
+        let requestID = UUID()
+        let wasBrowsingHistory = timelineController.browsingHistoricalWindow
+        activeJumpID = requestID
+        jumpTask?.cancel()
+        timelineController.beginHistoricalJump()
+        jumpTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let target = await store.loadReferencedMessage(id: referencedID, channel: channel)
+            guard !Task.isCancelled, activeJumpID == requestID else { return }
+            guard let target else {
+                if !wasBrowsingHistory {
+                    timelineController.browsingHistoricalWindow = false
+                }
+                let alert = UIAlertController(
+                    title: "无法定位原消息",
+                    message: "原消息可能已撤回，或当前网络暂不可用。",
+                    preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "知道了", style: .default))
+                present(alert, animated: true)
+                return
+            }
+            completeJump(to: target)
+        }
     }
 
 }

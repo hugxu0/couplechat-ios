@@ -106,8 +106,8 @@ export function registerRealtime(io: Server) {
     socket.on(socketEvents.messagesSearch, (payload: unknown, ack?: Ack) =>
       safeAck(async () => {
         const input = searchMessagesSchema.parse(payload ?? {});
-        const list = await searchMessages(user, input.channel, input.query, input.limit);
-        return { ok: true, list };
+        const page = await searchMessages(user, input.channel, input.query, input.limit, input.cursor);
+        return { ok: true, ...page };
       }, ack),
     );
 

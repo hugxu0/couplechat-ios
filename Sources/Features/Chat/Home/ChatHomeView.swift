@@ -16,6 +16,7 @@ struct ChatHomeView: View {
     }
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var timelineStore: ChatTimelineStore
     @EnvironmentObject private var theme: ThemeManager
@@ -76,6 +77,7 @@ struct ChatHomeView: View {
                 mainPanel
                     .padding(.horizontal, DS.Spacing.page)
                     .padding(.top, 8)
+                    .appReadableWidth(760)
                 // 卡片外保留一小段真实的滚动缓冲，给底部标签栏留出呼吸空间。
                 Color.clear.frame(height: 58)
             }
@@ -126,6 +128,7 @@ struct ChatHomeView: View {
                         showStatusPicker = false
                     },
                     onClose: { showStatusPicker = false })
+                    .presentationSizing(.form)
             }
             .alert("贴一张小纸条", isPresented: $showNotePrompt) {
                 TextField("写一句想贴给 TA 的话", text: $noteText)
@@ -189,36 +192,36 @@ struct ChatHomeView: View {
 
     private var brandHeader: some View {
         VStack(spacing: 7) {
-            ZStack {
+            ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
                     Image(systemName: "sparkles")
                         .font(DS.Typo.cardTitle.weight(.semibold))
                     Text("漫长悄悄话")
-                        .font(.system(size: 35, weight: .heavy, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
+                        .font(DS.Typo.display)
+                        .multilineTextAlignment(.center)
                     Image(systemName: "sparkles")
                         .font(DS.Typo.button)
                 }
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [DS.Palette.blue, DS.Palette.purple],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .shadow(
-                    color: colorScheme == .dark
-                        ? theme.accent.color.opacity(0.32)
-                        : .white.opacity(0.9),
-                    radius: 3
-                )
-
-                Image(systemName: "heart.fill")
-                    .font(DS.Typo.micro.weight(.bold))
-                    .foregroundStyle(DS.Palette.pink.opacity(0.58))
-                    .offset(y: -30)
+                VStack(spacing: 3) {
+                    Image(systemName: "sparkles")
+                    Text("漫长悄悄话")
+                        .font(DS.Typo.display)
+                        .multilineTextAlignment(.center)
+                }
             }
+            .foregroundStyle(
+                LinearGradient(
+                    colors: [DS.Palette.blue, DS.Palette.purple],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .shadow(
+                color: colorScheme == .dark
+                    ? theme.accent.color.opacity(0.32)
+                    : .white.opacity(0.9),
+                radius: 3
+            )
 
             Text("慢慢说，悄悄听")
                 .font(DS.Typo.sectionLabel)
@@ -352,60 +355,81 @@ struct ChatHomeView: View {
     }
 
     private var coupleHeader: some View {
-        HStack(alignment: .center, spacing: 0) {
-            ChatHomeCoupleAvatarColumn(
-                name: myName,
-                avatar: myAvatar,
-                avatarURL: store.avatarURL(for: myUsername),
-                image: .dog,
-                status: statusMap[myUsername],
-                online: store.connected,
-                ring: DS.Palette.member(myUsername),
-                editable: true,
-                statusOptions: statusOptions,
-                onStatusTap: { showStatusPicker = true }
-            )
-            .frame(maxWidth: .infinity)
-
-            VStack(spacing: 8) {
-                HStack(spacing: 9) {
-                    Rectangle()
-                        .fill(Color.clear)
-                        .frame(width: 28, height: 1.5)
-                        .overlay(
-                            Rectangle()
-                                .stroke(DS.Palette.pink.opacity(0.22), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-                        )
-                    Text("💗")
-                        .font(.system(size: 25))
-                        .shadow(color: DS.Palette.pink.opacity(0.18), radius: 4, y: 1)
-                    Rectangle()
-                        .fill(Color.clear)
-                        .frame(width: 28, height: 1.5)
-                        .overlay(
-                            Rectangle()
-                                .stroke(DS.Palette.pink.opacity(0.22), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-                        )
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: DS.Spacing.gap) {
+                    myAvatarColumn
+                    connectionBridge
+                    partnerAvatarColumn
                 }
-                Text(connectionSummary)
-                    .font(DS.Typo.micro.weight(.semibold))
-                    .foregroundStyle(DS.Palette.textSecondary)
+            } else {
+                HStack(alignment: .center, spacing: 0) {
+                    myAvatarColumn
+                    connectionBridge
+                        .frame(width: 84)
+                    partnerAvatarColumn
+                }
             }
-            .frame(width: 70)
+        }
+    }
 
-            ChatHomeCoupleAvatarColumn(
-                name: partnerName,
-                avatar: partnerAvatar,
-                avatarURL: store.avatarURL(for: partnerUsername),
-                image: .bunny,
-                status: statusMap[partnerUsername],
-                online: store.partnerOnline,
-                ring: DS.Palette.member(partnerUsername),
-                editable: false,
-                statusOptions: statusOptions,
-                onStatusTap: {}
-            )
-            .frame(maxWidth: .infinity)
+    private var myAvatarColumn: some View {
+        ChatHomeCoupleAvatarColumn(
+            name: myName,
+            avatar: myAvatar,
+            avatarURL: store.avatarURL(for: myUsername),
+            image: .dog,
+            status: statusMap[myUsername],
+            online: store.connected,
+            ring: DS.Palette.member(myUsername),
+            editable: true,
+            statusOptions: statusOptions,
+            onStatusTap: { showStatusPicker = true }
+        )
+        .frame(maxWidth: .infinity)
+    }
+
+    private var partnerAvatarColumn: some View {
+        ChatHomeCoupleAvatarColumn(
+            name: partnerName,
+            avatar: partnerAvatar,
+            avatarURL: store.avatarURL(for: partnerUsername),
+            image: .bunny,
+            status: statusMap[partnerUsername],
+            online: store.partnerOnline,
+            ring: DS.Palette.member(partnerUsername),
+            editable: false,
+            statusOptions: statusOptions,
+            onStatusTap: {}
+        )
+        .frame(maxWidth: .infinity)
+    }
+
+    private var connectionBridge: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 9) {
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(maxWidth: 28, maxHeight: 1.5)
+                    .overlay(
+                        Rectangle()
+                            .stroke(DS.Palette.pink.opacity(0.22), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                    )
+                Text("💗")
+                    .font(.title2)
+                    .shadow(color: DS.Palette.pink.opacity(0.18), radius: 4, y: 1)
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(maxWidth: 28, maxHeight: 1.5)
+                    .overlay(
+                        Rectangle()
+                            .stroke(DS.Palette.pink.opacity(0.22), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                    )
+            }
+            Text(connectionSummary)
+                .font(DS.Typo.micro.weight(.semibold))
+                .foregroundStyle(DS.Palette.textSecondary)
+                .multilineTextAlignment(.center)
         }
     }
 
@@ -441,7 +465,12 @@ struct ChatHomeView: View {
     }
 
     private var actionStrip: some View {
-        HStack(spacing: DS.Spacing.compact) {
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.flexible(), spacing: DS.Spacing.compact),
+                count: dynamicTypeSize.isAccessibilitySize ? 2 : 4),
+            spacing: DS.Spacing.compact
+        ) {
             ForEach(ChatHomeCatalog.actions) { action in
                 ChatHomeActionButton(
                     action: action,

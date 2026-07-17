@@ -26,6 +26,7 @@ struct PlansView: View {
                 .padding(.horizontal, DS.Spacing.page)
                 .padding(.top, 8)
                 .padding(.bottom, 96)
+                .appReadableWidth(980)
             }
             .scrollIndicators(.hidden)
             .background(AppPageBackground())
@@ -45,11 +46,13 @@ struct PlansView: View {
                 PersonalItemEditor(mode: mode, scope: scope) { title, markdown, dueAt in
                     Task { await saveItem(mode, title: title, markdown: markdown, dueAt: dueAt) }
                 }
+                .presentationSizing(.form)
             }
             .sheet(item: $eventEditor) { mode in
                 CalendarEventEditor(mode: mode, scope: scope) { draft in
                     await saveEvent(mode, draft: draft)
                 }
+                .presentationSizing(.form)
             }
         }
     }
@@ -209,6 +212,7 @@ struct PlansView: View {
 }
 
 private struct PlanSegmentedControl<Option: Hashable>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let options: [Option]
     @Binding var selection: Option
     let title: (Option) -> String
@@ -227,6 +231,9 @@ private struct PlanSegmentedControl<Option: Hashable>: View {
                     Text(title(option))
                         .font(DS.Typo.button)
                         .foregroundStyle(selection == option ? Color.white : DS.Palette.textSecondary)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                        .multilineTextAlignment(.center)
+                        .padding(.vertical, 8)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .contentShape(Rectangle())
                         .background {
@@ -250,7 +257,7 @@ private struct PlanSegmentedControl<Option: Hashable>: View {
             }
         }
         .padding(4)
-        .frame(height: height)
+        .frame(minHeight: height)
         .background(.thinMaterial, in: Capsule(style: .continuous))
         .overlay {
             Capsule(style: .continuous)

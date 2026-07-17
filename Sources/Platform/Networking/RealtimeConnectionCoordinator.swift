@@ -1,6 +1,21 @@
 import Combine
 import Foundation
+import Network
 import SocketIO
+
+private struct RealtimeNetworkPath: Equatable, Sendable {
+    let isSatisfied: Bool
+    let usesWiFi: Bool
+    let usesCellular: Bool
+    let usesWiredEthernet: Bool
+
+    init(_ path: NWPath) {
+        isSatisfied = path.status == .satisfied
+        usesWiFi = path.usesInterfaceType(.wifi)
+        usesCellular = path.usesInterfaceType(.cellular)
+        usesWiredEthernet = path.usesInterfaceType(.wiredEthernet)
+    }
+}
 
 /// 实时连接的显示状态。过渡态不应被 UI 渲染为断联错误。
 enum RealtimeConnectionState: Equatable {
@@ -37,6 +52,9 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
     private var attemptInFlight = false
     private var attemptToken = UUID()
     private var reconnectAttempt = 0
+    private let pathMonitor = NWPathMonitor()
+    private let pathQueue = DispatchQueue(label: "top.hoo66.realtime-network-path")
+    private var lastNetworkPath: RealtimeNetworkPath?
 
     var isConnected: Bool { state == .connected }
     var sessionUsername: String? { sessionProvider()?.username }
@@ -54,6 +72,18 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         self.onSocketCreated = onSocketCreated
         self.onConnected = onConnected
         self.onUnauthorized = onUnauthorized
+
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let snapshot = RealtimeNetworkPath(path)
+            Task { @MainActor [weak self] in
+                self?.handleNetworkPathChange(snapshot)
+            }
+        }
+        pathMonitor.start(queue: pathQueue)
+    }
+
+    deinit {
+        pathMonitor.cancel()
     }
 
     func connect() {
@@ -217,6 +247,24 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         case 4: return 2.4
         default: return 3
         }
+    }
+
+    private func handleNetworkPathChange(_ current: RealtimeNetworkPath) {
+        let previous = lastNetworkPath
+        lastNetworkPath = current
+        guard let previous, sessionProvider() != nil, previous != current else { return }
+
+        if !current.isSatisfied {
+            attemptToken = UUID()
+            attemptInFlight = false
+            tearDownSocket()
+            state = .reconnecting
+            return
+        }
+
+        // Wi-Fi / 蜂窝网络发生切换时，旧 socket 可能仍显示 connected，却已无法
+        // 收到 ACK。主动换一条连接，建立成功后会自动重放本地 outbox。
+        forceReconnect()
     }
 
     private func tearDownSocket() {

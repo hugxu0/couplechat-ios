@@ -46,17 +46,9 @@ enum VideoThumbnailGenerator {
         if let failed = failedAt[url], Date().timeIntervalSince(failed) < 20 { return nil }
         if let task = inFlight[url] { return await task.value }
 
-        let task = Task { () -> UIImage? in
-            if let direct = await generateImage(for: url) { return direct }
-            guard !url.isFileURL else { return nil }
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 30
-            guard let (localURL, response) = try? await URLSession.shared.download(for: request),
-                  response.expectedContentLength <= 80 * 1_024 * 1_024 || response.expectedContentLength < 0 else {
-                return nil
-            }
-            return await generateImage(for: localURL)
-        }
+        // AVAssetImageGenerator 会配合服务端 Range 读取所需片段。失败时保留占位图，
+        // 不再为了一个缩略图后台下载完整视频并与播放器争抢带宽。
+        let task = Task { await generateImage(for: url) }
         inFlight[url] = task
         let image = await task.value
         inFlight[url] = nil

@@ -25,7 +25,8 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
             cell.configure(
                 text: text,
                 showsReedit: recalledMessageId != nil,
-                accentColor: presentation.accentColor) { [weak self] in
+                accentColor: presentation.accentColor,
+                usesLightContent: presentation.timelineUsesLightContent) { [weak self] in
                     guard let self, let recalledMessageId else { return }
                     self.delegate?.timelineDidRequestReedit(recalledMessageId: recalledMessageId)
                 }
@@ -68,12 +69,14 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         let width = collectionView.bounds.width
         switch items[indexPath.item] {
         case .time:
-            return CGSize(width: width, height: 40)
+            return CGSize(
+                width: width,
+                height: max(40, ceil(UIFont.preferredFont(forTextStyle: .caption1).lineHeight + 18)))
         case .system(_, let text):
             let rect = (text as NSString).boundingRect(
                 with: CGSize(width: width - 48, height: .greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin, .usesFontLeading],
-                attributes: [.font: UIFont.systemFont(ofSize: 12)],
+                attributes: [.font: UIFont.preferredFont(forTextStyle: .caption1)],
                 context: nil)
             return CGSize(width: width, height: max(32, ceil(rect.height) + 16))
         case .message(let id):
@@ -206,7 +209,7 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
             currentUsername: presentation.currentUsername).map { action in
             let attributes: UIMenuElement.Attributes = action == .recall || action == .discard ? .destructive : []
             return UIAction(
-                title: title(for: action),
+                title: title(for: action, message: message),
                 image: UIImage(systemName: icon(for: action)),
                 attributes: attributes
             ) { [weak self] _ in
@@ -215,12 +218,14 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         }
     }
 
-    private func title(for action: ChatMessageAction) -> String {
+    private func title(for action: ChatMessageAction, message: ChatMessage) -> String {
         switch action {
         case .copy: return "复制"
         case .reply: return "引用"
         case .addToStickers: return "添加到表情"
-        case .addToAlbum: return "加入共同相册"
+        case .toggleFavorite:
+            guard let item = MediaBrowserItem(message: message) else { return "收藏" }
+            return MediaFavoriteStore.shared.contains(item) ? "取消收藏" : "添加到收藏"
         case .recall: return "撤回"
         case .retry: return "重新发送"
         case .discard: return "删除"
@@ -232,7 +237,7 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
         case .copy: return "doc.on.doc"
         case .reply: return "arrowshape.turn.up.left"
         case .addToStickers: return "plus.circle"
-        case .addToAlbum: return "photo.badge.plus"
+        case .toggleFavorite: return "heart"
         case .recall, .discard: return "trash"
         case .retry: return "arrow.clockwise"
         }
@@ -312,6 +317,11 @@ extension ChatTimelineController: ChatTimelineCellDelegate {
     func chatCellDidTapTranscript(_ cell: ChatNativeMessageCell) {
         guard let message = message(for: cell) else { return }
         delegate?.timelineDidTapTranscript(message: message)
+    }
+
+    func chatCellDidTapReply(_ cell: ChatNativeMessageCell) {
+        guard let message = message(for: cell) else { return }
+        delegate?.timelineDidTapReply(message: message)
     }
 
     private func message(for cell: ChatNativeMessageCell) -> ChatMessage? {

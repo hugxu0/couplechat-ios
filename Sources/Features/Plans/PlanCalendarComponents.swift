@@ -9,9 +9,10 @@ struct PlanCalendarView: View {
     let onToggle: (CalendarEvent) -> Void
     let onDelete: (CalendarEvent) -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        if sizeClass == .regular {
+        if sizeClass == .regular && !dynamicTypeSize.isAccessibilitySize {
             HStack(alignment: .top, spacing: DS.Spacing.section) {
                 calendarPanel.frame(maxWidth: 390)
                 agendaPanel.frame(maxWidth: .infinity)
@@ -103,13 +104,21 @@ struct PlanCalendarView: View {
             VStack(spacing: 2) {
                 Text(date.dayNumber)
                     .font(DS.Typo.secondary.monospacedDigit().weight(selected ? .bold : .medium))
-                Text(annotation)
-                    .font(DS.Typo.micro.weight(today ? .semibold : .regular))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.68)
-                    .foregroundStyle(selected
-                        ? Color.white.opacity(0.9)
-                        : (today ? DS.Palette.purple : (hasEvent ? DS.Palette.textSecondary : .clear)))
+                if dynamicTypeSize.isAccessibilitySize {
+                    Circle()
+                        .fill(selected ? Color.white.opacity(0.9) : DS.Palette.purple)
+                        .frame(width: 6, height: 6)
+                        .opacity(hasEvent || today ? 1 : 0)
+                        .accessibilityHidden(true)
+                } else {
+                    Text(annotation)
+                        .font(DS.Typo.micro.weight(today ? .semibold : .regular))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.68)
+                        .foregroundStyle(selected
+                            ? Color.white.opacity(0.9)
+                            : (today ? DS.Palette.purple : (hasEvent ? DS.Palette.textSecondary : .clear)))
+                }
             }
             .foregroundStyle(selected ? .white : DS.Palette.textPrimary.opacity(dimsOtherMonth ? 0.34 : 1))
             .frame(maxWidth: .infinity, minHeight: 56)
@@ -154,6 +163,7 @@ struct PlanCalendarView: View {
 }
 
 private struct CalendarAgendaRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let event: CalendarEvent
     let onEdit: () -> Void
     let onToggle: () -> Void
@@ -180,7 +190,8 @@ private struct CalendarAgendaRow: View {
                     Text(event.notes)
                         .font(DS.Typo.secondary)
                         .foregroundStyle(DS.Palette.textSecondary)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 6)

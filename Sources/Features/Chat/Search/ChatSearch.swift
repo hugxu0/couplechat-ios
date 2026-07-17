@@ -22,7 +22,7 @@ struct DateJumpSheet: View {
                     dismiss()
                 } label: {
                     Label("跳转到当天", systemImage: "arrow.down.message.fill")
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .font(DS.Typo.button)
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
@@ -55,7 +55,11 @@ struct ChatSearchSheet: View {
     @State private var query = ""
     @State private var results: [ChatMessage] = []
     @State private var searching = false
+    @State private var loadingMore = false
     @State private var searched = false
+    @State private var nextCursor: MessageSearchCursor?
+    @State private var hasMore = false
+    @State private var searchToken = UUID()
     @State private var showDateJump = false
     @FocusState private var focused: Bool
 
@@ -87,10 +91,13 @@ struct ChatSearchSheet: View {
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索消息内容")
             .onSubmit(of: .search) { runSearch() }
             .onChange(of: query) {
-                if query.isEmpty {
-                    results = []
-                    searched = false
-                }
+                searchToken = UUID()
+                searching = false
+                loadingMore = false
+                results = []
+                searched = false
+                nextCursor = nil
+                hasMore = false
             }
             .sheet(isPresented: $showDateJump) {
                 DateJumpSheet(channel: channel, onJump: { date in
@@ -100,7 +107,8 @@ struct ChatSearchSheet: View {
                         dismiss()
                     }
                 })
-                .presentationDetents([.height(360)])
+                .presentationDetents([.medium, .large])
+                .presentationSizing(.form)
             }
         }
     }
@@ -116,14 +124,14 @@ struct ChatSearchSheet: View {
                     .font(.system(size: 40))
                     .foregroundStyle(DS.Palette.textSecondary.opacity(0.5))
                 Text("没有找到「\(query)」相关的消息")
-                    .font(.system(size: 15))
+                    .font(DS.Typo.body)
                     .foregroundStyle(DS.Palette.textSecondary)
             } else {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 40))
                     .foregroundStyle(DS.Palette.textSecondary.opacity(0.4))
                 Text("输入关键词，回车搜索")
-                    .font(.system(size: 15))
+                    .font(DS.Typo.body)
                     .foregroundStyle(DS.Palette.textSecondary)
             }
         }
@@ -137,7 +145,26 @@ struct ChatSearchSheet: View {
                     resultRow(msg)
                 }
             } header: {
-                Text("共 \(results.count) 条结果")
+                Text(hasMore ? "已显示 \(results.count) 条结果" : "共 \(results.count) 条结果")
+            }
+
+            if hasMore || loadingMore {
+                Section {
+                    Button {
+                        loadMore()
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if loadingMore {
+                                ProgressView()
+                            } else {
+                                Label("加载更多结果", systemImage: "arrow.down.circle")
+                            }
+                            Spacer()
+                        }
+                    }
+                    .disabled(loadingMore)
+                }
             }
         }
         .listStyle(.insetGrouped)
@@ -147,15 +174,15 @@ struct ChatSearchSheet: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(msg.senderName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DS.Typo.caption.weight(.semibold))
                     .foregroundStyle(DS.Palette.accent)
                 Spacer()
                 Text(Self.dateTime(msg.ts))
-                    .font(.system(size: 12))
+                    .font(DS.Typo.caption)
                     .foregroundStyle(DS.Palette.textSecondary)
             }
             Text(highlighted(msg.displayText))
-                .font(.system(size: 15))
+                .font(DS.Typo.body)
                 .lineLimit(3)
         }
         .padding(.vertical, 3)
@@ -172,7 +199,7 @@ struct ChatSearchSheet: View {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty, let range = attributed.range(of: q, options: .caseInsensitive) else { return attributed }
         attributed[range].foregroundColor = DS.Palette.accent
-        attributed[range].font = .system(size: 15, weight: .bold)
+        attributed[range].font = .body.bold()
         return attributed
     }
 
@@ -185,16 +212,51 @@ struct ChatSearchSheet: View {
     private func runSearch() {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return }
+        let token = UUID()
+        searchToken = token
         searching = true
+        searched = false
+        loadingMore = false
+        results = []
+        nextCursor = nil
+        hasMore = false
         Task {
-            let found = await store.searchMessages(q, channel: channel)
+            let page = await store.searchMessages(q, channel: channel)
             await MainActor.run {
+                guard searchToken == token,
+                      query.trimmingCharacters(in: .whitespaces) == q else { return }
                 searching = false
                 searched = true
                 withAnimation(DS.Anim.ease) {
                     // 服务端按时间倒序返回，直接展示（最新的在最上面）
-                    results = found.sorted { $0.ts > $1.ts }
+                    results = page.messages.sorted {
+                        $0.ts == $1.ts ? $0.id > $1.id : $0.ts > $1.ts
+                    }
+                    nextCursor = page.nextCursor
+                    hasMore = page.hasMore
                 }
+            }
+        }
+    }
+
+    private func loadMore() {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty, !loadingMore, hasMore, let cursor = nextCursor else { return }
+        let token = searchToken
+        loadingMore = true
+        Task {
+            let page = await store.searchMessages(q, channel: channel, cursor: cursor)
+            await MainActor.run {
+                guard searchToken == token,
+                      query.trimmingCharacters(in: .whitespaces) == q else { return }
+                loadingMore = false
+                var seen = Set(results.map(\.id))
+                results.append(contentsOf: page.messages.filter { seen.insert($0.id).inserted })
+                results.sort {
+                    $0.ts == $1.ts ? $0.id > $1.id : $0.ts > $1.ts
+                }
+                nextCursor = page.nextCursor
+                hasMore = page.hasMore
             }
         }
     }

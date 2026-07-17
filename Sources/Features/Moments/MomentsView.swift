@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MomentsView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private enum RecommendationSheet: Identifiable {
         case composer
         case history
@@ -21,15 +22,15 @@ struct MomentsView: View {
     @StateObject private var recommendationModel = RecommendationViewModel()
     @StateObject private var badges = AppBadgeState.shared
     @State private var showingCreateAlbum = false
-    @State private var showingDateEditor = false
     @State private var recommendationSheet: RecommendationSheet?
+    @State private var recommendationSuccessMessage: String?
+    @State private var recommendationSuccessTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DS.Spacing.section) {
                     coupleOverview
-                    onThisDaySection
                     ChatStatsCard()
                     TodayRecommendationCard(
                         snapshot: recommendationModel.today,
@@ -43,10 +44,21 @@ struct MomentsView: View {
                 }
                 .padding(.horizontal, DS.Spacing.page)
                 .padding(.bottom, 96)
+                .appReadableWidth(900)
             }
             .scrollIndicators(.hidden)
             .background(AppPageBackground())
             .toolbar(.hidden, for: .navigationBar)
+            .overlay(alignment: .top) {
+                if let recommendationSuccessMessage {
+                    StatusBanner(text: recommendationSuccessMessage, kind: .success)
+                        .padding(.horizontal, DS.Spacing.page)
+                        .padding(.top, DS.Spacing.compact)
+                        .allowsHitTesting(false)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(1)
+                }
+            }
             .task { await reload() }
             .onAppear {
                 Task { await loadRecommendations(presentUnread: true) }
@@ -73,12 +85,14 @@ struct MomentsView: View {
                     return await model.createAlbum(title: title, note: note, token: token)
                 }
                 .presentationDetents([.medium, .large])
-            }
-            .sheet(isPresented: $showingDateEditor) {
-                DateEditorSheet().presentationDetents([.medium, .large])
+                .presentationSizing(.form)
             }
             .sheet(item: $recommendationSheet) { sheet in
                 recommendationSheetContent(sheet)
+            }
+            .onDisappear {
+                recommendationSuccessTask?.cancel()
+                recommendationSuccessTask = nil
             }
         }
     }
@@ -92,11 +106,13 @@ struct MomentsView: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+            .presentationSizing(.form)
         case .history:
             if let token = store.session?.token {
                 RecommendationHistoryView(token: token)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
+                    .presentationSizing(.form)
             }
         case .received(let item):
             ReceivedRecommendationSheet(item: item) {
@@ -104,25 +120,7 @@ struct MomentsView: View {
             }
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
-        }
-    }
-
-    @ViewBuilder
-    private var onThisDaySection: some View {
-        if model.loading && model.onThisDay.isEmpty {
-            AppCard {
-                HStack(spacing: DS.Spacing.gap) {
-                    ProgressView()
-                    Text("正在翻找过去的今天…")
-                        .font(DS.Typo.secondary)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                }
-            }
-        } else if let moment = model.onThisDay.first {
-            VStack(alignment: .leading, spacing: DS.Spacing.gap) {
-                AppSectionHeader(title: "今天的回声", subtitle: "同一天发生过的共同片段")
-                OnThisDayCard(moment: moment)
-            }
+            .presentationSizing(.form)
         }
     }
 
@@ -194,57 +192,54 @@ struct MomentsView: View {
 
     private var coupleOverview: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.gap) {
-            Button {
-                Haptics.light()
-                showingDateEditor = true
-            } label: {
-                VStack(spacing: 7) {
-                    Text("我们在一起的第")
-                        .font(DS.Typo.secondary.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.82))
-                    Text(togetherNumber)
-                        .font(.system(size: 64, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(.white)
-                        .contentTransition(.numericText())
-                    Text(togetherNumber == "等待设置" ? "" : "天")
-                        .font(DS.Typo.secondary.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.86))
-                    Text("有你在侧，平凡也晴朗。")
-                        .font(DS.Typo.secondary)
-                        .foregroundStyle(.white.opacity(0.82))
-                }
-                .padding(DS.Spacing.card)
-                .frame(maxWidth: .infinity, minHeight: 220)
-                .background {
-                    ZStack {
-                        LinearGradient(
-                            colors: [theme.accent.color, DS.Palette.purple.opacity(0.86)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing)
-                        Circle()
-                            .fill(.white.opacity(0.10))
-                            .frame(width: 170, height: 170)
-                            .offset(x: 142, y: -82)
-                        Circle()
-                            .stroke(.white.opacity(0.13), lineWidth: 18)
-                            .frame(width: 112, height: 112)
-                            .offset(x: -150, y: 92)
-                        Image(systemName: "heart.fill")
-                            .font(.system(size: 32, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.12))
-                            .rotationEffect(.degrees(-14))
-                            .offset(x: 118, y: 70)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-                    .shadow(color: theme.accent.color.opacity(0.18), radius: 18, y: 9)
-                }
+            VStack(spacing: 7) {
+                Text("我们在一起的第")
+                    .font(DS.Typo.secondary.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.82))
+                Text(togetherNumber)
+                    .font(.system(.largeTitle, design: .rounded).weight(.bold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .contentTransition(.numericText())
+                Text(togetherNumber == "等待设置" ? "" : "天")
+                    .font(DS.Typo.secondary.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.86))
+                Text("有你在侧，平凡也晴朗。")
+                    .font(DS.Typo.secondary)
+                    .foregroundStyle(.white.opacity(0.82))
             }
-            .buttonStyle(PressableStyle())
-            .accessibilityLabel("我们在一起\(togetherLabel)，轻点编辑日期")
+            .padding(DS.Spacing.card)
+            .frame(maxWidth: .infinity, minHeight: 220)
+            .background {
+                ZStack {
+                    LinearGradient(
+                        colors: [theme.accent.color, DS.Palette.purple.opacity(0.86)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing)
+                    Circle()
+                        .fill(.white.opacity(0.10))
+                        .frame(width: 170, height: 170)
+                        .offset(x: 142, y: -82)
+                    Circle()
+                        .stroke(.white.opacity(0.13), lineWidth: 18)
+                        .frame(width: 112, height: 112)
+                        .offset(x: -150, y: 92)
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 32, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.12))
+                        .rotationEffect(.degrees(-14))
+                        .offset(x: 118, y: 70)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+                .shadow(color: theme.accent.color.opacity(0.18), radius: 18, y: 9)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("我们在一起\(togetherLabel)")
 
             if !store.anniversaries.isEmpty {
                 LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.gap), count: 2),
+                    columns: [GridItem(.adaptive(
+                        minimum: dynamicTypeSize.isAccessibilitySize ? 220 : 150,
+                        maximum: 320), spacing: DS.Spacing.gap)],
                     spacing: DS.Spacing.gap
                 ) {
                     ForEach(store.anniversaries) { entry in
@@ -263,7 +258,8 @@ struct MomentsView: View {
             Text(entry.title)
                 .font(DS.Typo.caption.weight(.semibold))
                 .foregroundStyle(DS.Palette.textSecondary)
-                .lineLimit(2)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
             Text(entry.days.map { "\($0)\(entry.direction == .up ? " 天" : " 天后")" } ?? "未设置")
                 .font(DS.Typo.cardTitle.monospacedDigit())
                 .foregroundStyle(DS.Palette.textPrimary)
@@ -315,7 +311,24 @@ struct MomentsView: View {
 
     private func sendRecommendation(_ content: String) async -> Bool {
         guard let token = store.session?.token else { return false }
-        return await recommendationModel.send(content, token: token)
+        let sent = await recommendationModel.send(content, token: token)
+        if sent { showRecommendationSuccess() }
+        return sent
+    }
+
+    private func showRecommendationSuccess() {
+        recommendationSuccessTask?.cancel()
+        withAnimation(DS.Anim.motion(DS.Anim.ease)) {
+            recommendationSuccessMessage = "已推荐给 \(partnerDisplayName)"
+        }
+        recommendationSuccessTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.4))
+            guard !Task.isCancelled else { return }
+            withAnimation(DS.Anim.motion(DS.Anim.ease)) {
+                recommendationSuccessMessage = nil
+            }
+            recommendationSuccessTask = nil
+        }
     }
 
     private func acceptRecommendation(_ item: RecommendationItem) async {

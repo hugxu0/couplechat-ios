@@ -2,6 +2,26 @@ import Foundation
 import SocketIO
 import UIKit
 
+private final class MessageAckContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<[Any], Never>?
+
+    init(_ continuation: CheckedContinuation<[Any], Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning value: [Any]) {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return
+        }
+        self.continuation = nil
+        lock.unlock()
+        continuation.resume(returning: value)
+    }
+}
+
 enum OutboxRetryResult: Equatable {
     case started
     case missingLocalFile
@@ -264,6 +284,24 @@ final class MessageStore: ObservableObject {
         return messages(for: channel).contains(where: { $0.id == target.id })
     }
 
+    func loadReferencedMessage(id: String, channel: ChatChannel) async -> ChatMessage? {
+        if let loaded = messages(for: channel).first(where: { $0.id == id }) {
+            return loaded
+        }
+        let local = await persistence.fetchMessage(id: id, channel: channel.rawValue)
+        let target: ChatMessage?
+        if let local {
+            target = local
+        } else if let session = socketProvider?.currentSession {
+            target = await remoteDataSource.fetchMessage(id: id, channel: channel, session: session)
+        } else {
+            target = nil
+        }
+        guard let target,
+              await ensureMessageLoaded(target, channel: channel) else { return nil }
+        return target
+    }
+
     @discardableResult
     func ensureDateLoaded(_ date: Date, channel: ChatChannel) async -> ChatMessage? {
         let range = ChatMessageWindowing.dayRange(for: date)
@@ -424,9 +462,34 @@ final class MessageStore: ObservableObject {
         if let lastLoad = lastLoadNewerAt[channel.rawValue], Date().timeIntervalSince(lastLoad) < 0.45 { return }
         lastLoadNewerAt[channel.rawValue] = Date()
         loadingNewerChannels.insert(channel.rawValue)
+        defer { loadingNewerChannels.remove(channel.rawValue) }
         let limit = 24
         let lastTs = last.ts
 
+        // 搜索定位后的内存窗口可能与“本机安装后的近期缓存”之间隔着很长缺口。
+        // 联网时必须先向云端请求紧邻当前尾部的下一页，不能让本地孤立片段把时间线
+        // 直接跳到近期消息。
+        if socketProvider?.isConnected == true,
+           let session = socketProvider?.currentSession {
+            let page = await remoteDataSource.fetchNewerPage(
+                channel: channel,
+                since: lastTs,
+                limit: limit,
+                session: session)
+            if page.error == nil {
+                guard !page.messages.isEmpty else { return }
+                guard await persistence.insertMessages(page.messages) == page.messages.count else {
+                    print("[MessageStore] ⚠️ 较新消息页写入本地数据库失败")
+                    return
+                }
+                updateMessages(channel) { current in
+                    ChatMessageCollection.appendUnique(page.messages, to: &current)
+                }
+                return
+            }
+        }
+
+        // 无网或云端请求失败时，仅浏览设备里已有的连续缓存。
         let localNewer = await persistence.fetchMessages(
             channel: channel.rawValue, fromInclusive: lastTs + 0.001,
             toExclusive: Double.greatestFiniteMagnitude, limit: limit)
@@ -434,20 +497,7 @@ final class MessageStore: ObservableObject {
             updateMessages(channel) { current in
                 ChatMessageCollection.appendUnique(localNewer, to: &current)
             }
-            loadingNewerChannels.remove(channel.rawValue)
             return
-        }
-        let newer = await fetchRemoteMessages(
-            MessagePageRequest(channel: channel, since: lastTs, limit: limit),
-            context: "loadNewer:\(channel.rawValue)")
-        defer { loadingNewerChannels.remove(channel.rawValue) }
-        guard !newer.isEmpty else { return }
-        guard await persistence.insertMessages(newer) == newer.count else {
-            print("[MessageStore] ⚠️ 较新消息写入本地数据库失败")
-            return
-        }
-        updateMessages(channel) { current in
-            ChatMessageCollection.appendUnique(newer, to: &current)
         }
     }
 
@@ -832,26 +882,57 @@ final class MessageStore: ObservableObject {
 
     // MARK: - 搜索
 
-    func searchMessages(_ query: String, channel: ChatChannel) async -> [ChatMessage] {
+    func searchMessages(
+        _ query: String,
+        channel: ChatChannel,
+        cursor: MessageSearchCursor? = nil,
+        limit: Int = 50
+    ) async -> MessageSearchPage {
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return [] }
-        let local = await persistence.searchMessages(query: q, channel: channel.rawValue)
-        guard let s = socketProvider?.socket, socketProvider?.isConnected == true else { return local }
-        return await withCheckedContinuation { continuation in
+        guard !q.isEmpty else {
+            return MessageSearchPage(messages: [], nextCursor: nil, hasMore: false)
+        }
+        let local: [ChatMessage]
+        if cursor == nil {
+            local = await persistence.searchMessages(query: q, channel: channel.rawValue)
+        } else {
+            local = []
+        }
+        guard let s = socketProvider?.socket, socketProvider?.isConnected == true else {
+            return MessageSearchPage(messages: local, nextCursor: nil, hasMore: false)
+        }
+        let data: [Any] = await withCheckedContinuation { continuation in
             s.emitWithAck(
                 SocketEvent.messagesSearch.rawValue,
-                SocketPayloadEncoder.encode(MessageSearchRequest(channel: channel, query: q, limit: 50)))
-                .timingOut(after: 9) { data in
-                    guard let dict = data.first as? [String: Any],
-                          let list = dict["list"] as? [[String: Any]] else {
-                        continuation.resume(returning: local)
-                        return
-                    }
-                    let remote = Self.parseMessages(list, context: "search:\(channel.rawValue)")
-                        .filter { $0.channel == channel.rawValue }
-                    continuation.resume(returning: ChatMessageWindowing.mergeSearchResults(remote, local))
-                }
+                SocketPayloadEncoder.encode(MessageSearchRequest(
+                    channel: channel,
+                    query: q,
+                    limit: limit,
+                    cursor: cursor)))
+                .timingOut(after: 9) { continuation.resume(returning: $0) }
         }
+        guard let dict = data.first as? [String: Any],
+              dict["ok"] as? Bool == true,
+              let list = dict["list"] as? [[String: Any]] else {
+            return MessageSearchPage(messages: local, nextCursor: nil, hasMore: false)
+        }
+        let remote = Self.parseMessages(list, context: "search:\(channel.rawValue)")
+            .filter { $0.channel == channel.rawValue }
+        if !remote.isEmpty,
+           await persistence.insertMessages(remote) != remote.count {
+            print("[MessageStore] ⚠️ 搜索结果写入本地数据库不完整")
+        }
+        let cursorDict = dict["nextCursor"] as? [String: Any]
+        let nextTimestamp = (cursorDict?["ts"] as? NSNumber)?.doubleValue
+        let nextID = cursorDict?["id"] as? String
+        let nextCursor: MessageSearchCursor?
+        if let nextTimestamp, let nextID {
+            nextCursor = MessageSearchCursor(ts: nextTimestamp, id: nextID)
+        } else {
+            nextCursor = nil
+        }
+        let hasMore = dict["hasMore"] as? Bool == true && nextCursor != nil
+        return MessageSearchPage(messages: remote, nextCursor: nextCursor, hasMore: hasMore)
     }
 
     func mediaMessages(
@@ -911,7 +992,8 @@ final class MessageStore: ObservableObject {
         session: Session
     ) async {
         guard socketProvider?.isConnected == true, socketProvider?.socket != nil else {
-            await recordPendingFailure(item, channel: channel, message: "当前离线")
+            // 离线发送仍保留为待发状态；网络恢复、socket 重连后会由 outbox 自动重放。
+            // 只有确定的服务端拒绝或连续多次确认超时才显示失败按钮。
             return
         }
         markPendingSending(clientId: item.clientId, channel: channel)
@@ -1015,19 +1097,40 @@ final class MessageStore: ObservableObject {
             await recordPendingFailure(item, channel: channel, message: "附件上传不完整")
             return false
         }
-        let ack: [Any] = await withCheckedContinuation { continuation in
-            socket.emitWithAck(SocketEvent.messageSend.rawValue, SocketPayloadEncoder.encode(request))
-                .timingOut(after: 15) { continuation.resume(returning: $0) }
-        }
+        let ack = await waitForSendAck(socket: socket, request: request)
         let succeeded = await handleSendAck(ack, clientId: item.clientId, channel: channel)
         if succeeded {
             await completePendingOutbound(clientId: item.clientId)
         } else {
-            let code = (ack.first as? [String: Any])?["error"] as? String
-            let message = ServerErrorCode.message(for: code, fallback: "发送确认超时")
-            await recordPendingFailure(item, channel: channel, message: message)
+            let payload = ack.first as? [String: Any]
+            if let code = payload?["error"] as? String {
+                let message = ServerErrorCode.message(for: code, fallback: "发送失败")
+                await recordPendingFailure(item, channel: channel, message: message)
+            } else {
+                await recordTransientPendingFailure(
+                    item,
+                    channel: channel,
+                    session: session,
+                    message: "发送确认超时")
+            }
         }
         return succeeded
+    }
+
+    private func waitForSendAck(
+        socket: SocketIOClient,
+        request: MessageSendRequest
+    ) async -> [Any] {
+        await withCheckedContinuation { continuation in
+            let gate = MessageAckContinuation(continuation)
+            socket.emitWithAck(SocketEvent.messageSend.rawValue, SocketPayloadEncoder.encode(request))
+                .timingOut(after: 15) { gate.resume(returning: $0) }
+            // Socket.IO 在网络路径原地失效时偶尔不会交付 timeout callback。
+            // 独立兜底确保消息不会永远停在“三个点”。
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 16) {
+                gate.resume(returning: [])
+            }
+        }
     }
 
     private func markPendingSending(clientId: String, channel: ChatChannel) {
@@ -1061,6 +1164,33 @@ final class MessageStore: ObservableObject {
         item.lastError = message
         _ = await outboxProcessor.save(item)
         markPendingFailed(clientId: item.clientId, channel: channel, error: message)
+    }
+
+    private func recordTransientPendingFailure(
+        _ original: PendingOutboundMessage,
+        channel: ChatChannel,
+        session: Session,
+        message: String
+    ) async {
+        var item = await outboxProcessor.pending(clientId: original.clientId) ?? original
+        item.attempts += 1
+        item.lastError = message
+        _ = await outboxProcessor.save(item)
+
+        guard item.attempts < 3 else {
+            markPendingFailed(clientId: item.clientId, channel: channel, error: message)
+            return
+        }
+        markPendingSending(clientId: item.clientId, channel: channel)
+        let expectedToken = session.token
+        let delay = TimeInterval(item.attempts) * 1.5
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self,
+                  self.socketProvider?.currentSession?.token == expectedToken,
+                  let currentSession = self.socketProvider?.currentSession else { return }
+            self.flushOutbox(session: currentSession)
+        }
     }
 
     private func completePendingOutbound(clientId: String) async {

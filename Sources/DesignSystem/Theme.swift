@@ -312,16 +312,14 @@ struct WallpaperPreviewSurface: View {
 
 // MARK: - ThemeManager
 
-/// 聊天界面需要分别判断顶栏与输入栏下方的壁纸明暗。
-/// 不使用系统的深浅模式作为前景色依据，避免自定义壁纸和系统模式相互打架。
+/// 自定义壁纸只做一次整页明暗判断。消息区、输入栏、按钮和面板必须共享结果，
+/// 避免同一屏因局部背景不同而同时出现两套玻璃外观。
 enum WallpaperSurfaceRegion: Hashable {
-    case topCenter
-    case timelineCenter
-    case composerCenter
+    case wholeChat
 }
 
 /// 同一块玻璃面板只允许两种互斥组合：暗玻璃白字，或亮玻璃黑字。
-/// 系统材质不会替应用完成局部壁纸采样，所以顶栏和输入栏都使用这一套阈值。
+/// 系统材质不会替应用完成壁纸取色，所以聊天控件统一使用这一套阈值。
 enum ChatSurfaceTone: Equatable {
     case lightContent
     case darkContent
@@ -529,17 +527,6 @@ final class ThemeManager: ObservableObject {
         return value
     }
 
-    /// 输入区会跟随键盘上下移动，因此不能一直采样壁纸底部；由 UIKit 传入整块
-    /// 底部 dock 在屏幕中的位置，统一驱动输入框、按钮、面板和渐变材质。
-    func customWallpaperLuminance(
-        for channel: ChatChannel,
-        appearance: WallpaperAppearance,
-        normalizedRect: CGRect
-    ) -> CGFloat? {
-        guard let image = customWallpaperImage(for: channel, appearance: appearance) else { return nil }
-        return Self.regionLuminance(of: image, normalizedRect: normalizedRect)
-    }
-
     @discardableResult
     func addCustomWallpaper(
         imageData: Data,
@@ -618,16 +605,11 @@ final class ThemeManager: ObservableObject {
     }
 
     private static func regionLuminance(of image: UIImage, region: WallpaperSurfaceRegion) -> CGFloat {
-        // 采样点要与实际控件位置对应：顶部标题在中间，输入胶囊也只看中间区域。
-        // 整条边缘的天空、头像或消息不该干扰该控件的前景色决定。
         let sampleRect: CGRect
         switch region {
-        case .topCenter:
-            sampleRect = CGRect(x: 14.0 / 48.0, y: 7.0 / 104.0, width: 20.0 / 48.0, height: 12.0 / 104.0)
-        case .timelineCenter:
-            sampleRect = CGRect(x: 7.0 / 48.0, y: 30.0 / 104.0, width: 34.0 / 48.0, height: 42.0 / 104.0)
-        case .composerCenter:
-            sampleRect = CGRect(x: 7.0 / 48.0, y: 84.0 / 104.0, width: 34.0 / 48.0, height: 12.0 / 104.0)
+        case .wholeChat:
+            // 避开图片最外缘的装饰或裁切噪声，以主体区域的中位亮度稳定决定整页前景。
+            sampleRect = CGRect(x: 6.0 / 48.0, y: 12.0 / 104.0, width: 36.0 / 48.0, height: 80.0 / 104.0)
         }
         return regionLuminance(of: image, normalizedRect: sampleRect)
     }

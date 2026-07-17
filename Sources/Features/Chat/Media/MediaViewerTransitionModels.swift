@@ -1,4 +1,37 @@
-import CoreGraphics
+import SwiftUI
+import UIKit
+
+@MainActor
+final class MediaViewerSourceRegistry {
+    private let views = NSMapTable<NSString, UIView>(
+        keyOptions: .strongMemory,
+        valueOptions: .weakMemory)
+
+    func register(_ view: UIView, id: String) {
+        views.setObject(view, forKey: id as NSString)
+    }
+
+    func view(for id: String) -> UIView? {
+        views.object(forKey: id as NSString)
+    }
+}
+
+struct MediaViewerSourceAnchor: UIViewRepresentable {
+    let id: String
+    let registry: MediaViewerSourceRegistry
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        registry.register(view, id: id)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        registry.register(uiView, id: id)
+    }
+}
 
 enum MediaViewerGestureAxis: Equatable {
     case horizontal
