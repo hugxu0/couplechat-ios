@@ -135,7 +135,6 @@ struct ChatSessionScreen: View {
         .chatNativeHeader(
             model: headerModel,
             avatarURL: peerAvatarURL,
-            usesLightContent: chatSurfaceUsesLightContent,
             isShowingDetails: $isShowingDetail,
             onOpenDetails: {
                 Haptics.light()

@@ -120,13 +120,12 @@ final class ChatComposerView: UIView, UITextViewDelegate {
                 textView.reloadInputViews()
             }
         }
-        // 整个输入区共享同一稳定色层；不能让大胶囊与左右按钮因为采样到
-        // 壁纸的不同局部而看起来像两套透明材质。
-        let stableGlassAlpha: CGFloat = usesLightContent ? 0.26 : 0.18
-        replyContainer.setStableGlassTone(dark: usesLightContent, overlayAlpha: stableGlassAlpha)
-        catBackgroundView.setStableGlassTone(dark: usesLightContent, overlayAlpha: stableGlassAlpha)
-        inputCapsule.setStableGlassTone(dark: usesLightContent, overlayAlpha: stableGlassAlpha)
-        actionBackgroundView.setStableGlassTone(dark: usesLightContent, overlayAlpha: stableGlassAlpha)
+        // 与所有内部文字、图标共用 usesLightContent：暗背景只能是偏暗玻璃 + 白字，
+        // 亮背景只能是偏亮玻璃 + 黑字，避免面板和占位文案同时发白。
+        replyContainer.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18)
+        catBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18)
+        inputCapsule.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.16 : 0.20)
+        actionBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18)
         updateWaveBars(level: 0.35, cancelled: recordingCancelled)
         updateActionButton()
     }
@@ -552,9 +551,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
             actionButton.tintColor = .white
         } else {
             imageName = "mic"
-            actionBackgroundView.setStableGlassTone(
-                dark: usesLightContent,
-                overlayAlpha: usesLightContent ? 0.26 : 0.18)
+            actionBackgroundView.setTintColor(glassTintColor, alpha: 0.20)
             actionButton.backgroundColor = .clear
             actionButton.tintColor = accentColor
         }
@@ -571,6 +568,8 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     // 不能用 .label/.secondaryLabel，否则暗色系统 + 浅壁纸会重新变成白字。
     private var primaryTextColor: UIColor { usesLightContent ? .white : .black }
     private var secondaryTextColor: UIColor { usesLightContent ? UIColor.white.withAlphaComponent(0.72) : UIColor.black.withAlphaComponent(0.58) }
+    private var glassTintColor: UIColor { usesLightContent ? .black : .white }
+
     private func performActionButtonTap() {
         guard !isRecording else { return }
         if !previewItems.isEmpty {
