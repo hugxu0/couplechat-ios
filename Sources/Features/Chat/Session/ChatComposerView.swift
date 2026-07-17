@@ -47,17 +47,22 @@ final class ChatComposerView: UIView, UITextViewDelegate {
 
     private let stack = UIStackView()
     private let typingLabel = UILabel()
-    private let replyContainer = ChatGlassView(cornerRadius: 16)
+    private let replyContainer = ChatGlassView(style: .clear, cornerRadius: 16)
     private let replyTitleLabel = UILabel()
     private let replyBodyLabel = UILabel()
     private let mediaPreviewContainer = UIStackView()
     private let mediaScrollView = UIScrollView()
     private let mediaStack = UIStackView()
+    private let inputGlassContainer: UIVisualEffectView = {
+        let effect = UIGlassContainerEffect()
+        effect.spacing = 6
+        return UIVisualEffectView(effect: effect)
+    }()
     private let inputRow = UIStackView()
-    private let inputCapsule = ChatGlassView(cornerRadius: 22)
+    private let inputCapsule = ChatGlassView(style: .clear, cornerRadius: 22)
     private let inputCapsuleRow = UIStackView()
-    private let catBackgroundView = ChatGlassView(cornerRadius: 22)
-    private let actionBackgroundView = ChatGlassView(cornerRadius: 22)
+    private let catBackgroundView = ChatGlassView(style: .clear, cornerRadius: 22, interactive: true)
+    private let actionBackgroundView = ChatGlassView(style: .clear, cornerRadius: 22, interactive: true)
 
     private let catButton = UIButton(type: .system)
     private let emojiButton = UIButton(type: .system)
@@ -120,12 +125,11 @@ final class ChatComposerView: UIView, UITextViewDelegate {
                 textView.reloadInputViews()
             }
         }
-        // 与所有内部文字、图标共用 usesLightContent：暗背景只能是偏暗玻璃 + 白字，
-        // 亮背景只能是偏亮玻璃 + 黑字，避免面板和占位文案同时发白。
-        replyContainer.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18)
-        catBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18)
-        inputCapsule.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.16 : 0.20)
-        actionBackgroundView.setGlassTone(dark: usesLightContent, tintAlpha: usesLightContent ? 0.14 : 0.18)
+        // 普通状态完全交给 clear Liquid Glass 自适应，不再强制叠加白/黑 tint。
+        // 只有发送、录音等强调状态才通过系统 tintColor 着色。
+        replyContainer.clearTint()
+        catBackgroundView.clearTint()
+        inputCapsule.clearTint()
         updateWaveBars(level: 0.35, cancelled: recordingCancelled)
         updateActionButton()
     }
@@ -247,7 +251,18 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         stack.addArrangedSubview(recordingHintLabel)
 
         buildInputRow()
-        stack.addArrangedSubview(inputRow)
+        inputGlassContainer.translatesAutoresizingMaskIntoConstraints = false
+        inputGlassContainer.isOpaque = false
+        inputGlassContainer.backgroundColor = .clear
+        inputGlassContainer.contentView.addSubview(inputRow)
+        stack.addArrangedSubview(inputGlassContainer)
+
+        NSLayoutConstraint.activate([
+            inputRow.leadingAnchor.constraint(equalTo: inputGlassContainer.contentView.leadingAnchor),
+            inputRow.trailingAnchor.constraint(equalTo: inputGlassContainer.contentView.trailingAnchor),
+            inputRow.topAnchor.constraint(equalTo: inputGlassContainer.contentView.topAnchor),
+            inputRow.bottomAnchor.constraint(equalTo: inputGlassContainer.contentView.bottomAnchor)
+        ])
 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -309,21 +324,22 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         replyCloseButton.addAction(UIAction { [weak self] _ in self?.delegate?.composerDidCancelReply() }, for: .touchUpInside)
         replyCloseButton.translatesAutoresizingMaskIntoConstraints = false
 
-        replyContainer.addSubview(marker)
-        replyContainer.addSubview(labels)
-        replyContainer.addSubview(replyCloseButton)
+        let replyContent = replyContainer.contentView
+        replyContent.addSubview(marker)
+        replyContent.addSubview(labels)
+        replyContent.addSubview(replyCloseButton)
 
         NSLayoutConstraint.activate([
             replyContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
-            marker.leadingAnchor.constraint(equalTo: replyContainer.leadingAnchor, constant: 14),
-            marker.centerYAnchor.constraint(equalTo: replyContainer.centerYAnchor),
+            marker.leadingAnchor.constraint(equalTo: replyContent.leadingAnchor, constant: 14),
+            marker.centerYAnchor.constraint(equalTo: replyContent.centerYAnchor),
             marker.widthAnchor.constraint(equalToConstant: 3),
             marker.heightAnchor.constraint(equalToConstant: 28),
             labels.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 10),
             labels.trailingAnchor.constraint(equalTo: replyCloseButton.leadingAnchor, constant: -8),
-            labels.centerYAnchor.constraint(equalTo: replyContainer.centerYAnchor),
-            replyCloseButton.trailingAnchor.constraint(equalTo: replyContainer.trailingAnchor, constant: -10),
-            replyCloseButton.centerYAnchor.constraint(equalTo: replyContainer.centerYAnchor),
+            labels.centerYAnchor.constraint(equalTo: replyContent.centerYAnchor),
+            replyCloseButton.trailingAnchor.constraint(equalTo: replyContent.trailingAnchor, constant: -10),
+            replyCloseButton.centerYAnchor.constraint(equalTo: replyContent.centerYAnchor),
             replyCloseButton.widthAnchor.constraint(equalToConstant: 30),
             replyCloseButton.heightAnchor.constraint(equalToConstant: 30)
         ])
@@ -376,7 +392,8 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         inputCapsuleRow.alignment = .center
         inputCapsuleRow.spacing = 8
         inputCapsuleRow.translatesAutoresizingMaskIntoConstraints = false
-        inputCapsule.addSubview(inputCapsuleRow)
+        let inputContent = inputCapsule.contentView
+        inputContent.addSubview(inputCapsuleRow)
 
         textView.delegate = self
         textView.backgroundColor = .clear
@@ -401,7 +418,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         inputCapsuleRow.addArrangedSubview(attachmentButton)
         inputCapsuleRow.addArrangedSubview(textView)
         inputCapsuleRow.addArrangedSubview(emojiButton)
-        inputCapsule.addSubview(placeholderLabel)
+        inputContent.addSubview(placeholderLabel)
         buildRecordingOverlay()
 
         inputRow.addArrangedSubview(catBackgroundView)
@@ -417,10 +434,10 @@ final class ChatComposerView: UIView, UITextViewDelegate {
             actionBackgroundView.heightAnchor.constraint(equalToConstant: 44),
 
             inputCapsule.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            inputCapsuleRow.leadingAnchor.constraint(equalTo: inputCapsule.leadingAnchor, constant: 12),
-            inputCapsuleRow.trailingAnchor.constraint(equalTo: inputCapsule.trailingAnchor, constant: -10),
-            inputCapsuleRow.topAnchor.constraint(equalTo: inputCapsule.topAnchor, constant: 3),
-            inputCapsuleRow.bottomAnchor.constraint(equalTo: inputCapsule.bottomAnchor, constant: -3),
+            inputCapsuleRow.leadingAnchor.constraint(equalTo: inputContent.leadingAnchor, constant: 12),
+            inputCapsuleRow.trailingAnchor.constraint(equalTo: inputContent.trailingAnchor, constant: -10),
+            inputCapsuleRow.topAnchor.constraint(equalTo: inputContent.topAnchor, constant: 3),
+            inputCapsuleRow.bottomAnchor.constraint(equalTo: inputContent.bottomAnchor, constant: -3),
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
             placeholderLabel.centerYAnchor.constraint(equalTo: textView.centerYAnchor),
 
@@ -457,13 +474,14 @@ final class ChatComposerView: UIView, UITextViewDelegate {
 
         recordingContainer.addSubview(recordingWaveStack)
         recordingContainer.addSubview(recordingLabel)
-        inputCapsule.addSubview(recordingContainer)
+        let inputContent = inputCapsule.contentView
+        inputContent.addSubview(recordingContainer)
 
         NSLayoutConstraint.activate([
-            recordingContainer.leadingAnchor.constraint(equalTo: inputCapsule.leadingAnchor, constant: 16),
-            recordingContainer.trailingAnchor.constraint(equalTo: inputCapsule.trailingAnchor, constant: -16),
-            recordingContainer.topAnchor.constraint(equalTo: inputCapsule.topAnchor),
-            recordingContainer.bottomAnchor.constraint(equalTo: inputCapsule.bottomAnchor),
+            recordingContainer.leadingAnchor.constraint(equalTo: inputContent.leadingAnchor, constant: 16),
+            recordingContainer.trailingAnchor.constraint(equalTo: inputContent.trailingAnchor, constant: -16),
+            recordingContainer.topAnchor.constraint(equalTo: inputContent.topAnchor),
+            recordingContainer.bottomAnchor.constraint(equalTo: inputContent.bottomAnchor),
             recordingWaveStack.leadingAnchor.constraint(equalTo: recordingContainer.leadingAnchor),
             recordingWaveStack.centerYAnchor.constraint(equalTo: recordingContainer.centerYAnchor),
             recordingLabel.leadingAnchor.constraint(equalTo: recordingWaveStack.trailingAnchor, constant: 12),
@@ -490,12 +508,13 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         catButton.setImage(UIImage(systemName: AccountPresentation.dajuIconName), for: .normal)
         catButton.backgroundColor = .clear
         catButton.translatesAutoresizingMaskIntoConstraints = false
-        catBackgroundView.addSubview(catButton)
+        let catContent = catBackgroundView.contentView
+        catContent.addSubview(catButton)
         NSLayoutConstraint.activate([
-            catButton.leadingAnchor.constraint(equalTo: catBackgroundView.leadingAnchor),
-            catButton.trailingAnchor.constraint(equalTo: catBackgroundView.trailingAnchor),
-            catButton.topAnchor.constraint(equalTo: catBackgroundView.topAnchor),
-            catButton.bottomAnchor.constraint(equalTo: catBackgroundView.bottomAnchor)
+            catButton.leadingAnchor.constraint(equalTo: catContent.leadingAnchor),
+            catButton.trailingAnchor.constraint(equalTo: catContent.trailingAnchor),
+            catButton.topAnchor.constraint(equalTo: catContent.topAnchor),
+            catButton.bottomAnchor.constraint(equalTo: catContent.bottomAnchor)
         ])
     }
 
@@ -517,7 +536,8 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         actionButton.contentHorizontalAlignment = .center
         actionButton.contentVerticalAlignment = .center
         actionButton.translatesAutoresizingMaskIntoConstraints = false
-        actionBackgroundView.addSubview(actionButton)
+        let actionContent = actionBackgroundView.contentView
+        actionContent.addSubview(actionButton)
         actionButton.addAction(UIAction { [weak self] _ in self?.performActionButtonTap() }, for: .touchUpInside)
 
         let press = UILongPressGestureRecognizer(target: self, action: #selector(handleRecordGesture(_:)))
@@ -525,10 +545,10 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         actionButton.addGestureRecognizer(press)
 
         NSLayoutConstraint.activate([
-            actionButton.leadingAnchor.constraint(equalTo: actionBackgroundView.leadingAnchor),
-            actionButton.trailingAnchor.constraint(equalTo: actionBackgroundView.trailingAnchor),
-            actionButton.topAnchor.constraint(equalTo: actionBackgroundView.topAnchor),
-            actionButton.bottomAnchor.constraint(equalTo: actionBackgroundView.bottomAnchor)
+            actionButton.leadingAnchor.constraint(equalTo: actionContent.leadingAnchor),
+            actionButton.trailingAnchor.constraint(equalTo: actionContent.trailingAnchor),
+            actionButton.topAnchor.constraint(equalTo: actionContent.topAnchor),
+            actionButton.bottomAnchor.constraint(equalTo: actionContent.bottomAnchor)
         ])
     }
 
@@ -540,18 +560,16 @@ final class ChatComposerView: UIView, UITextViewDelegate {
             imageName = recordingCancelled ? "trash.fill" : "mic.fill"
             let color = recordingCancelled ? UIColor.systemRed : accentColor
             actionBackgroundView.setTintColor(color, alpha: 1)
-            // 原生玻璃的 tint 在 alpha 为 1 时仍可能被材质提亮；把实色放在按钮本身，
-            // 保证录音/发送态的白色符号不会落在白底上而消失。
-            actionButton.backgroundColor = color
+            actionButton.backgroundColor = .clear
             actionButton.tintColor = .white
         } else if hasText || hasMedia {
             imageName = "arrow.up"
             actionBackgroundView.setTintColor(accentColor, alpha: 1)
-            actionButton.backgroundColor = accentColor
+            actionButton.backgroundColor = .clear
             actionButton.tintColor = .white
         } else {
             imageName = "mic"
-            actionBackgroundView.setTintColor(glassTintColor, alpha: 0.20)
+            actionBackgroundView.clearTint()
             actionButton.backgroundColor = .clear
             actionButton.tintColor = accentColor
         }
@@ -568,8 +586,6 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     // 不能用 .label/.secondaryLabel，否则暗色系统 + 浅壁纸会重新变成白字。
     private var primaryTextColor: UIColor { usesLightContent ? .white : .black }
     private var secondaryTextColor: UIColor { usesLightContent ? UIColor.white.withAlphaComponent(0.72) : UIColor.black.withAlphaComponent(0.58) }
-    private var glassTintColor: UIColor { usesLightContent ? .black : .white }
-
     private func performActionButtonTap() {
         guard !isRecording else { return }
         if !previewItems.isEmpty {

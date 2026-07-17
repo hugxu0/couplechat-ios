@@ -96,8 +96,7 @@ extension ChatViewController {
         let isUserScrolling = collectionView.isTracking
             || collectionView.isDragging
             || collectionView.isDecelerating
-        // collectionView 的底边直接约束在 bottomStack 上方。这里保留的是
-        // 用户布局变化前的“逻辑跟随最新”状态，而不是用变化后的几何再猜一次。
+        // 保留布局变化前的“逻辑跟随最新”状态，不能用变化后的几何反推用户意图。
         let shouldMaintainLatest = keyboardTransitionMaintainsLatest
             ?? timelineController.maintainsLatestPosition
         let shouldForceLatest = forceBottom
@@ -112,9 +111,19 @@ extension ChatViewController {
                     self.inputDockSpacing + max(self.keyboardOverlap, self.view.safeAreaInsets.bottom))
             }
             self.view.layoutIfNeeded()
-            // 输入区已经由 Auto Layout 从时间线可视范围中排除；这里只保留
-            // 顶栏覆盖 inset，避免把键盘/输入栏高度重复计算到滚动内容中。
-            self.timelineController.setTopInset(self.topOverlayInset)
+            // 时间线在视觉上铺到屏幕底部，让原生玻璃能采样经过其后的内容；
+            // 最后一条消息则严格按底栏最终 frame 留在输入区上方，不再估算
+            // 键盘高度、输入框行数或面板组合高度。
+            let collectionFrame = self.collectionView.convert(
+                self.collectionView.bounds,
+                to: self.view)
+            let dockFrame = self.bottomStack.convert(self.bottomStack.bounds, to: self.view)
+            let bottomInset = max(
+                0,
+                collectionFrame.maxY - dockFrame.minY + self.inputDockSpacing)
+            self.timelineController.setInsets(
+                top: self.topOverlayInset,
+                bottom: bottomInset)
             self.collectionView.layoutIfNeeded()
             if (shouldMaintainLatest || shouldForceLatest) && !isUserScrolling {
                 self.timelineController.scrollToBottom(animated: false)

@@ -59,6 +59,7 @@ final class ChatTimelineController: NSObject {
     private var followLatestAnimator: UIViewPropertyAnimator?
     private var settlingFollowLatestGeneration: Int?
     var topInset: CGFloat = 96
+    var bottomInset: CGFloat = 0
     private var lastMeasuredWidth: CGFloat = 0
     /// 顶部越界必须交给 UIRefreshControl，否则会在它达到触发阈值前被截断。
     /// 底部没有系统刷新控件，仍用较短的越界距离保持上拉手感。
@@ -243,12 +244,14 @@ final class ChatTimelineController: NSObject {
         followLatest(animated: animated && !UIAccessibility.isReduceMotionEnabled)
     }
 
-    func setTopInset(_ top: CGFloat) {
+    func setInsets(top: CGFloat, bottom: CGFloat) {
         guard abs(topInset - top) > 0.5
+                || abs(bottomInset - bottom) > 0.5
                 || abs(collectionView.contentInset.top - top) > 0.5
-                || abs(collectionView.contentInset.bottom) > 0.5 else { return }
+                || abs(collectionView.contentInset.bottom - bottom) > 0.5 else { return }
         topInset = top
-        collectionView.contentInset = UIEdgeInsets(top: top, left: 0, bottom: 0, right: 0)
+        bottomInset = bottom
+        collectionView.contentInset = UIEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
         collectionView.scrollIndicatorInsets = collectionView.contentInset
     }
 

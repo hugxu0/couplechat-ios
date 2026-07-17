@@ -1,27 +1,21 @@
 import UIKit
 
-final class ChatGlassView: UIView {
-    private let blurView: UIVisualEffectView
-
-    init(cornerRadius: CGFloat) {
-        self.blurView = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
-        super.init(frame: .zero)
+/// 聊天控制层的原生 Liquid Glass 宿主。内容必须加入继承自
+/// UIVisualEffectView 的 contentView，才能参与系统玻璃的自适应渲染。
+final class ChatGlassView: UIVisualEffectView {
+    init(
+        style: UIGlassEffect.Style = .regular,
+        cornerRadius: CGFloat,
+        interactive: Bool = false
+    ) {
+        let glassEffect = UIGlassEffect(style: style)
+        glassEffect.isInteractive = interactive
+        super.init(effect: glassEffect)
         isOpaque = false
         backgroundColor = .clear
         layer.cornerCurve = .continuous
         layer.cornerRadius = cornerRadius
         clipsToBounds = true
-
-        blurView.isUserInteractionEnabled = false
-        blurView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(blurView)
-
-        NSLayoutConstraint.activate([
-            blurView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            blurView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            blurView.topAnchor.constraint(equalTo: topAnchor),
-            blurView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
     }
 
     required init?(coder: NSCoder) {
@@ -41,7 +35,11 @@ final class ChatGlassView: UIView {
         setSystemLiquidGlassTint(dark ? .black : .white, alpha: tintAlpha)
     }
 
+    func clearTint() {
+        (effect as? UIGlassEffect)?.tintColor = nil
+    }
+
     private func setSystemLiquidGlassTint(_ color: UIColor, alpha: CGFloat) {
-        (blurView.effect as? UIGlassEffect)?.tintColor = alpha > 0 ? color.withAlphaComponent(alpha) : nil
+        (effect as? UIGlassEffect)?.tintColor = alpha > 0 ? color.withAlphaComponent(alpha) : nil
     }
 }

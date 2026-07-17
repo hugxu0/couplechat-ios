@@ -23,7 +23,10 @@ final class ChatViewController: UIViewController {
     var collectionView: UICollectionView!
     let bottomStack = UIStackView()
     let panelContainer = UIView()
-    let jumpToBottomBackground = ChatGlassView(cornerRadius: 21)
+    let jumpToBottomBackground = ChatGlassView(
+        style: .clear,
+        cornerRadius: 21,
+        interactive: true)
     let jumpToBottomButton = UIButton(type: .system)
     let bottomRefreshIndicator = UIActivityIndicatorView(style: .medium)
     var jumpToBottomWidthConstraint: NSLayoutConstraint!
@@ -403,6 +406,10 @@ final class ChatViewController: UIViewController {
         bottomStack.backgroundColor = .clear
         bottomStack.isOpaque = false
         view.addSubview(bottomStack)
+        let edgeInteraction = UIScrollEdgeElementContainerInteraction()
+        edgeInteraction.scrollView = collectionView
+        edgeInteraction.edge = .bottom
+        bottomStack.addInteraction(edgeInteraction)
         composer.translatesAutoresizingMaskIntoConstraints = false
         panelContainer.translatesAutoresizingMaskIntoConstraints = false
         panelContainer.backgroundColor = .clear
@@ -427,11 +434,9 @@ final class ChatViewController: UIViewController {
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            // 时间线的真实可视底边截止在输入区上方。输入区仍保持透明玻璃外观，
-            // 但最后一条消息不再依赖动态 bottomInset 猜测键盘和输入栏遮挡高度。
-            collectionView.bottomAnchor.constraint(
-                equalTo: bottomStack.topAnchor,
-                constant: -inputDockSpacing),
+            // 原生玻璃需要真实的滚动内容从底栏后方经过。时间线铺满屏幕，
+            // 最后一条消息的安全边界由 applyInputLayout 按 bottomStack 的实际 frame 计算。
+            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             bottomStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomConstraint,
@@ -465,7 +470,8 @@ final class ChatViewController: UIViewController {
                 self.updateJumpToBottomVisibility(animated: true)
             }
         }, for: .touchUpInside)
-        jumpToBottomBackground.addSubview(jumpToBottomButton)
+        let jumpContent = jumpToBottomBackground.contentView
+        jumpContent.addSubview(jumpToBottomButton)
         NSLayoutConstraint.activate([
             jumpToBottomWidthConstraint,
             jumpToBottomBackground.heightAnchor.constraint(equalToConstant: 42),
@@ -473,10 +479,10 @@ final class ChatViewController: UIViewController {
             jumpToBottomBackground.bottomAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -12),
             bottomRefreshIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             bottomRefreshIndicator.bottomAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -14),
-            jumpToBottomButton.leadingAnchor.constraint(equalTo: jumpToBottomBackground.leadingAnchor),
-            jumpToBottomButton.trailingAnchor.constraint(equalTo: jumpToBottomBackground.trailingAnchor),
-            jumpToBottomButton.topAnchor.constraint(equalTo: jumpToBottomBackground.topAnchor),
-            jumpToBottomButton.bottomAnchor.constraint(equalTo: jumpToBottomBackground.bottomAnchor),
+            jumpToBottomButton.leadingAnchor.constraint(equalTo: jumpContent.leadingAnchor),
+            jumpToBottomButton.trailingAnchor.constraint(equalTo: jumpContent.trailingAnchor),
+            jumpToBottomButton.topAnchor.constraint(equalTo: jumpContent.topAnchor),
+            jumpToBottomButton.bottomAnchor.constraint(equalTo: jumpContent.bottomAnchor),
         ])
     }
 
