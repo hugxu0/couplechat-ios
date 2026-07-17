@@ -41,7 +41,7 @@ final class ChatComposerView: UIView, UITextViewDelegate {
             catButton.layer.removeAnimation(forKey: "cat-thinking")
         }
         // 大橘是一个主题动作，不随壁纸明暗退化成系统灰。
-        catButton.tintColor = accentColor
+        updateCatButtonConfiguration()
     }
     private(set) var preferredHeight: CGFloat = 58
 
@@ -61,8 +61,6 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     private let inputRow = UIStackView()
     private let inputCapsule = ChatGlassView(style: .clear, cornerRadius: 22)
     private let inputCapsuleRow = UIStackView()
-    private let catBackgroundView = ChatGlassView(style: .clear, cornerRadius: 22, interactive: true)
-    private let actionBackgroundView = ChatGlassView(style: .clear, cornerRadius: 22, interactive: true)
 
     private let catButton = UIButton(type: .system)
     private let emojiButton = UIButton(type: .system)
@@ -104,9 +102,12 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     func applyTheme(_ theme: ThemeManager, usesLightContent: Bool = false) {
         accentColor = theme.accent.uiColor
         self.usesLightContent = usesLightContent
+        // Liquid Glass 自身也读取 trait。把整组输入控件固定到同一个、由整张壁纸
+        // 决定的明暗外观，避免重进页面后继承临时系统外观而重新着色。
+        overrideUserInterfaceStyle = usesLightContent ? .dark : .light
         let primary = primaryTextColor
         let secondary = secondaryTextColor
-        catButton.tintColor = accentColor
+        updateCatButtonConfiguration()
         attachmentButton.tintColor = secondary
         emojiButton.tintColor = secondary
         typingLabel.textColor = secondary
@@ -125,10 +126,9 @@ final class ChatComposerView: UIView, UITextViewDelegate {
                 textView.reloadInputViews()
             }
         }
-        // 普通状态完全交给 clear Liquid Glass 自适应，不再强制叠加白/黑 tint。
-        // 只有发送、录音等强调状态才通过系统 tintColor 着色。
+        // 普通状态完全交给 clear Liquid Glass，不再强制叠加白/黑 tint。
+        // 发送、录音等强调状态由系统 prominent clear glass 负责着色。
         replyContainer.clearTint()
-        catBackgroundView.clearTint()
         inputCapsule.clearTint()
         updateWaveBars(level: 0.35, cancelled: recordingCancelled)
         updateActionButton()
@@ -421,17 +421,17 @@ final class ChatComposerView: UIView, UITextViewDelegate {
         inputContent.addSubview(placeholderLabel)
         buildRecordingOverlay()
 
-        inputRow.addArrangedSubview(catBackgroundView)
+        inputRow.addArrangedSubview(catButton)
         inputRow.addArrangedSubview(inputCapsule)
-        inputRow.addArrangedSubview(actionBackgroundView)
+        inputRow.addArrangedSubview(actionButton)
 
         NSLayoutConstraint.activate([
             inputRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
 
-            catBackgroundView.widthAnchor.constraint(equalToConstant: 44),
-            catBackgroundView.heightAnchor.constraint(equalToConstant: 44),
-            actionBackgroundView.widthAnchor.constraint(equalToConstant: 44),
-            actionBackgroundView.heightAnchor.constraint(equalToConstant: 44),
+            catButton.widthAnchor.constraint(equalToConstant: 44),
+            catButton.heightAnchor.constraint(equalToConstant: 44),
+            actionButton.widthAnchor.constraint(equalToConstant: 44),
+            actionButton.heightAnchor.constraint(equalToConstant: 44),
 
             inputCapsule.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             inputCapsuleRow.leadingAnchor.constraint(equalTo: inputContent.leadingAnchor, constant: 12),
@@ -502,20 +502,18 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     }
 
     private func configureCatButton() {
-        catBackgroundView.update(cornerRadius: 22)
-        catBackgroundView.translatesAutoresizingMaskIntoConstraints = false
-
-        catButton.setImage(UIImage(systemName: AccountPresentation.dajuIconName), for: .normal)
-        catButton.backgroundColor = .clear
+        updateCatButtonConfiguration()
         catButton.translatesAutoresizingMaskIntoConstraints = false
-        let catContent = catBackgroundView.contentView
-        catContent.addSubview(catButton)
-        NSLayoutConstraint.activate([
-            catButton.leadingAnchor.constraint(equalTo: catContent.leadingAnchor),
-            catButton.trailingAnchor.constraint(equalTo: catContent.trailingAnchor),
-            catButton.topAnchor.constraint(equalTo: catContent.topAnchor),
-            catButton.bottomAnchor.constraint(equalTo: catContent.bottomAnchor)
-        ])
+    }
+
+    private func updateCatButtonConfiguration() {
+        var configuration = UIButton.Configuration.clearGlass()
+        configuration.image = UIImage(systemName: AccountPresentation.dajuIconName)
+        configuration.baseForegroundColor = accentColor
+        configuration.cornerStyle = .capsule
+        configuration.contentInsets = .zero
+        catButton.configuration = configuration
+        catButton.tintColor = accentColor
     }
 
     private func configureIconButton(_ button: UIButton, image: String) {
@@ -526,54 +524,51 @@ final class ChatComposerView: UIView, UITextViewDelegate {
     }
 
     private func configureActionButton() {
-        actionBackgroundView.update(cornerRadius: 22)
-        actionBackgroundView.translatesAutoresizingMaskIntoConstraints = false
-
-        actionButton.backgroundColor = .clear
-        actionButton.layer.cornerCurve = .continuous
-        actionButton.layer.cornerRadius = 22
-        actionButton.clipsToBounds = true
         actionButton.contentHorizontalAlignment = .center
         actionButton.contentVerticalAlignment = .center
         actionButton.translatesAutoresizingMaskIntoConstraints = false
-        let actionContent = actionBackgroundView.contentView
-        actionContent.addSubview(actionButton)
         actionButton.addAction(UIAction { [weak self] _ in self?.performActionButtonTap() }, for: .touchUpInside)
 
         let press = UILongPressGestureRecognizer(target: self, action: #selector(handleRecordGesture(_:)))
         press.minimumPressDuration = 0.12
         actionButton.addGestureRecognizer(press)
-
-        NSLayoutConstraint.activate([
-            actionButton.leadingAnchor.constraint(equalTo: actionContent.leadingAnchor),
-            actionButton.trailingAnchor.constraint(equalTo: actionContent.trailingAnchor),
-            actionButton.topAnchor.constraint(equalTo: actionContent.topAnchor),
-            actionButton.bottomAnchor.constraint(equalTo: actionContent.bottomAnchor)
-        ])
+        updateActionButton()
     }
 
     private func updateActionButton() {
         let hasText = !(textView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasMedia = !previewItems.isEmpty
         let imageName: String
+        let tintColor: UIColor
+        let configuration: UIButton.Configuration
         if isRecording {
             imageName = recordingCancelled ? "trash.fill" : "mic.fill"
             let color = recordingCancelled ? UIColor.systemRed : accentColor
-            actionBackgroundView.setTintColor(color, alpha: 1)
-            actionButton.backgroundColor = .clear
-            actionButton.tintColor = .white
+            tintColor = color
+            var prominent = UIButton.Configuration.prominentClearGlass()
+            prominent.baseBackgroundColor = color
+            prominent.baseForegroundColor = .white
+            configuration = prominent
         } else if hasText || hasMedia {
             imageName = "arrow.up"
-            actionBackgroundView.setTintColor(accentColor, alpha: 1)
-            actionButton.backgroundColor = .clear
-            actionButton.tintColor = .white
+            tintColor = accentColor
+            var prominent = UIButton.Configuration.prominentClearGlass()
+            prominent.baseBackgroundColor = accentColor
+            prominent.baseForegroundColor = .white
+            configuration = prominent
         } else {
             imageName = "mic"
-            actionBackgroundView.clearTint()
-            actionButton.backgroundColor = .clear
-            actionButton.tintColor = accentColor
+            tintColor = accentColor
+            var clear = UIButton.Configuration.clearGlass()
+            clear.baseForegroundColor = accentColor
+            configuration = clear
         }
-        actionButton.setImage(UIImage(systemName: imageName), for: .normal)
+        var resolvedConfiguration = configuration
+        resolvedConfiguration.image = UIImage(systemName: imageName)
+        resolvedConfiguration.cornerStyle = .capsule
+        resolvedConfiguration.contentInsets = .zero
+        actionButton.configuration = resolvedConfiguration
+        actionButton.tintColor = tintColor
         updatePlaceholder()
     }
 

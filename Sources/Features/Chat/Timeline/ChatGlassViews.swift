@@ -26,10 +26,6 @@ final class ChatGlassView: UIVisualEffectView {
         layer.cornerRadius = cornerRadius
     }
 
-    func setTintColor(_ color: UIColor, alpha: CGFloat) {
-        setSystemLiquidGlassTint(color, alpha: alpha)
-    }
-
     /// 原生玻璃自行完成材质采样，只调整系统 tint，不叠加自定义高光层。
     func setGlassTone(dark: Bool, tintAlpha: CGFloat) {
         setSystemLiquidGlassTint(dark ? .black : .white, alpha: tintAlpha)

@@ -406,10 +406,6 @@ final class ChatViewController: UIViewController {
         bottomStack.backgroundColor = .clear
         bottomStack.isOpaque = false
         view.addSubview(bottomStack)
-        let edgeInteraction = UIScrollEdgeElementContainerInteraction()
-        edgeInteraction.scrollView = collectionView
-        edgeInteraction.edge = .bottom
-        bottomStack.addInteraction(edgeInteraction)
         composer.translatesAutoresizingMaskIntoConstraints = false
         panelContainer.translatesAutoresizingMaskIntoConstraints = false
         panelContainer.backgroundColor = .clear
