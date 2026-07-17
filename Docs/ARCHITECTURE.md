@@ -92,7 +92,9 @@ PostgreSQL 访问集中在 `server/src/db`。当前 schema 为 v31；v1–v31 mi
 - PostgreSQL 是账号、消息、已读、共享状态、业务实体和 AI Memory 的唯一事实源。
 - iOS SQLite 是按账号隔离的设备缓存，不是独立真相。
 - Socket.IO 是低延迟通知通道，不是唯一可靠通道；所有持久变更必须能通过 REST 或 Sync V2 补回。
+- 聊天**新消息**的多设备补齐主要靠 Socket、`/api/bootstrap` 与 `/api/messages` 分页；Sync V2 对 `message` 当前以撤回删除（`operation: delete`）为主，与主人消息、大橘消息同一套边界。
 - 客户端频道只有 `couple` 和 `ai`；未知频道必须拒绝或隔离，不能默认映射到 `couple`。
+- 大橘对话上下文（`day-digest-v2`）在服务端维护：作息日当日总览 + 微段 + 最近原文热窗口；细节见 [AI.md](AI.md)。
 
 ## 启动与接收
 

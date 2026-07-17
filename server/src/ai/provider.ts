@@ -1,8 +1,10 @@
-// LLM 客户端：按配置使用 Responses、Chat Completions 或 Anthropic Messages。
+// LLM 客户端：仅 OpenAI 兼容的 Responses / Chat Completions。
 // 失败/未配置一律返回 null，由调用方给出明确失败提示。
 
 import { config, type AiProvider } from "../config";
 import { responsesReasoningSettings, type GenProfile } from "./settings";
+
+// 图片理解统一走对话主模型多模态（见 imageAttachment + agent/runtime），不再有独立识图 API。
 
 export type ChatProfile = "chat" | "task";
 
@@ -12,10 +14,6 @@ export function aiEnabled(): boolean {
 
 function providerFor(profile: ChatProfile): AiProvider | undefined {
   return config.ai[profile] ?? config.ai.chat ?? config.ai.task;
-}
-
-function isClaudeModel(model: string) {
-  return /^claude-/i.test(model);
 }
 
 function responsesText(data: unknown): string | null {
@@ -56,42 +54,6 @@ async function logHttpFailure(scope: string, res: Response): Promise<void> {
       (retryAfter ? ` retry-after=${retryAfter}` : "") +
       (detail ? ` body=${detail}` : ""),
   );
-}
-
-// Anthropic 原生 Messages API。system 标 cache_control:ephemeral：
-// 人设+格式说明每次调用都不变，连续对话能吃到提示词缓存（约 1/10 计费）。
-async function chatAnthropic(p: AiProvider, args: ChatArgs, signal: AbortSignal): Promise<string | null> {
-  const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/messages`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": p.apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: p.model,
-      max_tokens: args.gen.maxTokens,
-      temperature: args.gen.temperature,
-      system: [{ type: "text", text: args.system, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: args.user }],
-    }),
-    signal,
-  });
-  if (!res.ok) {
-    await logHttpFailure(`${args.profile} anthropic`, res);
-    return null;
-  }
-  const data = (await res.json()) as {
-    content?: Array<{ type: string; text?: string }>;
-    stop_reason?: string;
-  };
-  const text = (data.content ?? [])
-    .filter((b) => b.type === "text" && b.text)
-    .map((b) => b.text)
-    .join("");
-  const content = text.trim() || null;
-  if (!content) console.warn(`[ai] ${args.profile} anthropic 空响应 stop_reason=${data.stop_reason ?? "unknown"}`);
-  return content;
 }
 
 async function chatOpenAi(p: AiProvider, args: ChatArgs, signal: AbortSignal): Promise<string | null> {
@@ -152,9 +114,6 @@ export async function chat(args: ChatArgs): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), args.gen.timeoutMs ?? 30_000);
   try {
-    if (provider.apiMode === "anthropic" || isClaudeModel(provider.model)) {
-      return await chatAnthropic(provider, args, controller.signal);
-    }
     if (provider.apiMode === "responses") {
       return await chatOpenAiResponses(provider, args, controller.signal);
     }
@@ -162,80 +121,6 @@ export async function chat(args: ChatArgs): Promise<string | null> {
   } catch (error) {
     const name = error instanceof Error ? error.name : "";
     console.warn(`[ai] ${args.profile} ${name === "AbortError" ? "超时" : `失败: ${error instanceof Error ? error.message : error}`}`);
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// 识图：OpenAI 兼容的多模态接口，支持一次联合分析最多 9 张图片。
-export async function describeImages(
-  suppliedUrls: string[],
-  gen: GenProfile,
-  prompt = "按顺序观察这些图片，说明每张图与当前问题有关的内容，并在需要时比较它们。不能确定的细节要明确说明。",
-): Promise<string | null> {
-  const imageUrls = [...new Set(suppliedUrls.filter(Boolean))].slice(0, 9);
-  if (!imageUrls.length) return null;
-  const p = config.aiVision;
-  if (!p) return null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), gen.timeoutMs ?? 30_000);
-  try {
-    if (p.apiMode === "responses") {
-      const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/responses`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
-        body: JSON.stringify({
-          model: p.model,
-          input: [{
-            role: "user",
-            content: [
-              { type: "input_text", text: prompt },
-              ...imageUrls.map((imageUrl) => ({ type: "input_image", image_url: imageUrl })),
-            ],
-          }],
-          max_output_tokens: gen.maxTokens,
-          temperature: gen.temperature,
-          reasoning: responsesReasoningSettings(p.reasoningEffort),
-          store: false,
-        }),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        await logHttpFailure("vision responses", res);
-        return null;
-      }
-      return responsesText(await res.json());
-    }
-    const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
-      body: JSON.stringify({
-        model: p.model,
-        max_tokens: gen.maxTokens,
-        temperature: gen.temperature,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              ...imageUrls.map((imageUrl) => ({ type: "image_url", image_url: { url: imageUrl } })),
-            ],
-          },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      await logHttpFailure("vision", res);
-      return null;
-    }
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data.choices?.[0]?.message?.content;
-    return content ? String(content).trim() || null : null;
-  } catch (error) {
-    const name = error instanceof Error ? error.name : "";
-    console.warn(`[ai] vision ${name === "AbortError" ? "超时" : `失败: ${error instanceof Error ? error.message : error}`}`);
     return null;
   } finally {
     clearTimeout(timer);

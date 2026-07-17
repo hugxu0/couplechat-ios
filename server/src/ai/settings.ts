@@ -10,19 +10,23 @@ export interface GenProfile {
 }
 
 export const GEN = {
-  // Responses 的输出预算同时承载推理与最终文本；high reasoning 下给普通回复保留足够余量。
-  reply: { maxTokens: 6000, temperature: 0.85, timeoutMs: 45_000 },
+  // 输出预算需覆盖推理+1~3 条短回复；过高会抬计费上限，6000 对闲聊偏浪费。
+  reply: { maxTokens: 3500, temperature: 0.85, timeoutMs: 45_000 },
   extractFacts: {
-    maxTokens: 4000,
+    maxTokens: 3200,
     temperature: 0.2,
     timeoutMs: 120_000,
     reasoningEffort: "low",
   },
-  contextSummary: { maxTokens: 1200, temperature: 0.2, timeoutMs: 30_000 },
-  describeImage: { maxTokens: 1500, temperature: 0.4, timeoutMs: 40_000 },
-  conflict: { maxTokens: 1400, temperature: 0.25, timeoutMs: 30_000 },
-  interject: { maxTokens: 900, temperature: 0.8, timeoutMs: 20_000 },
-  dailyRecommendation: { maxTokens: 500, temperature: 0.75, timeoutMs: 30_000 },
+  contextSummary: { maxTokens: 900, temperature: 0.2, timeoutMs: 30_000 },
+  /** 公聊冲突/搭话精简分类 */
+  engagement: {
+    maxTokens: 180,
+    temperature: 0.15,
+    timeoutMs: 20_000,
+    reasoningEffort: "low",
+  },
+  dailyRecommendation: { maxTokens: 400, temperature: 0.75, timeoutMs: 30_000 },
 } satisfies Record<string, GenProfile>;
 
 /**
@@ -36,10 +40,32 @@ export function responsesReasoningSettings(effort: AiProvider["reasoningEffort"]
 
 export const CONTEXT = {
   lineMax: 180,
-  recentFocusCount: 8,
-  recentMaxCount: 50,
-  summaryTriggerCount: 50,
-  summaryMaxChars: 1800,
+  /** 热窗口：最近原文中标为重点的条数 */
+  recentFocusCount: 16,
+  /** 热窗口：最近原文总条数（含重点） */
+  recentMaxCount: 40,
+  /** 微段：满多少条有效消息压一段 */
+  segmentMessageCount: 40,
+  /** 微段：至少多少条才允许按空闲/强制压缩 */
+  segmentMinMessages: 12,
+  /** 微段：最新消息空闲多久后可压（有 min 条时） */
+  segmentIdleMs: 10 * 60 * 1000,
+  /** 微段：最老未压消息最长等待 */
+  segmentMaxAgeMs: 45 * 60 * 1000,
+  /** 当日总览渲染进 prompt 的汉字上限 */
+  dayDigestMaxChars: 2500,
+  /** 当日活跃话题卡上限 */
+  dayTopicMax: 24,
+  /** prompt 中附带的最近微段数（总览已吸收多数要点，1 段通常够） */
+  pendingSegmentPromptMax: 1,
+  /** @大橘 前同步追赶预算 */
+  catchUpBudgetMs: 25_000,
+  /** 追赶分页大小 */
+  catchUpPageSize: 80,
+  /** 新消息后防抖调度 */
+  scheduleDebounceMs: 3_000,
+  /** 兼容旧引用：摘要类任务字符上限 */
+  summaryMaxChars: 2500,
   taskReminderCount: 20,
   taskMemoCount: 12,
   taskMemoTextMax: 200,
@@ -48,7 +74,8 @@ export const CONTEXT = {
 export const PACE = {
   replyGapMinMs: 900,
   replyGapJitterMs: 700,
-  queuePendingMax: 3,
+  /** 同频道可串行排队的上限；超出后只保留最新一条（coalesce） */
+  queuePendingMax: 5,
   respondTimeoutMs: 120_000,
 } as const;
 

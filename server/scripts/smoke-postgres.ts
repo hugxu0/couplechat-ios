@@ -601,16 +601,20 @@ async function main() {
     };
     const firstEvent = await memory.addMemory(eventInput);
     const repeatedEvent = await memory.addMemory(eventInput);
+    const eventKey = firstEvent?.memoryKey ?? "";
     const duplicateEventCount = await db.get<{ count: number }>(
       `SELECT COUNT(*)::int AS count FROM ai_memory
        WHERE layer = 'event' AND scope = 'couple' AND memory_key = ? AND content = ?`,
-      [eventInput.memoryKey, eventInput.content],
+      [eventKey, eventInput.content],
     );
     assertOk(
       "Memory 同一原文事件重复抽取保持幂等",
-      firstEvent?.id === repeatedEvent?.id && duplicateEventCount?.count === 1,
+      Boolean(firstEvent?.id)
+        && firstEvent?.id === repeatedEvent?.id
+        && firstEvent?.memoryKey === repeatedEvent?.memoryKey
+        && duplicateEventCount?.count === 1,
     );
-    await memory.addMemory({
+    const temporaryState = await memory.addMemory({
       layer: "state", scope: "couple", memoryKey: "state.smoke.temporary",
       subjects: [user.username], speakers: [user.username], content: "暂时很困",
       category: "mood", confidence: 0.9, importance: 2,
@@ -618,7 +622,11 @@ async function main() {
     });
     await memory.expireMemoryStates();
     const activeStates = await memory.searchMemory({ query: "", layers: ["state"], scopes: ["couple"] });
-    assertOk("Memory 状态 TTL 自动失效", !activeStates.some((item) => item.memoryKey === "state.smoke.temporary"));
+    assertOk(
+      "Memory 状态 TTL 自动失效",
+      Boolean(temporaryState?.id)
+        && !activeStates.some((item) => item.id === temporaryState!.id),
+    );
 
     const plan = await memory.addMemory({
       layer: "plan", scope: "couple", memoryKey: "plan.smoke.trip",

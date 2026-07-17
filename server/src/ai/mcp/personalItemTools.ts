@@ -21,7 +21,7 @@ export function registerPersonalItemTools(server: McpServer, run: AgentToolRun):
   server.registerTool(
     "list_personal_items",
     {
-      description: "查询当前主人可见的未完成提醒和备忘。可明确选择当前主人的私人事项、两人的共享事项或全部。",
+      description: "查询可见提醒/备忘；scope=personal|shared|all。",
       inputSchema: z.object({
         kind: z.enum(["reminder", "memo", "all"]).optional(),
         scope: z.enum(["personal", "shared", "all"]).optional(),
@@ -68,7 +68,7 @@ export function registerPersonalItemTools(server: McpServer, run: AgentToolRun):
   server.registerTool(
     "draft_personal_item_action",
     {
-      description: "生成需要主人确认的提醒/备忘完整增删改操作草案，不会直接写数据库。scope 必须区分 personal（当前主人私人）与 shared（两人共享）；add_memo 的 title 是列表标题，text 是不重复标题的 Markdown 正文。修改或删除前应先 list_personal_items 取得准确 id。",
+      description: "生成提醒/备忘增删改确认草案（不直接写入）。personal/shared 必分清；改删前先 list 取 id；memo 的 title 与 text 勿重复。",
       inputSchema: z.object({
         type: z.enum(["add_reminder", "add_memo", "complete_reminder", "edit_reminder", "delete_reminder", "edit_memo", "delete_memo"]),
         title: z.string().max(300).optional(),

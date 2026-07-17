@@ -3,6 +3,7 @@ import { ownerTextMessagesAfter, type LogMessage } from "../conversation/log";
 import { chat, extractJson } from "../provider";
 import { GEN } from "../settings";
 import { beijingDateTime } from "../time";
+import { isLowSignalText } from "../textSignals";
 import { refreshDerivedMemory } from "./derived";
 import {
   addMemory,
@@ -34,30 +35,6 @@ interface ExtractedMemory {
   sourceMemoryKeys?: string[];
   metadata?: Record<string, unknown>;
   reason?: string;
-}
-
-interface ExtractedEngagement {
-  kind?: "none" | "conflict" | "interject";
-  confidence?: number;
-  reason?: string;
-}
-
-export interface MemoryEngagementSignal {
-  channel: string;
-  kind: "conflict" | "interject";
-  confidence: number;
-  reason: string;
-  requesterUsername: string;
-  requesterName: string;
-  context: string;
-}
-
-let engagementHandler: ((signal: MemoryEngagementSignal) => void | Promise<void>) | null = null;
-
-export function setMemoryEngagementHandler(
-  handler: ((signal: MemoryEngagementSignal) => void | Promise<void>) | null,
-): void {
-  engagementHandler = handler;
 }
 
 const scanTimers = new Map<string, NodeJS.Timeout>();
@@ -96,35 +73,22 @@ export function shouldExtractMemoryBatch(
     && (force || sourceMessageCount >= MEMORY_SOURCE_BATCH_SIZE || dueDelay <= 0);
 }
 
-function systemPrompt(includeEngagement: boolean): string {
+function systemPrompt(): string {
   const people = accounts().map((account) => `${account.username}=${account.name}`).join("、");
   return [
-    "你是 CoupleChat 的基础记忆整理器。输入只有一段连续新聊天；基础 changes 只提取事实、经历、计划、近况四类。不要假设输入外的旧记忆内容。关系与理解由另一阶段根据写入后的基础卡生成，基础 changes 禁止输出 relationship/insight。",
-    `人物 username：${people}。subjects 必须且只能是单个逻辑主体：xu、si 或 both。`,
-    "subjects 表示内容是谁的，不表示谁说了这句话，也不表示卡片是否双方可见。只属于小旭的事情用 xu，只属于小偲的事情用 si；只有两个人共同参与、共同承担或整体状态才用 both。双方只是讨论某一个人的事，仍归这个人。",
-    "fact：稳定、将来可直接查询的个人或共同事实，例如身份、偏好、习惯、健康禁忌和重要人物。事实应原子化。",
-    "event：值得以后回忆或检索的一次经历。只存有意义的记录，不把每个生活碎片都变成事件。内容约 50~120 个汉字，必须独立讲清人物、时间线索、事情和结果，便于脱离原文进行向量检索。",
-    "plan：未来安排、承诺和准备做的事。按实际执行者归属；只有两个人都要执行才用 both。必须给 validHours，未明确期限默认 720 小时。",
-    "state：近三天的滚动近况，可以事无巨细地记录有用细节，包括上午/下午做了什么、健康与情绪、讨论主题、双方观点和意见不同。每个主体本批最多一张，内容尽量 300~800 字，必须给 validHours，默认 72 小时。",
-    "operation：upsert 新增/更新 fact、plan、state；append 追加 event；retract 表示明确否定旧记忆；complete/cancel 只用于计划。",
-    "更新、否定、完成或取消已有事实/计划时复用稳定 memoryKey；不要输出 targetMemoryId，服务端会按 scope、layer、memoryKey 和主体查找旧卡。近况由代码按主体维护固定滚动键。",
-    "根据整段新消息生成变更，不要输出或引用原始消息 ID；不得编造日期。",
-    "连续的同一次经历合成一张 event；近况中的琐碎活动不要再重复生成 event，除非它具有长期回忆或检索价值。",
-    "confidence 0~1，importance 1~5。玩笑、问句、AI 回复、未确认猜测、辱骂中的人格判断均不保存。",
-    "同时整理大橘基于本批基础 changes 形成的观察，放入 dajuChanges：只允许 kind=observation，只保存基于至少两张本批基础卡的谨慎观察，layer 固定为 insight，并列出 sourceMemoryKeys。大橘观察不是主人事实，默认有效 30 天。主人对大橘的行为指令由对话 Agent 直接处理，这里不得生成 instruction，也不得把这类要求改写成 changes 中的人物事实或偏好。subjects 表示观察涉及哪位主人或两个人。",
-    ...(includeEngagement ? [
-      "同时判断公聊 engagement，但不要回复用户：明显冲突才用 conflict；无冲突但确有情侣专属价值可补充时用 interject；普通闲聊用 none。",
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"observation","memoryKey":"daju.observation.interaction","subjects":["both"],"content":"...","sourceMemoryKeys":["fact.xu.preference","event.both.example"],"validHours":720}],"engagement":{"kind":"none","confidence":0,"reason":""}}',
-    ] : [
-      '只输出 JSON：{"changes":[{"operation":"upsert","layer":"fact","memoryKey":"fact.xu.preference","subjects":["xu"],"content":"...","validHours":72}],"dajuChanges":[{"operation":"upsert","kind":"observation","memoryKey":"daju.observation.interaction","subjects":["xu"],"content":"...","sourceMemoryKeys":["fact.xu.preference","event.xu.example"],"validHours":720}]}',
-    ]),
-    "changes 最多 40 条。没有变更时 changes 为空数组。",
+    "基础记忆整理器：仅根据本段新聊天输出 fact/event/plan/state 与可选 daju 观察；禁止 relationship/insight/engagement/instruction。",
+    `人物：${people}。subjects 只能是 xu|si|both（内容归属，不是发言人）；共同执行/状态用 both。`,
+    "fact=稳定可查询事实（原子）；event=有回忆价值的经历50~120字；plan=未来安排须 validHours(默认720)；state=近三天近况每主体最多一张300~800字 validHours默认72。",
+    "operation: upsert|append|retract|complete|cancel。memoryKey 用 {layer}.{subject}.{topic}；state 可用 state.{subject}.recent。同事实复用 key。",
+    "勿编造、勿引用消息ID。玩笑/问句/猜测不存。连续经历合并一张 event。dajuChanges 仅 observation，须≥2 个 sourceMemoryKeys（本批基础卡 key），默认30天。",
+    'JSON：{"changes":[...],"dajuChanges":[...]} changes≤40；无变更则空数组。',
   ].join("\n");
 }
 
 function messageLine(message: LogMessage): string {
+  // 批处理最多 80 条：单条正文截断，避免 token 被长消息撑爆。
   const body = message.type === "text" ? message.text.replace(/\s+/g, " ").trim() : `[${message.type}]`;
-  return `[${beijingDateTime(message.ts)}] [${message.sender}/${message.senderName}] ${body.slice(0, 1000)}`;
+  return `[${beijingDateTime(message.ts)}] [${message.sender}/${message.senderName}] ${body.slice(0, 240)}`;
 }
 
 const BASE_MEMORY_LAYERS = new Set<MemoryLayer>(["fact", "event", "plan", "state"]);
@@ -153,17 +117,26 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     }
 
     const nextCursor = { ts: sourceMessages.at(-1)!.ts, id: sourceMessages.at(-1)!.id };
+    // 寒暄不送模型，但仍推进游标，避免永远堵在「嗯嗯」上。
+    const modelMessages = sourceMessages.filter(
+      (message) => message.type === "text" && !isLowSignalText(message.text),
+    );
+    if (!modelMessages.length) {
+      await advanceMemoryCursor(channel, nextCursor);
+      console.log(`[memory] ${channel} 跳过 ${sourceMessages.length} 条低信息量消息`);
+      return;
+    }
+
     const output = await chat({
       profile: "task",
-      system: systemPrompt(channel === "couple"),
-      user: `【本批新消息，频道=${channel}】\n${sourceMessages.map(messageLine).join("\n")}`,
+      system: systemPrompt(),
+      user: `【本批新消息，频道=${channel}】\n${modelMessages.map(messageLine).join("\n")}`,
       gen: GEN.extractFacts,
     });
     if (!output) throw new Error("基础记忆模型无输出");
     const parsed = extractJson<{
       changes?: ExtractedMemory[];
       dajuChanges?: ExtractedMemory[];
-      engagement?: ExtractedEngagement;
     }>(output);
     if (!parsed || !Array.isArray(parsed.changes)) throw new Error("基础记忆 JSON 无效");
 
@@ -332,28 +305,13 @@ async function scanChannel(channel: string, force = false): Promise<void> {
 
     await advanceMemoryCursor(channel, nextCursor);
     await reconcileMemoryLifecycle();
-    const engagement = parsed.engagement;
-    const kind = engagement?.kind;
-    const confidence = Math.max(0, Math.min(1, Number(engagement?.confidence) || 0));
-    await refreshDerivedMemory(channel, { forceRelationship: kind === "conflict" && confidence >= 0.7 });
-    const threshold = kind === "conflict" ? 0.7 : 0.78;
-    if (channel === "couple" && engagementHandler
-      && (kind === "conflict" || kind === "interject") && confidence >= threshold) {
-      const requester = sourceMessages.at(-1)!;
-      const signal: MemoryEngagementSignal = {
-        channel,
-        kind,
-        confidence,
-        reason: String(engagement?.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 600),
-        requesterUsername: requester.sender,
-        requesterName: requester.senderName,
-        context: sourceMessages.map(messageLine).join("\n"),
-      };
-      void Promise.resolve(engagementHandler(signal)).catch((error) => {
-        console.warn("[memory] 后台介入信号处理失败:", error instanceof Error ? error.message : error);
-      });
+    // 无新卡时不必跑派生（省一次大模型调用）
+    if (saved > 0) {
+      await refreshDerivedMemory(channel);
     }
-    console.log(`[memory] ${channel} 整理 ${sourceMessages.length} 条消息，写入/更新 ${saved} 条基础记忆`);
+    console.log(
+      `[memory] ${channel} 整理 ${modelMessages.length}/${sourceMessages.length} 条消息，写入/更新 ${saved} 条基础记忆`,
+    );
   } finally {
     running.delete(channel);
   }

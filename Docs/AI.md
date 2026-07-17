@@ -1,44 +1,86 @@
 # 大橘 AI
 
-> 系统只服务 `xu/si`。配置兼容的非 Claude 对话模型时，两位用户使用 OpenAI Agents SDK、MCP、历史检索与自动 Memory；直接生成任务同时支持 Responses、Chat Completions 和 Anthropic Messages。数据通过 conversation/account/couple ownership 约束，Memory 还区分“关于主人”和“大橘自己”的动态记忆。
+> 系统只服务 `xu/si`。对话与后台任务统一使用 **OpenAI 兼容**接口（Responses 或 Chat Completions）：回复走 OpenAI Agents SDK + MCP + Memory；整理/摘要/推荐等直接生成任务走 `provider.ts`。数据通过 conversation/account/couple ownership 约束，Memory 还区分“关于主人”和“大橘自己”的动态记忆。
 
 ## 回答链路
 
+主人消息落库后由 `pipeline.dispatchAfterOwnerMessage` **三线并行**（均不阻塞发送）：
+
 ```text
-`xu/si` 主人消息写入 PostgreSQL
-  ├─ 增量整理 Memory
-  ├─ 更新窗口外对话摘要
-  └─ 需要回复时
-       → ReplyQueue
-       → OpenAI Agents SDK（兼容的非 Claude 对话模型）
-       → MCP 工具（按需）
-       → 1～3 条回复 / 确认卡 / 来源卡片
-       → 消息入库并广播
+messages 落库
+  ├─ 1 day-context   scheduleContextCatchUp（微段 + 作息日总览）
+  │                    └─ 公聊微段提交后 → engagement 本地门闩 → 可选分类模型 → 可选后台 Agent
+  ├─ 2 long-memory   onMemoryMessage（批处理；寒暄跳过模型仍推进游标）
+  └─ 3 reply         公聊仅 AI_TRIGGER_ALIASES；私聊每条文字/图
+                       → ReplyQueue（同频道串行，pending≤5 后 coalesce 最新）
+                       → ensureContextCaughtUp → Agent + MCP
+                       → createAiMessage + Socket 广播
+                       → 再 scheduleContextCatchUp（纳入大橘发言）
 ```
 
-`couple` 频道仅在出现 `AI_TRIGGER_ALIASES` 时直接回答；个人 `ai` 频道每条文字或图片都进入回答链路。每个频道串行执行，超时会释放队列并提供可见反馈，积压时保留最新请求。
+| 层 | 写哪里 | 读哪里 |
+|---|---|---|
+| 热窗口原文 | `messages` | Agent user 上下文 |
+| 日总览/微段 | `ai_runtime_state` `context:v2:*` | Agent user；engagement |
+| 长期 Memory | `ai_memory*` | MCP tools；推荐等 |
+| 大橘发言 | `messages` | 同上热窗口 |
 
-未配置任何 `AI_*` provider 时，公聊被明确召唤和 AI 私聊仍会返回内置兜底文本；配置了 provider 但 Agent 不兼容或单轮失败时，会写入可见的失败/重试提示。Memory 提取、摘要、推荐等直接生成任务通过 `provider.ts` 执行，不依赖 Agent runtime。
+未配置 `AI_*` 时，明确召唤与私聊仍回固定不可用文案。Memory/摘要/推荐等 task 走 `provider.ts`，不依赖 Agent runtime。
 
 ## 代码位置
 
 | 路径 | 职责 |
 |---|---|
-| `server/src/ai/index.ts` | 入口分流、消息广播和后台触发 |
-| `agent/runtime.ts` | Agent instructions、模型和 MCP 连接 |
-| `agent/replyQueue.ts` | 队列、超时、多条回复和确认卡 |
-| `mcp/` | 工具服务器、单轮身份、预算和工具实现 |
-| `memory/store.ts` | Memory 生命周期、检索、派生来源和向量 |
-| `memory/extractor.ts` | 新消息增量整理与强校验 |
-| `memory/maintenance.ts` | 近况/计划过期和向量维护 |
-| `conversation/` | 最近消息、上下文摘要和原文搜索 |
-| `debug/` | 本机 Trace 与 Memory 调试页 |
+| `server/src/ai/index.ts` | 门面：init、Socket sink、handleUserMessage |
+| `pipeline.ts` | 主人消息后三线调度 |
+| `imageAttachment.ts` | 需要看图时解析本条/最近图组 |
+| `agent/runtime.ts` | Agent、多模态注入与工具触发的重跑 |
+| `agent/replyQueue.ts` | 队列、超时、多条回复与确认卡 |
+| `engagement.ts` | 公聊冲突/搭话（本地预过滤 + 精简分类） |
+| `textSignals.ts` | 低信息量文本判定（上下文与 Memory 共用） |
+| `mcp/` | 工具、单轮身份、预算 |
+| `memory/store.ts` | Memory 持久化与检索 |
+| `memory/extractor.ts` | 批处理整理 |
+| `memory/maintenance.ts` | 生命周期与 embedding 补齐 |
+| `conversation/context.ts` | day-digest-v2、微段、热窗口 |
+| `debug/` | 本机 Trace / Memory 调试页 |
 
 ## Agent 输入
 
-完整 Agent 每轮初始输入包含北京时间、说话人、频道权限、窗口外摘要、最多 50 条原文和当前问题。其中最后 8 条是重点上下文，更早的最多 42 条只作低优先级辅助；私聊累计到 50 条后把滚出重点窗口的内容写入摘要，公聊则在每次大橘会话完成后更新会话摘要。工具结果由 Agent 在同一轮继续处理，不重复塞进初始输入。
+完整 Agent 每轮初始输入包含北京时间、说话人、频道权限、**今日聊天总览**、可选时段要点、最近原文和当前问题。
 
-窗口外摘要保存在 `ai_runtime_state`，它是可重建的短期上下文，不是长期事实。
+| 层 | 内容 | 作用 |
+|---|---|---|
+| 今日聊天总览（Day Digest） | 作息日（北京 06:00 切日）内的话题卡、决定、未决、情绪线 | 晚上仍能知道早上聊过什么的大概 |
+| 较早时段要点 | 最近若干微段 bullets | 中等粒度时间线 |
+| 热窗口原文 | 最近 40 条，其中最后 16 条为重点 | 指代、语气、刚说完的细节 |
+
+上下文维护在 `conversation/context.ts`（strategy `day-digest-v2`）：
+
+- 公聊与私聊同一套；**消化双方全部有效聊天**，不再只摘要「大橘会话」。
+- 约每 40 条有效消息（或空闲 10 分钟 / 最老消息 45 分钟）压成微段，再折入当日总览；贴纸与短寒暄（嗯/哈哈等）不计入微段。
+- 任意主人消息后防抖调度追赶；Agent 回答前强制追赶（约 25s 预算）；落后时在 prompt 中提示可用 `search_chat_messages`。
+- 日切后昨日总览归档；Agent 输入可带【昨日话题标题】一行（无细节）。
+- 状态保存在 `ai_runtime_state`（`context:v2:{channel}`），可重建，不是长期事实库；跨天稳定事实仍靠 Memory。
+
+### 公聊冲突 / 主动搭话
+
+与 Memory 批处理解耦，实现见 `server/src/ai/engagement.ts`：
+
+- **触发**：公聊微段写入并折入当日总览之后（跟上下文追赶节奏，而不是 80 条记忆批）。
+- **检测输入（精简）**：当日总览压缩版 + 本段 bullets + 最近约 14 条 compact 原文；不读整批聊天全文。
+- **输出**：`none | conflict | interject` + confidence + 短 reason；阈值与冷却（conflict 15 分钟 / interject 2 小时）后再排队 Agent。
+- **开口上下文**：只带 reason、话题提示、段要点与短原文；Agent 另有完整【今日聊天总览】+ 热窗口，不再灌 80 条主人消息。
+- **日志**：`[engagement] decision=...`（none / suppressed_threshold / suppressed_cooldown / emit）。
+
+工具结果由 Agent 在同一轮继续处理，不重复塞进初始输入。
+
+### Token 纪律（实现约定）
+
+- Agent system 只保留总则；工具细则以 MCP tool description 为准，MCP server.instructions 保持极短。
+- 行为要求预注入 user 后，默认不再调用 `get_daju_instructions`。
+- 后台介入线索不附带最近原文（热窗口已有）；Memory 批处理单条正文截断；日总览合并只送瘦身 JSON。
+- 输出预算：`GEN.reply` 等见 `settings.ts`，避免为闲聊预留过大 maxTokens。
 
 ## Memory
 
@@ -61,7 +103,7 @@
 
 `ai_memory.perspective` 区分 `people` 与 `daju`，`memory_kind` 区分 `standard`、`instruction` 和 `observation`。主人在当前对话中明确提出长期的大橘行为要求时，由回复 Agent 理解整句话并直接调用 `save_daju_instruction` 写入，不使用关键词规则，也不等待批量整理；仅当前一次的临时要求和推断偏好不会保存。大橘观察仍由后台整理器生成，必须引用至少两张基础记忆卡，并按有效期自动过期。普通人物检索默认只看 `people`，大橘行为要求由 Agent 自动注入，观察仅在复盘、分析和调解时按需读取。
 
-整理器按游标读取最多 80 条主人消息，基础提取模型只接收这批新消息，不再附带旧 Memory 正文，并使用独立的低推理强度与 120 秒上限，不继承对话任务的高推理配置。达到 80 条立即整理；20 条以上在空闲 15 分钟后整理，20 条以下空闲 60 分钟后整理，最老消息等待满 2 小时也会整理。模型输出稳定 `memoryKey` 后，服务端按层处理：`fact/plan` 先做精确 key 匹配，未命中时才用同层同主体向量候选更新；`state` 按主体滚动；`event` 追加并以 key+内容幂等。关系与理解在基础卡写入后由独立派生阶段生成；大橘观察只允许引用本批实际写入的至少两张基础卡。卡片落库后不保存原始消息 ID、摘录或引用。无效 JSON 或写入失败不能推进游标。
+整理器按游标读取最多 80 条主人消息，基础提取模型只接收这批新消息，不再附带旧 Memory 正文，并使用独立的低推理强度与 120 秒上限，不继承对话任务的高推理配置。达到 80 条立即整理；20 条以上在空闲 15 分钟后整理，20 条以下空闲 60 分钟后整理，最老消息等待满 2 小时也会整理。模型输出 `memoryKey` 后，服务端先规范化再入库：people 标准卡为 `{layer}.{subject}.{topic}`；`state` 固定 `state.{subject}.recent`；`relationship` / 人物 `insight` 固定滚动键；大橘指令 `daju.instruction.{topic}`、观察 `daju.observation.{topic}`。随后按层处理：`fact/plan` 先做精确 key 匹配，未命中时才用同层同主体向量候选更新；`state` 按主体滚动；`event` 追加并以 key+内容幂等。关系与理解在基础卡写入后由独立派生阶段生成；大橘观察只允许引用本批实际写入的至少两张基础卡。卡片落库后不保存原始消息 ID、摘录或引用。无效 JSON 或写入失败不能推进游标。
 
 关键规则：
 
@@ -129,11 +171,6 @@ AI_TASK_MODEL=
 AI_TASK_API_MODE=
 AI_TASK_REASONING_EFFORT=
 
-AI_VISION_BASE_URL=
-AI_VISION_API_KEY=
-AI_VISION_MODEL=
-AI_VISION_API_MODE=
-
 # 通常留空；服务端会按当前 PORT 派生 loopback /api/ai-mcp
 AI_MCP_URL=
 AI_TRIGGER_ALIASES=@大橘
@@ -148,9 +185,17 @@ EMBEDDING_MODEL=voyage-4
 EMBEDDING_DIM=1024
 ```
 
-`AI_CHAT_*` 用于直接回复，`AI_TASK_*` 用于整理、摘要和后台内容；未单独配置时使用 `AI_*`。`*_API_MODE` 支持 `responses/chat_completions/anthropic`，未声明时 Claude 模型自动走 Anthropic，其余默认 Chat Completions。服务端只执行配置指定的协议，不在失败后切换另一套模型协议。`*_REASONING_EFFORT` 支持 `none/minimal/low/medium/high/xhigh`。
+`AI_CHAT_*` 用于直接回复，`AI_TASK_*` 用于整理、摘要和后台内容；未单独配置时使用 `AI_*`。`*_API_MODE` 仅支持 `responses` / `chat_completions`（OpenAI 兼容），未声明时默认 Chat Completions；不再提供 Anthropic 原生协议分支。服务端只执行配置指定的协议，不在失败后切换另一套模型协议。`*_REASONING_EFFORT` 支持 `none/minimal/low/medium/high/xhigh`。
 
-当前图片可一次把最多 9 张送入模型；当前消息直接交给主模型，`inspect_recent_images` 只负责用户明确追问前一组图片的场景。联网只使用 Responses 原生 `web_search`，不再维护 MiMo/Tavily 搜索主备、来源分流和网页提取工具。向量检索支持 Voyage、MongoDB 两个多 key 池顺序 failover，也兼容旧的 `EMBEDDING_BASE_URL/API_KEY` 单 key 配置；向量服务不可用时仍可做字面、时间、主体与高重要度检索。完整生产示例以 `server/.env.production.example` 为准。
+**图片理解**：统一用对话主模型多模态，**不再使用独立 `AI_VISION` 转写**。
+
+| 场景 | 行为 |
+|---|---|
+| 本条消息带图 | 图与问题作为 `input_image` 一并进主模型 |
+| 公聊先发图再 @（问题像在问图） | 开跑前预附着频道最近一组连续图片（≤9）+ 问题 |
+| 预判未附着但 Agent 仍要看图 | `inspect_recent_images` 解析 URL 后 **多模态重跑**（问题+图），不生成旁路描述 |
+
+联网只使用 Responses 原生 `web_search`。向量检索支持 Voyage、MongoDB 多 key 池 failover；向量不可用时仍可字面检索。完整示例见 `server/.env.production.example`。
 
 ## 本机调试
 

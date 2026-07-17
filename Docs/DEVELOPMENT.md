@@ -74,7 +74,12 @@ AGENTS.md               全仓库安全、验证和交付规则
 | `server/src/chat/messageService.ts` | 消息读写、分页、搜索和撤回 |
 | `server/src/socket/realtime.ts` | Socket 鉴权、事件处理和广播 |
 | `server/src/upload/` | 上传、签名媒体访问与清理 |
-| `server/src/ai/` | Agent、Memory、MCP、上下文和调试页 |
+| `server/src/ai/` | Agent、Memory、MCP、日总览、engagement |
+| `server/src/ai/pipeline.ts` | 主人消息后三线调度（上下文 / Memory / 回复） |
+| `server/src/ai/imageAttachment.ts` | 多模态看图附着（问题+图进主模型） |
+| `server/src/ai/conversation/context.ts` | day-digest-v2 与热窗口 |
+| `server/src/ai/engagement.ts` | 公聊冲突/搭话 |
+| `server/src/ai/textSignals.ts` | 低信息量文本判定 |
 | `server/src/*/routes.ts` | 各业务 REST 入口 |
 | `server/scripts/smoke-postgres.ts` | embedded PostgreSQL 当前行为 smoke |
 | `server/deploy/` | 固定 SHA 的发布脚本和安全模板 |

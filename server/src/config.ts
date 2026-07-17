@@ -34,7 +34,8 @@ export interface AiProvider {
   baseUrl: string;
   apiKey: string;
   model: string;
-  apiMode: "responses" | "chat_completions" | "anthropic";
+  /** 仅 OpenAI 兼容：Responses 或 Chat Completions。 */
+  apiMode: "responses" | "chat_completions";
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 }
 
@@ -44,13 +45,8 @@ function providerFromEnv(prefix: string, fallback?: AiProvider): AiProvider | un
   const model = process.env[`${prefix}_MODEL`] ?? fallback?.model ?? "";
   if (!baseUrl || !apiKey || !model) return undefined;
   const declaredMode = (process.env[`${prefix}_API_MODE`] ?? fallback?.apiMode ?? "").trim().toLowerCase();
-  const apiMode = declaredMode === "responses" || declaredMode === "anthropic"
-    ? declaredMode
-    : declaredMode === "chat_completions"
-      ? "chat_completions"
-      : /^claude-/i.test(model)
-        ? "anthropic"
-        : "chat_completions";
+  // 未声明时默认 chat_completions；显式 responses 走 Responses API。不再自动识别 Claude/Anthropic。
+  const apiMode = declaredMode === "responses" ? "responses" : "chat_completions";
   const declaredEffort = (process.env[`${prefix}_REASONING_EFFORT`] ?? fallback?.reasoningEffort ?? "").trim().toLowerCase();
   const reasoningEffort = ["none", "minimal", "low", "medium", "high", "xhigh"].includes(declaredEffort)
     ? declaredEffort as AiProvider["reasoningEffort"]
@@ -115,8 +111,6 @@ export const config = {
       .filter(Boolean),
   },
   aiMcpUrl: process.env.AI_MCP_URL ?? `http://127.0.0.1:${port}/api/ai-mcp`,
-  // 图片识图（多模态）：只有消息带图片时才调用，未配置则直接跳过图片。
-  aiVision: providerFromEnv("AI_VISION"),
   embeddingPools,
   embeddingModel: process.env.EMBEDDING_MODEL ?? fallbackEmbedding?.model ?? "voyage-4",
   embeddingDim: Number(process.env.EMBEDDING_DIM ?? 1024),

@@ -27,15 +27,16 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   const server = new McpServer(
     { name: "couplechat-ai-tools", version: "0.1.0" },
     {
+      // 细则写在各 tool description；此处只保留一行总则，避免与 Agent system 重复。
       instructions:
-        "按问题类型选择结构化记忆：事实 search_facts、经历 search_events、计划 search_plans、近况 get_current_states、近期关系 get_relationship_context、互动理解 get_current_insight；当前主人明确提出长期的大橘行为要求时直接调用 save_daju_instruction，涉及已有大橘行为规则时读取 get_daju_instructions，涉及大橘观察或复盘时读取 get_daju_observations。人物查询按 search_facts → search_events → search_chat_messages 回退，facts 为空时不能跳过 events。结构化记忆命中后直接使用；只有用户明确要求逐字原话，或 facts/events 都为空时，才搜索原始聊天。任何记忆都不能跨越当前频道权限。",
+        "工具按名选用；记忆与聊天不得越权。人物：facts→events→原话搜索。行为要求通常已在对话上下文中，勿重复 get_daju_instructions。",
     },
   );
 
   server.registerTool(
     "search_facts",
     {
-      description: "搜索稳定事实、喜好、习惯、身份、重要人物以及长期健康禁忌。临时生病或近期身体状态应调用 get_current_states。人物查询没有命中或没有回答身份/关系时，下一步必须用同一个名字调用 search_events，不能直接跳到 search_chat_messages。",
+      description: "稳定事实/喜好/身份/禁忌。近况身体用 get_current_states。人物未命中身份关系时接着 search_events，勿直接 search_chat_messages。",
       inputSchema: z.object({
         query: z.string().min(1).max(300),
         subject: z.string().max(40).optional().describe("username、主人昵称、both 或留空"),
@@ -62,7 +63,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "search_events",
     {
-      description: "搜索过去发生的经历和事件事实，适合‘上次、前几天、什么时候、后来怎样’。命中后直接使用，不要继续搜索聊天；只有用户明确要求逐字原话时才调用 search_chat_messages。",
+      description: "过去经历/事件。命中即用；仅要逐字原话时再 search_chat_messages。",
       inputSchema: z.object({
         query: z.string().min(1).max(300),
         subject: z.string().max(40).optional().describe("username、主人昵称、both 或留空"),
@@ -96,7 +97,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "search_chat_messages",
     {
-      description: "搜索两位主人的原始聊天证据，不返回大橘自己的旧回答。人物身份/关系查询必须先尝试 search_facts 和 search_events；只有两者都为空或用户明确要求逐字原话时才使用本工具。query 填核心概念；需要发散时由你在 alternatives 中给出少量不同表达。",
+      description: "主人原话检索（不含大橘回复）。人物须先 facts+events。query 用核心概念，可用 alternatives。",
       inputSchema: z.object({
         query: z.string().min(1).max(240),
         alternatives: z.array(z.string().min(1).max(120)).max(5).optional().describe("由 Agent 根据当前问题生成的不同表达，不要重复原查询"),
@@ -200,7 +201,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "get_messages_around",
     {
-      description: "展开某条原始聊天消息前后的上下文，用于确认代词、说话人、否定、玩笑以及事件真实含义。",
+      description: "展开某条聊天前后文，确认代词/否定/玩笑含义。",
       inputSchema: z.object({
         messageId: z.string().min(1).max(100),
         before: z.number().int().min(1).max(15).optional(),
@@ -229,7 +230,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "search_plans",
     {
-      description: "搜索从聊天提取出的当前计划、承诺和安排，可按人物筛选。返回的 memoryValidUntil 是卡片继续有效的时间，不是计划的执行时间或截止时间；正式提醒/备忘仍以 list_personal_items 为准。",
+      description: "聊天提取的计划/承诺。validUntil=卡片有效期非执行截止；正式提醒用 list_personal_items。",
       inputSchema: z.object({
         query: z.string().min(1).max(300),
         subject: z.string().max(40).optional().describe("username、主人昵称、both 或留空"),
@@ -252,7 +253,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "get_people_context",
     {
-      description: "读取两位主人的核心人物事实，并把小旭、小偲和两个人共同的事实分开返回。只在理解人物身份和长期背景确实需要时调用。",
+      description: "分人物返回核心事实卡；仅需长期背景时调用。",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -295,7 +296,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "get_current_states",
     {
-      description: "读取最近几天的滚动近况，例如生病、忙碌、活动、情绪和双方近期讨论。可按人物筛选；每个主体只返回最新一张当前卡。",
+      description: "近几天近况（身体/忙碌/情绪等）；每主体最新一张。",
       inputSchema: z.object({
         subject: z.string().max(40).optional().describe("username、主人昵称、both 或留空"),
       }),
@@ -323,7 +324,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "get_relationship_context",
     {
-      description: "读取两位主人最新的近期关系滚动总结，包括亲密、疏离、争执原因和见面后的变化。它不是长期约定清单，也不是对某一次争执的裁决。",
+      description: "近期关系滚动总结；非长期约定、非单次裁决。",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -341,7 +342,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "get_current_insight",
     {
-      description: "读取大橘当前的互动方式理解。仅在用户要求分析、复盘或调解时使用；它是根据多张基础记忆生成的滚动假设，可能出错，必须以谨慎语气表达。",
+      description: "互动方式理解卡；仅分析/复盘/调解时用，表述须谨慎。",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -362,7 +363,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "save_daju_instruction",
     {
-      description: "把当前主人在本轮消息中明确提出、以后持续生效的大橘行为要求直接保存或按主题更新。适用于称呼、语气、回复方式、互动边界等长期要求；只影响本次回答的临时格式、普通任务、玩笑、问句、推断偏好，以及主人明确说不要记住的内容不得保存。topic 是稳定的简短语义主题，同一主题更新时必须复用，例如‘回复长度’或‘称呼方式’。存储范围由当前聊天自动决定，不能自行选择。",
+      description: "保存长期大橘行为要求。topic 稳定复用；临时格式/玩笑/推断不存。",
       inputSchema: z.object({
         topic: z.string().trim().min(2).max(80).describe("稳定的简短语义主题；同一类要求更新时复用同一主题"),
         instruction: z.string().trim().min(3).max(600).describe("脱离当前对话也能独立理解的明确行为要求"),
@@ -389,7 +390,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
         perspective: "daju",
         kind: "instruction",
         scope: run.identity.storedChannel,
-        memoryKey: `daju.instruction.${args.topic}`,
+        memoryKey: args.topic,
         subjects,
         speakers: [run.identity.requesterUsername],
         content: args.instruction,
@@ -415,7 +416,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
   server.registerTool(
     "get_daju_instructions",
     {
-      description: "读取主人明确交给大橘的行为要求和偏好。它们是大橘的动态行为约束，当前主人消息和系统安全规则优先级更高。",
+      description: "仅当用户消息中没有【大橘当前行为要求】块时使用；通常已预置，勿重复调用。",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },

@@ -16,6 +16,12 @@ export interface AgentRunIdentity {
   expiresAt: number;
 }
 
+/** 工具请求将图片附着到下一轮主模型多模态输入（与问题一起看）。 */
+export interface PendingImageAttach {
+  urls: string[];
+  messageIds: string[];
+}
+
 export interface AgentToolRun {
   identity: AgentRunIdentity;
   trace: TraceEntry;
@@ -23,6 +29,8 @@ export interface AgentToolRun {
   citations: Citation[];
   usedVision: boolean;
   toolCounts: Record<string, number>;
+  /** 由 attach/inspect 图片工具写入；runtime 据此做一次多模态重跑 */
+  pendingImageAttach?: PendingImageAttach;
 }
 
 const activeRuns = new Map<string, AgentToolRun>();
@@ -85,7 +93,8 @@ export async function recordAgentTool<T>(
   const nextCount = (run.toolCounts[name] ?? 0) + 1;
   run.toolCounts[name] = nextCount;
   const perToolLimits: Record<string, number> = {
-    search_facts: 1,
+    // 人物/多实体问题常需分次查 facts；1 次会过早掉进 events/chat。
+    search_facts: 3,
     search_events: 2,
     search_plans: 2,
     get_current_states: 2,
@@ -102,7 +111,7 @@ export async function recordAgentTool<T>(
   };
   const totalCalls = Object.values(run.toolCounts).reduce((sum, count) => sum + count, 0);
   const limit = perToolLimits[name] ?? 2;
-  if (nextCount > limit || totalCalls > 12) {
+  if (nextCount > limit || totalCalls > 14) {
     throw new Error("本轮检索预算已用完。请停止调用工具，根据已有可靠证据回答；证据不足就明确说无法确认。 ");
   }
   const startedAt = Date.now();

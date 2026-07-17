@@ -44,11 +44,11 @@ function parseState(raw: string): DerivedRunState {
 
 function sourceLine(memory: MemoryItem): string {
   const time = memory.occurredAt ?? memory.validFrom ?? memory.updatedAt;
-  return `[${memory.id}] layer=${memory.layer} subject=${memory.subjects[0] ?? "unknown"} time=${time} content=${memory.content.slice(0, 500)}`;
+  return `[${memory.id}] ${memory.layer}/${memory.subjects[0] ?? "?"} ${time} ${memory.content.slice(0, 220)}`;
 }
 
 function continuityLine(memory: MemoryItem): string {
-  return `[${memory.id}] layer=${memory.layer} updatedAt=${memory.updatedAt} content=${memory.content.slice(0, 700)}`;
+  return `[${memory.id}] ${memory.layer} ${memory.content.slice(0, 280)}`;
 }
 
 function validSourceIds(card: DerivedCard | null | undefined, allowed: Set<string>): string[] {
@@ -86,8 +86,8 @@ export async function refreshDerivedMemory(
     return (memory.occurredAt ?? memory.updatedAt) >= now - 30 * DAY_MS;
   });
   const sources = [
-    ...eligibleSources.filter((memory) => memory.layer !== "event").slice(0, 40),
-    ...eligibleSources.filter((memory) => memory.layer === "event").slice(0, 40),
+    ...eligibleSources.filter((memory) => memory.layer !== "event").slice(0, 28),
+    ...eligibleSources.filter((memory) => memory.layer === "event").slice(0, 24),
   ];
   if (!sources.length) return { relationship: false, insight: false };
 
@@ -100,7 +100,7 @@ export async function refreshDerivedMemory(
   if (!relationshipDue && !insightDue) return { relationship: false, insight: false };
 
   const continuity = allActive.filter((memory) =>
-    memory.layer === "relationship" || memory.layer === "insight").slice(0, 12);
+    memory.layer === "relationship" || memory.layer === "insight").slice(0, 6);
   const output = await chat({
     profile: "task",
     system: derivedPrompt(relationshipDue, insightDue),

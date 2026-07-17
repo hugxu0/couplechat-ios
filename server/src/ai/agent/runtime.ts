@@ -15,6 +15,7 @@ import { personaCore } from "../persona";
 import { extractJson, extractReplyText, type Citation } from "../provider";
 import { beijingDateTime } from "../time";
 import { searchMemory, visibleMemoryScopes } from "../memory/store";
+import { resolveImageAttachment, sameImageSet } from "../imageAttachment";
 import type { TraceEntry } from "../debug/trace";
 import type { AiAction } from "../actions/personalItems";
 import type { Trigger } from "./replyQueue";
@@ -32,45 +33,35 @@ function providerConfig() {
 }
 
 export function agentRuntimeEnabled(): boolean {
-  const provider = providerConfig();
-  return Boolean(
-    provider &&
-    !/^claude-/i.test(provider.model),
-  );
+  // 任意已配置的 chat/task provider 即可；统一走 OpenAI 兼容协议。
+  return Boolean(providerConfig());
 }
 
 function instructions(trigger: Trigger): string {
   const names = accounts().map((account) => account.name);
   const isPrivate = trigger.storedChannel.startsWith("ai:");
   const background = trigger.origin === "conflict" || trigger.origin === "interject";
+  // 工具细则以 MCP tool description 为准，此处只保留总则，避免与 MCP instructions 三重叠。
   return [
     personaCore(names),
     isPrivate
-      ? "这里是当前主人和你的私聊。工具会自动限制权限；绝不能向另一位主人泄露私聊内容。"
-      : "这里是两位主人共同的公聊，最终回复两个人都看得到。不得尝试获取任何私聊数据。",
-    "你可以自主使用 MCP 工具。普通闲聊无需调用工具；涉及个人事实、过去事件、原话、准确时间、提醒备忘、图片或最新外部信息时，自己选择并串联工具。",
-    "完成度自检：最终回答前，先在心里核对当前请求涉及的对象、时间范围、字段、限制和格式是否都已覆盖。若依赖工具且结果只覆盖部分对象或字段、来源不能支撑结论、结果彼此冲突或仍有关键缺项，应继续选择合适工具补齐；确实无法补齐时明确说明缺少什么，不能拿猜测或自己先前未经核实的回答填空。普通闲聊和不依赖外部证据的问题无需为了走流程反复调用工具。",
-    "记忆检索原则：稳定信息用 search_facts；发生过什么用 search_events；未来安排用 search_plans；最近几天的活动、身体和情绪用 get_current_states；近期两个人相处状态用 get_relationship_context；只有用户要求分析、复盘或调解时才用 get_current_insight。结构化记忆命中后直接使用，不再追溯原始聊天。只有用户当前消息明确要求逐字原话时才调用 search_chat_messages。没有可靠结果就说没找到，绝不能脑补。",
+      ? "私聊：仅当前主人可见；不得泄露另一位主人的私聊。"
+      : "公聊：双方都看得到；不得索取任一方私聊数据。",
+    "工具：普通闲聊可不调用。事实/经历/计划/近况/关系用对应 search_* 或 get_*；人物身份 search_facts→search_events→（仍无或要原话）search_chat_messages；命中结构化记忆后勿再翻聊天。无可靠结果就说没找到，禁止脑补。大橘旧回复不能当事实证据。",
     background
-      ? "大橘行为要求会自动放在上下文中，但后台介入候选不得新增或修改指令。只有涉及分析、复盘或调解时，才按需调用 get_daju_observations；观察只是大橘的假设，不能当作主人明确说过的事实。"
-      : "大橘行为要求：已有要求会自动放在本轮上下文中，当前请求和系统安全规则优先。如果当前主人明确提出一条以后持续生效、针对大橘未来行为、称呼、语气、回复方式或边界的要求，必须在本轮直接调用 save_daju_instruction 保存；由你理解整句话判断，不能依赖固定关键词。只服务于当前这一次回答的临时格式要求、普通任务、玩笑、问句、你自行推断出的偏好，以及主人明确说不要记住的内容都不要保存；是否长期生效不明确时先问清楚。工具成功后可以自然确认已经记住，工具失败则不能声称已保存。只有涉及分析、复盘或调解时，才按需调用 get_daju_observations；观察只是大橘的假设，不能当作主人明确说过的事实。",
-    "人物查询强制回退顺序：主人问‘知不知道某人、某人是谁、和某人什么关系’时先 search_facts；如果 facts 为空或没有回答身份/关系，必须用同一个核心名字调用 search_events；只有 facts 和 events 都没有相关结果，或主人明确要求逐字原话时，才调用 search_chat_messages。不能从 facts 直接跳到聊天。",
-    "证据纪律：最近聊天和搜索结果里，大橘自己以前说过的话只能用于理解对话，绝不能作为事实证据。人物姓名、身份和关系必须来自主人原话或可靠事实卡，不能因为名字在附近出现就建立关系。",
-    "上下文层级：当前问题最高；最近 8 条重点原文用于理解当前话题、语气和指代；较早原文只是辅助背景，不能压过当前问题；跨会话摘要用于连接已经滚出原文窗口的大橘会话。不同层级冲突时以当前问题和较新的主人原话为准。",
-    "如果主人说‘不是他/你说错了’，立即废弃之前答案，不能再用旧答案当查询依据。最多先查一次结构化记忆、再查两次原始聊天；仍无明确主人原话就直接说暂时无法确认，并请主人提供名字或大致时间。",
-    "搜索原始聊天时，query 只放核心概念；需要语义发散时由你根据当前问题生成少量 alternatives。不要把人物名字和大量泛词混进查询；人物用 sender 约束。默认使用 hybrid，只有验证同一条原话时才用 all。",
-    "工具每次只返回有限候选，不代表扫描了全部历史。回复中不能说‘查了所有聊天记录/从来没有说过’，只能说‘目前找到的记录里没有明确证据’。搜索命中问题本身也不等于找到了答案。",
-    "联网原则：只有最新或外部信息才联网；私人经历不能用联网代替本地证据。只使用 Responses 原生 web_search；如果当前模型不支持或结果不足，就明确说明无法可靠联网，不能改走另一套搜索服务。主人给出具体网页时也使用原生 web_search 尝试读取。",
-    "图片原则：当前消息带一张或多张图片时，所有图片都已按发送顺序直接提供，必须结合当前问题逐张观察，比较类问题不能漏图，也不要重复调用工具。当前文字问题结合最近聊天明显在指代前面一组图片（例如刚发图后问‘这些是什么、比较一下’），或你无法读取当前图片时，才调用 inspect_recent_images。根据完整上下文自主判断，不要因为最近记录里碰巧有旧图片就擅自识图。",
-    "提醒/备忘原则：先按需 list_personal_items 取得准确 id；新增、完成、修改或删除提醒/备忘都必须调用 draft_personal_item_action。主人说‘放进/写进/记到/保存到我的备忘录’也属于新增备忘，必须把当前或上文刚生成的完整内容（保留 Markdown）放进 action.text，并单独给 action.title 一个简短列表标题；正文开头不要再重复标题。不能只在文字里说‘请确认’却不调用工具。该工具只生成确认草案，回复必须请主人确认，不能声称已经执行。",
-    "事项范围：personal 是当前说话人自己的私人提醒/备忘，shared 是两位主人共同可见的共享事项。出现‘我的/我自己/私人/个人’必须选 personal；出现‘我们的/一起/共同/共享/给我们俩’必须选 shared。AI 私聊未说明时默认 personal，公聊未说明时默认 shared；仍有歧义就先问清楚，绝不能混用。查询时也按同一规则给 list_personal_items 传 scope。",
-    "回复格式：普通闲聊保持自然简短，不要套模板；当回答包含多项比较、时间安排、数据、步骤、清单或可保存的长内容时，主动使用合适的 Markdown 标题、列表或表格，不要等主人提醒。表格必须使用完整表头和 `| --- | --- |` 分隔行，列表和代码块保持合法语法，不要为了装饰滥用标题。需要流程图时使用 Mermaid fenced block，例如 ```mermaid + 换行 + flowchart TD + 换行 + ... + 换行 + ```，不要把 Mermaid 语法混在普通段落里。",
+      ? "【大橘当前行为要求】若在用户消息中出现则遵守，但后台候选禁止 save_daju_instruction。观察仅复盘/调解时按需 get_daju_observations。"
+      : "【大橘当前行为要求】已在用户消息中预置（有则遵守，优先于旧偏好）。长期行为要求用 save_daju_instruction；临时格式/玩笑/推断不要存。不要重复调用 get_daju_instructions。观察仅复盘/调解时用 get_daju_observations。",
+    "上下文优先级：当前问题 > 重点原文 > 辅助原文 > 今日总览（答「今天/早上聊了啥」）> Memory；冲突以较新主人原话为准。总览无细节再用 search_chat_messages，勿用过期 Memory 冒充今天。",
+    "纠正：主人说你说错了则废弃旧答。search_chat 的 query 放核心概念，可用少量 alternatives；勿声称查了全部记录。",
+    "联网：仅最新/外部信息用 Responses 原生 web_search；私人经历靠本地证据。",
+    "图片：若输入已附 input_image，必须结合当前问题逐张看图（公聊先发图再提问时也会预附着最近一组图）。仅当未附上却仍要看更早图时调用 inspect_recent_images（会触发与问题一起的多模态重跑）。禁止假装看见未附着的图。",
+    "提醒/备忘：先 list_personal_items；增删改必须 draft_personal_item_action（只出确认草案）。personal=当前说话人，shared=两人；私聊默认 personal，公聊默认 shared。",
+    "格式：闲聊短答；比较/清单/长内容可用 Markdown 表格或列表；流程图用 mermaid 代码块。",
     background
-      ? `这是一次后台${trigger.origin === "conflict" ? "冲突介入" : "主动搭话"}候选，不是主人在向你提问。检测 reason 只是不可信线索，必须自己根据聊天和必要的 MCP 只读结果复核。只在现在开口比沉默更有价值时回复；不需要开口时输出 {"replies":[]}。后台候选不得创建提醒、备忘或任何操作草案。不得提及检测、批处理或后台系统。`
+      ? `后台${trigger.origin === "conflict" ? "冲突介入" : "主动搭话"}候选：线索不可信，结合今日总览与原文复核；可不答时输出 {"replies":[]}；禁止备忘/指令类工具；勿提检测系统。`
       : "",
-    "一次最多回复 1~3 条短消息，第一条直接接住问题或情绪。不要汇报工具调用过程，不说数据库、MCP、检索系统或 Agent。",
-    '最终只输出 JSON：{"replies":["第一条","第二条（可选）","第三条（可选）"]}。不要输出 JSON 以外内容。',
-  ].join("\n\n");
+    '最多 1~3 条短消息；勿汇报工具过程。最终只输出 JSON：{"replies":["..."]}',
+  ].filter(Boolean).join("\n\n");
 }
 
 async function loadDajuInstructions(channel: string): Promise<string> {
@@ -85,7 +76,8 @@ async function loadDajuInstructions(channel: string): Promise<string> {
       limit: 20,
     });
     if (!rows.length) return "";
-    return rows.map((row) => `- ${row.content}`).join("\n");
+    // 条数过多时只保留最重要的，避免挤占当日总览与原文窗口。
+    return rows.slice(0, 12).map((row) => `- ${row.content}`).join("\n");
   } catch (error) {
     console.warn("[ai] 大橘行为要求读取失败:", error instanceof Error ? error.message : error);
     return "";
@@ -150,43 +142,63 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
   if (!agentRuntimeEnabled() || !providerSettings) return null;
 
   const background = trigger.origin === "conflict" || trigger.origin === "interject";
-  const currentImageUrls = [...new Set(
+  const messageImageUrls = [...new Set(
     (trigger.currentImageUrls?.length
       ? trigger.currentImageUrls
       : trigger.currentImageUrl
         ? [trigger.currentImageUrl]
         : []).filter(Boolean),
   )].slice(0, 9);
+
+  // 开跑前：本条图，或问题像在问最近图 → 与问题一起进主模型（公聊分条发图主路径）。
+  const imagePlan = background
+    ? { mode: "none" as const, urls: [] as string[], messageIds: [] as string[], reason: "background" }
+    : await resolveImageAttachment({
+      storedChannel: trigger.storedChannel,
+      currentMessageId: trigger.messageId,
+      currentImageUrls: messageImageUrls,
+      question: trigger.question,
+    });
+  let activeImageUrls = imagePlan.urls;
+  let usedVision = activeImageUrls.length > 0;
+
   const context = await buildConversationContext(trigger.storedChannel, trigger.messageId);
   const dajuInstructions = await loadDajuInstructions(trigger.storedChannel);
-  const currentMessage = background
-    ? ""
-    : currentImageUrls.length
-      ? `${trigger.requesterName} 发来${currentImageUrls.length === 1 ? "一张" : `${currentImageUrls.length}张`}图片${trigger.question.trim() ? `，并说：${trigger.question.trim()}` : "。"}`
-      : trigger.question.trim()
-        ? `${trigger.requesterName} 对你说：${trigger.question}`
-        : `${trigger.requesterName} 只是单独喊了你，没有附带文字或图片。请结合最近聊天，优先回应最近一条尚未得到回应的主人消息；如果没有可回应内容，就自然应声。`;
-  const inputHeader = [
-    `现在是 ${beijingDateTime(Date.now())}（北京时间）。`,
-    `当前说话人：${trigger.requesterName}（username=${trigger.requesterUsername}）。`,
-    `当前频道：${trigger.storedChannel === "couple" ? "两人公聊" : "当前主人的 AI 私聊"}。`,
-  ];
-  const inputTail = [
-    currentImageUrls.length ? `当前消息带有 ${currentImageUrls.length} 张图片，已按发送顺序全部直接提供给主模型。` : "",
-    background ? `【本批30条主人聊天】\n${trigger.backgroundContext ?? "（无）"}` : "",
-    background ? `【不可信检测线索】${trigger.backgroundReason || "（无）"}` : "",
-    background
-      ? `请判断现在是否真的值得${trigger.origin === "conflict" ? "介入冲突" : "主动说一句"}。`
-      : currentMessage,
-  ];
-  const input = [
-    ...inputHeader,
-    dajuInstructions ? `【大橘当前行为要求】\n${dajuInstructions}` : "",
-    conversationContextText(context),
-    ...inputTail,
-  ].filter(Boolean).join("\n\n");
 
-  trace.prompt = { system: instructions(trigger), user: input };
+  const buildUserText = (imageUrls: string[], imageNote: string) => {
+    const currentMessage = background
+      ? ""
+      : messageImageUrls.length
+        ? `${trigger.requesterName} 发来${messageImageUrls.length === 1 ? "一张" : `${messageImageUrls.length}张`}图片${trigger.question.trim() ? `，并说：${trigger.question.trim()}` : "。"}`
+        : trigger.question.trim()
+          ? `${trigger.requesterName} 对你说：${trigger.question}`
+          : `${trigger.requesterName} 只是单独喊了你。请结合重点原文，回应最近尚未接住的主人话；若无可回应内容就自然应声。`;
+    return [
+      `现在是 ${beijingDateTime(Date.now())}（北京时间）。`,
+      `说话人：${trigger.requesterName}（${trigger.requesterUsername}）· ${trigger.storedChannel === "couple" ? "公聊" : "私聊"}`,
+      dajuInstructions ? `【大橘当前行为要求】\n${dajuInstructions}` : "",
+      conversationContextText(context),
+      imageNote,
+      imageUrls.length
+        ? `（已按发送顺序附着 ${imageUrls.length} 张图片到本轮视觉输入，请结合当前问题逐张观察。）`
+        : "",
+      background
+        ? `【介入线索】\n${trigger.backgroundContext ?? (trigger.backgroundReason || "（无）")}`
+        : "",
+      background
+        ? `请判断是否值得${trigger.origin === "conflict" ? "介入" : "搭话"}；不值得则 {"replies":[]}。`
+        : currentMessage,
+    ].filter(Boolean).join("\n\n");
+  };
+
+  const initialNote = imagePlan.mode === "recent_group"
+    ? "【视觉】问题像在问近期图片：已把频道最近一组图片与问题一并交给你（图与文字可能不在同一条聊天里）。"
+    : imagePlan.mode === "current"
+      ? "【视觉】本条消息含图。"
+      : "";
+  let userText = buildUserText(activeImageUrls, initialNote);
+
+  trace.prompt = { system: instructions(trigger), user: userText };
   trace.agent = {
     enabled: true,
     model: providerSettings.model,
@@ -203,8 +215,8 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
     requesterName: trigger.requesterName,
     storedChannel: trigger.storedChannel,
     allowDajuInstructionWrite: !background,
-    currentImageUrl: currentImageUrls[0],
-    currentImageUrls,
+    currentImageUrl: activeImageUrls[0],
+    currentImageUrls: activeImageUrls,
   }, trace);
 
   const mcp = new MCPServerStreamableHttp({
@@ -214,15 +226,18 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
     timeout: 45_000,
     requestInit: { headers: { "x-couplechat-ai-run": token } },
   });
-  const modelInput = (text: string): string | AgentInputItem[] => currentImageUrls.length
-    ? [{
-        role: "user",
-        content: [
-          { type: "input_text", text },
-          ...currentImageUrls.map((image) => ({ type: "input_image" as const, image, detail: "auto" as const })),
-        ],
-      }]
-    : text;
+
+  const toModelInput = (text: string, imageUrls: string[]): string | AgentInputItem[] => {
+    if (!imageUrls.length) return text;
+    return [{
+      role: "user",
+      content: [
+        { type: "input_text", text },
+        ...imageUrls.map((image) => ({ type: "input_image" as const, image, detail: "auto" as const })),
+      ],
+    }];
+  };
+
   const baseModelSettings = {
     temperature: GEN.reply.temperature,
     maxTokens: GEN.reply.maxTokens,
@@ -230,9 +245,12 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
   } as const;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90_000);
+
   try {
     await mcp.connect();
-    const runWithMode = async (useResponses: boolean) => {
+    const useResponses = providerSettings.apiMode === "responses";
+
+    const runOnce = async (text: string, imageUrls: string[], maxTurns: number) => {
       const modelSettings = {
         ...baseModelSettings,
         reasoning: useResponses
@@ -263,8 +281,8 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
           mcpServers: [mcp],
           modelSettings,
         });
-        const result = await runner.run(agent, modelInput(input), {
-          maxTurns: 6,
+        const result = await runner.run(agent, toModelInput(text, imageUrls), {
+          maxTurns,
           signal: controller.signal,
         });
         return { result, workerRawResponses: [...result.rawResponses] };
@@ -273,7 +291,27 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
       }
     };
 
-    const execution = await runWithMode(providerSettings.apiMode === "responses");
+    let execution = await runOnce(userText, activeImageUrls, 6);
+    let totalTurns = execution.workerRawResponses.length;
+
+    // 工具请求附着了另一组图：用「同一问题 + 新图」再跑一轮多模态，结果以本轮为准。
+    const pending = toolRun.pendingImageAttach;
+    if (pending?.urls.length && !sameImageSet(pending.urls, activeImageUrls)) {
+      activeImageUrls = pending.urls;
+      usedVision = true;
+      toolRun.pendingImageAttach = undefined;
+      toolRun.identity.currentImageUrls = activeImageUrls;
+      toolRun.identity.currentImageUrl = activeImageUrls[0];
+      userText = buildUserText(
+        activeImageUrls,
+        "【视觉】已按工具请求附着最近图片组，请结合用户原问题直接看图回答。",
+      );
+      trace.prompt = { system: instructions(trigger), user: userText };
+      console.log(`[ai] multimodal re-run with ${activeImageUrls.length} image(s)`);
+      execution = await runOnce(userText, activeImageUrls, 4);
+      totalTurns += execution.workerRawResponses.length;
+    }
+
     const { result, workerRawResponses } = execution;
     const rawOutput = typeof result.finalOutput === "string"
       ? result.finalOutput
@@ -283,7 +321,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
       ? calibrateEvidenceLanguage(normalizedReplies)
       : normalizedReplies;
     trace.agent.finalOutput = rawOutput;
-    trace.agent.turns = workerRawResponses.length;
+    trace.agent.turns = totalTurns;
     if (!replies.length && !background) return null;
     const citations = [...toolRun.citations];
     for (const citation of nativeWebCitations(workerRawResponses)) {
@@ -293,7 +331,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
       replies,
       actions: toolRun.actions,
       citations,
-      usedVision: currentImageUrls.length > 0 || toolRun.usedVision,
+      usedVision: usedVision || toolRun.usedVision || activeImageUrls.length > 0,
       rawOutput,
     };
   } finally {

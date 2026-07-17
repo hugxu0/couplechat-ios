@@ -130,10 +130,153 @@ function clamp(value: number | undefined, min: number, max: number, fallback: nu
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
 }
 
+/** 将 key 片段压成稳定 slug：小写、保留中文、折叠分隔符。 */
+export function slugifyMemoryTopic(raw: string, maxLen = 80): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s/|\\]+/g, "_")
+    .replace(/[^a-z0-9_.:\-\u4e00-\u9fff]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/\.+/g, ".")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .slice(0, maxLen)
+    .replace(/^[._-]+|[._-]+$/g, "");
+}
+
+const SUBJECT_ALIASES: Record<string, "xu" | "si" | "both"> = {
+  xu: "xu",
+  xuxu: "xu",
+  hugxu: "xu",
+  小旭: "xu",
+  si: "si",
+  sisi: "si",
+  小偲: "si",
+  both: "both",
+  couple: "both",
+  shared: "both",
+  双方: "both",
+  两人: "both",
+  我们: "both",
+};
+
+function mapSubjectToken(token: string): "xu" | "si" | "both" | null {
+  return SUBJECT_ALIASES[token.trim().toLowerCase()] ?? null;
+}
+
+const FACT_TOPIC_HINTS = new Set([
+  "preference", "habit", "identity", "health", "person", "work", "family",
+  "food", "sleep", "pet", "location", "allergy", "hobby", "schedule",
+  "偏好", "习惯", "身份", "健康", "人物", "工作", "家庭", "食物", "睡眠",
+]);
+
+export interface NormalizeMemoryKeyInput {
+  layer: MemoryLayer;
+  perspective?: MemoryPerspective;
+  kind?: MemoryKind;
+  subjects: string[];
+  memoryKey?: string;
+  category?: string;
+  content?: string;
+}
+
+/**
+ * 统一 memory_key 规范：
+ * - people standard: `{layer}.{subject}.{topic}`
+ * - state / relationship / people insight: 固定滚动键
+ * - daju instruction: `daju.instruction.{topic}`
+ * - daju observation: `daju.observation.{topic}`
+ *
+ * 只规范化形态，不改语义主题；已是规范形态的 key 保持稳定，兼容旧库。
+ */
+export function normalizeMemoryKey(input: NormalizeMemoryKeyInput): string {
+  const perspective = input.perspective ?? "people";
+  const kind = input.kind ?? "standard";
+  const subjects = normalizedMemorySubjects(input.subjects);
+  const subject = subjects[0] ?? "both";
+
+  if (input.layer === "state") return `state.${subject}.recent`;
+  if (input.layer === "relationship") return "relationship.both.recent";
+  if (input.layer === "insight" && perspective === "people") return "insight.both.interaction";
+
+  if (perspective === "daju" && kind === "instruction") {
+    const topic = extractTopicSlug(input.memoryKey, ["daju", "instruction", "fact", subject])
+      || slugifyMemoryTopic(input.category ?? "")
+      || "general";
+    return `daju.instruction.${topic}`.slice(0, 160);
+  }
+  if (perspective === "daju" && kind === "observation") {
+    const topic = extractTopicSlug(input.memoryKey, ["daju", "observation", "insight", subject])
+      || slugifyMemoryTopic(input.category ?? "")
+      || "general";
+    return `daju.observation.${topic}`.slice(0, 160);
+  }
+
+  // people standard: fact / event / plan
+  let topic = extractTopicSlug(input.memoryKey, [input.layer, subject, "daju", "instruction", "observation"]);
+  if (!topic && input.category) topic = slugifyMemoryTopic(input.category);
+  if (!topic && input.content) {
+    // 仅作兜底身份，避免空 key；正常路径应由模型给出稳定 topic。
+    topic = slugifyMemoryTopic(input.content.slice(0, 40)) || "general";
+  }
+  if (!topic) topic = "general";
+
+  // fact 若 topic 过短且 category 是稳定提示词，用 category 作一级主题，避免 fact.xu.a / fact.xu.b 碎片。
+  if (input.layer === "fact" && input.category) {
+    const cat = slugifyMemoryTopic(input.category);
+    if (cat && FACT_TOPIC_HINTS.has(cat) && topic !== cat && !topic.startsWith(`${cat}.`) && !topic.startsWith(`${cat}_`)) {
+      if (topic.length <= 12 && !topic.includes(".")) topic = `${cat}.${topic}`;
+    }
+  }
+
+  return `${input.layer}.${subject}.${topic}`.slice(0, 160);
+}
+
+/** 从模型给的原始 key 中剥掉 layer/subject/daju 前缀，得到 topic slug。 */
+function extractTopicSlug(rawKey: string | undefined, stripTokens: string[]): string {
+  if (!rawKey?.trim()) return "";
+  // 模型可能用 `.` / `_` / `:` 混写：先粗清洗，再按分隔符逐段剥前缀。
+  let cleaned = rawKey.trim().toLowerCase().replace(/:/g, ".");
+  cleaned = cleaned
+    .replace(/[\s/|\\]+/g, "_")
+    .replace(/[^a-z0-9_.:\-\u4e00-\u9fff]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/\.+/g, ".")
+    .replace(/^[._-]+|[._-]+$/g, "");
+  if (!cleaned) return "";
+
+  const strip = new Set(stripTokens.map((token) => token.toLowerCase()).filter(Boolean));
+  const canStrip = (token: string) => strip.has(token) || Boolean(mapSubjectToken(token));
+
+  // 反复剥掉前缀 token（支持 fact.xu.xxx 与 fact_xu_xxx）
+  for (let guard = 0; guard < 6; guard += 1) {
+    const dotted = cleaned.split(".").filter(Boolean);
+    if (dotted.length > 1 && canStrip(dotted[0])) {
+      cleaned = dotted.slice(1).join(".");
+      continue;
+    }
+    const underscored = cleaned.split("_").filter(Boolean);
+    if (underscored.length > 1 && canStrip(underscored[0])) {
+      cleaned = underscored.slice(1).join("_");
+      continue;
+    }
+    break;
+  }
+
+  if (canStrip(cleaned) && !cleaned.includes(".") && !cleaned.includes("_")) return "";
+  return slugifyMemoryTopic(cleaned, 100);
+}
+
 function normalizedKey(candidate: MemoryCandidate): string {
-  const supplied = candidate.memoryKey.trim().toLowerCase().replace(/[^a-z0-9_.:\-\u4e00-\u9fff]+/g, "_");
-  if (supplied) return supplied.slice(0, 160);
-  return `${candidate.layer}:${candidate.subjects.sort().join("+")}:${candidate.category ?? "general"}:${candidate.content.slice(0, 50)}`;
+  return normalizeMemoryKey({
+    layer: candidate.layer,
+    perspective: candidate.perspective,
+    kind: candidate.kind,
+    subjects: candidate.subjects,
+    memoryKey: candidate.memoryKey,
+    category: candidate.category,
+    content: candidate.content,
+  });
 }
 
 function embeddingText(input: {
@@ -455,10 +598,20 @@ export async function findActiveMemoryByKey(
   const owner = await resolveMemoryOwner(input.scope);
   if (!owner) return null;
   const ownerSQL = memoryOwnerSQL(owner);
+  const subjects = normalizedMemorySubjects(input.subjects ?? []);
+  const memoryKey = input.layer
+    ? normalizeMemoryKey({
+      layer: input.layer,
+      perspective: input.perspective,
+      kind: input.kind,
+      subjects: subjects.length ? subjects : ["both"],
+      memoryKey: input.memoryKey,
+    })
+    : slugifyMemoryTopic(input.memoryKey.replace(/:/g, "."), 160);
   const clauses = ["scope = ?", "memory_key = ?", "status = 'active'", ownerSQL.clause];
   const params: Array<string | number> = [
     input.scope,
-    input.memoryKey.trim().toLowerCase().replace(/[^a-z0-9_.:\-\u4e00-\u9fff]+/g, "_").slice(0, 160),
+    memoryKey,
     ownerSQL.value,
   ];
   if (input.layer) {
@@ -473,9 +626,9 @@ export async function findActiveMemoryByKey(
     clauses.push("memory_kind = ?");
     params.push(input.kind);
   }
-  if (input.subjects?.length) {
+  if (subjects.length) {
     clauses.push("subjects_json::jsonb = CAST(? AS jsonb)");
-    params.push(JSON.stringify(input.subjects));
+    params.push(JSON.stringify(subjects));
   }
   const row = await get<AiMemoryRow>(
     `SELECT * FROM ai_memory WHERE ${clauses.join(" AND ")}
