@@ -96,7 +96,7 @@ extension ChatViewController {
         let isUserScrolling = collectionView.isTracking
             || collectionView.isDragging
             || collectionView.isDecelerating
-        // collectionView 的底边已直接约束在 bottomStack 上方。这里保留的是
+        // collectionView 的底边直接约束在 bottomStack 上方。这里保留的是
         // 用户布局变化前的“逻辑跟随最新”状态，而不是用变化后的几何再猜一次。
         let shouldMaintainLatest = keyboardTransitionMaintainsLatest
             ?? timelineController.maintainsLatestPosition
@@ -106,21 +106,15 @@ extension ChatViewController {
         let anchor = shouldMaintainLatest || shouldForceLatest
             ? nil
             : timelineController.visibleAnchor()
-        let panelHeight = panelContainer.isHidden ? 0 : panelHeightConstraint.constant
-        let dockHeight = composerHeightConstraint.constant + panelHeight
-        let coveredBottom = bottomDockUsesScreenBottom
-            ? 0
-            : max(keyboardOverlap, view.safeAreaInsets.bottom)
-        let bottomInset = dockHeight + coveredBottom
-            + (bottomDockUsesScreenBottom ? 0 : inputDockSpacing)
-
         let updates = {
             if !self.bottomDockUsesScreenBottom {
                 self.bottomConstraint.constant = -(
                     self.inputDockSpacing + max(self.keyboardOverlap, self.view.safeAreaInsets.bottom))
             }
             self.view.layoutIfNeeded()
-            self.timelineController.setInsets(top: self.topOverlayInset, bottom: bottomInset)
+            // 输入区已经由 Auto Layout 从时间线可视范围中排除；这里只保留
+            // 顶栏覆盖 inset，避免把键盘/输入栏高度重复计算到滚动内容中。
+            self.timelineController.setTopInset(self.topOverlayInset)
             self.collectionView.layoutIfNeeded()
             if (shouldMaintainLatest || shouldForceLatest) && !isUserScrolling {
                 self.timelineController.scrollToBottom(animated: false)

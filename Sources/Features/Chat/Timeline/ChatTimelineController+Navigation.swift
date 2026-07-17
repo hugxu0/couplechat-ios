@@ -40,6 +40,8 @@ extension ChatTimelineController {
     }
 
     func scrollToBottom(animated: Bool) {
+        scrollState.isNearBottom = true
+        if scrollState.isAtLatestWindow { scrollState.hasNewMessagesBelow = false }
         guard !items.isEmpty else { return }
         collectionView.layoutIfNeeded()
         let minY = -collectionView.adjustedContentInset.top

@@ -116,9 +116,31 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        userScrollInProgress = true
         completeFollowingLatest()
         captureDragStartAnchor()
         delegate?.timelineDidBeginDragging()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        recordUserScrollPosition()
+        if !decelerate { userScrollInProgress = false }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        recordUserScrollPosition()
+        userScrollInProgress = false
+    }
+
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        userScrollInProgress = true
+        completeFollowingLatest()
+        return true
+    }
+
+    func scrollViewDidScrollToTop(_ scrollView: UIScrollView) {
+        recordUserScrollPosition()
+        userScrollInProgress = false
     }
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
@@ -127,15 +149,19 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         limitRubberBandDistance(scrollView)
-        _ = ChatScrollReducer.reduce(
-            state: &scrollState,
-            event: .userScrolled(isNearBottom: isNearBottom(), isAtLatestWindow: isNearLatestWindow()))
+        if userScrollInProgress { recordUserScrollPosition() }
         delegate?.timelineDidScroll()
         let bottomPull = scrollView.contentOffset.y + scrollView.bounds.height
             - scrollView.contentInset.bottom - scrollView.contentSize.height
         if scrollView.isDragging, bottomPull > 48, !isNearLatestWindow() {
             delegate?.timelineDidRequestNewer()
         }
+    }
+
+    private func recordUserScrollPosition() {
+        _ = ChatScrollReducer.reduce(
+            state: &scrollState,
+            event: .userScrolled(isNearBottom: isNearBottom(), isAtLatestWindow: isNearLatestWindow()))
     }
 
     private func limitRubberBandDistance(_ scrollView: UIScrollView) {

@@ -389,14 +389,12 @@ final class MessageStore: ObservableObject {
     func isShowingLatestWindow(_ channel: ChatChannel) -> Bool {
         let list = messages(for: channel)
         guard let latestID = latestPersistedMessageIDs[channel.rawValue] else { return true }
-        guard let last = list.last else { return true }
-        if last.id == latestID { return true }
-        // 自己刚发出的消息是本地乐观插入（pending/failed），排在最新已确认消息之后。
-        // 这类尾部消息仍属于“最新窗口”，否则每次发送都会被误判为浏览历史，
-        // 导致列表不跟到底、新消息落到输入栏后面（见搜索/分页跳转逻辑）。
-        guard let anchorIndex = list.firstIndex(where: { $0.id == latestID }) else { return false }
-        let tail = list[list.index(after: anchorIndex)...]
-        return tail.allSatisfy { $0.pending || $0.failed }
+        guard !list.isEmpty else { return true }
+        // 只要当前窗口仍包含“发布前已知的最新持久消息”，随后追加的 pending、
+        // ACK 或实时来信都属于同一个最新窗口。实时来信会先发布到 UI，再异步
+        // 写 SQLite 并推进 latestID；若只允许尾部是 pending，这个短暂顺序会把
+        // 已确认来信误判成历史窗口，导致它落到输入栏后面且不再自动恢复。
+        return list.contains(where: { $0.id == latestID })
     }
 
     func loadOlderAsync(_ channel: ChatChannel = .couple) async {

@@ -427,8 +427,11 @@ final class ChatViewController: UIViewController {
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            // 时间线铺满屏幕，输入栏只是透明叠加层；消息可以在它后面滚过。
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            // 时间线的真实可视底边截止在输入区上方。输入区仍保持透明玻璃外观，
+            // 但最后一条消息不再依赖动态 bottomInset 猜测键盘和输入栏遮挡高度。
+            collectionView.bottomAnchor.constraint(
+                equalTo: bottomStack.topAnchor,
+                constant: -inputDockSpacing),
             bottomStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomConstraint,

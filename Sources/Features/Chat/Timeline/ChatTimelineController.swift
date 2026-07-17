@@ -49,6 +49,9 @@ final class ChatTimelineController: NSObject {
     var expandedTranscriptIDs = Set<String>()
     var pendingTopAnchor: (itemId: String, offset: CGFloat)?
     var dragStartAnchor: (itemId: String, offset: CGFloat)?
+    /// 只有真实手势滚动能修改用户的阅读意图。键盘、输入栏、reloadData 和
+    /// 程序化贴底产生的 scrollViewDidScroll 都不得把它误判成用户上滑。
+    var userScrollInProgress = false
     var stickToLatestAfterNextReload = false
     var scrollState = ChatScrollState()
     private var suppressesJumpToLatest = false
@@ -56,7 +59,6 @@ final class ChatTimelineController: NSObject {
     private var followLatestAnimator: UIViewPropertyAnimator?
     private var settlingFollowLatestGeneration: Int?
     var topInset: CGFloat = 96
-    var bottomInset: CGFloat = 0
     private var lastMeasuredWidth: CGFloat = 0
     /// 顶部越界必须交给 UIRefreshControl，否则会在它达到触发阈值前被截断。
     /// 底部没有系统刷新控件，仍用较短的越界距离保持上拉手感。
@@ -111,10 +113,9 @@ final class ChatTimelineController: NSObject {
             if case .message(let id) = item { return id }
             return nil
         }.first
-        // 键盘、输入栏与上一轮 followLatest 可能正在改变几何；此时旧 offset
-        // 暂时不满足 44pt 阈值，但逻辑上仍在跟随最新，不能把它当成用户离底。
-        let wasFollowingLatest = maintainsLatestPosition || suppressesJumpToLatest
-        let wasNearLatestBottom = (isNearBottom() || wasFollowingLatest) && isNearLatestWindow()
+        // 是否跟随最新是用户意图，不从键盘动画或 reloadData 变化中的 offset
+        // 反推；只有真实手势滚动会更新 scrollState.isNearBottom。
+        let wasNearLatestBottom = maintainsLatestPosition
         let oldAnchor = visibleAnchor()
         let oldLast = lastMessageId(in: items)
         let oldCount = messageCount(in: items)
@@ -175,7 +176,10 @@ final class ChatTimelineController: NSObject {
 
     var browsingHistoricalWindow: Bool {
         get { !scrollState.isAtLatestWindow }
-        set { scrollState.isAtLatestWindow = !newValue }
+        set {
+            scrollState.isAtLatestWindow = !newValue
+            if newValue { scrollState.isNearBottom = false }
+        }
     }
 
     var hasInitialPosition: Bool { scrollState.didInitialPosition }
@@ -187,7 +191,7 @@ final class ChatTimelineController: NSObject {
     }
 
     var shouldShowJumpToLatest: Bool {
-        !suppressesJumpToLatest && !(isNearBottom() && isNearLatestWindow())
+        !suppressesJumpToLatest && !maintainsLatestPosition
     }
 
     var hasNewMessagesBelow: Bool { scrollState.hasNewMessagesBelow }
@@ -202,11 +206,8 @@ final class ChatTimelineController: NSObject {
             scrollState.hasNewMessagesBelow = true
             return
         }
-        // 收消息可能恰好发生在键盘/ACK 的贴底动画中。保留既有跟随意图，
-        // 否则这条来信会被放到输入栏后面，并错误显示“有新消息”。
-        let wasFollowingLatest = maintainsLatestPosition || suppressesJumpToLatest
-        scrollState.isNearBottom = isNearBottom() || wasFollowingLatest
-        scrollState.isAtLatestWindow = isNearLatestWindow()
+        // 只使用已经由用户手势确定的阅读意图。此处重新采样瞬时 offset 会把
+        // 键盘、输入栏和 ACK reload 的程序化布局变化误判成用户离底。
         let commands = ChatScrollReducer.reduce(
             state: &scrollState,
             event: .receivedMessage(isMine: isMine))
@@ -242,14 +243,12 @@ final class ChatTimelineController: NSObject {
         followLatest(animated: animated && !UIAccessibility.isReduceMotionEnabled)
     }
 
-    func setInsets(top: CGFloat, bottom: CGFloat) {
+    func setTopInset(_ top: CGFloat) {
         guard abs(topInset - top) > 0.5
-                || abs(bottomInset - bottom) > 0.5
                 || abs(collectionView.contentInset.top - top) > 0.5
-                || abs(collectionView.contentInset.bottom - bottom) > 0.5 else { return }
+                || abs(collectionView.contentInset.bottom) > 0.5 else { return }
         topInset = top
-        bottomInset = bottom
-        collectionView.contentInset = UIEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
+        collectionView.contentInset = UIEdgeInsets(top: top, left: 0, bottom: 0, right: 0)
         collectionView.scrollIndicatorInsets = collectionView.contentInset
     }
 
@@ -400,6 +399,8 @@ final class ChatTimelineController: NSObject {
     }
 
     private func followLatest(animated: Bool) {
+        scrollState.isNearBottom = true
+        if scrollState.isAtLatestWindow { scrollState.hasNewMessagesBelow = false }
         followLatestGeneration += 1
         let generation = followLatestGeneration
         followLatestAnimator?.stopAnimation(true)
