@@ -8,10 +8,10 @@
 
 | 层级 | 最后核验 | 结论 |
 |---|---|---|
-| 本次审查基线 | 文档更新前的 `1c9074ad857bb15b19aa620ee7651f780bedde33` | 单仓库与生产拓扑保持不变；本轮继续收紧发布与备份规则，schema 仍为 v31 |
-| 服务端验证 | 2026-07-17 | 对当前本地工作树执行 `npm run check`：32 个快速测试、一次 PostgreSQL 18 当前行为烟测和生产编译全部通过，耗时约 15.3 秒；未连接生产环境 |
+| 本次审查基线 | `76d18046475668aeccc287746173a4be30bd3a0b` | 单仓库与生产拓扑保持不变；本轮加入固定 SHA 的快速服务端发布入口，schema 仍为 v31 |
+| 服务端验证 | 2026-07-17 | 对 `76d18046475668aeccc287746173a4be30bd3a0b` 执行 `npm run check`：33 个测试、一次 PostgreSQL 18 当前行为烟测和生产编译全部通过；随后使用同一 SHA 的快速发布入口完成线上验收 |
 | 最近一次 iOS 远程验证 | `4efff3c9d058d16a6ec48f8255e214d9f2a3225f` / quick run `29527650542` / IPA run `29527662722` | 新的单条快速验证链和 unsigned IPA 归档均通过；IPA artifact 已完成 metadata、SHA-256、资源和签名残留校验 |
-| 生产环境 | 2026-07-17 | 美国唯一可写源站已部署 `4efff3c9d058d16a6ec48f8255e214d9f2a3225f`，schema v31；日本入口保持原拓扑且不运行 CoupleChat Node/PostgreSQL。发布前生成并验证 quiesced 基线备份 `20260716T192532Z-589c7962924a`，临时库真实恢复、51 张策略表、关键序列、20/455 媒体抽样、SHA-256、本机、私有 origin、公开入口和 Socket.IO transport 均通过；旧 release 目录、旧 CoupleChat 镜像和旧本地备份已清理，仅保留一个旧版本回滚镜像 | 
+| 生产环境 | 2026-07-17 | 美国唯一可写源站已部署 `76d18046475668aeccc287746173a4be30bd3a0b`，schema v31；本次使用快速路径，远端切换耗时 16 秒、含上传总耗时 24.2 秒，不运行 migration、不新建完整备份恢复。现行 quiesced 基线 `20260716T192532Z-589c7962924a` 继续有效；本机、私有 origin、公开入口、固定账号列表和 Socket.IO transport 均通过。日本入口保持原拓扑且不运行 CoupleChat Node/PostgreSQL；旧 release/incoming 和旧镜像标签已清理，仅保留 `rollback-4efff3c9d058d16a6ec48f8255e214d9f2a3225f` |
 
 本机旧 IPA、tar、展开的 release 或备份目录不属于上述任何生产证据。
 
