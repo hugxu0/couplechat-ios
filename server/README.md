@@ -20,4 +20,4 @@ npm run check
 - [部署与恢复](../Docs/operations/DEPLOYMENT.md)
 - [已知问题](../Docs/current/KNOWN_ISSUES.md)
 
-生产 Node 端口是 `3000`；`.env.production.example`、Compose、Dockerfile 与健康检查的生产默认值已经统一。`8080` 只保留为显式的本地开发端口。首次安装与远程一键升级入口仍未实现；日常发布按 [DEPLOYMENT.md](../Docs/operations/DEPLOYMENT.md) 的普通代码路径人工执行。
+生产 Node 端口是 `3000`；`.env.production.example`、Compose、Dockerfile 与健康检查的生产默认值已经统一。`8080` 只保留为显式的本地开发端口。普通代码发布使用 `deploy/publish-server.ps1`；首次安装仍需按私有运维资料人工准备。

@@ -130,3 +130,23 @@ test("backup metadata is portable and records release plus sequence evidence", (
   assert.match(source, /message_server_seq_seq_last_value=\$message_sequence_last_value/);
   assert.match(source, /sync_event_seq_last_value=\$sync_sequence_last_value/);
 });
+
+test("ordinary deployment is fixed-SHA, migration-free, health-gated, and rollback-capable", () => {
+  const source = read("deploy/deploy-server.sh");
+  const publisher = read("deploy/publish-server.ps1");
+
+  assert.match(source, /flock -n 9/, "deployments must be serialized");
+  assert.match(source, /sha256sum -- "\$package"/, "the uploaded server-only package must be verified");
+  assert.match(source, /RUN_MIGRATIONS: \"false\"/, "ordinary deployment must explicitly disable migrations");
+  assert.doesNotMatch(source, /npm run migrate|scripts\/backup-production\.sh|scripts\/verify-backup\.sh/);
+  assert.match(source, /schema_after[\s\S]*schema_before/, "schema drift must fail the deployment");
+  assert.match(source, /function|rollback\(\)/, "a failed candidate must have an application rollback path");
+  assert.match(source, /hoo66\.top[\s\S]*socket\.io/, "public HTTP and Socket.IO must be checked");
+  assert.match(source, /install -m 0750[\s\S]*deploy-server/, "a successful release must update the installed entrypoint");
+
+  assert.match(publisher, /git status --porcelain/, "the local publisher must reject a dirty worktree");
+  assert.match(publisher, /origin\/main/, "only the exact pushed main commit may deploy");
+  assert.match(publisher, /npm[\s\S]*run[\s\S]*check/, "validation must run exactly once before packaging");
+  assert.match(publisher, /\$\{commitSha\}:server/, "the package must contain only the server subtree");
+  assert.match(publisher, /Get-FileHash -Algorithm SHA256/, "the publisher must bind the package to a hash");
+});

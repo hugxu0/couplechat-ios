@@ -150,7 +150,7 @@ curl -kfsS https://127.0.0.1:8444/live \
 
 只有 migration、数据修复、媒体结构变化、同步协议不兼容或恢复/冷切换，才额外记录 quiesce、备份 SHA-256、`RESTORE-VERIFIED` 和独立 migrator，并按 [DEPLOYMENT.md](DEPLOYMENT.md) 的数据变更路径执行。
 
-当前仓库仍没有真正实现的 `/opt/couplechat/bin/deploy-server` 一键入口；在它实现前，AI 必须按 [DEPLOYMENT.md](DEPLOYMENT.md) 的人工步骤操作，不能自行拼接一条“自动部署命令”。
+普通代码发布不得再手工拼接远程命令。在仓库根目录调用 `server/deploy/publish-server.ps1`；它只打包固定 commit 的 `server/`，上传后调用服务器 `/opt/couplechat/bin/deploy-server`，并在候选失败时自动回滚应用镜像和源码。详细边界见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
 ## 接手结束时必须交付
 

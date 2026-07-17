@@ -38,7 +38,7 @@ server/                Fastify/Socket.IO/PostgreSQL 服务端
 project.yml            XcodeGen 工程定义
 ```
 
-发布规范要求服务端包只包含 `server/` 子目录，并绑定精确 tag/commit 与 SHA-256；普通代码发布按部署文档的短路径人工执行，远程一键入口尚未实现，不会把整个项目复制到服务器。
+发布规范要求服务端包只包含 `server/` 子目录，并绑定精确 commit 与 SHA-256；普通代码发布由仓库内 PowerShell 入口完成一次验证、打包、上传、切换和健康检查，不会把整个项目复制到服务器。
 
 ## 最短验证
 

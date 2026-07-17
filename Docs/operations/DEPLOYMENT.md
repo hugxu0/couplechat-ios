@@ -17,24 +17,31 @@
 
 普通服务端代码、文案或无数据结构变化的配置发布，只走下面这条短路径。它不停止写入、不运行 migrator，也不在每次发布时重复完整数据库/上传恢复；定时备份和现有基线负责灾备。
 
-1. 在仓库确认工作树干净，记录完整 commit SHA。
-2. 在本机执行一次 `cd server; npm run check`。只有 `package-lock.json` 变化或依赖目录不存在时才先运行 `npm ci`；不要在服务器重新跑整套测试。
-3. 只归档 `server/` 子树，生成固定 SHA 的 server-only 包和 SHA-256。
-4. 在美国源站做只读 preflight，确认当前 `RELEASE`、schema、`.env` 权限、磁盘空间、容器和三层入口状态。
-5. 上传包并校验 SHA-256；构建或复用该 SHA 对应的镜像，Web 进程保持 `RUN_MIGRATIONS=false`。
-6. 仅重建美国源站的 CoupleChat 容器，不改数据库、uploads、Nginx 或日本入口。
-7. 依次检查：
+在仓库根目录设置私有 SSH alias 或目标后只运行一个入口：
+
+```powershell
+.\server\deploy\publish-server.ps1 -SshTarget '<private-ssh-alias>'
+```
+
+该入口自动完成且只完成：
+
+1. 拒绝未提交工作树，确认 `HEAD` 精确等于 `origin/main`。
+2. 在本机执行一次 `npm run check`；服务器不重复测试。
+3. 只归档当前 commit 的 `server/` 子树，生成并校验 SHA-256。
+4. 在美国源站确认当前 `RELEASE`、schema、`.env`、磁盘、容器、现行恢复基线和三层入口。
+5. 先构建固定 SHA 镜像，再以 `RUN_MIGRATIONS=false` 重建美国容器；数据库、uploads、Nginx 和日本入口不变。
+6. 依次检查：
 
    ```text
    美国本机 /live、/health、/ready
    私有 origin /health
    公开 hoo66.top /live、/health、/ready
-   Socket.IO transport 和媒体上传
+   固定账号列表和 Socket.IO transport
    ```
 
-8. 健康检查全部通过后写入新的 `RELEASE`，保留当前镜像和一个可兼容的回滚镜像，删除旧候选目录、旧镜像和旧 tar。不要因为普通代码发布删除唯一的现行基线备份。
+7. 健康检查全部通过后同步服务器源码、写入新的 `RELEASE`，保留当前镜像和一个回滚镜像，删除本次候选包和旧 CoupleChat 镜像标签。候选失败时自动恢复旧镜像和旧源码。
 
-当前仓库没有已实现的远程一键 `deploy-server` 命令；以上是人工执行的标准短路径，不能把目标脚本写成已经存在。
+本机入口是 `server/deploy/publish-server.ps1`，服务器固定入口是 `/opt/couplechat/bin/deploy-server`。两者都是普通代码发布专用，不接受 moving branch，也不会创建或删除备份。
 
 ## 数据变更发布（仅在需要时）
 
@@ -83,7 +90,7 @@
 生产后必须记录：
 
 - 新的 `RELEASE` SHA 和 schema；
-- 本机、origin、公开入口、Socket.IO 和上传检查结果；
+- 本机、origin、公开入口、固定账号列表和 Socket.IO 检查结果；
 - 是否执行了 migration；
 - 是否删除了旧发布物；只有执行数据变更路径时才记录备份/恢复批次和清理；
 - 是否修改数据库、Nginx、证书、密钥或设备状态。

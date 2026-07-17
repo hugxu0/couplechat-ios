@@ -72,6 +72,14 @@ npm run healthcheck -- https://hoo66.top
 - `npm run check`：一次完成 TypeScript 类型检查、快速纯逻辑测试、一次 embedded PostgreSQL 当前行为烟测和生产编译。
 - `npm run healthcheck`：依次检查 `/health`、`/ready` 和固定账号列表 `xu,si`。
 
+普通服务端代码发布不再重复人工打包和远程命令；在工作树干净且 `HEAD` 已推送到 `origin/main` 后运行：
+
+```powershell
+.\server\deploy\publish-server.ps1 -SshTarget '<private-ssh-alias>'
+```
+
+脚本会执行本机唯一一次 `npm run check`。migration、数据修复、媒体结构变化或不兼容协议变更不能使用这个入口。
+
 测试必须使用临时数据库或只读生产检查。不要在自动测试中删除、批量修改生产数据或写入生产媒体。
 
 ## iOS 构建
