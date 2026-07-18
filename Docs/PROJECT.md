@@ -8,8 +8,8 @@
 |---|---|---|
 | 客户端源码与 CI | `fd18ef63108765f5fe2ba6e0994de5eb94c6be1c` / run `29663631689` | Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
 | 最近 iOS 产物 | `fd18ef63108765f5fe2ba6e0994de5eb94c6be1c` / run `29663632882` | Xcode 26.3 unsigned IPA 归档、内容校验和下载校验通过，版本 `0.2.0 (13)` |
-| 服务端本地验证 | 2026-07-19 | `npm run check` 通过；覆盖日记聚焦选材、共同聊天原文窗口、清单式正文拒绝，以及 schema v32 全部持久化表的备份策略覆盖 |
-| 生产环境 | 2026-07-19 | 固定 RELEASE `fd18ef63108765f5fe2ba6e0994de5eb94c6be1c` 已发布，前一 release `ca63167eef8f45f50400f346fe412a63a7ec1594` 保留回滚镜像，schema v32 未变化；发布入口的美国本机、私有 origin、公开入口三层健康、固定账号与 Socket 均通过；未执行 migration、备份、恢复或停写 |
+| 服务端本地验证 | 2026-07-19 | `npm run check` 通过；覆盖大橘视角兜底、心理诊断/主人建议拒绝、日记聚焦选材、共同聊天原文窗口，以及 schema v32 全部持久化表的备份策略覆盖 |
+| 生产环境 | 2026-07-19 | 固定 RELEASE `f9b2688e04795ea8d18dadcf0f252ba09ca66fbe` 已发布，前一 release `fd18ef63108765f5fe2ba6e0994de5eb94c6be1c` 保留回滚镜像，schema v32 未变化；发布入口的美国本机、私有 origin、公开入口三层健康、固定账号与 Socket 均通过；未执行 migration、备份、恢复或停写 |
 
 本机旧 IPA、tar、展开 release 或备份目录不属于生产证据。服务器细节见 [SERVER.md](SERVER.md)，签名与侧载见 [IOS.md](IOS.md)。
 
