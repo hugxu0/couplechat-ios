@@ -172,6 +172,7 @@ async function main() {
       diaryFallback.title.length > 0 &&
         diaryFallback.body.includes("周末去公园走走") &&
         diaryFallback.body.includes("\n\n") &&
+        diaryFallback.body.includes("我趴在旁边") &&
         !diaryFallback.body.startsWith("情绪："),
     );
     assertOk(
@@ -216,6 +217,12 @@ async function main() {
       "大橘日记拒绝清单式模型正文",
       !isUsableDiaryBody(
         "昨天聊了好多：先确认软件版本；还计算了零食总价；最后设置了提醒。".repeat(3),
+      ),
+    );
+    assertOk(
+      "大橘日记拒绝心理诊断和主人建议",
+      !isUsableDiaryBody(
+        "软件更新后壁纸没了，我却听见她心里更大的担心。\n\n我把这一晚记成一次轻轻的确认，之后不再拿两个人比较，提醒一下当前的选择与边界。",
       ),
     );
 

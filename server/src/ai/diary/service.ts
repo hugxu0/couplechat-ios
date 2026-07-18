@@ -252,14 +252,10 @@ async function curateDiaryFocus(material: DiaryMaterial): Promise<DiaryFocus> {
 
 function focusedDiaryMaterial(material: DiaryMaterial, focus: DiaryFocus) {
   const topicIds = new Set(focus.topicIds);
-  const decisionIds = new Set(focus.decisionIds);
-  const openLoopIds = new Set(focus.openLoopIds);
   return {
     theme: focus.theme,
     moodLine: material.moodLine,
     topics: material.topics.filter((item) => topicIds.has(item.id)),
-    decisions: material.decisions.filter((item) => decisionIds.has(item.id)).map((item) => item.text),
-    openLoops: material.openLoops.filter((item) => openLoopIds.has(item.id)).map((item) => item.text),
   };
 }
 
@@ -326,55 +322,62 @@ function normalizeDiaryTitle(value: string): string {
 
 export function isUsableDiaryBody(value: string): boolean {
   if (value.length < 70 || value.length > 520) return false;
+  const paragraphs = value.split(/\n\n+/u).filter(Boolean);
+  if (paragraphs.length < 2 || paragraphs.length > 4) return false;
   if (/(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s)/m.test(value)) return false;
   if ((value.match(/[；;]/gu)?.length ?? 0) >= 2) return false;
-  return !/(根据(?:给定)?材料|聊天总览|输入的JSON|作为AI|系统提示|聊了好多|逐一记录|收进了爪印：)/u.test(value);
+  if (/(根据(?:给定)?材料|聊天总览|输入的JSON|作为AI|系统提示|聊了好多|逐一记录|收进了爪印：)/u.test(value)) {
+    return false;
+  }
+  if (/(我却听见.+心里|我知道.+其实|其实.+担心|之后(?:不再|要|应该)|提醒一下|建议|应该|需要继续|给.+边界|选择与边界|这意味着|说明了|一次(?:轻轻的)?确认|真正被彼此接住|日子不必)/u.test(value)) {
+    return false;
+  }
+  return !/(他|她|小旭|小偲|你们)(?:心里|其实|一定|显然|只是)/u.test(value);
+}
+
+function sourceBody(line: string): string {
+  return line.replace(/^\d{2}:\d{2}\s+[^:：]{1,24}[:：]\s*/u, "").trim();
 }
 
 /** 模型不可用时也只围绕选中的主线写，绝不把整份摘要字段逐项堆给用户。 */
 export function buildDiaryFallback(
   digest: DayDigestLike,
   selectedFocus?: DiaryFocus,
+  sourceLines: string[] = [],
 ): { title: string; body: string } {
   const material = diaryMaterial(digest);
   const focus = selectedFocus ?? focusFromMaterial(material);
   const focused = focusedDiaryMaterial(material, focus);
   const leadTopic = focused.topics[0];
   const titleSeed = focus.theme || leadTopic?.title || "这一天值得记住的片刻";
-  const title = `爪印里的${truncateCharacters(withoutTerminalPunctuation(titleSeed), 10)}`;
+  const title = `我记住的${truncateCharacters(withoutTerminalPunctuation(titleSeed), 10)}`;
   const paragraphs: string[] = [];
-
-  const mood = focused.moodLine
-    ? ` ${truncateCharacters(withoutTerminalPunctuation(focused.moodLine), 72)}。`
-    : "";
-  paragraphs.push(`这一天，我最想记住的是${withoutTerminalPunctuation(titleSeed)}。${mood}`.trim());
 
   if (leadTopic) {
     const point = leadTopic.points[0];
     const detail = point
-      ? ` ${truncateCharacters(withoutTerminalPunctuation(point), 88)}。`
+      ? `${truncateCharacters(withoutTerminalPunctuation(point), 88)}。`
       : "";
-    paragraphs.push(`你们把“${truncateCharacters(withoutTerminalPunctuation(leadTopic.title), 32)}”认真放在了两个人之间。${detail}`.trim());
+    paragraphs.push(`我趴在旁边时，你们说起了“${truncateCharacters(withoutTerminalPunctuation(leadTopic.title), 32)}”。${detail}`.trim());
+  } else if (focused.moodLine) {
+    paragraphs.push(`我记得那天的聊天里，${truncateCharacters(withoutTerminalPunctuation(focused.moodLine), 100)}。`);
   }
   const supportingTopic = focused.topics[1];
   if (supportingTopic) {
     const point = supportingTopic.points[0];
     paragraphs.push(
       point
-        ? `与它相连的另一幕是“${truncateCharacters(withoutTerminalPunctuation(supportingTopic.title), 28)}”。${truncateCharacters(withoutTerminalPunctuation(point), 78)}。`
-        : `与它相连的另一幕，是你们也认真说起了“${truncateCharacters(withoutTerminalPunctuation(supportingTopic.title), 28)}”。`,
+        ? `后来，我又听见话题落到了“${truncateCharacters(withoutTerminalPunctuation(supportingTopic.title), 28)}”：${truncateCharacters(withoutTerminalPunctuation(point), 78)}。`
+        : `后来，我又听见你们说起了“${truncateCharacters(withoutTerminalPunctuation(supportingTopic.title), 28)}”。`,
     );
   }
 
-  const ending: string[] = [];
-  if (focused.decisions[0]) {
-    ending.push(`后来，你们把${truncateCharacters(withoutTerminalPunctuation(focused.decisions[0]), 76)}定了下来。`);
+  const scene = sourceLines.map(sourceBody).filter(Boolean).slice(0, 2);
+  if (scene.length) {
+    paragraphs.push(`我把聊天里留下的两句也记在这里：“${scene.join("” “")}”。`);
+  } else {
+    paragraphs.push("我先把这件小事记下来。以后再翻到这一页时，我还会认出那天的语气。");
   }
-  if (focused.openLoops[0]) {
-    ending.push(`至于${truncateCharacters(withoutTerminalPunctuation(focused.openLoops[0]), 76)}，还没有走到结尾，我先替你们留一小块空白。`);
-  }
-  ending.push("日子不必把每一件小事都写满；真正被彼此接住的那一刻，已经足够留下一枚爪印。");
-  paragraphs.push(ending.join(""));
   return { title: normalizeDiaryTitle(title), body: normalizeDiaryBody(paragraphs.join("\n\n")) };
 }
 
@@ -435,7 +438,7 @@ export async function ensureDiaryForDay(dayKey: string, options?: { force?: bool
   } catch (error) {
     console.warn("[diary] 相关原文读取失败，仅使用聚焦总览:", error instanceof Error ? error.message : error);
   }
-  const fallback = buildDiaryFallback(digest!, focus);
+  const fallback = buildDiaryFallback(digest!, focus, sourceLines);
   let title = fallback.title;
   let body = fallback.body;
 
@@ -444,13 +447,13 @@ export async function ensureDiaryForDay(dayKey: string, options?: { force?: bool
       profile: "task",
       scope: "diary",
       system: [
-        "你是情侣空间里的大橘。用第一人称写一页有温度、克制、具体的共同生活日记；猫的口吻只需偶尔自然流露。",
-        "编辑已经替你选好主线。整篇只围绕 theme 和第一条 topic 展开，第二条 topic 仅在自然相连时轻轻带过；绝不能把输入字段逐项复述，也不要试图交代完整的一天。",
-        "sourceLines 是所选话题时间点附近的少量共同聊天原文，只用来恢复真实顺序、语气和细节。不要大段照抄原话，不要把无关事项从原文重新捡回来。",
-        "标题 6～16 个中文字符，抓住最值得记住的画面或心情，不写日期，不用模板标题。",
-        "正文通常 120～280 个中文字符、2～4 个自然段。先落下一幕或一种心情，再写彼此如何回应或事情如何变化，最后留一句温柔但不说教的观察；材料少时宁可短，不凑字数。",
-        "不要使用小标题、项目符号、Markdown、冒号清单或连续分号；不要写“聊了好多”“还聊到”“逐一记录”，不要以“昨天，本橘陪你们”开头，不要写成摘要报告。",
-        "只能使用输入中明确出现的事实。不得补造时间、地点、动作、原话、因果或情绪；openLoops 只能写成尚待继续，不能擅自给出结果。",
+        "你是趴在情侣聊天旁边的大橘，请写一篇真正属于大橘自己的日记，不是主人总结、关系分析、心理咨询、复盘报告或建议。猫的口吻要像一个有性格、有记忆的旁观者。",
+        "大橘可以写自己看见了什么、当时怎么想、喜欢什么、担心什么、觉得哪里有趣或安静；这些是大橘自己的感受。不要把主人的潜台词、动机或未说出口的心理写成事实，也不要评价谁对谁错。",
+        "按 sourceLines 的时间顺序写两三幕具体聊天：大橘在旁边听见了什么、看见两个人怎样回应、最后停在哪里。sourceLines 是恢复细节和语气的依据；topic 只是选材标签，不要把标签扩写成关系结论。",
+        "标题 6～16 个中文字符，抓住大橘真正记住的一个画面、声音或小心思，不写日期，不用模板标题。",
+        "正文 100～260 个中文字符、2～3 个自然段。结尾停在大橘自己的一个具体念头或当晚的聊天画面，不要升华成道理，不要提出以后应该怎么做。",
+        "不要使用小标题、项目符号、Markdown、冒号清单或连续分号；不要写“聊了好多”“还聊到”“逐一记录”，不要以“昨天，本橘陪你们”开头，也不要写成主人的流水账。",
+        "只能使用输入中明确出现的事实。大橘可以有主观感受，但必须明确是“我觉得/我喜欢/我有点担心”，不能写成对主人内心的确定判断。",
         '只输出 JSON：{"title":"...","body":"段落1\\n\\n段落2\\n\\n段落3"}。',
       ].join("\n"),
       user: `作息日 ${dayKey}（北京时间 06:00 切日）的已筛选材料（JSON）：\n${JSON.stringify({
