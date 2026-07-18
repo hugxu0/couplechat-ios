@@ -36,9 +36,15 @@ function responsesText(data: unknown): string | null {
 
 interface ChatArgs {
   profile: ChatProfile;
+  /** 仅用于脱敏运维日志区分任务阶段，不包含用户正文。 */
+  scope?: string;
   system: string;
   user: string;
   gen: GenProfile;
+}
+
+function logScope(args: ChatArgs): string {
+  return args.scope?.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 60) || args.profile;
 }
 
 async function logHttpFailure(scope: string, res: Response): Promise<void> {
@@ -72,7 +78,7 @@ async function chatOpenAi(p: AiProvider, args: ChatArgs, signal: AbortSignal): P
     signal,
   });
   if (!res.ok) {
-    await logHttpFailure(args.profile, res);
+    await logHttpFailure(logScope(args), res);
     return null;
   }
   const data = (await res.json()) as {
@@ -80,7 +86,7 @@ async function chatOpenAi(p: AiProvider, args: ChatArgs, signal: AbortSignal): P
   };
   const content = data.choices?.[0]?.message?.content;
   const text = content ? String(content).trim() || null : null;
-  if (!text) console.warn(`[ai] ${args.profile} 空响应 finish_reason=${data.choices?.[0]?.finish_reason ?? "unknown"}`);
+  if (!text) console.warn(`[ai] ${logScope(args)} 空响应 finish_reason=${data.choices?.[0]?.finish_reason ?? "unknown"}`);
   return text;
 }
 
@@ -100,11 +106,11 @@ async function chatOpenAiResponses(p: AiProvider, args: ChatArgs, signal: AbortS
     signal,
   });
   if (!res.ok) {
-    await logHttpFailure(`${args.profile} responses`, res);
+    await logHttpFailure(`${logScope(args)} responses`, res);
     return null;
   }
   const text = responsesText(await res.json());
-  if (!text) console.warn(`[ai] ${args.profile} responses 空响应`);
+  if (!text) console.warn(`[ai] ${logScope(args)} responses 空响应`);
   return text;
 }
 
@@ -120,7 +126,7 @@ export async function chat(args: ChatArgs): Promise<string | null> {
     return await chatOpenAi(provider, args, controller.signal);
   } catch (error) {
     const name = error instanceof Error ? error.name : "";
-    console.warn(`[ai] ${args.profile} ${name === "AbortError" ? "超时" : `失败: ${error instanceof Error ? error.message : error}`}`);
+    console.warn(`[ai] ${logScope(args)} ${name === "AbortError" ? "超时" : `失败: ${error instanceof Error ? error.message : error}`}`);
     return null;
   } finally {
     clearTimeout(timer);

@@ -41,12 +41,14 @@ const scanTimers = new Map<string, NodeJS.Timeout>();
 const planningTimers = new Map<string, NodeJS.Timeout>();
 const running = new Set<string>();
 const retryAttempts = new Map<string, number>();
+const SYSTEM_MEMORY_SYNC = { actorAccountId: null } as const;
 
 export const MEMORY_SOURCE_BATCH_SIZE = 80;
 export const MEMORY_BUSY_BATCH_THRESHOLD = 20;
 export const MEMORY_BUSY_IDLE_MS = 15 * 60 * 1000;
 export const MEMORY_QUIET_IDLE_MS = 60 * 60 * 1000;
 export const MEMORY_MAX_BATCH_AGE_MS = 2 * 60 * 60 * 1000;
+export const MEMORY_EMPTY_RETRY_THRESHOLD = 12;
 
 export function memoryExtractionDelay(
   sourceMessageCount: number,
@@ -73,15 +75,29 @@ export function shouldExtractMemoryBatch(
     && (force || sourceMessageCount >= MEMORY_SOURCE_BATCH_SIZE || dueDelay <= 0);
 }
 
+export function shouldRetryEmptyMemoryBatch(
+  modelMessageCount: number,
+  candidateCount: number,
+): boolean {
+  return modelMessageCount >= MEMORY_EMPTY_RETRY_THRESHOLD && candidateCount === 0;
+}
+
 function systemPrompt(): string {
   const people = accounts().map((account) => `${account.username}=${account.name}`).join("、");
   return [
-    "基础记忆整理器：仅根据本段新聊天输出 fact/event/plan/state 与可选 daju 观察；禁止 relationship/insight/engagement/instruction。",
-    `人物：${people}。subjects 只能是 xu|si|both（内容归属，不是发言人）；共同执行/状态用 both。`,
-    "fact=稳定可查询事实（原子）；event=有回忆价值的经历50~120字；plan=未来安排须 validHours(默认720)；state=近三天近况每主体最多一张300~800字 validHours默认72。",
-    "operation: upsert|append|retract|complete|cancel。memoryKey 用 {layer}.{subject}.{topic}；state 可用 state.{subject}.recent。同事实复用 key。",
-    "勿编造、勿引用消息ID。玩笑/问句/猜测不存。连续经历合并一张 event。dajuChanges 仅 observation，须≥2 个 sourceMemoryKeys（本批基础卡 key），默认30天。",
-    'JSON：{"changes":[...],"dajuChanges":[...]} changes≤40；无变更则空数组。',
+    "你是 CoupleChat 的基础记忆整理器。输入只有一段连续的新聊天，只能根据这批消息整理，不得假设旧记忆正文。",
+    "changes 只允许 fact、event、plan、state；禁止 relationship、insight、engagement 和 instruction。高层关系/理解由另一阶段根据基础卡生成。",
+    `人物 username：${people}。subjects 必须且只能是单个逻辑主体 xu、si 或 both；它表示内容属于谁，不是发言人。只属于一人的事情归该人，只有共同参与、共同承担或两人的整体状态才用 both。`,
+    "fact：稳定且以后值得直接查询的原子事实，例如身份、偏好、习惯、健康禁忌、工作、家庭和重要人物。",
+    "event：已经发生且以后值得回忆或检索的一次经历，约 50~120 字，独立写清人物、时间线索、事情和结果。不要把每句日常聊天都变成 event。",
+    "plan：未来安排、承诺或准备做的事；必须给 validHours，未明确期限默认 720 小时。完成、取消或明确否定旧计划时输出对应 operation。",
+    "state：近三天滚动近况，可记录活动、健康、情绪、正在讨论的主题、双方观点和分歧。每个主体本批最多一张，内容应具体连贯，validHours 默认 72 小时。",
+    "operation 只能是 upsert|append|retract|complete|cancel。fact/plan 更新时复用稳定 memoryKey；state 使用 state.{subject}.recent；其他 key 使用 {layer}.{subject}.{topic}。",
+    "连续的同一次经历合并成一张 event；近况里的琐碎活动不要重复生成为 event。玩笑、问句、未确认猜测、辱骂中的人格判断不保存。不得编造日期，不得输出或引用消息 ID。",
+    `本批经过低信息量过滤后若仍有至少 ${MEMORY_EMPTY_RETRY_THRESHOLD} 条真实交流，并出现活动、感受、健康、争执、决定、计划或持续讨论主题，至少输出一张 state；只有确实没有任何可整理信息时 changes 才能为空。`,
+    "dajuChanges 只允许 observation；必须引用本批实际 changes 中至少两个 sourceMemoryKeys，默认有效 30 天。主人对大橘的长期行为要求由对话 Agent 直接保存，这里不得生成 instruction。",
+    "confidence 范围 0~1，importance 范围 1~5，changes 最多 40 条。示例仅说明字段，不得复制示例正文。",
+    '只输出合法 JSON，例如：{"changes":[{"operation":"upsert","layer":"state","memoryKey":"state.xu.recent","subjects":["xu"],"content":"根据本批聊天概括的近期状态","validHours":72,"confidence":0.8,"importance":3}],"dajuChanges":[]}',
   ].join("\n");
 }
 
@@ -129,6 +145,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
 
     const output = await chat({
       profile: "task",
+      scope: "memory.extract",
       system: systemPrompt(),
       user: `【本批新消息，频道=${channel}】\n${modelMessages.map(messageLine).join("\n")}`,
       gen: GEN.extractFacts,
@@ -139,11 +156,18 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       dajuChanges?: ExtractedMemory[];
     }>(output);
     if (!parsed || !Array.isArray(parsed.changes)) throw new Error("基础记忆 JSON 无效");
+    const candidateChanges = parsed.changes.slice(0, 40);
+    const candidateDajuChanges = (parsed.dajuChanges ?? []).slice(0, 20);
+    if (shouldRetryEmptyMemoryBatch(modelMessages.length, candidateChanges.length)) {
+      throw new Error(
+        `基础记忆模型对 ${modelMessages.length} 条有效消息返回零候选，保留游标等待重试`,
+      );
+    }
 
     let saved = 0;
     const stateSubjects = new Set<string>();
     const savedBaseByKey = new Map<string, MemoryItem>();
-    for (const item of parsed.changes.slice(0, 40)) {
+    for (const item of candidateChanges) {
       const operation = item.operation ?? "upsert";
       if (!item.layer || !BASE_MEMORY_LAYERS.has(item.layer as MemoryLayer)) continue;
       const layer = item.layer as MemoryLayer;
@@ -227,7 +251,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         metadata: { ...item.metadata, updateReason: item.reason ?? "", extractorVersion: 4 },
         targetMemoryId: targetForUpdate?.id,
       };
-      const stored = await addMemory(candidate);
+      const stored = await addMemory(candidate, SYSTEM_MEMORY_SYNC);
       if (stored) {
         saved += 1;
         savedBaseByKey.set(memoryKey, stored);
@@ -236,7 +260,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       }
     }
 
-    for (const item of (parsed.dajuChanges ?? []).slice(0, 20)) {
+    for (const item of candidateDajuChanges) {
       const operation = item.operation ?? "upsert";
       const subjects = normalizedMemorySubjects(item.subjects ?? []);
       if (!item.memoryKey || subjects.length !== 1) continue;
@@ -296,7 +320,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         },
         sourceMemoryIds,
         targetMemoryId: target?.id,
-      });
+      }, SYSTEM_MEMORY_SYNC);
       if (stored) {
         saved += 1;
         await archiveSiblingMemories(stored.id, false);
@@ -305,13 +329,25 @@ async function scanChannel(channel: string, force = false): Promise<void> {
 
     await advanceMemoryCursor(channel, nextCursor);
     await reconcileMemoryLifecycle();
-    // 无新卡时不必跑派生（省一次大模型调用）
+    // 同一频道仍串行派生，避免共享 task provider 并发堆积；手动 HTTP
+    // 最多等待 20 秒，超时后由该任务继续完成并通过 Sync V2 通知客户端。
     if (saved > 0) {
-      await refreshDerivedMemory(channel);
+      await refreshDerivedMemory(channel).catch((error) => {
+        console.warn(
+          `[memory] ${channel} 派生整理失败:`,
+          error instanceof Error ? error.message : error,
+        );
+      });
     }
     console.log(
-      `[memory] ${channel} 整理 ${modelMessages.length}/${sourceMessages.length} 条消息，写入/更新 ${saved} 条基础记忆`,
+      `[memory] ${channel} 整理 ${modelMessages.length}/${sourceMessages.length} 条消息，` +
+        `候选 ${candidateChanges.length}/${candidateDajuChanges.length}，写入/更新 ${saved} 条基础记忆`,
     );
+    if (candidateChanges.length > 0 && saved === 0) {
+      console.warn(
+        `[memory] ${channel} 模型返回 ${candidateChanges.length} 条基础候选但全部被校验或排除规则拒绝`,
+      );
+    }
   } finally {
     running.delete(channel);
   }
@@ -386,7 +422,10 @@ export async function flushMemory(channel: string): Promise<void> {
   const scheduled = scanTimers.get(channel);
   if (scheduled) clearTimeout(scheduled);
   scanTimers.delete(channel);
-  await scanChannel(channel, true);
-  await refreshDerivedMemory(channel, { forceAll: true });
-  schedulePlanning(channel);
+  try {
+    await scanChannel(channel, true);
+  } finally {
+    // 手动整理失败也必须恢复自动规划，不能因清掉旧 timer 后留下永久空窗。
+    schedulePlanning(channel);
+  }
 }

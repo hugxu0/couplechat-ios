@@ -138,7 +138,11 @@ function nativeWebCitations(rawResponses: unknown): Citation[] {
   return citations;
 }
 
-export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promise<AgentReplyResult | null> {
+export async function runAgentReply(
+  trigger: Trigger,
+  trace: TraceEntry,
+  externalSignal?: AbortSignal,
+): Promise<AgentReplyResult | null> {
   const providerSettings = providerConfig();
   if (!agentRuntimeEnabled() || !providerSettings) return null;
 
@@ -245,7 +249,10 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
     parallelToolCalls: false,
   } as const;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 90_000);
+  const abortFromCaller = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = setTimeout(() => controller.abort(), GEN.reply.timeoutMs ?? 45_000);
 
   try {
     await mcp.connect();
@@ -337,6 +344,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
     };
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
     await mcp.close().catch(() => {});
     endAgentToolRun(trace.id);
   }

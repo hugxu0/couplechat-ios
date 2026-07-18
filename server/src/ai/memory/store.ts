@@ -67,7 +67,8 @@ export interface MemoryCandidate {
 }
 
 export interface MemoryWriteSync {
-  actorAccountId: string;
+  /** 后台系统写入使用 null；主人或设备发起的修改传真实 actor。 */
+  actorAccountId?: string | null;
   actorDeviceId?: string | null;
   restoreExcluded?: boolean;
 }

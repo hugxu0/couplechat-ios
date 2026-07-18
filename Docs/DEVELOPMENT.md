@@ -155,7 +155,7 @@ xcodebuild build -project CoupleChat.xcodeproj -scheme CoupleChat \
 
 ### 数据库与同步
 
-- migration 只追加，不能修改 v1–v31。
+- migration 只追加，不能修改 v1–v32。
 - 所有 Sync 事件经过统一写入边界，并在分配序号前取得 advisory lock。
 - SQLite 只通过 `ChatPersistenceProtocol` 异步访问；MainActor 和页面不得直接执行 SQL。
 - cursor/ack 只有在整批协议校验和本地事务成功后推进。

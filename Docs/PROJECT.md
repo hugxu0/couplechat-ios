@@ -9,7 +9,7 @@
 | 客户端源码与 CI | `fffd0bd6880382c31d8611e73ebc8d1c021a2426` / run `29588581647` | 当前工作分支的 Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
 | 最近 iOS 产物 | `fffd0bd6880382c31d8611e73ebc8d1c021a2426` / run `29588584761` | Xcode 26.3 unsigned IPA 归档和下载校验通过，版本 `0.2.0 (11)` |
 | 服务端本地验证 | 2026-07-18 | 全栈审计优化后 `npm run check` 通过（登录限流、媒体 TTL 签名、`(ts,id)` 分页、AI Trace 脱敏、队列终态等） |
-| 生产环境 | 2026-07-18 | 上次核验 RELEASE 为 `b3f9f57`（纯图占位修复）；本批全栈优化待固定 SHA 发布后更新；schema v31 无新 migration |
+| 生产环境 | 2026-07-18 | 只读核验 RELEASE 为 `3589088b41ba879a6756fc44aab285ecd9a27305`，schema v32，容器运行且 `/live`、`/health`、`/ready` 通过；本次 AI/Memory 修复尚未部署 |
 
 本机旧 IPA、tar、展开 release 或备份目录不属于生产证据。服务器细节见 [SERVER.md](SERVER.md)，签名与侧载见 [IOS.md](IOS.md)。
 
@@ -25,7 +25,7 @@
 - Bundle ID：`com.hugxu0.couplechat.native`；工程由根目录 `project.yml` 生成。
 - iOS 依赖：Socket.IO Client Swift `16.1.0`、GLTFKit2 `0.5.15`，均固定精确版本。
 - 3D 资源：`Sources/Resources/cute_cat.glb` 受 Git 管理并随 IPA 发布。
-- 服务端：Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16，当前 schema v31。
+- 服务端：Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16，当前 schema v32。
 - 公开基地址：`https://hoo66.top`；Debug 与 Release 当前都连接该地址。
 - 发布方式：公开单仓库；服务端只发布固定 SHA 的 `server/` 子树；GitHub 只生成 unsigned IPA。
 - 签名方式：免费 Apple Personal Team，不支持 TestFlight/App Store，约 7 天需要刷新。

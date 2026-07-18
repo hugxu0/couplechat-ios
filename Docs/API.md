@@ -107,7 +107,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 
 `scope` 为 `all/shared/private`；`layer` 为 `fact/event/plan/state/relationship/insight`；`perspective` 为 `people/daju`；`kind` 为 `standard/instruction/observation`；`status` 为 `active/all`；`subject` 为 `xu/si/both`；`q` 搜索正文、分类和主体。`limit` 范围 `1...200`、默认 `100`。列表默认只返回 active Memory，并按时间键 `COALESCE(occurred_at, valid_from, created_at)` 倒序，再以 `id` 倒序稳定排序；响应含 `nextCursor/hasMore`。`cursor` 是服务端不透明值，分页游标携带该时间键和 id。未指定 `perspective` 时，Agent 的普通人物检索只读取 `people`；客户端选择“大橘”时会显式请求 `daju`，并按指令或观察分类。
 
-共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion? }`，importance 范围 `1...5`；提供旧 `baseVersion` 时返回 409 和权威 `item`，客户端会载入它。删除会按卡片 key 记录 exclusion，避免后台再次自动生成；主人之后明确重新下达同主题指令时可以恢复。`POST refresh` body 为 `{ scope: "shared" | "private" }`。
+共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion? }`，importance 范围 `1...5`；提供旧 `baseVersion` 时返回 409 和权威 `item`，客户端会载入它。删除会按卡片 key 记录 exclusion，避免后台再次自动生成；主人之后明确重新下达同主题指令时可以恢复。`POST refresh` body 为 `{ scope: "shared" | "private" }`；服务端最多同步等待 20 秒，响应中的 `pending` 表示整理仍在后台进行，完成后的 Memory 变更通过 Sync V2 触发客户端重新读取。
 
 ### 今日推荐
 

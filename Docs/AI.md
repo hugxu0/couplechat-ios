@@ -13,7 +13,7 @@ messages 落库
   ├─ 2 long-memory   onMemoryMessage（批处理；寒暄跳过模型仍推进游标）
   └─ 3 reply         公聊仅 AI_TRIGGER_ALIASES；私聊仅有文字时答（纯图不答）
                        → ReplyQueue（同频道串行，pending≤5 后 coalesce 最新）
-                       → ensureContextCaughtUp → Agent + MCP
+                       → 已提交总览 + 原文热窗口 → Agent + MCP
                        → createAiMessage + Socket 广播
                        → 再 scheduleContextCatchUp（纳入大橘发言）
 ```
@@ -59,7 +59,7 @@ messages 落库
 
 - 公聊与私聊同一套；**消化双方全部有效聊天**，不再只摘要「大橘会话」。
 - 约每 40 条有效消息（或空闲 10 分钟 / 最老消息 45 分钟）压成微段，再折入当日总览；贴纸与短寒暄（嗯/哈哈等）不计入微段。
-- 任意主人消息后防抖调度追赶；Agent 回答前强制追赶（约 25s 预算）；落后时自动转入后台长预算追赶，并在 prompt 中提示可用 `search_chat_messages`。
+- 任意主人消息后防抖调度追赶；Agent 回答不等待摘要模型，只读取已提交总览和最近原文。落后时在后台按微段阈值继续追赶，并在 prompt 中提示可用 `search_chat_messages`。
 - 日切后昨日总览归档；Agent 输入可带【昨日话题标题】一行（无细节）。
 - 状态保存在 `ai_runtime_state`（`context:v2:{channel}`），可重建，不是长期事实库；跨天稳定事实仍靠 Memory。
 - **大橘日记**：调度器定期确保「上一作息日」日记（`ai_daily_diaries`）；材料只来自 couple 日总览/归档，REST 见 `GET/POST /api/v2/ai/diaries*`。
@@ -104,7 +104,7 @@ messages 落库
 
 `ai_memory.perspective` 区分 `people` 与 `daju`，`memory_kind` 区分 `standard`、`instruction` 和 `observation`。主人在当前对话中明确提出长期的大橘行为要求时，由回复 Agent 理解整句话并直接调用 `save_daju_instruction` 写入，不使用关键词规则，也不等待批量整理；仅当前一次的临时要求和推断偏好不会保存。大橘观察仍由后台整理器生成，必须引用至少两张基础记忆卡，并按有效期自动过期。普通人物检索默认只看 `people`，大橘行为要求由 Agent 自动注入，观察仅在复盘、分析和调解时按需读取。
 
-整理器按游标读取最多 80 条主人消息，基础提取模型只接收这批新消息，不再附带旧 Memory 正文，并使用独立的低推理强度与 120 秒上限，不继承对话任务的高推理配置。达到 80 条立即整理；20 条以上在空闲 15 分钟后整理，20 条以下空闲 60 分钟后整理，最老消息等待满 2 小时也会整理。模型输出 `memoryKey` 后，服务端先规范化再入库：people 标准卡为 `{layer}.{subject}.{topic}`；`state` 固定 `state.{subject}.recent`；`relationship` / 人物 `insight` 固定滚动键；大橘指令 `daju.instruction.{topic}`、观察 `daju.observation.{topic}`。随后按层处理：`fact/plan` 先做精确 key 匹配，未命中时才用同层同主体向量候选更新；`state` 按主体滚动；`event` 追加并以 key+内容幂等。关系与理解在基础卡写入后由独立派生阶段生成；大橘观察只允许引用本批实际写入的至少两张基础卡。卡片落库后不保存原始消息 ID、摘录或引用。无效 JSON 或写入失败不能推进游标。
+整理器按游标读取最多 80 条主人消息，基础提取模型只接收这批新消息，不再附带旧 Memory 正文，并使用独立的低推理强度与 120 秒上限，不继承对话任务的高推理配置。达到 80 条立即整理；20 条以上在空闲 15 分钟后整理，20 条以下空闲 60 分钟后整理，最老消息等待满 2 小时也会整理。模型输出 `memoryKey` 后，服务端先规范化再入库：people 标准卡为 `{layer}.{subject}.{topic}`；`state` 固定 `state.{subject}.recent`；`relationship` / 人物 `insight` 固定滚动键；大橘指令 `daju.instruction.{topic}`、观察 `daju.observation.{topic}`。随后按层处理：`fact/plan` 先做精确 key 匹配，未命中时才用同层同主体向量候选更新；`state` 按主体滚动；`event` 追加并以 key+内容幂等。关系与理解在基础卡写入后异步生成；大橘观察只允许引用本批实际写入的至少两张基础卡。卡片落库后不保存原始消息 ID、摘录或引用。无效 JSON、写入失败，或至少 12 条有效消息却返回零候选时不能推进游标；后台卡片写入会生成 Memory Sync V2 事件。
 
 关键规则：
 
@@ -201,7 +201,7 @@ EMBEDDING_DIM=1024
 
 ## 本机调试
 
-仅在迁移到当前 schema v31 的隔离恢复库运行调试服务后打开本地 `http://127.0.0.1:8080/ai-debug`（若本地修改 `PORT`，地址随之变化）。连接生产库启动本地调试服务的入口已移除。调试页支持：
+仅在迁移到当前 schema v32 的隔离恢复库运行调试服务后打开本地 `http://127.0.0.1:8080/ai-debug`（若本地修改 `PORT`，地址随之变化）。连接生产库启动本地调试服务的入口已移除。调试页支持：
 
 - 两位账号与公聊/私聊切换；
 - 查看 Agent instructions、输入、工具调用、输出和耗时；

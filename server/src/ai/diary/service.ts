@@ -155,6 +155,7 @@ export async function ensureDiaryForDay(dayKey: string, options?: { force?: bool
   try {
     const raw = await chat({
       profile: "task",
+      scope: "diary",
       system:
         "你是情侣空间的大橘，用第一人称猫系口吻写「昨天」的短日记。只根据给定材料，不编造未出现的事实。输出 JSON：{\"title\":\"≤18字\",\"body\":\"120~280字，2~4段\"}",
       user: `作息日 ${dayKey}（北京时间 06:00 切日）的公聊总览材料：\n${material}`,

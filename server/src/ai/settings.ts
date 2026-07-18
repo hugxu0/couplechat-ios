@@ -18,7 +18,12 @@ export const GEN = {
     timeoutMs: 120_000,
     reasoningEffort: "low",
   },
-  contextSummary: { maxTokens: 900, temperature: 0.2, timeoutMs: 30_000 },
+  contextSummary: {
+    maxTokens: 900,
+    temperature: 0.2,
+    timeoutMs: 30_000,
+    reasoningEffort: "low",
+  },
   /** 公聊冲突/搭话精简分类 */
   engagement: {
     maxTokens: 180,

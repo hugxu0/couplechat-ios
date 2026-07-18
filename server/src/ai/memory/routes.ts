@@ -39,6 +39,8 @@ const refreshBody = z.object({
   scope: z.enum(["shared", "private"]),
 });
 
+const MEMORY_REFRESH_HTTP_BUDGET_MS = 20_000;
+
 function visibleScopes(username: string): string[] {
   return ["couple", `ai:${username}`];
 }
@@ -183,7 +185,28 @@ export async function registerMemoryRoutes(app: FastifyInstance) {
     const parsed = refreshBody.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
     const channel = parsed.data.scope === "shared" ? "couple" : `ai:${request.user.username}`;
-    await flushMemory(channel);
-    return { ok: true, stats: await memoryStatsForScopes(visibleScopes(request.user.username), identity) };
+    let refreshError: unknown;
+    const refreshTask = flushMemory(channel)
+      .then(() => "completed" as const)
+      .catch((error) => {
+        refreshError = error;
+        console.warn(
+          `[memory] ${channel} 手动整理失败:`,
+          error instanceof Error ? error.message : error,
+        );
+        return "failed" as const;
+      });
+    let timer: NodeJS.Timeout | null = null;
+    const pending = new Promise<"pending">((resolve) => {
+      timer = setTimeout(() => resolve("pending"), MEMORY_REFRESH_HTTP_BUDGET_MS);
+    });
+    const outcome = await Promise.race([refreshTask, pending]);
+    if (timer) clearTimeout(timer);
+    if (outcome === "failed") throw refreshError;
+    return {
+      ok: true,
+      pending: outcome === "pending",
+      stats: await memoryStatsForScopes(visibleScopes(request.user.username), identity),
+    };
   });
 }

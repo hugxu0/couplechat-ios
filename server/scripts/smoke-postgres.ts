@@ -200,6 +200,7 @@ async function main() {
       requesterUsername: "smoke",
     };
     const timeoutReplies: string[] = [];
+    let timeoutAborted = false;
     const timeoutSink = {
       emit: async (_channel: string, text: string) => { timeoutReplies.push(text); },
       typing: () => undefined,
@@ -208,10 +209,18 @@ async function main() {
     await runReplyTaskWithTimeout(
       aiTrigger,
       timeoutSink,
-      async () => new Promise<void>(() => undefined),
+      async (state) => new Promise<void>((resolve) => {
+        state.signal.addEventListener("abort", () => {
+          timeoutAborted = true;
+          resolve();
+        }, { once: true });
+      }),
       5,
     );
-    assertOk("AI 超时会发送兜底回复", timeoutReplies.length === 1);
+    assertOk(
+      "AI 超时会中止底层任务并发送兜底回复",
+      timeoutAborted && timeoutReplies.length === 1,
+    );
     const backgroundTimeoutReplies: string[] = [];
     await runReplyTaskWithTimeout(
       { ...aiTrigger, origin: "conflict" },
@@ -585,12 +594,20 @@ async function main() {
     const { messagesAfter, ownerTextMessagesAfter } = await import("../src/ai/conversation/log");
     const tiedMessages = await messagesAfter("couple", { ts: tiedTs, id: "cursor-smoke-a" }, 10);
     const ownerTiedMessages = await ownerTextMessagesAfter("couple", { ts: tiedTs, id: "cursor-smoke-a" }, 30);
-    const { MEMORY_SOURCE_BATCH_SIZE, memoryExtractionDelay, shouldExtractMemoryBatch } = await import("../src/ai/memory/extractor");
+    const {
+      MEMORY_SOURCE_BATCH_SIZE,
+      memoryExtractionDelay,
+      shouldExtractMemoryBatch,
+      shouldRetryEmptyMemoryBatch,
+    } = await import("../src/ai/memory/extractor");
     assertOk(
       "Memory 按80条硬上限与分段空闲窗口整理，并使用 (ts,id) 游标",
       MEMORY_SOURCE_BATCH_SIZE === 80 &&
         !shouldExtractMemoryBatch(79) && shouldExtractMemoryBatch(80) && shouldExtractMemoryBatch(1, true) &&
         memoryExtractionDelay(20, tiedTs, tiedTs, tiedTs) === 15 * 60 * 1000 &&
+        !shouldRetryEmptyMemoryBatch(11, 0) &&
+        shouldRetryEmptyMemoryBatch(12, 0) &&
+        !shouldRetryEmptyMemoryBatch(80, 1) &&
         tiedMessages.some((message) => message.id === "cursor-smoke-b") &&
         !tiedMessages.some((message) => message.id === "cursor-smoke-a") &&
         ownerTiedMessages.some((message) => message.id === "cursor-smoke-b"),
@@ -620,6 +637,22 @@ async function main() {
       previousMemory?.status === "superseded" &&
         memoryResults.some((item) => item.id === nextMemory!.id && item.content === "现在更喜欢绿色") &&
         evidence?.count === 0,
+    );
+    const systemSyncedMemory = await memory.addMemory({
+      layer: "fact", scope: "couple", memoryKey: "fact.smoke.system_sync",
+      subjects: [user.username], speakers: [], content: "后台整理写入同步测试",
+      category: "test", confidence: 0.9, importance: 2,
+    }, { actorAccountId: null });
+    const systemMemorySync = await db.get<{ entity_type: string; operation: string }>(
+      `SELECT entity_type, operation FROM sync_events
+       WHERE entity_type = 'memory' AND entity_id = ? ORDER BY seq DESC LIMIT 1`,
+      [systemSyncedMemory!.id],
+    );
+    assertOk(
+      "后台 Memory 写入生成 Sync V2 事件",
+      Boolean(systemSyncedMemory?.version)
+        && systemMemorySync?.entity_type === "memory"
+        && systemMemorySync.operation === "upsert",
     );
     const correctedMemory = await memory.addMemory({
       layer: "fact", scope: "couple", memoryKey: "model.generated.different.key",

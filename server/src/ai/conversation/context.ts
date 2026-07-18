@@ -300,6 +300,7 @@ async function generateSegment(
   };
   const output = await chat({
     profile: "task",
+    scope: "context.segment",
     system:
       '时段要点整理。输出JSON {"bullets":["..."]} 5~8条≤60字。保留话题/人物/时间/决定/否定/未决/情绪；删寒暄；不编造。',
     user: [
@@ -387,6 +388,7 @@ async function mergeSegmentsIntoDigest(
   }));
   const output = await chat({
     profile: "task",
+    scope: "context.digest",
     system:
       '合并当日聊天总览。输出JSON：{"topics":[{"id","title","status":"open|done|dropped","actors":["xu|si|both|daju"],"points":[],"lastAt":0}],"decisions":[],"openLoops":[],"moodLine":""}。同话题复用id；points每话题≤5；topics≤24；不编造；lastAt毫秒。',
     user: `旧:${JSON.stringify(slimDigest)}\n新段:${JSON.stringify(slimSegments)}`,
@@ -593,7 +595,8 @@ async function runCatchUp(
 
 /** 落后时后台继续追赶的预算（毫秒），不阻塞发送。 */
 const BACKGROUND_CATCHUP_BUDGET_MS = 120_000;
-const BACKGROUND_CATCHUP_GAP_MS = 5_000;
+// 小于一段的活跃消息属于正常缓冲，不应每 5 秒强制触发两次 task 模型调用。
+const BACKGROUND_CATCHUP_GAP_MS = 5 * 60_000;
 const backgroundTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function scheduleBackgroundCatchUp(channel: string): void {
@@ -603,7 +606,7 @@ function scheduleBackgroundCatchUp(channel: string): void {
     setTimeout(() => {
       backgroundTimers.delete(channel);
       void ensureContextCaughtUp(channel, {
-        force: true,
+        force: false,
         budgetMs: BACKGROUND_CATCHUP_BUDGET_MS,
       })
         .then((result) => {
@@ -706,29 +709,42 @@ export async function buildConversationContext(
   channel: string,
   currentMessageId?: string,
 ): Promise<ConversationContext> {
-  const catchUp = await ensureContextCaughtUp(channel, {
-    force: true,
-    budgetMs: CONTEXT.catchUpBudgetMs,
-  });
   const state = await loadState(channel);
+  const today = cycleDate();
+  // 回复首字延迟只依赖已提交总览和原文热窗口。新消息后的摘要追赶由
+  // scheduleContextCatchUp 在后台完成；不要在回复前串行等待两次 task 模型。
+  const promptState = state.dayKey === today
+    ? state
+    : {
+        ...state,
+        dayKey: today,
+        dayDigest: emptyDigest(today),
+        recentSegments: [],
+        pendingSegments: [],
+      };
   const [recent, yesterdayTitlesText] = await Promise.all([
     recentConversationMessages(channel, CONVERSATION_MAX_MESSAGES, currentMessageId),
-    loadYesterdayTitles(channel, state.dayKey),
+    loadYesterdayTitles(channel, promptState.dayKey),
   ]);
+  const lagMessageCount = await countLag(channel, state.rawCursor);
+  if (lagMessageCount > 0) scheduleBackgroundCatchUp(channel);
   const visible = recent.filter((message) => message.kind !== "system");
   const { supplemental, focus } = splitConversationMessages(visible);
 
   return {
-    dayKey: state.dayKey,
-    dayDigestText: renderDayDigest(state.dayDigest, CONTEXT.dayDigestMaxChars),
+    dayKey: promptState.dayKey,
+    dayDigestText: renderDayDigest(promptState.dayDigest, CONTEXT.dayDigestMaxChars),
     yesterdayTitlesText,
-    recentSegmentsText: renderRecentSegments(state.recentSegments, CONTEXT.pendingSegmentPromptMax),
+    recentSegmentsText: renderRecentSegments(
+      promptState.recentSegments,
+      CONTEXT.pendingSegmentPromptMax,
+    ),
     supplemental,
     focus,
     recent: visible,
     turnCount: visible.filter((message) => message.sender === "ai").length,
-    lagMessageCount: catchUp.lagMessageCount,
-    catchUpIncomplete: catchUp.incomplete,
+    lagMessageCount,
+    catchUpIncomplete: lagMessageCount > 0,
   };
 }
 

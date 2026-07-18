@@ -9,6 +9,7 @@ import {
 } from "./store";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SYSTEM_MEMORY_SYNC = { actorAccountId: null } as const;
 const RELATIONSHIP_INTERVAL_MS = DAY_MS;
 const INSIGHT_INTERVAL_MS = 7 * DAY_MS;
 const INSIGHT_CHANGED_SOURCE_THRESHOLD = 20;
@@ -103,6 +104,7 @@ export async function refreshDerivedMemory(
     memory.layer === "relationship" || memory.layer === "insight").slice(0, 6);
   const output = await chat({
     profile: "task",
+    scope: "memory.derived",
     system: derivedPrompt(relationshipDue, insightDue),
     user: [
       `【基础记忆卡】\n${sources.map(sourceLine).join("\n")}`,
@@ -133,7 +135,7 @@ export async function refreshDerivedMemory(
         validFrom: now,
         metadata: { derived: true, synthesis: "relationship", sourceWindowDays: 30 },
         sourceMemoryIds,
-      });
+      }, SYSTEM_MEMORY_SYNC);
       if (saved) {
         await archiveSiblingMemories(saved.id, false, now);
         relationship = true;
@@ -158,7 +160,7 @@ export async function refreshDerivedMemory(
         validFrom: now,
         metadata: { derived: true, synthesis: "interaction", sourceWindowDays: 30 },
         sourceMemoryIds,
-      });
+      }, SYSTEM_MEMORY_SYNC);
       if (saved) {
         await archiveSiblingMemories(saved.id, false, now);
         insight = true;

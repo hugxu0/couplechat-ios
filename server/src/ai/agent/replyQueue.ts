@@ -28,10 +28,12 @@ export interface Trigger {
 }
 
 export interface ResponseRunState {
-  cancelled: boolean;
+  readonly cancelled: boolean;
+  readonly signal: AbortSignal;
   emitted: boolean;
   /** 超时或正常路径谁先 claim 谁负责发用户可见文案，避免双发。 */
   claimEmit(): boolean;
+  cancel(): void;
 }
 
 const FAILURE_REPLY = "我刚刚没接稳这句话，但我还在。你再发一次，我马上接住。";
@@ -43,13 +45,20 @@ function sleep(ms: number) {
 
 function createRunState(): ResponseRunState {
   let claimed = false;
+  const controller = new AbortController();
   return {
-    cancelled: false,
+    get cancelled() {
+      return controller.signal.aborted;
+    },
+    signal: controller.signal,
     emitted: false,
     claimEmit() {
       if (claimed) return false;
       claimed = true;
       return true;
+    },
+    cancel() {
+      controller.abort();
     },
   };
 }
@@ -63,7 +72,7 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
   const trace = traceBegin(trigger.storedChannel, trigger.requesterName, trigger.question, trigger.messageId);
   try {
     const startedAt = Date.now();
-    const result = await runAgentReply(trigger, trace);
+    const result = await runAgentReply(trigger, trace, state.signal);
     traceTiming(trace, "agent", startedAt);
     if (!result) throw new Error("Agent 没有生成有效结果");
     if (!result.replies.length) {
@@ -173,7 +182,7 @@ export async function runReplyTaskWithTimeout(
   const timeout = new Promise<void>((resolve) => {
     timer = setTimeout(() => {
       void (async () => {
-        state.cancelled = true;
+        state.cancel();
         timedOut = true;
         console.warn(`[ai] 应答超时，已释放频道队列: ${trigger.storedChannel}`);
         if (!background && !state.emitted && state.claimEmit()) {

@@ -395,6 +395,7 @@ async function generateRecommendation(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const generated = await chat({
       profile: "task",
+      scope: "recommendation",
       gen: GEN.dailyRecommendation,
       system: [
         "大橘给小旭小偲挑一个今天可一起体验的具体对象（作品/店/活动/美食等），禁止泛泛行动建议。",

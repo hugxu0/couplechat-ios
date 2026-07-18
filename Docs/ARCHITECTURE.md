@@ -83,7 +83,7 @@ ChatHomeView
 | `ai` | Agent、Memory、MCP、上下文和后台任务 |
 | `contracts` | 服务端实时协议权威定义 |
 
-PostgreSQL 访问集中在 `server/src/db`。当前 schema 为 v31；v1–v31 migration 不得改写，后续只能追加。业务写入通过显式事务完成；`db/index.ts` 只做稳定 re-export。
+PostgreSQL 访问集中在 `server/src/db`。当前 schema 为 v32；v1–v32 migration 不得改写，后续只能追加。业务写入通过显式事务完成；`db/index.ts` 只做稳定 re-export。
 
 公聊事件发送到 `couple:<id>`，账号私有事件发送到 `account:<id>`。关闭顺序由 `lifecycle/shutdown.ts` 统一管理，先停止生产者，再关闭 Socket 和数据库。
 

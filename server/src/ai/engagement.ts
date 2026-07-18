@@ -216,6 +216,7 @@ async function evaluateCoupleEngagement(input: {
 
     const output = await chat({
       profile: "task",
+      scope: "engagement",
       system:
         '公聊介入分类器，不回复用户。conflict=对立未缓和；interject=无冲突但有轻推价值；闲聊=none。拿不准=none。只输出JSON：{"kind":"none|conflict|interject","confidence":0,"reason":"≤40字","topicHint":""}',
       user: [
