@@ -68,7 +68,7 @@ function withoutTerminalPunctuation(value: string): string {
 function splitLongParagraph(paragraph: string): string[] {
   const sentences = paragraph.match(/[^。！？!?]+[。！？!?]?/gu)?.map((item) => item.trim()).filter(Boolean) ?? [];
   if (sentences.length < 3) return [paragraph];
-  const desiredChunks = Math.min(3, Math.max(2, Math.ceil(paragraph.length / 100)));
+  const desiredChunks = Math.min(6, Math.max(3, Math.ceil(paragraph.length / 150)));
   const targetLength = Math.ceil(paragraph.length / desiredChunks);
   const chunks: string[] = [];
   let current = "";
@@ -90,7 +90,7 @@ export function normalizeDiaryBody(value: string): string {
     .map((paragraph) => paragraph.replace(/[ \t]+/g, " ").trim())
     .filter(Boolean);
   const readable = paragraphs.length === 1 ? splitLongParagraph(paragraphs[0]) : paragraphs;
-  return truncateCharacters(readable.slice(0, 3).join("\n\n"), 520).trim();
+  return truncateCharacters(readable.slice(0, 6).join("\n\n"), 1_000).trim();
 }
 
 function normalizeDiaryTitle(value: string): string {
@@ -102,7 +102,7 @@ function normalizeDiaryTitle(value: string): string {
 
 /** 只有格式和长度保护，不再用词表替模型写作。 */
 export function isUsableDiaryBody(value: string): boolean {
-  if (value.length < 70 || value.length > 520) return false;
+  if (value.length < 180 || value.length > 1_000) return false;
   if (/(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s)/m.test(value)) return false;
   return !/(根据(?:给定)?材料|输入的JSON|作为AI|系统提示)/u.test(value);
 }
@@ -202,10 +202,11 @@ export async function ensureDiaryForDay(dayKey: string, options?: { force?: bool
       scope: "diary",
       system: [
         "你是大橘。请把下面上一作息日的完整情侣公聊，写成一篇真正属于大橘自己的日记。",
-        "这是大橘的日记，不是主人的聊天总结。大橘要写自己的观察、感受、联想和小心思：像一只一直趴在旁边、记得声音和气氛的猫。",
-        "请通读全部聊天，再自己挑最让大橘记住的两三幕来写，不要按消息逐条复述，也不要把所有事情列出来。可以写大橘觉得安心、好奇、担心或想插话，但不能把主人没说出口的心理当成事实，不能替他们做判断或给建议。",
-        "正文要有具体画面和时间推进，最后停在大橘自己的一个念头或当晚的一幕。不要出现时间戳、说话人前缀、JSON、摘要标签、心理咨询话术或列表。",
-        "标题 6～16 个中文字符；正文 120～300 个中文字符，2～3 个自然段。只输出 JSON：{\"title\":\"...\",\"body\":\"段落1\\n\\n段落2\"}。",
+        "这是大橘的日记，不是主人的聊天总结，也不是把聊天换成第一人称重新讲一遍。大橘是一只有性格、有偏爱、会走神也会琢磨事情的猫，要写自己的观察、感受、联想和没想明白的小心思。",
+        "通读全部聊天后，先找到这一天最让大橘放不下的一条暗线、一个变化或一个疑问，只围绕它往深处写。具体聊天只是让这条思考长出来的土壤，不是待办清单；不必覆盖全天，不要按“先聊了、后来又聊了、最后聊了”串联事项。",
+        "至少写进一个只有当天聊天才会有的具体细节，再写大橘当时的反应、它由此想到什么、还有什么没有想通。大橘可以安心、好奇、担心、吃醋、犯困或想插话；对主人内心的理解只能写成大橘自己的猜测，不能冒充事实，不能替主人判断或给建议。",
+        "文字要像夜里真正写下的一页，有画面、有停顿，也有大橘持续了一整篇的独特心声；结尾停在一个具体动作、声音、念头或仍悬着的问题，不总结道理。不要出现时间戳、说话人前缀、摘要标签、心理咨询话术或列表。",
+        "标题 6～18 个中文字符；正文 500～800 个中文字符，4～6 个自然段。只输出 JSON：{\"title\":\"...\",\"body\":\"段落1\\n\\n段落2\\n\\n段落3\"}。",
       ].join("\n"),
       user: `上一作息日（北京时间 06:00 到次日 06:00）的完整公聊记录，按时间顺序：\n${lines.join("\n")}`,
       gen: GEN.diary,

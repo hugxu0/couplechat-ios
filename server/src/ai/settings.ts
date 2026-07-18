@@ -53,8 +53,8 @@ export const GEN = {
     reasoningEffort: "low",
   },
   dailyRecommendation: { maxTokens: 400, temperature: 0.75, timeoutMs: 30_000 },
-  /** 大橘日记：固定短文 */
-  diary: { maxTokens: 600, temperature: 0.7, timeoutMs: 45_000 },
+  /** 大橘日记：允许围绕一条主线写出有思考的完整篇幅 */
+  diary: { maxTokens: 1_400, temperature: 0.8, timeoutMs: 60_000 },
 } satisfies Record<string, GenProfile>;
 
 /**
