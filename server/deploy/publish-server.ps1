@@ -66,6 +66,7 @@ try {
         $packagePath = Join-Path $temporaryDirectory $packageName
         Invoke-Native -Command "git" -Arguments @(
             "archive",
+            "--worktree-attributes",
             "--format=tar.gz",
             "--output=$packagePath",
             "${commitSha}:server"
