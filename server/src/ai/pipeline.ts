@@ -38,6 +38,26 @@ function messageImageUrls(message: ClientMessage): string[] {
   return [...new Set(photos.length ? photos : message.url ? [message.url] : [])].slice(0, 9);
 }
 
+/**
+ * iOS 媒体消息会带上展示占位文案（如 `[图片]`），不算用户说明/提问。
+ * 只有真正的 caption 才应触发私聊自动回复或公聊「图+字」召唤。
+ */
+const MEDIA_PLACEHOLDER_TEXT = new Set([
+  "[图片]",
+  "[视频]",
+  "[语音]",
+  "[文件]",
+  "[表情]",
+]);
+
+function hasMeaningfulUserText(text: string | undefined | null): boolean {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed) return false;
+  if (MEDIA_PLACEHOLDER_TEXT.has(trimmed)) return false;
+  if (/^\[\d+张图片\]$/.test(trimmed)) return false;
+  return true;
+}
+
 function buildUserTrigger(
   storedChannel: string,
   user: AuthUser,
@@ -100,8 +120,10 @@ export function dispatchAfterOwnerMessage(
   if (message.kind !== "user") return { queuedReply: false };
 
   const storedChannel = toStoredChannel(message.channel, user.username);
-  const isText = message.type === "text" && message.text.trim().length > 0;
-  const hasCaption = message.text.trim().length > 0;
+  const rawText = message.text ?? "";
+  const meaningfulText = hasMeaningfulUserText(rawText);
+  const isText = message.type === "text" && meaningfulText;
+  const hasCaption = meaningfulText;
   const imageUrls = messageImageUrls(message);
   const isImage = imageUrls.length > 0;
   if (!isText && !isImage) return { queuedReply: false };
@@ -116,10 +138,13 @@ export function dispatchAfterOwnerMessage(
 
   // ── 线 3：用户向回复 ──────────────────────────────────────────
   const isPrivate = storedChannel.startsWith("ai:");
-  const triggered = hasCaption && isTriggered(message.text);
+  const triggered = hasCaption && isTriggered(rawText);
 
-  // 纯图、无说明文字：只落库/上下文，不自动分析（私聊与公聊一致等用户再问）。
+  // 纯图、无真实说明（含 iOS `[图片]` 占位）：只落库/上下文，不自动分析。
   if (isImage && !hasCaption) {
+    console.log(
+      `[ai] skip bare-image auto-reply channel=${storedChannel} messageId=${message.id}`,
+    );
     return { queuedReply: false };
   }
 
@@ -132,20 +157,20 @@ export function dispatchAfterOwnerMessage(
         storedChannel,
         user,
         message.id,
-        stripTrigger(message.text),
+        stripTrigger(rawText),
         false,
       );
       return { queuedReply: false };
     }
     // 有图必须带说明/召唤文字才会走到这里；无图召唤则只传文字。
-    const question = stripTrigger(message.text) || "（只是喊了你）";
+    const question = stripTrigger(rawText) || "（只是喊了你）";
     const trigger = buildUserTrigger(storedChannel, user, message, question, imageUrls);
     sink.activity?.(trigger, "accepted");
     queueRespond(trigger, sink);
     return { queuedReply: true };
   }
 
-  // 私聊：有文字才答（可带图说明）；纯图已在上方 return。
+  // 私聊：有真实文字才答（可带图说明）；纯图/占位已在上方 return。
   if (!isText && !(isImage && hasCaption)) {
     return { queuedReply: false };
   }
@@ -156,7 +181,7 @@ export function dispatchAfterOwnerMessage(
       storedChannel,
       user,
       message.id,
-      message.text.trim(),
+      rawText.trim(),
       true,
     );
     return { queuedReply: false };
@@ -166,7 +191,7 @@ export function dispatchAfterOwnerMessage(
     storedChannel,
     user,
     message,
-    message.text.trim(),
+    rawText.trim(),
     imageUrls,
   );
   sink.activity?.(trigger, "accepted");
