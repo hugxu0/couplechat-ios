@@ -118,6 +118,38 @@ async function main() {
         migrations.every((migration, index) =>
           migration.version === expectedMigrations[index][0] && migration.name === expectedMigrations[index][1]),
     );
+    const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
+    const backupPolicy = fs.readFileSync(
+      path.resolve("scripts", "backup-table-policy.sh"),
+      "utf8",
+    );
+    const backupPolicyMaxSchema = Number(
+      backupPolicy.match(/^readonly BACKUP_TABLE_POLICY_MAX_SCHEMA=(\d+)$/m)?.[1] ?? 0,
+    );
+    const backupTableRules = [...backupPolicy.matchAll(
+      /^\s*'([a-z][a-z0-9_]*)\|([1-9][0-9]*)\|(0|[1-9][0-9]*)'\s*$/gm,
+    )].map((match) => ({
+      table: match[1],
+      minSchema: Number(match[2]),
+      maxSchema: Number(match[3]),
+    }));
+    const backupTables = backupTableRules
+      .filter((rule) =>
+        latestSchemaVersion >= rule.minSchema &&
+        (rule.maxSchema === 0 || latestSchemaVersion <= rule.maxSchema))
+      .map((rule) => rule.table)
+      .sort();
+    const publicTables = (await db.all<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+       ORDER BY table_name`,
+    )).map((row) => row.table_name).sort();
+    assertOk(
+      "备份策略覆盖当前 schema 的全部持久化表",
+      backupPolicyMaxSchema === latestSchemaVersion &&
+        backupTables.length === new Set(backupTables).size &&
+        backupTables.join(",") === publicTables.join(","),
+    );
 
     const legacyMembers = await db.all<{ username: string }>(
       `SELECT account.username FROM couple_members member
