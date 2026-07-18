@@ -512,12 +512,12 @@ private struct DajuDiaryDetailView: View {
                                 endPoint: .trailing))
                             .frame(height: 1)
 
-                        VStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 12) {
                             ForEach(Array(diary.paragraphs.enumerated()), id: \.offset) { index, paragraph in
                                 Text(paragraph)
                                     .font(.system(.body, design: .serif))
                                     .foregroundStyle(DS.Palette.textPrimary)
-                                    .lineSpacing(8)
+                                    .lineSpacing(6)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .accessibilityLabel("第 \(index + 1) 段，\(paragraph)")
                             }
