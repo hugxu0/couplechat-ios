@@ -7,6 +7,9 @@ import Foundation
 enum ChatMessageCollection {
     static func upsert(_ message: ChatMessage, into messages: inout [ChatMessage]) {
         if let index = messages.firstIndex(where: { sameIdentity($0, message) }) {
+            // 云端/SQLite 的正式消息是权威状态。启动恢复时，即使 outbox 清理曾被
+            // 系统中断，也不能让随后投影的 pending 反向覆盖已经确认的消息。
+            if isConfirmed(messages[index]), !isConfirmed(message) { return }
             messages[index] = message
             removeDuplicates(of: message, keeping: index, from: &messages)
             return
@@ -71,6 +74,10 @@ enum ChatMessageCollection {
             return lhsClientId == rhsClientId
         }
         return false
+    }
+
+    private static func isConfirmed(_ message: ChatMessage) -> Bool {
+        !message.pending && !message.failed
     }
 
     private static func insertChronologically(

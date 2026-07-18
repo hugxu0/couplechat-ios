@@ -72,7 +72,8 @@ struct MediaPagerView: View {
                         let item = items[index]
                         MediaPage(
                             item: item,
-                            shouldLoadMedia: abs(index - selectedIndex) <= 2,
+                            // 仅保留当前页与相邻页；避免一次打开同时下载多张 50 MiB 原图。
+                            shouldLoadMedia: abs(index - selectedIndex) <= 1,
                             isFavorite: favorites.contains(item),
                             onSave: { save(item) },
                             onToggleFavorite: { toggleFavorite(item) },
@@ -82,9 +83,6 @@ struct MediaPagerView: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
-                .task(id: selectedId) {
-                    prefetchAroundSelection()
-                }
             }
 
             if let toast {
@@ -105,19 +103,6 @@ struct MediaPagerView: View {
         .background(Color.clear)
         .accessibilityAction(.escape) { selectedId = nil }
         .preferredColorScheme(.dark)
-    }
-
-    private func prefetchAroundSelection() {
-        guard !items.isEmpty else { return }
-        guard let currentIndex = items.firstIndex(where: { $0.id == selectedId }) else { return }
-        let lower = max(items.startIndex, currentIndex - 3)
-        let upper = min(items.index(before: items.endIndex), currentIndex + 3)
-        for index in lower...upper {
-            guard !items[index].isVideo, let url = items[index].mediaURL else { continue }
-            Task.detached(priority: .userInitiated) {
-                _ = await ImageCache.shared.image(for: url)
-            }
-        }
     }
 
     private func save(_ item: MediaBrowserItem) {

@@ -29,7 +29,10 @@ extension PendingOutboundMessage {
         let decodedMeta = metaJSON
             .flatMap { $0.data(using: .utf8) }
             .flatMap { try? JSONDecoder().decode(ChatMessageMeta.self, from: $0) }
-        let interaction = decodedMeta?.interaction
+        let sendMeta = decodedMeta.flatMap { meta -> MessageSendMeta? in
+            guard meta.interaction != nil || meta.media != nil else { return nil }
+            return MessageSendMeta(interaction: meta.interaction, media: meta.media)
+        }
         return MessageSendRequest(
             channel: channel,
             type: type,
@@ -39,7 +42,7 @@ extension PendingOutboundMessage {
             replyTo: replyTo,
             replyPreview: replyPreview,
             clientId: clientId,
-            meta: interaction.map { MessageSendMeta(interaction: $0) },
+            meta: sendMeta,
             attachments: attachmentRequests)
     }
 }

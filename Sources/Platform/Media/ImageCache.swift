@@ -13,10 +13,17 @@ final class ImageCache {
     private let memory = NSCache<NSString, UIImage>()
     private let sizeLock = NSLock()
     private var imageSizes: [String: CGSize] = [:]
+    private let inFlightLock = NSLock()
+    private var inFlight: [String: (id: UUID, task: Task<UIImage?, Never>)] = [:]
+    private let previewFailureLock = NSLock()
+    private var previewFailures: [String: Date] = [:]
     private let fileManager = FileManager.default
     let directory: URL
     private let ioQueue = DispatchQueue(label: "image-cache-io", qos: .utility)
     private static let maxDownloadBytes: Int64 = 50 * 1024 * 1024
+    private static let maxDiskBytes: Int64 = 1_024 * 1_024 * 1_024
+    private static let downloadGate = MediaDownloadGate(limit: 4)
+    private static let cacheFormatMarker = ".stable-media-v2"
     private static let maxDecodedPixelSize = 2_400
     private static let maxAnimatedPixelSize = 600
 
@@ -24,13 +31,34 @@ final class ImageCache {
         let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         directory = caches.appendingPathComponent("MediaCache", isDirectory: true)
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        MediaCacheStorage.markDirectoryAsLocalCache(directory)
+        let marker = directory.appendingPathComponent(Self.cacheFormatMarker)
+        if !fileManager.fileExists(atPath: marker.path) {
+            _ = fileManager.createFile(atPath: marker.path, contents: Data())
+            ioQueue.async { [directory] in
+                let items = try? FileManager.default.contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: nil)
+                for item in items ?? [] where item.lastPathComponent != Self.cacheFormatMarker {
+                    try? FileManager.default.removeItem(at: item)
+                }
+            }
+        }
         memory.countLimit = 240
+        ioQueue.async { [directory] in
+            MediaCacheStorage.trim(directory: directory, maxBytes: Self.maxDiskBytes)
+        }
     }
 
-    /// 用 url 的 SHA256 十六进制做文件名：跨启动稳定，且不含非法字符。
+    /// 短期媒体签名每次刷新都会改变 sig/exp；缓存身份只忽略这两个授权参数，
+    /// 路径（含 thumbnail）和其他查询参数仍参与缓存隔离。
+    static func cacheIdentity(for url: URL) -> String {
+        MediaCacheIdentity.value(for: url)
+    }
+
+    /// 用稳定媒体身份的 SHA256 十六进制做文件名：跨启动稳定，且不含非法字符。
     private func key(for url: URL) -> String {
-        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        MediaCacheIdentity.digest(for: url)
     }
 
     private func fileURL(for url: URL) -> URL {
@@ -39,7 +67,7 @@ final class ImageCache {
 
     /// 仅查内存缓存（主线程安全、极快）。命中就不用走异步、也不闪占位。
     func memoryImage(for url: URL) -> UIImage? {
-        memory.object(forKey: url.absoluteString as NSString)
+        memory.object(forKey: Self.cacheIdentity(for: url) as NSString)
     }
 
     /// 图片解码后的尺寸独立于 NSCache 保存。系统在后台可能清理已解码图片，
@@ -48,18 +76,18 @@ final class ImageCache {
         if let image = memoryImage(for: url) { return image.size }
         sizeLock.lock()
         defer { sizeLock.unlock() }
-        return imageSizes[url.absoluteString]
+        return imageSizes[Self.cacheIdentity(for: url)]
     }
 
     func rememberImageSize(_ size: CGSize, for url: URL) {
         guard size.width > 0, size.height > 0 else { return }
         sizeLock.lock()
-        imageSizes[url.absoluteString] = size
+        imageSizes[Self.cacheIdentity(for: url)] = size
         sizeLock.unlock()
     }
 
     func isCached(_ url: URL) -> Bool {
-        if memory.object(forKey: url.absoluteString as NSString) != nil { return true }
+        if memory.object(forKey: Self.cacheIdentity(for: url) as NSString) != nil { return true }
         return fileManager.fileExists(atPath: fileURL(for: url).path)
     }
 
@@ -73,6 +101,7 @@ final class ImageCache {
             return Self.decodeForDisplay(data)
         }.value
         if let decoded {
+            ioQueue.async { MediaCacheStorage.touch(file) }
             storeInMemory(decoded, for: url)
         }
         return decoded
@@ -83,7 +112,30 @@ final class ImageCache {
     @discardableResult
     func image(for url: URL) async -> UIImage? {
         if let hit = memoryImage(for: url) { return hit }
+        let identity = Self.cacheIdentity(for: url)
+        let entry = inFlightLock.withLock {
+            if let existing = inFlight[identity] {
+                return existing
+            }
+            let id = UUID()
+            let task = Task { [weak self] in
+                await self?.loadImage(for: url)
+            }
+            let entry = (id: id, task: task)
+            inFlight[identity] = entry
+            return entry
+        }
 
+        let result = await entry.task.value
+        inFlightLock.withLock {
+            if inFlight[identity]?.id == entry.id {
+                inFlight.removeValue(forKey: identity)
+            }
+        }
+        return result
+    }
+
+    private func loadImage(for url: URL) async -> UIImage? {
         // 自己刚选中的照片在消息确认前使用 file:// 临时地址。它不能交给 URLSession，
         // 直接后台解码才能让点开本人刚发的图立即看到原图。
         if url.isFileURL {
@@ -91,6 +143,7 @@ final class ImageCache {
                 guard let data = try? Data(contentsOf: url) else { return nil }
                 return Self.decodeForDisplay(data)
             }.value
+            guard !Task.isCancelled else { return nil }
             if let decoded {
                 storeInMemory(decoded, for: url)
             }
@@ -103,6 +156,8 @@ final class ImageCache {
             guard let data = try? Data(contentsOf: file) else { return nil }
             return Self.decodeForDisplay(data)
         }.value {
+            guard !Task.isCancelled else { return nil }
+            ioQueue.async { MediaCacheStorage.touch(file) }
             storeInMemory(decoded, for: url)
             return decoded
         }
@@ -112,16 +167,48 @@ final class ImageCache {
         let prepared = await Task.detached(priority: .utility) { () -> UIImage? in
             Self.decodeForDisplay(data)
         }.value
-        guard let prepared else { return nil }
+        guard let prepared, !Task.isCancelled else { return nil }
         storeInMemory(prepared, for: url)
         ioQueue.async {
             do {
                 try data.write(to: file)
+                MediaCacheStorage.protect(file)
+                MediaCacheStorage.touch(file)
+                MediaCacheStorage.trim(
+                    directory: self.directory,
+                    maxBytes: Self.maxDiskBytes,
+                    preserving: [file])
             } catch {
                 print("[ImageCache] ⚠️ 磁盘写入失败 url=\(file.lastPathComponent): \(error.localizedDescription)")
             }
         }
         return prepared
+    }
+
+    /// 气泡优先读取已落盘原图，其次读取上传时生成的小图；服务端或历史资源
+    /// 没有缩略图时回退原图，并短暂记住失败，避免滚动复用反复请求同一个 404。
+    func previewImage(for originalURL: URL, thumbnailURL: URL?) async -> UIImage? {
+        if let original = await cachedImage(for: originalURL) { return original }
+        guard let thumbnailURL else { return await image(for: originalURL) }
+        if let thumbnail = await cachedImage(for: thumbnailURL) { return thumbnail }
+        let thumbnailIdentity = Self.cacheIdentity(for: thumbnailURL)
+        let failedRecently = previewFailureLock.withLock {
+            previewFailures[thumbnailIdentity].map {
+                Date().timeIntervalSince($0) < 5 * 60
+            } ?? false
+        }
+        if !failedRecently {
+            if let thumbnail = await image(for: thumbnailURL) {
+                previewFailureLock.withLock {
+                    previewFailures.removeValue(forKey: thumbnailIdentity)
+                }
+                return thumbnail
+            }
+            previewFailureLock.withLock {
+                previewFailures[thumbnailIdentity] = Date()
+            }
+        }
+        return await image(for: originalURL)
     }
 
     private func downloadImageData(for url: URL) async -> Data? {
@@ -130,7 +217,7 @@ final class ImageCache {
             var request = URLRequest(url: url)
             request.timeoutInterval = 20
             do {
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await Self.downloadData(for: request)
                 guard let http = response as? HTTPURLResponse else { return nil }
                 if (200..<300).contains(http.statusCode),
                    Int64(data.count) <= Self.maxDownloadBytes {
@@ -148,6 +235,18 @@ final class ImageCache {
         return nil
     }
 
+    private static func downloadData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        await downloadGate.acquire()
+        do {
+            let result = try await URLSession.shared.data(for: request)
+            await downloadGate.release()
+            return result
+        } catch {
+            await downloadGate.release()
+            throw error
+        }
+    }
+
     /// 已经拿到 Data（比如自己刚上传的图）时直接落缓存，省一次下载。
     func store(data: Data, image: UIImage? = nil, for url: URL) {
         let file = fileURL(for: url)
@@ -160,32 +259,54 @@ final class ImageCache {
             }
             do {
                 try data.write(to: file)
+                MediaCacheStorage.protect(file)
+                MediaCacheStorage.touch(file)
+                MediaCacheStorage.trim(
+                    directory: self.directory,
+                    maxBytes: Self.maxDiskBytes,
+                    preserving: [file])
             } catch {
                 print("[ImageCache] ⚠️ 磁盘写入失败 url=\(file.lastPathComponent): \(error.localizedDescription)")
             }
         }
     }
 
-    /// 撤回媒体时同时清理原资源与视频封面使用的合成缓存键。
-    func removeMedia(for url: URL) {
-        remove(for: url)
-        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+    /// 撤回媒体时同时清理原资源、图片缩略图与视频封面使用的合成缓存键。
+    func removeMedia(for url: URL) async {
+        await remove(for: url)
+        if let thumbnailURL = ServerConfig.mediaThumbnailURL(for: url) {
+            await remove(for: thumbnailURL)
+        }
+        let digest = SHA256.hash(data: Data(Self.cacheIdentity(for: url).utf8))
             .map { String(format: "%02x", $0) }
             .joined()
         if let thumbnailURL = URL(string: "cc-video-thumbnail://cache/\(digest)") {
-            remove(for: thumbnailURL)
+            await remove(for: thumbnailURL)
         }
     }
 
-    func remove(for url: URL) {
-        memory.removeObject(forKey: url.absoluteString as NSString)
+    private func remove(for url: URL) async {
+        let identity = Self.cacheIdentity(for: url)
+        memory.removeObject(forKey: identity as NSString)
         sizeLock.lock()
-        imageSizes.removeValue(forKey: url.absoluteString)
+        imageSizes.removeValue(forKey: identity)
         sizeLock.unlock()
+        previewFailureLock.lock()
+        previewFailures.removeValue(forKey: identity)
+        previewFailureLock.unlock()
+        inFlightLock.lock()
+        let task = inFlight.removeValue(forKey: identity)?.task
+        inFlightLock.unlock()
+        task?.cancel()
+        if let task { _ = await task.value }
         let file = fileURL(for: url)
-        ioQueue.async { [fileManager] in
-            guard fileManager.fileExists(atPath: file.path) else { return }
-            try? fileManager.removeItem(at: file)
+        await withCheckedContinuation { continuation in
+            ioQueue.async { [fileManager] in
+                if fileManager.fileExists(atPath: file.path) {
+                    try? fileManager.removeItem(at: file)
+                }
+                continuation.resume()
+            }
         }
     }
 
@@ -193,31 +314,47 @@ final class ImageCache {
 
     /// 磁盘缓存总字节数
     func diskUsageBytes() -> Int64 {
-        guard let items = try? fileManager.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
-        return items.reduce(0) { sum, url in
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-            return sum + Int64(size)
-        }
+        MediaCacheStorage.stats(at: directory).bytes
     }
 
     /// 已缓存的文件数量
     func cachedFileCount() -> Int {
-        (try? fileManager.contentsOfDirectory(atPath: directory.path))?.count ?? 0
+        MediaCacheStorage.stats(at: directory).fileCount
     }
 
-    /// 清空全部图片缓存（内存 + 磁盘）
-    func clearAll() {
+    func clearAllAsync() async {
+        let tasks = clearMemoryAndTasks()
+        for task in tasks {
+            _ = await task.value
+        }
+        await withCheckedContinuation { continuation in
+            ioQueue.async { [directory] in
+                MediaCacheStorage.removeContents(of: directory)
+                Self.createCacheFormatMarker(in: directory)
+                continuation.resume()
+            }
+        }
+    }
+
+    private func clearMemoryAndTasks() -> [Task<UIImage?, Never>] {
         memory.removeAllObjects()
         sizeLock.lock()
         imageSizes.removeAll()
         sizeLock.unlock()
-        ioQueue.async { [fileManager, directory] in
-            guard let items = try? fileManager.contentsOfDirectory(atPath: directory.path) else { return }
-            for name in items {
-                try? fileManager.removeItem(at: directory.appendingPathComponent(name))
-            }
-        }
+        previewFailureLock.lock()
+        previewFailures.removeAll()
+        previewFailureLock.unlock()
+        inFlightLock.lock()
+        let tasks = inFlight.values.map { $0.task }
+        inFlight.removeAll()
+        inFlightLock.unlock()
+        tasks.forEach { $0.cancel() }
+        return tasks
+    }
+
+    private static func createCacheFormatMarker(in directory: URL) {
+        let marker = directory.appendingPathComponent(cacheFormatMarker)
+        _ = FileManager.default.createFile(atPath: marker.path, contents: Data())
     }
 
     private static func decodeForDisplay(_ data: Data) -> UIImage? {
@@ -238,7 +375,7 @@ final class ImageCache {
     }
 
     private func storeInMemory(_ image: UIImage, for url: URL) {
-        memory.setObject(image, forKey: url.absoluteString as NSString)
+        memory.setObject(image, forKey: Self.cacheIdentity(for: url) as NSString)
         rememberImageSize(image.size, for: url)
     }
 

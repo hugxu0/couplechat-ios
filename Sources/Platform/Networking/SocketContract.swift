@@ -115,6 +115,7 @@ struct MessageSendRequest: Encodable {
 
 struct MessageSendMeta: Encodable {
     let interaction: ChatInteractionMeta?
+    let media: ChatMediaMeta?
 }
 
 struct MessageAttachmentRequest: Encodable {

@@ -34,4 +34,19 @@ enum ServerConfig {
         }
         return URL(string: raw, relativeTo: baseURL)?.absoluteURL
     }
+
+    /// 新签名媒体使用同一份 sig/exp 读取上传时生成的静态缩略图。
+    /// 历史 `/uploads/`、本地 file URL 和未知媒体地址没有缩略图，调用方回退原图。
+    static func mediaThumbnailURL(for originalURL: URL?) -> URL? {
+        guard let originalURL,
+              var components = URLComponents(url: originalURL, resolvingAgainstBaseURL: false),
+              components.scheme == "http" || components.scheme == "https",
+              components.host?.lowercased() == baseURL.host?.lowercased() else { return nil }
+        let pathParts = components.path.split(separator: "/", omittingEmptySubsequences: true)
+        guard pathParts.count == 2,
+              pathParts[0] == "media",
+              pathParts[1].hasPrefix("up_") else { return nil }
+        components.path += "/thumbnail"
+        return components.url
+    }
 }

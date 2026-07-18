@@ -3,7 +3,7 @@ import SQLite3
 
 final class ChatLocalDatabase {
     static let shared = ChatLocalDatabase()
-    private static let schemaVersion: Int32 = 7
+    private static let schemaVersion: Int32 = 8
     private var db: OpaquePointer?
     private(set) var currentDatabaseURL: URL?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -21,6 +21,7 @@ final class ChatLocalDatabase {
 
         do {
             try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+            MediaCacheStorage.markDirectoryAsLocalCache(directoryURL)
         } catch {
             return false
         }
@@ -80,15 +81,17 @@ final class ChatLocalDatabase {
         return count
     }
 
-    /// 某频道内指定类型消息的媒体地址列表（去重、去空），用于「缓存全部图片」
+    /// 某频道内指定类型消息的媒体地址，按时间升序返回；相册只纳入静态图，
+    /// 让受限 LRU 最后保留最近访问内容，而不会把 paired video 当图片下载。
     func mediaURLs(channel: String, types: [String]) -> [String] {
         databaseLock.lock()
         defer { databaseLock.unlock() }
         guard !types.isEmpty else { return [] }
         let placeholders = types.map { _ in "?" }.joined(separator: ",")
         let sql = """
-        SELECT DISTINCT url FROM messages
-        WHERE channel = ? AND url IS NOT NULL AND url <> '' AND type IN (\(placeholders));
+        SELECT url, attachmentsJson FROM messages
+        WHERE channel = ? AND type IN (\(placeholders))
+        ORDER BY ts ASC, id ASC;
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -99,6 +102,13 @@ final class ChatLocalDatabase {
         var urls: [String] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let value = readText(stmt, index: 0) { urls.append(value) }
+            guard let rawAttachments = readText(stmt, index: 1),
+                  let data = rawAttachments.data(using: .utf8),
+                  let attachments = try? JSONDecoder().decode([ChatAttachment].self, from: data)
+            else { continue }
+            urls += attachments
+                .filter { $0.role == "photo" || $0.mimeType.hasPrefix("image/") }
+                .map(\.url)
         }
         sqlite3_finalize(stmt)
         return urls
@@ -179,9 +189,10 @@ final class ChatLocalDatabase {
             uploadURL TEXT,
             createdAt REAL NOT NULL,
             attempts INTEGER NOT NULL DEFAULT 0,
-            lastError TEXT
-            ,metaJson TEXT
-            ,attachmentsJson TEXT
+            lastError TEXT,
+            requiresManualRetry INTEGER NOT NULL DEFAULT 0,
+            metaJson TEXT,
+            attachmentsJson TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_pending_outbound_created
             ON pending_outbound_messages(createdAt);
@@ -202,12 +213,24 @@ final class ChatLocalDatabase {
               execute(sql: sharedStateSQL),
               execute(sql: outboxSQL),
               ensureOutboxColumns(),
+              migrateOutboxTerminalFailures(from: currentVersion),
               execute(sql: appMetaSQL),
               migrateHardDeletedRecalls(from: currentVersion),
               execute(sql: "PRAGMA user_version = \(Self.schemaVersion);"),
               execute(sql: "COMMIT;") else { return false }
         committed = true
         return true
+    }
+
+    private func migrateOutboxTerminalFailures(from version: Int32) -> Bool {
+        guard version < 8 else { return true }
+        // v7 及更早版本只用 attempts 表达失败；App 重启后 attempts > 0
+        // 已经显示为手动重试。升级时保留该语义，不能因新增列默认 0 而误重发。
+        return execute(sql: """
+        UPDATE pending_outbound_messages
+           SET requiresManualRetry = 1
+         WHERE attempts > 0;
+        """)
     }
 
     private func migrateHardDeletedRecalls(from version: Int32) -> Bool {
@@ -253,7 +276,12 @@ final class ChatLocalDatabase {
 
     private func ensureOutboxColumns() -> Bool {
         let existing = tableColumns("pending_outbound_messages")
-        for (name, definition) in [("metaJson", "TEXT"), ("attachmentsJson", "TEXT")]
+        let definitions = [
+            ("metaJson", "TEXT"),
+            ("attachmentsJson", "TEXT"),
+            ("requiresManualRetry", "INTEGER NOT NULL DEFAULT 0"),
+        ]
+        for (name, definition) in definitions
         where !existing.contains(name) {
             guard execute(sql: "ALTER TABLE pending_outbound_messages ADD COLUMN \(name) \(definition);") else { return false }
         }
@@ -683,8 +711,8 @@ final class ChatLocalDatabase {
         let sql = """
         INSERT OR REPLACE INTO pending_outbound_messages
         (clientId, channel, type, text, replyTo, replyPreview, localFilePath, mimeType,
-         uploadId, uploadURL, createdAt, attempts, lastError, metaJson, attachmentsJson)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+         uploadId, uploadURL, createdAt, attempts, lastError, requiresManualRetry, metaJson, attachmentsJson)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         return performPreparedWrite(
             sql: sql,
@@ -704,8 +732,9 @@ final class ChatLocalDatabase {
                     sqlite3_bind_double(stmt, 11, item.createdAt),
                     sqlite3_bind_int(stmt, 12, Int32(item.attempts)),
                     self.bindTextResult(stmt, index: 13, value: item.lastError),
-                    self.bindTextResult(stmt, index: 14, value: item.metaJSON),
-                    self.bindTextResult(stmt, index: 15, value: attachmentsJSON),
+                    sqlite3_bind_int(stmt, 14, item.requiresManualRetry ? 1 : 0),
+                    self.bindTextResult(stmt, index: 15, value: item.metaJSON),
+                    self.bindTextResult(stmt, index: 16, value: attachmentsJSON),
                 ]
             })
     }
@@ -715,7 +744,8 @@ final class ChatLocalDatabase {
         defer { databaseLock.unlock() }
         let sql = """
         SELECT clientId, channel, type, text, replyTo, replyPreview, localFilePath, mimeType,
-               uploadId, uploadURL, createdAt, attempts, lastError, metaJson, attachmentsJson
+               uploadId, uploadURL, createdAt, attempts, lastError, requiresManualRetry,
+               metaJson, attachmentsJson
         FROM pending_outbound_messages WHERE clientId = ? LIMIT 1;
         """
         var stmt: OpaquePointer?
@@ -731,7 +761,8 @@ final class ChatLocalDatabase {
         defer { databaseLock.unlock() }
         let sql = """
         SELECT clientId, channel, type, text, replyTo, replyPreview, localFilePath, mimeType,
-               uploadId, uploadURL, createdAt, attempts, lastError, metaJson, attachmentsJson
+               uploadId, uploadURL, createdAt, attempts, lastError, requiresManualRetry,
+               metaJson, attachmentsJson
         FROM pending_outbound_messages ORDER BY createdAt ASC;
         """
         var stmt: OpaquePointer?
@@ -773,8 +804,9 @@ final class ChatLocalDatabase {
             createdAt: sqlite3_column_double(stmt, 10),
             attempts: Int(sqlite3_column_int(stmt, 11)),
             lastError: readText(stmt, index: 12),
-            metaJSON: readText(stmt, index: 13),
-            attachments: readText(stmt, index: 14).flatMap { raw in
+            requiresManualRetry: sqlite3_column_int(stmt, 13) != 0,
+            metaJSON: readText(stmt, index: 14),
+            attachments: readText(stmt, index: 15).flatMap { raw in
                 raw.data(using: .utf8).flatMap { try? JSONDecoder().decode([PendingOutboundAttachment].self, from: $0) }
             } ?? [])
     }

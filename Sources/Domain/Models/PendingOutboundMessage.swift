@@ -15,6 +15,8 @@ struct PendingOutboundMessage: Equatable {
     let createdAt: Double
     var attempts: Int
     var lastError: String?
+    /// `true` 表示自动重试已经结束；重连不能再次发送，必须由用户显式重试。
+    var requiresManualRetry = false
     var metaJSON: String? = nil
     var attachments: [PendingOutboundAttachment] = []
 
@@ -25,7 +27,7 @@ struct PendingOutboundMessage: Equatable {
         }
     }
 
-    func optimisticMessage(session: Session) -> ChatMessage {
+    func optimisticMessage(session: Session, waitingToSend: Bool = false) -> ChatMessage {
         let meta = decodedMeta
         if isMedia || type == "sticker" {
             let optimisticAttachments = attachments.map { attachment in
@@ -47,8 +49,9 @@ struct PendingOutboundMessage: Equatable {
                 attachments: optimisticAttachments.isEmpty ? nil : optimisticAttachments,
                 meta: meta)
             message.ts = createdAt
-            message.pending = attempts == 0
-            message.failed = attempts > 0
+            message.pending = !requiresManualRetry
+            message.failed = requiresManualRetry
+            message.waitingToSend = waitingToSend && !requiresManualRetry
             return message
         }
 
@@ -61,8 +64,9 @@ struct PendingOutboundMessage: Equatable {
             replyPreview: replyPreview,
             meta: meta)
         message.ts = createdAt
-        message.pending = attempts == 0
-        message.failed = attempts > 0
+        message.pending = !requiresManualRetry
+        message.failed = requiresManualRetry
+        message.waitingToSend = waitingToSend && !requiresManualRetry
         return message
     }
 

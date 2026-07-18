@@ -47,17 +47,17 @@ struct StorageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { refresh() }
         .onChange(of: historySync.operation) { refresh() }
-        .confirmationDialog("清理图片缓存", isPresented: $showClearConfirm, titleVisibility: .visible) {
+        .confirmationDialog("清理媒体缓存", isPresented: $showClearConfirm, titleVisibility: .visible) {
             Button("清理", role: .destructive) { clearCache() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("只清理已下载的图片，聊天记录不受影响。需要时会重新下载。")
+            Text("清理已下载的图片、语音和文件预览；聊天记录与待发送媒体不受影响，需要时会重新下载。")
         }
         .confirmationDialog("清除本地聊天记录？", isPresented: $showClearMessagesConfirm, titleVisibility: .visible) {
             Button("清除本地记录", role: .destructive) { clearLocalMessages() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("只删除这台设备上的消息数据库，服务器上的聊天记录和上传文件不会删除；之后可以重新同步。")
+            Text("删除这台设备上的消息数据库和已下载媒体；待发送消息与服务器数据不会删除，之后可以重新同步。")
         }
     }
 
@@ -109,8 +109,17 @@ struct StorageView: View {
     private var breakdownSection: some View {
         Section("占用明细") {
             breakdownRow(icon: "photo.stack", tint: DS.Palette.pink,
-                         title: "聊天图片缓存",
+                         title: "图片与视频封面",
                          detail: "\(breakdown?.cachedImageFiles ?? 0) 项 · \(sizeString(breakdown?.imageCacheBytes ?? 0))")
+            breakdownRow(icon: "waveform", tint: DS.Palette.green,
+                         title: "语音缓存",
+                         detail: "\(breakdown?.cachedVoiceFiles ?? 0) 项 · \(sizeString(breakdown?.voiceCacheBytes ?? 0))")
+            breakdownRow(icon: "doc.text", tint: DS.Palette.orange,
+                         title: "文件预览缓存",
+                         detail: "\(breakdown?.cachedPreviewFiles ?? 0) 项 · \(sizeString(breakdown?.fileCacheBytes ?? 0))")
+            breakdownRow(icon: "arrow.up.circle", tint: DS.Palette.purple,
+                         title: "待发送媒体",
+                         detail: "\(breakdown?.outboxFiles ?? 0) 项 · \(sizeString(breakdown?.outboxBytes ?? 0))")
             breakdownRow(icon: "externaldrive", tint: DS.Palette.blue,
                          title: "消息数据库",
                          detail: sizeString(breakdown?.databaseBytes ?? 0))
@@ -157,7 +166,7 @@ struct StorageView: View {
                 .disabled(!store.loggedIn || historyIsUpToDate)
 
                 Button { runCacheImages() } label: {
-                    Label("下载全部聊天图片", systemImage: "icloud.and.arrow.down")
+                    Label("缓存聊天图片", systemImage: "icloud.and.arrow.down")
                 }
                 .disabled(!store.loggedIn)
             }
@@ -169,7 +178,7 @@ struct StorageView: View {
             } else if !store.connected {
                 Text("需要先连接服务器才能同步聊天记录。")
             } else {
-                Text("离开此页面会继续同步；App 被系统暂停后，下次会从已保存进度继续。图片单独下载，失败项会显示数量。")
+                Text("离开页面会继续同步；图片缓存上限为 1 GB，超出后保留最近访问内容，失败项会显示数量。")
             }
         }
     }
@@ -190,7 +199,7 @@ struct StorageView: View {
                 value: total.map { Double(min(current, $0)) }, total: total.map(Double.init))
         case let .images(done, total, failed):
             progressBlock(
-                title: "正在下载聊天图片",
+                title: "正在缓存聊天图片",
                 detail: "已处理 \(done) / \(total) 项" + (failed > 0 ? " · \(failed) 项失败" : ""),
                 value: Double(done), total: Double(max(total, 1)))
         }
@@ -246,7 +255,7 @@ struct StorageView: View {
 
     private var cleanupSection: some View {
         Section {
-            DestructiveActionRow(title: "清理图片缓存", systemImage: "trash") {
+            DestructiveActionRow(title: "清理媒体缓存", systemImage: "trash") {
                 showClearConfirm = true
             }
             .disabled(operation.isRunning)
@@ -264,7 +273,10 @@ struct StorageView: View {
     // MARK: - 动作
 
     private func refresh() {
-        Task { breakdown = await store.localData.storageBreakdown() }
+        Task {
+            breakdown = await store.localData.storageBreakdown(
+                username: store.session?.username)
+        }
     }
 
     private func runFullSync() {
@@ -280,10 +292,12 @@ struct StorageView: View {
     }
 
     private func clearCache() {
-        store.localData.clearImageCache()
-        refresh()
-        historySync.showNotice("图片缓存已清理")
-        Haptics.light()
+        Task {
+            await store.localData.clearDownloadedMedia()
+            refresh()
+            historySync.showNotice("媒体缓存已清理")
+            Haptics.light()
+        }
     }
 
     private func clearLocalMessages() {

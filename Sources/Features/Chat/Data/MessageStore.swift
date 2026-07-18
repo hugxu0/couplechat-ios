@@ -100,6 +100,9 @@ final class MessageStore: ObservableObject {
 
     private static let mediaTypes = ["image", "video"]
     private static let managedAttachmentTypes = ["image", "video", "file"]
+    private static let maxAutomaticSendAttempts = 3
+    private static let sendAckTimeout: TimeInterval = 12
+    private static let sendAckHardTimeout: TimeInterval = 13
 
     weak var socketProvider: SocketProvider?
 
@@ -193,13 +196,14 @@ final class MessageStore: ObservableObject {
                 channel: ChatChannel.ai.rawValue),
         ]
         latestPersistedMessageIDs = cachedMessages.compactMapValues { $0.last?.id }
+        await reconcilePendingOutbounds(with: cachedMessages.values.flatMap { $0 })
         // 正式消息和待发消息分表存储；重启后把 outbox 重新投影成聊天气泡。
         for item in await outboxProcessor.allPending() {
             guard let channel = ChatChannel(rawValue: item.channel) else {
                 print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
                 continue
             }
-            let optimistic = item.optimisticMessage(session: session)
+            let optimistic = item.optimisticMessage(session: session, waitingToSend: true)
             updateMessages(channel) { list in
                 ChatMessageCollection.upsert(optimistic, into: &list)
             }
@@ -211,6 +215,7 @@ final class MessageStore: ObservableObject {
         let receipts = snapshot.readStates
         var next = messagesByChannel
         var persistedLatestIDs = latestPersistedMessageIDs
+        var persistedRemoteMessages: [ChatMessage] = []
         for channel in ChatChannel.allCases {
             let rawChannel = channel.rawValue
             let messages = remote[rawChannel] ?? []
@@ -223,6 +228,7 @@ final class MessageStore: ObservableObject {
             if persisted == messages.count {
                 persistedLatestIDs[rawChannel] = messages.last?.id
                 next[rawChannel] = messages
+                persistedRemoteMessages.append(contentsOf: messages)
             } else {
                 print("[MessageStore] ⚠️ bootstrap 消息写入失败 channel=\(rawChannel)")
             }
@@ -235,13 +241,16 @@ final class MessageStore: ObservableObject {
             }
         }
 
+        await reconcilePendingOutbounds(with: persistedRemoteMessages)
         for item in await outboxProcessor.allPending() {
             guard let channel = ChatChannel(rawValue: item.channel) else {
                 print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
                 continue
             }
             var list = next[channel.rawValue] ?? []
-            ChatMessageCollection.upsert(item.optimisticMessage(session: session), into: &list)
+            ChatMessageCollection.upsert(
+                item.optimisticMessage(session: session, waitingToSend: true),
+                into: &list)
             next[channel.rawValue] = list
         }
         messagesByChannel = next
@@ -362,7 +371,7 @@ final class MessageStore: ObservableObject {
             let pending = await outboxProcessor.allPending()
             pendingOptimistic = pending
                 .filter { $0.channel == channel.rawValue }
-                .map { $0.optimisticMessage(session: session) }
+                .map { $0.optimisticMessage(session: session, waitingToSend: true) }
         } else {
             pendingOptimistic = []
         }
@@ -538,7 +547,8 @@ final class MessageStore: ObservableObject {
     }
 
     func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?,
-                   channel: ChatChannel = .couple, displayText: String? = nil, session: Session) async {
+                   channel: ChatChannel = .couple, displayText: String? = nil,
+                   durationMs: Int? = nil, session: Session) async {
         let clientId = "tmp-" + UUID().uuidString
         let createdAt = Date().timeIntervalSince1970 * 1000
         let durableURL = await outboxProcessor.persistMedia(
@@ -550,6 +560,7 @@ final class MessageStore: ObservableObject {
             localPreviewURL: localPreviewURL,
             channel: channel,
             displayText: displayText,
+            durationMs: durationMs,
             session: session,
             clientId: clientId,
             createdAt: createdAt)
@@ -563,6 +574,7 @@ final class MessageStore: ObservableObject {
         localPreviewURL: URL?,
         channel: ChatChannel = .couple,
         displayText: String? = nil,
+        durationMs: Int? = nil,
         session: Session
     ) async {
         let clientId = "tmp-" + UUID().uuidString
@@ -576,6 +588,7 @@ final class MessageStore: ObservableObject {
             localPreviewURL: localPreviewURL ?? fileURL,
             channel: channel,
             displayText: displayText,
+            durationMs: durationMs,
             session: session,
             clientId: clientId,
             createdAt: createdAt)
@@ -588,6 +601,7 @@ final class MessageStore: ObservableObject {
         localPreviewURL: URL?,
         channel: ChatChannel,
         displayText: String?,
+        durationMs: Int?,
         session: Session,
         clientId: String,
         createdAt: Double
@@ -600,6 +614,7 @@ final class MessageStore: ObservableObject {
             previewURL: localPreviewURL,
             channel: channel,
             session: session,
+            durationMs: durationMs,
             clientId: clientId,
             createdAt: createdAt)
         updateMessages(channel) { messages in
@@ -654,6 +669,7 @@ final class MessageStore: ObservableObject {
 
         pending.lastError = nil
         pending.attempts = 0
+        pending.requiresManualRetry = false
         guard await outboxProcessor.save(pending) else { return .notFound }
         guard let channel = ChatChannel(rawValue: pending.channel) else {
             print("[MessageStore] ⚠️ 拒绝重试未知频道待发消息 clientId=\(pending.clientId)")
@@ -868,14 +884,28 @@ final class MessageStore: ObservableObject {
     }
 
     func applyRecallPersisted(id: String, channel: ChatChannel) async -> Bool {
+        let persistedMessage = await persistence.fetchMessage(
+            id: id,
+            channel: channel.rawValue)
         guard await persistRecall(id: id, channel: channel) else { return false }
-        applyRecallLocally(id: id, channel: channel)
+        await applyRecallLocally(
+            id: id,
+            channel: channel,
+            persistedMessage: persistedMessage)
         return true
     }
 
-    private func applyRecallLocally(id: String, channel: ChatChannel) {
+    private func applyRecallLocally(
+        id: String,
+        channel: ChatChannel,
+        persistedMessage: ChatMessage?
+    ) async {
         optimisticRecalls.removeValue(forKey: id)
         var mediaURLs: Set<URL> = []
+        if let url = persistedMessage?.mediaURL { mediaURLs.insert(url) }
+        for attachment in persistedMessage?.attachments ?? [] {
+            if let url = attachment.mediaURL { mediaURLs.insert(url) }
+        }
         updateMessages(channel) { list in
             for message in list where message.id == id {
                 if let url = message.mediaURL { mediaURLs.insert(url) }
@@ -895,11 +925,14 @@ final class MessageStore: ObservableObject {
             })?.id
         }
         MediaFavoriteStore.shared.remove(messageId: id)
-        for url in mediaURLs { ImageCache.shared.removeMedia(for: url) }
         NotificationCenter.default.post(
             name: Self.messageDeletedNotification,
             object: nil,
             userInfo: ["messageId": id])
+        for url in mediaURLs {
+            await ImageCache.shared.removeMedia(for: url)
+            await MediaFileCache.shared.removeMedia(for: url)
+        }
     }
 
     private func persistRecall(id: String, channel: ChatChannel) async -> Bool {
@@ -1038,6 +1071,8 @@ final class MessageStore: ObservableObject {
         }
         messagesByChannel = [:]
         latestPersistedMessageIDs = [:]
+        await ImageCache.shared.clearAllAsync()
+        await MediaFileCache.shared.clearAll()
     }
 
     // MARK: - 私有辅助
@@ -1047,12 +1082,12 @@ final class MessageStore: ObservableObject {
         channel: ChatChannel,
         session: Session
     ) async {
+        markPendingWaiting(clientId: item.clientId, channel: channel)
         guard socketProvider?.isConnected == true, socketProvider?.socket != nil else {
             // 离线发送仍保留为待发状态；网络恢复、socket 重连后会由 outbox 自动重放。
             // 只有确定的服务端拒绝或连续多次确认超时才显示失败按钮。
             return
         }
-        markPendingSending(clientId: item.clientId, channel: channel)
         flushOutbox(session: session)
     }
 
@@ -1077,7 +1112,7 @@ final class MessageStore: ObservableObject {
     }
 
     private func transmitPendingOutbound(_ original: PendingOutboundMessage, session: Session) async -> Bool {
-        guard let socket = socketProvider?.socket, socketProvider?.isConnected == true else { return false }
+        guard socketProvider?.isConnected == true else { return false }
         var item = original
         guard let channel = ChatChannel(rawValue: item.channel) else {
             print("[MessageStore] ⚠️ 拒绝发送未知频道待发消息 clientId=\(item.clientId)")
@@ -1099,6 +1134,12 @@ final class MessageStore: ObservableObject {
                     item.attachments[index].uploadURL = uploaded.url
                     item.lastError = nil
                     _ = await outboxProcessor.save(item)
+                    if attachment.mimeType.hasPrefix("image/"),
+                       let remoteURL = ServerConfig.resolveMediaURL(uploaded.url) {
+                        cacheUploadedImage(
+                            at: attachment.localFilePath,
+                            remoteURL: remoteURL)
+                    }
                     updateMessages(channel) { list in
                         guard let messageIndex = list.firstIndex(where: { $0.id == item.clientId }),
                               let attachmentIndex = list[messageIndex].attachments?.firstIndex(where: {
@@ -1112,7 +1153,7 @@ final class MessageStore: ObservableObject {
                         }
                     }
                 } catch {
-                    await recordPendingFailure(item, channel: channel, message: error.localizedDescription)
+                    await recordUploadFailure(error, item: item, channel: channel, session: session)
                     return false
                 }
             }
@@ -1134,9 +1175,8 @@ final class MessageStore: ObservableObject {
                 _ = await outboxProcessor.save(item)
 
                 if item.type == "image",
-                   let data = try? Data(contentsOf: localURL),
                    let remoteURL = ServerConfig.resolveMediaURL(uploaded.url) {
-                    ImageCache.shared.store(data: data, for: remoteURL)
+                    cacheUploadedImage(at: localURL.path, remoteURL: remoteURL)
                 }
                 updateMessages(channel) { list in
                     guard let index = list.firstIndex(where: { $0.id == item.clientId }) else { return }
@@ -1144,7 +1184,7 @@ final class MessageStore: ObservableObject {
                     list[index].url = item.uploadURL
                 }
             } catch {
-                await recordPendingFailure(item, channel: channel, message: error.localizedDescription)
+                await recordUploadFailure(error, item: item, channel: channel, session: session)
                 return false
             }
         }
@@ -1153,21 +1193,37 @@ final class MessageStore: ObservableObject {
             await recordPendingFailure(item, channel: channel, message: "附件上传不完整")
             return false
         }
+        guard socketProvider?.currentSession?.token == session.token,
+              socketProvider?.isConnected == true,
+              let socket = socketProvider?.socket else {
+            markPendingWaiting(clientId: item.clientId, channel: channel)
+            return false
+        }
         let ack = await waitForSendAck(socket: socket, request: request)
         let succeeded = await handleSendAck(ack, clientId: item.clientId, channel: channel)
         if succeeded {
+            await retainCompletedMediaCache(item)
             await completePendingOutbound(clientId: item.clientId)
         } else {
             let payload = ack.first as? [String: Any]
             if let code = payload?["error"] as? String {
                 let message = ServerErrorCode.message(for: code, fallback: "发送失败")
                 await recordPendingFailure(item, channel: channel, message: message)
-            } else {
+            } else if ack.isEmpty {
+                if socketProvider?.socket === socket {
+                    socketProvider?.recoverConnection()
+                }
                 await recordTransientPendingFailure(
                     item,
                     channel: channel,
                     session: session,
                     message: "发送确认超时")
+            } else {
+                await recordTransientPendingFailure(
+                    item,
+                    channel: channel,
+                    session: session,
+                    message: "发送结果未能保存")
             }
         }
         return succeeded
@@ -1180,10 +1236,10 @@ final class MessageStore: ObservableObject {
         await withCheckedContinuation { continuation in
             let gate = MessageAckContinuation(continuation)
             socket.emitWithAck(SocketEvent.messageSend.rawValue, SocketPayloadEncoder.encode(request))
-                .timingOut(after: 15) { gate.resume(returning: $0) }
+                .timingOut(after: Self.sendAckTimeout) { gate.resume(returning: $0) }
             // Socket.IO 在网络路径原地失效时偶尔不会交付 timeout callback。
             // 独立兜底确保消息不会永远停在“三个点”。
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 16) {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.sendAckHardTimeout) {
                 gate.resume(returning: [])
             }
         }
@@ -1194,6 +1250,26 @@ final class MessageStore: ObservableObject {
             guard let index = ChatMessageCollection.index(matchingClientId: clientId, in: list) else { return }
             list[index].pending = true
             list[index].failed = false
+            list[index].waitingToSend = false
+        }
+    }
+
+    private func markPendingWaiting(clientId: String, channel: ChatChannel) {
+        updateMessages(channel) { list in
+            guard let index = ChatMessageCollection.index(matchingClientId: clientId, in: list),
+                  !list[index].failed else { return }
+            list[index].pending = true
+            list[index].waitingToSend = true
+        }
+    }
+
+    func markPendingWaitingToSend() {
+        for channel in ChatChannel.allCases {
+            updateMessages(channel) { list in
+                for index in list.indices where list[index].pending && !list[index].failed {
+                    list[index].waitingToSend = true
+                }
+            }
         }
     }
 
@@ -1202,6 +1278,7 @@ final class MessageStore: ObservableObject {
             guard let index = ChatMessageCollection.index(matchingClientId: clientId, in: list) else { return }
             list[index].pending = false
             list[index].failed = true
+            list[index].waitingToSend = false
         }
         if channel == .ai {
             aiTyping = false
@@ -1218,6 +1295,7 @@ final class MessageStore: ObservableObject {
         var item = await outboxProcessor.pending(clientId: original.clientId) ?? original
         item.attempts += 1
         item.lastError = message
+        item.requiresManualRetry = true
         _ = await outboxProcessor.save(item)
         markPendingFailed(clientId: item.clientId, channel: channel, error: message)
     }
@@ -1231,13 +1309,14 @@ final class MessageStore: ObservableObject {
         var item = await outboxProcessor.pending(clientId: original.clientId) ?? original
         item.attempts += 1
         item.lastError = message
+        item.requiresManualRetry = item.attempts >= Self.maxAutomaticSendAttempts
         _ = await outboxProcessor.save(item)
 
-        guard item.attempts < 3 else {
+        guard !item.requiresManualRetry else {
             markPendingFailed(clientId: item.clientId, channel: channel, error: message)
             return
         }
-        markPendingSending(clientId: item.clientId, channel: channel)
+        markPendingWaiting(clientId: item.clientId, channel: channel)
         let expectedToken = session.token
         let delay = TimeInterval(item.attempts) * 1.5
         Task { @MainActor [weak self] in
@@ -1245,12 +1324,89 @@ final class MessageStore: ObservableObject {
             guard let self,
                   self.socketProvider?.currentSession?.token == expectedToken,
                   let currentSession = self.socketProvider?.currentSession else { return }
+            guard self.socketProvider?.isConnected == true else {
+                self.markPendingWaiting(clientId: item.clientId, channel: channel)
+                return
+            }
             self.flushOutbox(session: currentSession)
+        }
+    }
+
+    private func recordUploadFailure(
+        _ error: Error,
+        item: PendingOutboundMessage,
+        channel: ChatChannel,
+        session: Session
+    ) async {
+        if Self.isRetryableUploadError(error) {
+            await recordTransientPendingFailure(
+                item,
+                channel: channel,
+                session: session,
+                message: error.localizedDescription)
+        } else {
+            await recordPendingFailure(item, channel: channel, message: error.localizedDescription)
+        }
+    }
+
+    private func cacheUploadedImage(at path: String, remoteURL: URL) {
+        Task {
+            let data = await Task.detached(priority: .utility) {
+                try? Data(contentsOf: URL(fileURLWithPath: path))
+            }.value
+            if let data {
+                ImageCache.shared.store(data: data, for: remoteURL)
+            }
+        }
+    }
+
+    private nonisolated static func isRetryableUploadError(_ error: Error) -> Bool {
+        if let uploadError = error as? MediaUploadError {
+            return uploadError.isRetryable
+        }
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .badURL, .unsupportedURL, .fileDoesNotExist, .noPermissionsToReadFile,
+             .dataLengthExceedsMaximum, .userAuthenticationRequired, .cancelled:
+            return false
+        default:
+            return true
         }
     }
 
     private func completePendingOutbound(clientId: String) async {
         await outboxProcessor.complete(clientId: clientId)
+    }
+
+    private func reconcilePendingOutbounds(with confirmedMessages: [ChatMessage]) async {
+        let confirmedClientIDs = Set(confirmedMessages.compactMap { message -> String? in
+            guard !message.pending, !message.failed else { return nil }
+            return message.clientId
+        })
+        guard !confirmedClientIDs.isEmpty else { return }
+
+        for item in await outboxProcessor.allPending()
+        where confirmedClientIDs.contains(item.clientId) {
+            await retainCompletedMediaCache(item)
+            await completePendingOutbound(clientId: item.clientId)
+        }
+    }
+
+    private func retainCompletedMediaCache(_ item: PendingOutboundMessage) async {
+        guard item.attachments.isEmpty,
+              let path = item.localFilePath,
+              let remoteURL = ServerConfig.resolveMediaURL(item.uploadURL) else { return }
+        let kind: DownloadedMediaKind
+        switch item.type {
+        case "voice": kind = .voice
+        case "file": kind = .file
+        default: return
+        }
+        await MediaFileCache.shared.importLocalFile(
+            URL(fileURLWithPath: path),
+            remoteURL: remoteURL,
+            kind: kind,
+            suggestedFilename: item.type == "file" ? item.text : nil)
     }
 
     @discardableResult

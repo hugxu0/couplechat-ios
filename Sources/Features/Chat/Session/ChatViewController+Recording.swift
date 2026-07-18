@@ -149,12 +149,19 @@ extension ChatViewController {
         composer.clearRecording()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 
-        guard !cancelled, duration >= 1.0, let url, let data = try? Data(contentsOf: url) else {
+        guard !cancelled, duration >= 1.0, let url else {
             if let url { try? FileManager.default.removeItem(at: url) }
             return
         }
         stickToLatestAfterNextReload = true
-        store.sendMedia(data: data, mimeType: "audio/m4a", preferredType: "voice", localPreviewURL: url, channel: channel)
+        store.sendMediaFile(
+            fileURL: url,
+            mimeType: "audio/m4a",
+            preferredType: "voice",
+            localPreviewURL: url,
+            channel: channel,
+            durationMs: min(600_000, max(1, Int((duration * 1_000).rounded()))),
+            removeSourceAfterPersist: true)
     }
 
     private func failRecordingRequest(_ requestID: UUID) {

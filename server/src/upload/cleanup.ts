@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { all, run, type UploadRow } from "../db";
 import { config } from "../config";
+import { removeUploadArtifacts } from "./thumbnail";
 
 const ABANDONED_AFTER_MS = 24 * 60 * 60 * 1000;
 const UPLOADING_STALE_MS = 2 * 60 * 60 * 1000;
@@ -42,7 +43,7 @@ export async function drainFileCleanupQueue(): Promise<number> {
         console.warn(`[upload] 拒绝清理越界路径 id=${row.id}`);
         continue;
       }
-      await fs.rm(row.path, { force: true });
+      await removeUploadArtifacts(row.path);
       completed += await run(
         `UPDATE file_cleanup_queue SET completed_at = ?, attempt_count = attempt_count + 1,
          last_error = NULL WHERE id = ? AND completed_at IS NULL`,
@@ -73,7 +74,7 @@ export async function cleanupAbandonedMessageUploads(now = Date.now()): Promise<
   for (const row of rows) {
     try {
       if (isPathInsideUploadDir(row.path)) {
-        await fs.rm(row.path, { force: true });
+        await removeUploadArtifacts(row.path);
       }
       removed += await run(
         `DELETE FROM uploads upload WHERE upload.id = ?

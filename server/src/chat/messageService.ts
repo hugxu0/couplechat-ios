@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import { nanoid } from "nanoid";
 import { all, get, run, transaction, type MessageRow, type ReadReceiptRow, type UploadRow } from "../db";
 import type { SendMessagePayload } from "../contracts/realtime";
@@ -11,6 +10,7 @@ import { conversationIdentity, conversationIdentityIn } from "../auth/identity";
 import { appendSyncEvent } from "../sync/events";
 import { enqueueTranscriptForMessage } from "../transcription/service";
 import { refreshSignedMediaUrl } from "../upload/mediaAccess";
+import { removeUploadArtifacts } from "../upload/thumbnail";
 
 export type SendMessageInput = SendMessagePayload;
 export interface FetchMessagesInput {
@@ -664,7 +664,7 @@ export async function recallMessage(user: AuthUser, id: string) {
     }
     for (const item of result.uploadCleanup) {
       try {
-        await fs.rm(item.path, { force: true });
+        await removeUploadArtifacts(item.path);
         await run(
           `UPDATE file_cleanup_queue SET completed_at = ?, attempt_count = attempt_count + 1,
            last_error = NULL WHERE id = ? AND completed_at IS NULL`,

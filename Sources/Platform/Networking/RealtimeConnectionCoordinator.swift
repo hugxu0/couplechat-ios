@@ -45,6 +45,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
     private let sessionProvider: () -> Session?
     private let onSocketCreated: (SocketIOClient) -> Void
     private let onConnected: () -> Void
+    private let onConnectionUnavailable: () -> Void
     private let onUnauthorized: () -> Void
 
     private var manager: SocketManager?
@@ -65,12 +66,14 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         sessionProvider: @escaping () -> Session?,
         onSocketCreated: @escaping (SocketIOClient) -> Void,
         onConnected: @escaping () -> Void,
+        onConnectionUnavailable: @escaping () -> Void = {},
         onUnauthorized: @escaping () -> Void
     ) {
         self.baseURL = baseURL
         self.sessionProvider = sessionProvider
         self.onSocketCreated = onSocketCreated
         self.onConnected = onConnected
+        self.onConnectionUnavailable = onConnectionUnavailable
         self.onUnauthorized = onUnauthorized
 
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -127,7 +130,12 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         reconnectAttempt = 0
         tearDownSocket()
         state = .reconnecting
+        onConnectionUnavailable()
         connect()
+    }
+
+    func recoverConnection() {
+        forceReconnect()
     }
 
     func reportAway(_ away: Bool) {
@@ -187,6 +195,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
                 self.socket = nil
                 self.manager = nil
                 self.state = .reconnecting
+                self.onConnectionUnavailable()
                 self.scheduleRetry()
             }
         }
@@ -215,6 +224,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
             self.attemptToken = UUID()
             self.tearDownSocket()
             self.state = .reconnecting
+            self.onConnectionUnavailable()
             self.scheduleRetry()
         }
     }
@@ -259,6 +269,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
             attemptInFlight = false
             tearDownSocket()
             state = .reconnecting
+            onConnectionUnavailable()
             return
         }
 
@@ -299,6 +310,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
             tearDownSocket()
             state = .reconnecting
             lastError = nil
+            onConnectionUnavailable()
             scheduleRetry()
         }
     }

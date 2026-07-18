@@ -42,7 +42,9 @@ struct CachedImage<Placeholder: View>: View {
             if let hit = ImageCache.shared.memoryImage(for: url) {
                 image = hit
             } else {
-                image = await ImageCache.shared.image(for: url)
+                image = await ImageCache.shared.previewImage(
+                    for: url,
+                    thumbnailURL: ServerConfig.mediaThumbnailURL(for: url))
             }
         }
         .onChange(of: image?.size) { _, size in

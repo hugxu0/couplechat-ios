@@ -22,7 +22,7 @@ actor OutboxProcessor {
         repeat {
             flushRequested = false
             let pending = await persistence.loadPendingOutbounds()
-            for item in pending {
+            for item in pending where !item.requiresManualRetry {
                 guard await isConnected() else { break }
                 let sent = await send(item)
                 if !sent {
@@ -70,6 +70,11 @@ actor OutboxProcessor {
 
     private static let maxMediaBytes = 50 * 1024 * 1024
 
+    nonisolated static func storageStats(username: String?) -> MediaCacheStats {
+        guard let username else { return .empty }
+        return MediaCacheStorage.stats(at: outboxDirectory(username: username))
+    }
+
     func persistMedia(
         data: Data,
         mimeType: String,
@@ -111,21 +116,16 @@ actor OutboxProcessor {
         guard let applicationSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask).first else { return nil }
-        let safeUsername = username
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        let directory = applicationSupport
-            .appendingPathComponent("ChatOutboxMedia", isDirectory: true)
-            .appendingPathComponent(safeUsername, isDirectory: true)
+        let directory = Self.outboxDirectory(
+            applicationSupport: applicationSupport,
+            username: username)
         let ext = MediaUploadService.fileExtension(for: mimeType)
         let url = directory.appendingPathComponent(clientId).appendingPathExtension(ext)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            MediaCacheStorage.markDirectoryAsLocalCache(directory)
             try write(url)
-            var values = URLResourceValues()
-            values.isExcludedFromBackup = true
-            var mutableURL = url
-            try? mutableURL.setResourceValues(values)
+            MediaCacheStorage.protect(url)
             return url
         } catch {
             return nil
@@ -151,5 +151,24 @@ actor OutboxProcessor {
                 print("[OutboxProcessor] Failed to remove file clientId=\(item.clientId)")
             }
         }
+    }
+
+    private nonisolated static func outboxDirectory(username: String) -> URL {
+        let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask)[0]
+        return outboxDirectory(applicationSupport: applicationSupport, username: username)
+    }
+
+    private nonisolated static func outboxDirectory(
+        applicationSupport: URL,
+        username: String
+    ) -> URL {
+        let safeUsername = username
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        return applicationSupport
+            .appendingPathComponent("ChatOutboxMedia", isDirectory: true)
+            .appendingPathComponent(safeUsername, isDirectory: true)
     }
 }

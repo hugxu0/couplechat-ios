@@ -19,10 +19,13 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var transcript: VoiceTranscript?
     var pending = false
     var failed = false
+    /// 仅用于本地乐观消息：已可靠入队，但当前尚未真正占用发送通道。
+    var waitingToSend = false
 
     private enum CodingKeys: String, CodingKey {
         case id, sender, senderName, kind, type, text, url, channel, ts, clientId
-        case recalledText, replyTo, replyPreview, meta, attachments, transcript, pending, failed
+        case recalledText, replyTo, replyPreview, meta, attachments, transcript
+        case pending, failed, waitingToSend
     }
 
     init?(dict: [String: Any]) {
@@ -95,6 +98,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         transcript = try container.decodeIfPresent(VoiceTranscript.self, forKey: .transcript)
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
         failed = try container.decodeIfPresent(Bool.self, forKey: .failed) ?? false
+        waitingToSend = try container.decodeIfPresent(Bool.self, forKey: .waitingToSend) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -117,6 +121,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(transcript, forKey: .transcript)
         try container.encode(pending, forKey: .pending)
         try container.encode(failed, forKey: .failed)
+        try container.encode(waitingToSend, forKey: .waitingToSend)
     }
 
     init(optimisticText text: String, me: Session, clientId: String, channel: String,
@@ -160,6 +165,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var date: Date { Date(timeIntervalSince1970: ts / 1000) }
 
     var mediaURL: URL? { ServerConfig.resolveMediaURL(url) }
+    var mediaThumbnailURL: URL? { ServerConfig.mediaThumbnailURL(for: mediaURL) }
 
     var timeString: String {
         let f = DateFormatter()
@@ -173,6 +179,7 @@ struct ChatMessageMeta: Codable, Equatable {
     var search: SearchMeta?
     var interaction: ChatInteractionMeta?
     var recallNotice: RecallNoticeMeta?
+    var media: ChatMediaMeta?
 
     init?(dict: [String: Any]) {
         var hasAny = false
@@ -200,6 +207,12 @@ struct ChatMessageMeta: Codable, Equatable {
         } else {
             recallNotice = nil
         }
+        if let mediaDict = dict["media"] as? [String: Any] {
+            media = ChatMediaMeta(dict: mediaDict)
+            hasAny = media != nil || hasAny
+        } else {
+            media = nil
+        }
         guard hasAny else { return nil }
     }
 
@@ -208,6 +221,34 @@ struct ChatMessageMeta: Codable, Equatable {
         search = nil
         self.interaction = interaction
         recallNotice = nil
+        media = nil
+    }
+
+    init(media: ChatMediaMeta) {
+        confirm = nil
+        search = nil
+        interaction = nil
+        recallNotice = nil
+        self.media = media
+    }
+}
+
+struct ChatMediaMeta: Codable, Equatable {
+    let durationMs: Int
+
+    init(durationMs: Int) {
+        self.durationMs = durationMs
+    }
+
+    init?(dict: [String: Any]) {
+        let value: Int?
+        if let number = dict["durationMs"] as? NSNumber {
+            value = number.intValue
+        } else {
+            value = dict["durationMs"] as? Int
+        }
+        guard let value, (1...600_000).contains(value) else { return nil }
+        durationMs = value
     }
 }
 
@@ -280,6 +321,7 @@ struct ChatAttachment: Identifiable, Codable, Equatable {
     }
 
     var mediaURL: URL? { ServerConfig.resolveMediaURL(url) }
+    var mediaThumbnailURL: URL? { ServerConfig.mediaThumbnailURL(for: mediaURL) }
 }
 
 struct ActionConfirm: Codable, Equatable {

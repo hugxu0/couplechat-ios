@@ -138,6 +138,32 @@ async function main() {
       "媒体消息要求 uploadId",
       !sendMessageSchema.safeParse({ channel: "couple", type: "image", text: "[图片]" }).success,
     );
+    const voiceDurationPayload = sendMessageSchema.safeParse({
+      channel: "couple",
+      type: "voice",
+      text: "[语音]",
+      uploadId: "up_smoke_voice_meta",
+      meta: { media: { durationMs: 12_345 } },
+    });
+    assertOk(
+      "语音时长元数据限制为 1...600000 整数毫秒且不能附着到其他消息类型",
+      voiceDurationPayload.success &&
+        voiceDurationPayload.data.meta?.media?.durationMs === 12_345 &&
+        !sendMessageSchema.safeParse({
+          channel: "couple",
+          type: "image",
+          text: "[图片]",
+          uploadId: "up_smoke_image_meta",
+          meta: { media: { durationMs: 12_345 } },
+        }).success &&
+        !sendMessageSchema.safeParse({
+          channel: "couple",
+          type: "voice",
+          text: "[语音]",
+          uploadId: "up_smoke_voice_meta",
+          meta: { media: { durationMs: 600_001 } },
+        }).success,
+    );
     const { questionLikelyNeedsImages, questionLooksLikeImageReaction } = await import(
       "../src/ai/imageAttachment"
     );
@@ -383,7 +409,10 @@ async function main() {
     const uploadId = "up_smoke_media_123";
     const uploadURL = "https://example.com/uploads/up_smoke_media_123.jpg";
     const mediaPath = path.join(dataDir, "up_smoke_media_123.jpg");
+    const { createImageThumbnail, thumbnailPathFor } = await import("../src/upload/thumbnail");
+    const mediaThumbnailPath = thumbnailPathFor(mediaPath);
     fs.writeFileSync(mediaPath, "media");
+    fs.writeFileSync(mediaThumbnailPath, "thumbnail");
     await db.run(
       "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [uploadId, user.username, mediaPath, uploadURL, "image/jpeg", 5, Date.now()],
@@ -404,21 +433,60 @@ async function main() {
     assertOk("同一 upload 不能绑定两条消息", duplicateAttachmentRejected);
     const recalledMedia = await recallMessage(user, media.id);
     let recalledUpload = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", [uploadId]);
-    for (let attempt = 0; attempt < 50 && (recalledUpload || fs.existsSync(mediaPath)); attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < 50 && (recalledUpload || fs.existsSync(mediaPath) || fs.existsSync(mediaThumbnailPath));
+      attempt += 1
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 10));
       recalledUpload = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", [uploadId]);
     }
     assertOk(
       "撤回媒体消息同时删除附件",
-      recalledMedia?.id === media.id && !recalledUpload && !fs.existsSync(mediaPath),
+      recalledMedia?.id === media.id && !recalledUpload &&
+        !fs.existsSync(mediaPath) && !fs.existsSync(mediaThumbnailPath),
     );
+
+    const voiceMetaUploadId = "up_smoke_voice_meta";
+    const voiceMetaPath = path.join(dataDir, "smoke-voice-meta.m4a");
+    fs.writeFileSync(voiceMetaPath, "voice");
+    await db.run(
+      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        voiceMetaUploadId,
+        user.username,
+        voiceMetaPath,
+        "https://example.com/voice-meta.m4a",
+        "audio/m4a",
+        5,
+        Date.now(),
+      ],
+    );
+    const voiceWithDuration = await createMessage(user, {
+      channel: "couple",
+      type: "voice",
+      text: "[语音]",
+      uploadId: voiceMetaUploadId,
+      clientId: "smoke-voice-meta-1",
+      meta: { media: { durationMs: 12_345 } },
+    });
+    const returnedVoiceMeta = voiceWithDuration.meta as {
+      media?: { durationMs?: number };
+    } | null;
+    assertOk(
+      "语音时长元数据随消息持久化并返回",
+      returnedVoiceMeta?.media?.durationMs === 12_345,
+    );
+    await recallMessage(user, voiceWithDuration.id);
 
     // 相册/Live Photo：一条逻辑消息原子绑定静态图与 paired video，撤回整组清理。
     const albumPhotoId = "up_smoke_album_photo";
     const albumMotionId = "up_smoke_album_motion";
     const albumPhotoPath = path.join(dataDir, "smoke-album.jpg");
+    const albumPhotoThumbnailPath = thumbnailPathFor(albumPhotoPath);
     const albumMotionPath = path.join(dataDir, "smoke-album.mov");
     fs.writeFileSync(albumPhotoPath, "photo");
+    fs.writeFileSync(albumPhotoThumbnailPath, "thumbnail");
     fs.writeFileSync(albumMotionPath, "motion");
     await db.run(
       `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose)
@@ -449,7 +517,12 @@ async function main() {
     );
     for (
       let attempt = 0;
-      attempt < 50 && (remainingAlbumUploads.length > 0 || fs.existsSync(albumPhotoPath) || fs.existsSync(albumMotionPath));
+      attempt < 50 && (
+        remainingAlbumUploads.length > 0 ||
+        fs.existsSync(albumPhotoPath) ||
+        fs.existsSync(albumPhotoThumbnailPath) ||
+        fs.existsSync(albumMotionPath)
+      );
       attempt += 1
     ) {
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -459,12 +532,17 @@ async function main() {
     }
     assertOk(
       "撤回相册消息清理整组附件",
-      remainingAlbumUploads.length === 0 && !fs.existsSync(albumPhotoPath) && !fs.existsSync(albumMotionPath),
+      remainingAlbumUploads.length === 0 &&
+        !fs.existsSync(albumPhotoPath) &&
+        !fs.existsSync(albumPhotoThumbnailPath) &&
+        !fs.existsSync(albumMotionPath),
     );
     // 只清理明确用于消息且超过 24h 仍未绑定的文件；头像/贴纸不误删。
     const abandonedPath = path.join(dataDir, "abandoned-message.jpg");
+    const abandonedThumbnailPath = thumbnailPathFor(abandonedPath);
     const avatarPath = path.join(dataDir, "keep-avatar.jpg");
     fs.writeFileSync(abandonedPath, "abandoned");
+    fs.writeFileSync(abandonedThumbnailPath, "thumbnail");
     fs.writeFileSync(avatarPath, "avatar");
     const oldCreatedAt = Date.now() - 2 * 24 * 60 * 60 * 1000;
     await db.run(
@@ -480,17 +558,58 @@ async function main() {
     const keptAvatar = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", ["up_avatar_keep_123"]);
     assertOk(
       "过期消息附件清理且不误删头像",
-      cleaned === 1 && !fs.existsSync(abandonedPath) && fs.existsSync(avatarPath) && keptAvatar?.id === "up_avatar_keep_123",
+      cleaned === 1 &&
+        !fs.existsSync(abandonedPath) &&
+        !fs.existsSync(abandonedThumbnailPath) &&
+        fs.existsSync(avatarPath) &&
+        keptAvatar?.id === "up_avatar_keep_123",
     );
 
-    const { signedMediaURL, signMediaId, verifyMediaSignature, parseRequestedByteRange } = await import("../src/upload/mediaAccess");
+    const thumbnailSourcePath = path.join(dataDir, "thumbnail-source.png");
+    const generatedThumbnailPath = thumbnailPathFor(thumbnailSourcePath);
+    const sharp = (await import("sharp")).default;
+    await sharp({
+      create: {
+        width: 1_400,
+        height: 900,
+        channels: 3,
+        background: { r: 238, g: 125, b: 162 },
+      },
+    }).png().toFile(thumbnailSourcePath);
+    const thumbnailCreated = await createImageThumbnail(
+      thumbnailSourcePath,
+      generatedThumbnailPath,
+      "image/png",
+    );
+    const thumbnailMetadata = thumbnailCreated
+      ? await sharp(generatedThumbnailPath).metadata()
+      : undefined;
+    assertOk(
+      "静态图片上传生成最长边 720px 的 JPEG 缩略图",
+      thumbnailCreated &&
+        thumbnailMetadata?.format === "jpeg" &&
+        thumbnailMetadata.width === 720 &&
+        thumbnailMetadata.height === 463,
+    );
+
+    const {
+      signedMediaURL,
+      signedMediaThumbnailURL,
+      signMediaId,
+      verifyMediaSignature,
+      parseRequestedByteRange,
+    } = await import("../src/upload/mediaAccess");
     const signedURL = new URL(signedMediaURL("up_signature_123"));
+    const signedThumbnailURL = new URL(signedMediaThumbnailURL("up_signature_123"));
     const signature = signedURL.searchParams.get("sig") ?? "";
     const exp = Number(signedURL.searchParams.get("exp") ?? "0");
     const signed = signMediaId("up_signature_123", exp);
     assertOk(
       "新媒体 URL 使用 HMAC 签名与过期时间",
       signedURL.pathname === "/media/up_signature_123" &&
+        signedThumbnailURL.pathname === "/media/up_signature_123/thumbnail" &&
+        signedThumbnailURL.searchParams.has("sig") &&
+        signedThumbnailURL.searchParams.has("exp") &&
         Number.isFinite(exp) && exp > Date.now() &&
         signature === signed.sig &&
         verifyMediaSignature("up_signature_123", signature, exp) &&
@@ -504,11 +623,14 @@ async function main() {
     );
     const routeMediaId = "up_signed_route_123";
     const routeMediaPath = path.join(dataDir, `${routeMediaId}.txt`);
+    const routeThumbnailPath = thumbnailPathFor(routeMediaPath);
     fs.writeFileSync(routeMediaPath, "signed-media");
+    fs.writeFileSync(routeThumbnailPath, "signed-thumb");
     const routeMediaURL = signedMediaURL(routeMediaId);
+    const routeThumbnailURL = signedMediaThumbnailURL(routeMediaId);
     await db.run(
       "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [routeMediaId, user.username, routeMediaPath, routeMediaURL, "text/plain", 12, Date.now(), "avatar"],
+      [routeMediaId, user.username, routeMediaPath, routeMediaURL, "image/jpeg", 12, Date.now(), "avatar"],
     );
     const compatibleRouteFilename = "1783639852451-95c29e3767ff.jpg";
     const compatibleRoutePath = path.join(dataDir, compatibleRouteFilename);
@@ -570,6 +692,15 @@ async function main() {
       headers: { authorization },
     });
     const signedResponse = await app.inject({ method: "GET", url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search });
+    const thumbnailResponse = await app.inject({
+      method: "GET",
+      url: new URL(routeThumbnailURL).pathname + new URL(routeThumbnailURL).search,
+    });
+    const thumbnailRangeResponse = await app.inject({
+      method: "GET",
+      url: new URL(routeThumbnailURL).pathname + new URL(routeThumbnailURL).search,
+      headers: { range: "bytes=1-4" },
+    });
     const rangeResponse = await app.inject({
       method: "GET",
       url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search,
@@ -578,6 +709,72 @@ async function main() {
     const compatibleRouteResponse = await app.inject({ method: "GET", url: `/uploads/${compatibleRouteFilename}` });
     const invalidSignatureResponse = await app.inject({ method: "GET", url: `/media/${routeMediaId}?sig=invalid-signature-value-000000000000` });
     const bypassResponse = await app.inject({ method: "GET", url: `/uploads/${path.basename(routeMediaPath)}` });
+    const clientOriginal = await sharp({
+      create: {
+        width: 1_400,
+        height: 900,
+        channels: 3,
+        background: { r: 84, g: 142, b: 235 },
+      },
+    }).jpeg().toBuffer();
+    const clientThumbnail = await sharp(clientOriginal)
+      .resize({ width: 720, height: 720, fit: "inside" })
+      .jpeg({ quality: 78 })
+      .toBuffer();
+    const uploadBoundary = "SmokeBoundaryClientThumbnail";
+    const uploadPayload = Buffer.concat([
+      Buffer.from(
+        `--${uploadBoundary}\r\n` +
+        "Content-Disposition: form-data; name=\"thumbnailBase64\"\r\n" +
+        "Content-Type: text/plain; charset=us-ascii\r\n\r\n",
+      ),
+      Buffer.from(clientThumbnail.toString("base64")),
+      Buffer.from(
+        `\r\n--${uploadBoundary}\r\n` +
+        "Content-Disposition: form-data; name=\"file\"; filename=\"client-original.jpg\"\r\n" +
+        "Content-Type: image/jpeg\r\n\r\n",
+      ),
+      clientOriginal,
+      Buffer.from(`\r\n--${uploadBoundary}--\r\n`),
+    ]);
+    const uploadResponse = await app.inject({
+      method: "POST",
+      url: "/api/upload?purpose=message",
+      headers: {
+        authorization,
+        "content-type": `multipart/form-data; boundary=${uploadBoundary}`,
+      },
+      payload: uploadPayload,
+    });
+    const uploadedBody = uploadResponse.statusCode === 200
+      ? uploadResponse.json<{ id: string }>()
+      : undefined;
+    const uploadedRow = uploadedBody
+      ? await db.get<{ path: string }>("SELECT path FROM uploads WHERE id = ?", [uploadedBody.id])
+      : undefined;
+    const uploadedThumbnailPath = uploadedRow ? thumbnailPathFor(uploadedRow.path) : undefined;
+    const invalidThumbnailPayload = Buffer.concat([
+      Buffer.from(
+        `--${uploadBoundary}\r\n` +
+        "Content-Disposition: form-data; name=\"thumbnailBase64\"\r\n" +
+        "Content-Type: text/plain; charset=us-ascii\r\n\r\n" +
+        `${clientOriginal.toString("base64")}\r\n` +
+        `--${uploadBoundary}\r\n` +
+        "Content-Disposition: form-data; name=\"file\"; filename=\"client-original.jpg\"\r\n" +
+        "Content-Type: image/jpeg\r\n\r\n",
+      ),
+      clientOriginal,
+      Buffer.from(`\r\n--${uploadBoundary}--\r\n`),
+    ]);
+    const invalidThumbnailResponse = await app.inject({
+      method: "POST",
+      url: "/api/upload?purpose=message",
+      headers: {
+        authorization,
+        "content-type": `multipart/form-data; boundary=${uploadBoundary}`,
+      },
+      payload: invalidThumbnailPayload,
+    });
     await app.close();
     assertOk(
       "REST bootstrap 与消息分页返回有界快照",
@@ -596,11 +793,23 @@ async function main() {
     assertOk("那年今日接口已完整退役", retiredOnThisDayResponse.statusCode === 404);
     assertOk("AI MCP GET 探测继续保持 405 契约", mcpGetResponse.statusCode === 405);
     assertOk(
-      "签名媒体路由拒绝伪造签名和裸路径旁路",
+      "上传接口校验并保留客户端生成的 JPEG 缩略图",
+      uploadResponse.statusCode === 200 &&
+        invalidThumbnailResponse.statusCode === 415 &&
+        uploadedThumbnailPath !== undefined &&
+        fs.existsSync(uploadedThumbnailPath) &&
+        fs.readFileSync(uploadedThumbnailPath).equals(clientThumbnail),
+    );
+    assertOk(
+      "签名原图/缩略图支持 Range 且拒绝伪造签名和裸路径旁路",
       healthResponse.statusCode === 200 && healthResponse.json().database === "ok" &&
         liveResponse.statusCode === 200 && liveResponse.json().process === "alive" &&
         readyResponse.statusCode === 200 && readyResponse.json().database === "ok" &&
         signedResponse.statusCode === 200 && signedResponse.body === "signed-media" &&
+        thumbnailResponse.statusCode === 200 && thumbnailResponse.body === "signed-thumb" &&
+        thumbnailResponse.headers["content-type"] === "image/jpeg" &&
+        thumbnailRangeResponse.statusCode === 206 && thumbnailRangeResponse.body === "igne" &&
+        thumbnailRangeResponse.headers["content-range"] === "bytes 1-4/12" &&
         rangeResponse.statusCode === 206 && rangeResponse.body === "gned-m" &&
         rangeResponse.headers["accept-ranges"] === "bytes" &&
         rangeResponse.headers["content-range"] === "bytes 2-7/12" &&

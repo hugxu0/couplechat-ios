@@ -8,6 +8,7 @@ import { run } from "../db";
 import { config } from "../config";
 import { requireAuth } from "../auth/httpAuth";
 import { signedMediaURL } from "./mediaAccess";
+import { createImageThumbnail, thumbnailPathFor, validateClientThumbnail } from "./thumbnail";
 import { errorCodeFor, errorCodes } from "../errors/errorCodes";
 import { startOperation } from "../observability/operationLog";
 
@@ -29,6 +30,14 @@ const allowedMime = new Set([
 const uploadQuerySchema = z.object({
   purpose: z.enum(["message", "album", "avatar", "sticker"]),
 });
+const CLIENT_THUMBNAIL_MAX_BYTES = 512 * 1024;
+const clientThumbnailMimeTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+]);
 
 function extensionFor(mimeType: string) {
   switch (mimeType) {
@@ -92,6 +101,38 @@ function invalidFileSignatureError() {
   return Object.assign(new Error("file_signature_mismatch"), { statusCode: 415 });
 }
 
+function clientThumbnailFromFields(fields: unknown, originalMimeType: string): Buffer | undefined {
+  const raw = typeof fields === "object" && fields !== null
+    ? (fields as Record<string, unknown>).thumbnailBase64
+    : undefined;
+  if (raw === undefined) return undefined;
+  if (!clientThumbnailMimeTypes.has(originalMimeType)) throw invalidFileSignatureError();
+  const candidate = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof candidate !== "object" || candidate === null) throw invalidFileSignatureError();
+  const field = candidate as {
+    type?: unknown;
+    value?: unknown;
+    valueTruncated?: unknown;
+  };
+  if (field.type !== "field" || field.valueTruncated === true || typeof field.value !== "string") {
+    throw invalidFileSignatureError();
+  }
+  const encoded = field.value.trim();
+  const maxEncodedLength = Math.ceil(CLIENT_THUMBNAIL_MAX_BYTES / 3) * 4;
+  if (!encoded || encoded.length > maxEncodedLength || encoded.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+    throw invalidFileSignatureError();
+  }
+  const data = Buffer.from(encoded, "base64");
+  if (data.length > CLIENT_THUMBNAIL_MAX_BYTES ||
+      data.toString("base64") !== encoded ||
+      data.length < 3 ||
+      data[0] !== 0xff || data[1] !== 0xd8 || data[2] !== 0xff) {
+    throw invalidFileSignatureError();
+  }
+  return data;
+}
+
 export async function registerUploadRoutes(app: FastifyInstance) {
   fs.mkdirSync(config.uploadDir, { recursive: true });
 
@@ -105,6 +146,7 @@ export async function registerUploadRoutes(app: FastifyInstance) {
 
     const file = await request.file();
     if (!file) return reply.code(400).send({ error: errorCodes.fileRequired });
+    if (file.fieldname !== "file") return reply.code(400).send({ error: errorCodes.invalidRequest });
     if (!allowedMime.has(file.mimetype)) return reply.code(415).send({ error: errorCodes.unsupportedMediaType });
 
     const id = `up_${nanoid(16)}`;
@@ -117,11 +159,29 @@ export async function registerUploadRoutes(app: FastifyInstance) {
     const filename = `${id}${extensionFor(file.mimetype)}`;
     const fullPath = path.join(config.uploadDir, filename);
     const tempPath = path.join(config.uploadDir, `.${filename}.uploading`);
+    const thumbnailPath = thumbnailPathFor(fullPath);
+    const thumbnailTempPath = path.join(
+      config.uploadDir,
+      `.${path.basename(thumbnailPath)}.uploading`,
+    );
     try {
       // 先写入不可访问的临时文件；元数据落库成功后才发布签名媒体地址。
       await pipeline(file.file, fs.createWriteStream(tempPath, { flags: "wx" }));
       const stat = fs.statSync(tempPath);
       if (!hasExpectedSignature(tempPath, file.mimetype)) throw invalidFileSignatureError();
+      const clientThumbnail = clientThumbnailFromFields(file.fields, file.mimetype);
+      let hasThumbnail = false;
+      if (clientThumbnail) {
+        if (!await validateClientThumbnail(clientThumbnail)) throw invalidFileSignatureError();
+        fs.writeFileSync(thumbnailTempPath, clientThumbnail, { flag: "wx" });
+        hasThumbnail = true;
+      } else {
+        hasThumbnail = await createImageThumbnail(
+          tempPath,
+          thumbnailTempPath,
+          file.mimetype,
+        );
+      }
       const url = signedMediaURL(id);
 
       await run(
@@ -130,6 +190,16 @@ export async function registerUploadRoutes(app: FastifyInstance) {
         [id, request.user.username, fullPath, url, file.mimetype, stat.size, Date.now(), query.data.purpose],
       );
       fs.renameSync(tempPath, fullPath);
+      if (hasThumbnail) {
+        try {
+          fs.renameSync(thumbnailTempPath, thumbnailPath);
+        } catch (error) {
+          fs.rmSync(thumbnailTempPath, { force: true });
+          console.warn(
+            `[upload] 缩略图发布失败 id=${id}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       operation.success({ sizeBytes: stat.size });
 
       return {
@@ -143,6 +213,8 @@ export async function registerUploadRoutes(app: FastifyInstance) {
       // 上传中断、磁盘错误或数据库异常都不留下可访问的孤儿文件。
       fs.rmSync(tempPath, { force: true });
       fs.rmSync(fullPath, { force: true });
+      fs.rmSync(thumbnailTempPath, { force: true });
+      fs.rmSync(thumbnailPath, { force: true });
       await run("DELETE FROM uploads WHERE id = ?", [id]).catch(() => undefined);
       operation.failure(errorCodeFor(error));
       throw error;

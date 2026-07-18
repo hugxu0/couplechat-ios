@@ -16,10 +16,19 @@ extension HTTPClient {
 }
 
 struct URLSessionHTTPClient: HTTPClient {
+    private static let defaultSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 45
+        // URLSession.shared 的资源超时很长，上传链路断在半途时会长期占住 outbox。
+        configuration.timeoutIntervalForResource = 300
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
+    }()
+
     private let session: URLSession
 
-    init(session: URLSession = .shared) {
-        self.session = session
+    init(session: URLSession? = nil) {
+        self.session = session ?? Self.defaultSession
     }
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {

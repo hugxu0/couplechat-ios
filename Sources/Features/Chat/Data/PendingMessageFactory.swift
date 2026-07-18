@@ -51,18 +51,23 @@ enum PendingMessageFactory {
         previewURL: URL?,
         channel: ChatChannel,
         session: Session,
+        durationMs: Int? = nil,
         clientId requestedClientId: String? = nil,
         createdAt: Double = Date().timeIntervalSince1970 * 1000
     ) -> PendingMessageDraft {
         let clientId = requestedClientId ?? makeClientId()
         let outgoingText = text ?? placeholderText(for: type)
+        let meta = durationMs.map {
+            ChatMessageMeta(media: ChatMediaMeta(durationMs: $0))
+        }
         var message = ChatMessage(
             optimisticMedia: type,
             text: outgoingText,
             localURL: durableURL?.absoluteString ?? previewURL?.absoluteString,
             me: session,
             clientId: clientId,
-            channel: channel.rawValue)
+            channel: channel.rawValue,
+            meta: meta)
         message.ts = createdAt
         let outbound = PendingOutboundMessage(
             clientId: clientId,
@@ -77,7 +82,8 @@ enum PendingMessageFactory {
             uploadURL: nil,
             createdAt: createdAt,
             attempts: 0,
-            lastError: nil)
+            lastError: nil,
+            metaJSON: encodedMeta(meta))
         return PendingMessageDraft(message: message, outbound: outbound)
     }
 

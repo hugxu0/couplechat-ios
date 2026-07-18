@@ -106,6 +106,9 @@ final class ChatStore: ObservableObject {
                 await self.recoverSyncV2()
             }
         },
+        onConnectionUnavailable: { [weak self] in
+            self?.messageStore.markPendingWaitingToSend()
+        },
         onUnauthorized: { [weak self] in self?.auth.verifySessionOrLogout() })
     private lazy var eventRouter = RealtimeEventRouter(
         auth: auth,
@@ -318,6 +321,8 @@ final class ChatStore: ObservableObject {
         MediaFavoriteStore.shared.deactivate()
         shared.deactivate()
         Task {
+            await ImageCache.shared.clearAllAsync()
+            await MediaFileCache.shared.clearAll()
             await auth.logout()
             // 若期间已登录新账号，不再 revoke 旧设备之外的操作。
             guard let sessionToRevoke else { return }
@@ -389,7 +394,15 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?, channel: ChatChannel = .couple, displayText: String? = nil) {
+    func sendMedia(
+        data: Data,
+        mimeType: String,
+        preferredType: String,
+        localPreviewURL: URL?,
+        channel: ChatChannel = .couple,
+        displayText: String? = nil,
+        durationMs: Int? = nil
+    ) {
         guard let session = auth.session else { return }
         if channel == .ai, preferredType == "image" { messageStore.aiReplying = true }
         Task {
@@ -400,6 +413,7 @@ final class ChatStore: ObservableObject {
                 localPreviewURL: localPreviewURL,
                 channel: channel,
                 displayText: displayText,
+                durationMs: durationMs,
                 session: session)
         }
     }
@@ -410,11 +424,18 @@ final class ChatStore: ObservableObject {
         preferredType: String,
         localPreviewURL: URL?,
         channel: ChatChannel = .couple,
-        displayText: String? = nil
+        displayText: String? = nil,
+        durationMs: Int? = nil,
+        removeSourceAfterPersist: Bool = false
     ) {
         guard let session = auth.session else { return }
         if channel == .ai, preferredType == "image" { messageStore.aiReplying = true }
         Task {
+            defer {
+                if removeSourceAfterPersist {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+            }
             await messageStore.sendMediaFile(
                 fileURL: fileURL,
                 mimeType: mimeType,
@@ -422,6 +443,7 @@ final class ChatStore: ObservableObject {
                 localPreviewURL: localPreviewURL,
                 channel: channel,
                 displayText: displayText,
+                durationMs: durationMs,
                 session: session)
         }
     }

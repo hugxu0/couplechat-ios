@@ -55,6 +55,9 @@ export async function buildApp(dependencies: AppDependencies = {}) {
     limits: {
       fileSize: 50 * 1024 * 1024,
       files: 1,
+      fields: 1,
+      parts: 2,
+      fieldSize: 768 * 1024,
     },
   });
   const readiness = async (_request: unknown, reply: { code(status: number): { send(value: unknown): unknown } }) => {

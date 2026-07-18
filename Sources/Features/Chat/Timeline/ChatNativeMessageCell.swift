@@ -1,4 +1,3 @@
-import AVFoundation
 import PhotosUI
 import UIKit
 
@@ -41,7 +40,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     private let interactionFeather = CAGradientLayer()
 
     private var representedImageURL: URL?
-    private var representedVoiceURL: URL?
     private var message: ChatMessage?
     private var mine = false
     private var grouped = false
@@ -232,7 +230,6 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         super.prepareForReuse()
         message = nil
         representedImageURL = nil
-        representedVoiceURL = nil
         voiceTranscript = nil
         voiceTranscriptExpanded = false
         mediaImageView.stopAnimating()
@@ -365,6 +362,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         guard let message else { return }
         statusLabel.text = statusText(message: message, read: read)
         statusLabel.isHidden = !mine || message.failed
+        statusLabel.accessibilityLabel = statusAccessibilityLabel(message: message, read: read)
         statusLabel.textColor = read ? .white : accentColor
         statusLabel.backgroundColor = read ? accentColor.withAlphaComponent(0.92) : .clear
         statusLabel.layer.borderColor = accentColor.withAlphaComponent(0.85).cgColor
@@ -620,7 +618,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             return
         }
         Task { [weak self] in
-            let image = await ImageCache.shared.image(for: url)
+            let image = await ImageCache.shared.previewImage(
+                for: url,
+                thumbnailURL: message.type == "image" ? message.mediaThumbnailURL : nil)
             await MainActor.run {
                 guard let self, self.representedImageURL == url else { return }
                 self.applyMediaImage(image)
@@ -652,7 +652,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             albumScrollView.addSubview(container)
             guard let url = attachment.mediaURL else { continue }
             Task { [weak imageView] in
-                let image = await ImageCache.shared.image(for: url)
+                let image = await ImageCache.shared.previewImage(
+                    for: url,
+                    thumbnailURL: attachment.mediaThumbnailURL)
                 await MainActor.run {
                     imageView?.stopAnimating()
                     imageView?.image = image
@@ -683,9 +685,10 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         case "voice":
             bodyLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
             bodyLabel.textColor = foreground
-            bodyLabel.text = "···"
+            bodyLabel.text = message.meta?.media.map {
+                Self.voiceDurationText(milliseconds: $0.durationMs)
+            } ?? "语音"
             updateVoiceWaveform(color: foreground)
-            loadVoiceDuration(message)
         case "file":
             let text = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
             bodyLabel.text = text.isEmpty ? "文件" : text
@@ -693,7 +696,13 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             bodyLabel.adjustsFontForContentSizeCategory = true
             bodyLabel.numberOfLines = 1
             bodyLabel.lineBreakMode = .byTruncatingMiddle
-            fileMetaLabel.text = message.pending ? "正在上传" : "文件 · 轻点预览"
+            if message.failed {
+                fileMetaLabel.text = "发送失败 · 轻点重试"
+            } else if message.pending {
+                fileMetaLabel.text = message.waitingToSend ? "等待发送" : "正在上传"
+            } else {
+                fileMetaLabel.text = "文件 · 轻点预览"
+            }
             fileMetaLabel.textColor = foreground.withAlphaComponent(0.68)
             fileActionView.tintColor = foreground.withAlphaComponent(0.72)
         default:
@@ -1025,28 +1034,21 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     }
 
     private func statusText(message: ChatMessage, read: Bool) -> String {
+        if message.pending, message.waitingToSend { return "待" }
         if message.pending { return "…" }
         if message.failed { return "" }
         return "✓"
     }
 
-    private func loadVoiceDuration(_ message: ChatMessage) {
-        guard !message.pending, let url = message.mediaURL else { return }
-        representedVoiceURL = url
-        Task { [weak self, url] in
-            guard let localURL = try? await VoiceMediaCache.shared.localURL(for: url) else { return }
-            let asset = AVURLAsset(url: localURL)
-            let duration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
-            guard duration.isFinite, duration > 0 else { return }
-            await MainActor.run {
-                guard let self, self.representedVoiceURL == url else { return }
-                self.bodyLabel.text = Self.voiceDurationText(duration)
-            }
-        }
+    private func statusAccessibilityLabel(message: ChatMessage, read: Bool) -> String {
+        if message.failed { return "发送失败" }
+        if message.pending, message.waitingToSend { return "等待发送" }
+        if message.pending { return "正在发送" }
+        return read ? "已读" : "已发送"
     }
 
-    private static func voiceDurationText(_ duration: TimeInterval) -> String {
-        let seconds = max(1, Int(duration.rounded()))
+    private static func voiceDurationText(milliseconds: Int) -> String {
+        let seconds = max(1, Int((Double(milliseconds) / 1_000).rounded()))
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 

@@ -7,4 +7,5 @@ protocol SocketProvider: AnyObject {
     var isConnected: Bool { get }
     var sessionUsername: String? { get }
     var currentSession: Session? { get }
+    func recoverConnection()
 }

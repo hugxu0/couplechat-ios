@@ -42,8 +42,14 @@ const interactionSchema = z.object({
   text: z.string().max(200),
 });
 
+const mediaMetaSchema = z.object({
+  // 当前 App 内语音最长 10 分钟；保存整数毫秒可让接收端无需下载音频就完成布局。
+  durationMs: z.number().int().min(1).max(600_000),
+}).strict();
+
 const messageMetaSchema = z.object({
   interaction: interactionSchema.optional(),
+  media: mediaMetaSchema.optional(),
 }).passthrough();
 
 export const sendMessageSchema = z.object({
@@ -93,6 +99,9 @@ export const sendMessageSchema = z.object({
   }
   if (!requiresUpload && value.uploadId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uploadId"], message: "upload_reference_not_allowed" });
+  }
+  if (value.meta?.media && value.type !== "voice") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["meta", "media"], message: "media_duration_requires_voice" });
   }
 });
 

@@ -7,11 +7,19 @@ struct AppLocalStatsBuckets {
 
 struct AppStorageBreakdown {
     var imageCacheBytes: Int64
+    var voiceCacheBytes: Int64
+    var fileCacheBytes: Int64
+    var outboxBytes: Int64
     var databaseBytes: Int64
     var cachedImageFiles: Int
+    var cachedVoiceFiles: Int
+    var cachedPreviewFiles: Int
+    var outboxFiles: Int
     var coupleMessages: Int
     var aiMessages: Int
-    var totalBytes: Int64 { imageCacheBytes + databaseBytes }
+    var totalBytes: Int64 {
+        imageCacheBytes + voiceCacheBytes + fileCacheBytes + outboxBytes + databaseBytes
+    }
 }
 
 struct AppMediaCacheResult: Equatable {
@@ -70,11 +78,19 @@ actor LocalDataRepository {
         return AppLocalStatsBuckets(days: days, months: months)
     }
 
-    func storageBreakdown() async -> AppStorageBreakdown {
-        await AppStorageBreakdown(
+    func storageBreakdown(username: String? = nil) async -> AppStorageBreakdown {
+        let downloaded = await MediaFileCache.shared.stats()
+        let outbox = OutboxProcessor.storageStats(username: username)
+        return await AppStorageBreakdown(
             imageCacheBytes: ImageCache.shared.diskUsageBytes(),
+            voiceCacheBytes: downloaded.voice.bytes,
+            fileCacheBytes: downloaded.files.bytes,
+            outboxBytes: outbox.bytes,
             databaseBytes: persistence.databaseSizeBytes(),
             cachedImageFiles: ImageCache.shared.cachedFileCount(),
+            cachedVoiceFiles: downloaded.voice.fileCount,
+            cachedPreviewFiles: downloaded.files.fileCount,
+            outboxFiles: outbox.fileCount,
             coupleMessages: persistence.messageCount(channel: ChatChannel.couple.rawValue),
             aiMessages: persistence.messageCount(channel: ChatChannel.ai.rawValue))
     }
@@ -88,7 +104,10 @@ actor LocalDataRepository {
             rawURLs += await persistence.mediaURLs(
                 channel: channel.rawValue, types: ["image", "sticker"])
         }
-        let urls = Array(Set(rawURLs.compactMap(ServerConfig.resolveMediaURL)))
+        var seen: Set<String> = []
+        let urls = rawURLs.compactMap(ServerConfig.resolveMediaURL).filter {
+            seen.insert(MediaCacheIdentity.value(for: $0)).inserted
+        }
         onProgress(0, urls.count, 0)
         var completed = 0
         var failed = 0
@@ -103,8 +122,9 @@ actor LocalDataRepository {
         return AppMediaCacheResult(total: urls.count, completed: completed, failed: failed)
     }
 
-    nonisolated func clearImageCache() {
-        ImageCache.shared.clearAll()
+    func clearDownloadedMedia() async {
+        await ImageCache.shared.clearAllAsync()
+        await MediaFileCache.shared.clearAll()
     }
 
     private static let weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"]

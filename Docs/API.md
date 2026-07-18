@@ -74,13 +74,16 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| `POST` | `/api/upload?purpose=message|avatar|sticker|album` | multipart 单文件上传，最大 50 MB |
+| `POST` | `/api/upload?purpose=message|avatar|sticker|album` | multipart 原文件上传，最大 50 MB；可在文件前附带客户端缩略图字段 |
 | `GET` | `/media/:id?sig=...&exp=...` | 签名媒体地址；新签发含 `exp`（默认 TTL 24h，可用 `MEDIA_URL_TTL_SECONDS`）；无 `exp` 的历史签名仍兼容 |
+| `GET` | `/media/:id/thumbnail?sig=...&exp=...` | 与原资源同签名范围的静态 JPEG 缩略图；不存在时返回 404 |
 | `GET` | `/uploads/:filename` | 已有消息的兼容媒体地址 |
 
-上传成功返回 `id`、`url`、`mimeType`、`size` 和 `type`。发送媒体消息时必须使用返回的 `id` 作为 `uploadId`。
+上传成功返回 `id`、`url`、`mimeType`、`size` 和 `type`。发送媒体消息时必须使用返回的 `id` 作为 `uploadId`。新版 iOS 对可静态预览的图片在后台生成最长边 720 px、最多 512 KiB 的 JPEG，并在原文件 part 之前以 `thumbnailBase64` 文本字段提交；服务端只接受规范 Base64、JPEG 文件头和允许的原图 MIME，字段或文件超限、截断及签名不符均拒绝整个上传。旧客户端仍可只提交 `file`。
 
-两个媒体读取入口均支持单段 HTTP Range，并返回 `Accept-Ranges: bytes`、`206` 和 `Content-Range`。必须正确支持 `bytes=start-end`、`bytes=start-` 与 `bytes=-suffixLength`；视频播放器会使用 suffix Range 读取文件尾部元数据，不能把它退化成整文件响应。
+服务端优先保存已校验的客户端缩略图；旧客户端未附带时，再为可安全静态解码的 JPEG、PNG、WebP、HEIC/HEIF 尝试生成相同规格的预览。动图、当前图像库无法解码的格式以及发布前已有媒体可能没有缩略图；客户端必须在 404 时回退原资源。缩略图是上传文件的派生旁路文件，撤回和过期附件清理会同时删除，备份与恢复随 `uploads/` 一起处理。
+
+三个媒体读取入口均支持单段 HTTP Range，并返回 `Accept-Ranges: bytes`、`206` 和 `Content-Range`。必须正确支持 `bytes=start-end`、`bytes=start-` 与 `bytes=-suffixLength`；视频播放器会使用 suffix Range 读取文件尾部元数据，不能把它退化成整文件响应。
 
 ### 提醒与备忘
 
@@ -229,6 +232,7 @@ io("https://hoo66.top", { auth: { token } })
 - `type`：`text/image/video/sticker/voice/file`。
 - `text` 最长 8,000 字符；`replyPreview` 最长 500 字符。
 - 图片、视频、语音和文件必须引用 `uploadId`；贴纸可使用已有贴纸 URL。
+- 新版语音消息可带 `meta.media.durationMs`，值为 `1...600000` 的整数毫秒；该字段只允许用于 `type=voice`。旧客户端可省略，服务端原样返回并持久化合法元数据。
 - 服务端契约支持最多 9 个 Live Photo asset（最多 18 个 attachment part）；每个 asset 必须有 `photo`，可带一个 `pairedVideo`，同一上传不能重复引用。当前 iOS 选择器仍只发送静态照片。
 - `clientId` 应始终提供，用于重试幂等。
 

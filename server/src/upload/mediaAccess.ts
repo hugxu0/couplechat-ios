@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { config } from "../config";
 import { get, type UploadRow } from "../db";
+import { thumbnailPathFor } from "./thumbnail";
 
 const mediaParamsSchema = z.object({ id: z.string().regex(/^up_[A-Za-z0-9_-]{8,}$/) });
 // 新后端使用 up_<id>，旧网页后端使用 <13位毫秒时间戳>-<12位hex>。
@@ -63,6 +64,12 @@ export function signedMediaURL(id: string, options?: { ttlSeconds?: number }): s
   return `${config.publicBaseURL}/media/${id}?sig=${sig}&exp=${exp}`;
 }
 
+export function signedMediaThumbnailURL(id: string, options?: { ttlSeconds?: number }): string {
+  const ttlSeconds = options?.ttlSeconds ?? config.mediaUrlTtlSeconds;
+  const { sig, exp } = signMediaId(id, Date.now() + ttlSeconds * 1000);
+  return `${config.publicBaseURL}/media/${id}/thumbnail?sig=${sig}&exp=${exp}`;
+}
+
 /** AI 出站看图使用更短 TTL。 */
 export function signedMediaURLForAi(id: string): string {
   return signedMediaURL(id, { ttlSeconds: config.mediaAiUrlTtlSeconds });
@@ -109,11 +116,15 @@ function requestedByteRange(request: FastifyRequest, size: number): { start: num
   return parseRequestedByteRange(request.headers.range, size);
 }
 
-function sendUpload(request: FastifyRequest, reply: FastifyReply, upload: UploadRow) {
-  const filename = path.basename(upload.path).replace(/["\r\n]/g, "_");
-  const range = requestedByteRange(request, upload.size);
+function sendMediaFile(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  file: { path: string; mimeType: string; size: number },
+) {
+  const filename = path.basename(file.path).replace(/["\r\n]/g, "_");
+  const range = requestedByteRange(request, file.size);
   reply
-    .type(upload.mime_type)
+    .type(file.mimeType)
     .header("Accept-Ranges", "bytes")
     .header("Content-Disposition", `inline; filename="${filename}"`)
     .header("X-Content-Type-Options", "nosniff")
@@ -122,14 +133,48 @@ function sendUpload(request: FastifyRequest, reply: FastifyReply, upload: Upload
     reply
       .code(206)
       .header("Content-Length", String(range.end - range.start + 1))
-      .header("Content-Range", `bytes ${range.start}-${range.end}/${upload.size}`);
-    return reply.send(fs.createReadStream(upload.path, range));
+      .header("Content-Range", `bytes ${range.start}-${range.end}/${file.size}`);
+    return reply.send(fs.createReadStream(file.path, range));
   }
-  reply.header("Content-Length", String(upload.size));
-  return reply.send(fs.createReadStream(upload.path));
+  reply.header("Content-Length", String(file.size));
+  return reply.send(fs.createReadStream(file.path));
+}
+
+function sendUpload(request: FastifyRequest, reply: FastifyReply, upload: UploadRow) {
+  return sendMediaFile(request, reply, {
+    path: upload.path,
+    mimeType: upload.mime_type,
+    size: upload.size,
+  });
 }
 
 export async function registerMediaAccessRoutes(app: FastifyInstance) {
+  app.get("/media/:id/thumbnail", async (request, reply) => {
+    const params = mediaParamsSchema.safeParse(request.params);
+    const query = signatureQuerySchema.safeParse(request.query);
+    if (!params.success || !query.success || !verifyMediaSignature(params.data.id, query.data.sig, query.data.exp)) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    const upload = await get<UploadRow>("SELECT * FROM uploads WHERE id = ?", [params.data.id]);
+    if (!upload || !upload.mime_type.startsWith("image/") || !fs.existsSync(upload.path)) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    const thumbnailPath = thumbnailPathFor(upload.path);
+    let size: number;
+    try {
+      const stat = fs.statSync(thumbnailPath);
+      if (!stat.isFile()) return reply.code(404).send({ error: "not_found" });
+      size = stat.size;
+    } catch {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    return sendMediaFile(request, reply, {
+      path: thumbnailPath,
+      mimeType: "image/jpeg",
+      size,
+    });
+  });
+
   app.get("/media/:id", async (request, reply) => {
     const params = mediaParamsSchema.safeParse(request.params);
     const query = signatureQuerySchema.safeParse(request.query);
