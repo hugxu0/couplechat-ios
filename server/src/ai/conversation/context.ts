@@ -34,7 +34,7 @@ interface DaySegment {
   bullets: string[];
 }
 
-interface DayTopic {
+export interface DayTopic {
   id: string;
   title: string;
   status: TopicStatus;
@@ -43,7 +43,7 @@ interface DayTopic {
   lastAt: number;
 }
 
-interface DayDigest {
+export interface DayDigest {
   dayKey: string;
   topics: DayTopic[];
   decisions: string[];
@@ -80,6 +80,37 @@ export interface ConversationContext {
 
 const updateChains = new Map<string, Promise<void>>();
 const scheduleTimers = new Map<string, NodeJS.Timeout>();
+export const CONTEXT_DIGEST_CIRCUIT_FAILURE_THRESHOLD = 2;
+export const CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS = 10 * 60 * 1000;
+
+export interface ContextDigestCircuitState {
+  failures: number;
+  openUntil: number;
+}
+
+export function isContextDigestCircuitOpen(
+  state: ContextDigestCircuitState,
+  now: number,
+): boolean {
+  return state.openUntil > now;
+}
+
+export function nextContextDigestCircuitState(
+  state: ContextDigestCircuitState,
+  succeeded: boolean,
+  now: number,
+): ContextDigestCircuitState {
+  if (succeeded) return { failures: 0, openUntil: 0 };
+  const failures = state.failures + 1;
+  return {
+    failures,
+    openUntil: failures >= CONTEXT_DIGEST_CIRCUIT_FAILURE_THRESHOLD
+      ? now + CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS
+      : 0,
+  };
+}
+
+let digestCircuitState: ContextDigestCircuitState = { failures: 0, openUntil: 0 };
 
 function stateKey(channel: string): string {
   return `${STATE_KEY_PREFIX}${channel}`;
@@ -354,6 +385,7 @@ async function commitSegment(
         id: segment.id,
         dayKey: segment.dayKey,
         timeRangeLabel: segment.timeRangeLabel,
+        endedAt: segment.to.ts,
         messageCount: segment.messageCount,
         bullets: segment.bullets,
       },
@@ -361,24 +393,177 @@ async function commitSegment(
   }
 }
 
+function cleanDigestStrings(value: unknown, max = 20): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, max);
+}
+
+function mergeDigestStrings(existing: string[], added: string[], max = 20): string[] {
+  const seen = new Set<string>();
+  return [...existing, ...added]
+    .filter((item) => {
+      const key = item.toLocaleLowerCase("zh-CN");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(-max);
+}
+
+function localDigestFallback(digest: DayDigest, segments: DaySegment[]): DayDigest {
+  const latestSegmentAt = segments.reduce((max, segment) => Math.max(max, segment.to.ts), 0);
+  const points = segments.flatMap((segment) => segment.bullets).slice(0, 12);
+  const excerpt: DayTopic = {
+    id: `topic_seg_${segments[0]?.id || nanoid(6)}`,
+    title: segments.length === 1
+      ? (segments[0].timeRangeLabel || "时段摘录")
+      : "今日摘录",
+    status: "open",
+    actors: ["both"],
+    points,
+    lastAt: latestSegmentAt,
+  };
+  return {
+    dayKey: digest.dayKey,
+    topics: [...digest.topics.filter((topic) => topic.id !== excerpt.id), excerpt]
+      .sort((a, b) => b.lastAt - a.lastAt)
+      .slice(0, CONTEXT.dayTopicMax),
+    decisions: digest.decisions,
+    openLoops: digest.openLoops,
+    moodLine: digest.moodLine,
+    updatedAt: Date.now(),
+  };
+}
+
+interface DigestPatchTopic {
+  matchId?: unknown;
+  title?: unknown;
+  status?: unknown;
+  actors?: unknown;
+  points?: unknown;
+}
+
+export interface DigestPatch {
+  topics?: unknown;
+  decisionsAdd?: unknown;
+  openLoopsAdd?: unknown;
+  openLoopsClose?: unknown;
+  moodLine?: unknown;
+}
+
+export function applyDigestPatch(
+  digest: DayDigest,
+  patch: DigestPatch,
+  latestSegmentAt: number,
+): { digest: DayDigest; topicPatchCount: number } | null {
+  const topicRows = Array.isArray(patch.topics)
+    ? patch.topics.slice(0, 6) as DigestPatchTopic[]
+    : [];
+  const decisionsAdd = cleanDigestStrings(patch.decisionsAdd, 8);
+  const openLoopsAdd = cleanDigestStrings(patch.openLoopsAdd, 8);
+  const openLoopsClose = new Set(
+    cleanDigestStrings(patch.openLoopsClose, 8).map((item) => item.toLocaleLowerCase("zh-CN")),
+  );
+  const suppliedMood = typeof patch.moodLine === "string"
+    ? patch.moodLine.replace(/\s+/g, " ").trim().slice(0, 120)
+    : "";
+  if (
+    !topicRows.length
+    && !decisionsAdd.length
+    && !openLoopsAdd.length
+    && !openLoopsClose.size
+    && !suppliedMood
+  ) {
+    return null;
+  }
+
+  const topics = [...digest.topics];
+  let topicPatchCount = 0;
+  for (const row of topicRows) {
+    if (!row || typeof row !== "object") continue;
+    const matchId = String(row.matchId ?? "").trim().slice(0, 40);
+    const requestedTitle = String(row.title ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 40);
+    let existingIndex = matchId
+      ? topics.findIndex((topic) => topic.id === matchId)
+      : -1;
+    if (existingIndex < 0 && requestedTitle) {
+      existingIndex = topics.findIndex((topic) => topic.title === requestedTitle);
+    }
+    const existing = existingIndex >= 0 ? topics[existingIndex] : undefined;
+    const title = requestedTitle || existing?.title || "";
+    if (!title) continue;
+    const newPoints = cleanDigestStrings(row.points, 5);
+    const next: DayTopic = {
+      id: existing?.id ?? `topic_${nanoid(8)}`,
+      title,
+      status: row.status === undefined ? existing?.status ?? "open" : sanitizeTopicStatus(row.status),
+      actors: row.actors === undefined ? existing?.actors ?? ["both"] : sanitizeActors(row.actors),
+      points: mergeDigestStrings(existing?.points ?? [], newPoints, 5),
+      lastAt: latestSegmentAt,
+    };
+    if (existingIndex >= 0) topics[existingIndex] = next;
+    else topics.push(next);
+    topicPatchCount += 1;
+  }
+  if (
+    topicPatchCount === 0
+    && !decisionsAdd.length
+    && !openLoopsAdd.length
+    && !openLoopsClose.size
+    && !suppliedMood
+  ) {
+    return null;
+  }
+
+  const remainingOpenLoops = digest.openLoops.filter(
+    (item) => !openLoopsClose.has(item.toLocaleLowerCase("zh-CN")),
+  );
+  return {
+    digest: {
+      dayKey: digest.dayKey,
+      topics: topics
+        .sort((a, b) => b.lastAt - a.lastAt)
+        .slice(0, CONTEXT.dayTopicMax),
+      decisions: mergeDigestStrings(digest.decisions, decisionsAdd),
+      openLoops: mergeDigestStrings(remainingOpenLoops, openLoopsAdd),
+      moodLine: suppliedMood || digest.moodLine,
+      updatedAt: Date.now(),
+    },
+    topicPatchCount,
+  };
+}
+
 async function mergeSegmentsIntoDigest(
   digest: DayDigest,
   segments: DaySegment[],
 ): Promise<DayDigest> {
   if (!segments.length) return digest;
-  // user 只送瘦身 JSON，避免把空字段/长元数据反复回灌。
-  const slimDigest = {
+  const now = Date.now();
+  if (isContextDigestCircuitOpen(digestCircuitState, now)) {
+    console.log(
+      `[context] digest mode=fallback reason=circuit_open ` +
+        `retryInMs=${digestCircuitState.openUntil - now} segments=${segments.length}`,
+    );
+    return localDigestFallback(digest, segments);
+  }
+
+  // 只让模型返回当前微段引起的增量，不再反复重写最多 24 张完整话题卡。
+  const digestIndex = {
     dayKey: digest.dayKey,
     topics: digest.topics.slice(0, CONTEXT.dayTopicMax).map((topic) => ({
       id: topic.id,
       title: topic.title,
       status: topic.status,
-      actors: topic.actors,
-      points: topic.points.slice(0, 4),
       lastAt: topic.lastAt,
     })),
-    decisions: digest.decisions.slice(0, 12),
-    openLoops: digest.openLoops.slice(0, 12),
+    decisions: digest.decisions.slice(-8),
+    openLoops: digest.openLoops.slice(-8),
     moodLine: digest.moodLine,
   };
   const slimSegments = segments.map((segment) => ({
@@ -386,76 +571,38 @@ async function mergeSegmentsIntoDigest(
     ts: segment.to.ts,
     b: segment.bullets,
   }));
+  const startedAt = Date.now();
   const output = await chat({
     profile: "task",
     scope: "context.digest",
-    system:
-      '合并当日聊天总览。输出JSON：{"topics":[{"id","title","status":"open|done|dropped","actors":["xu|si|both|daju"],"points":[],"lastAt":0}],"decisions":[],"openLoops":[],"moodLine":""}。同话题复用id；points每话题≤5；topics≤24；不编造；lastAt毫秒。',
-    user: `旧:${JSON.stringify(slimDigest)}\n新段:${JSON.stringify(slimSegments)}`,
-    gen: { ...GEN.contextSummary, maxTokens: 1800, timeoutMs: 45_000 },
+    system: [
+      "把新微段增量合并进当日总览；不要重写或复述全部旧总览。",
+      '只输出JSON：{"topics":[{"matchId":"已有id或空","title":"≤40字","status":"open|done|dropped","actors":["xu|si|both|daju"],"points":["≤60字"]}],"decisionsAdd":[],"openLoopsAdd":[],"openLoopsClose":[],"moodLine":"≤120字"}。',
+      "同一话题必须填已有 matchId；新话题 matchId 留空。topics 最多6个、points 每项最多5条，其余数组各最多8条。",
+      "只写新段明确支持的变化；完成或放弃旧未决时原文放进 openLoopsClose；不编造。",
+    ].join("\n"),
+    user: `索引:${JSON.stringify(digestIndex)}\n新段:${JSON.stringify(slimSegments)}`,
+    gen: GEN.contextDigest,
   });
+  const parsed = extractJson<DigestPatch>(output);
   const latestSegmentAt = segments.reduce((max, segment) => Math.max(max, segment.to.ts), 0);
-  const localFallback = (): DayDigest => {
-    const points = segments.flatMap((segment) => segment.bullets).slice(0, 12);
-    const excerpt: DayTopic = {
-      id: `topic_seg_${segments[0]?.id || nanoid(6)}`,
-      title: segments.length === 1
-        ? (segments[0].timeRangeLabel || "时段摘录")
-        : "今日摘录",
-      status: "open",
-      actors: ["both"],
-      points,
-      lastAt: latestSegmentAt,
-    };
-    const topics = [...digest.topics.filter((topic) => topic.id !== excerpt.id), excerpt]
-      .sort((a, b) => b.lastAt - a.lastAt)
-      .slice(0, CONTEXT.dayTopicMax);
-    return {
-      dayKey: digest.dayKey,
-      topics,
-      decisions: digest.decisions,
-      openLoops: digest.openLoops,
-      moodLine: digest.moodLine,
-      updatedAt: Date.now(),
-    };
-  };
+  const applied = parsed ? applyDigestPatch(digest, parsed, latestSegmentAt) : null;
+  if (!applied) {
+    digestCircuitState = nextContextDigestCircuitState(digestCircuitState, false, Date.now());
+    console.warn(
+      `[context] digest mode=fallback reason=${output ? "invalid_patch" : "empty_response"} ` +
+        `durationMs=${Date.now() - startedAt} failures=${digestCircuitState.failures} ` +
+        `circuitOpen=${isContextDigestCircuitOpen(digestCircuitState, Date.now())} segments=${segments.length}`,
+    );
+    return localDigestFallback(digest, segments);
+  }
 
-  const parsed = extractJson<{
-    topics?: unknown;
-    decisions?: unknown;
-    openLoops?: unknown;
-    moodLine?: unknown;
-  }>(output);
-  if (!parsed || !Array.isArray(parsed.topics)) return localFallback();
-
-  const topics: DayTopic[] = parsed.topics.slice(0, CONTEXT.dayTopicMax).map((topic, index) => {
-    const row = topic as Partial<DayTopic>;
-    return {
-      id: String(row.id || `topic_${index + 1}`).replace(/\s+/g, "_").slice(0, 40),
-      title: String(row.title || "未命名话题").replace(/\s+/g, " ").trim().slice(0, 40),
-      status: sanitizeTopicStatus(row.status),
-      actors: sanitizeActors(row.actors),
-      points: Array.isArray(row.points)
-        ? row.points.map((point) => String(point).replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 8)
-        : [],
-      lastAt: Number(row.lastAt) || latestSegmentAt,
-    };
-  });
-
-  if (!topics.length) return localFallback();
-
-  return {
-    dayKey: digest.dayKey,
-    topics,
-    decisions: Array.isArray(parsed.decisions)
-      ? parsed.decisions.map((item) => String(item).trim()).filter(Boolean).slice(0, 20)
-      : digest.decisions,
-    openLoops: Array.isArray(parsed.openLoops)
-      ? parsed.openLoops.map((item) => String(item).trim()).filter(Boolean).slice(0, 20)
-      : digest.openLoops,
-    moodLine: String(parsed.moodLine ?? digest.moodLine ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
-    updatedAt: Date.now(),
-  };
+  digestCircuitState = nextContextDigestCircuitState(digestCircuitState, true, Date.now());
+  console.log(
+    `[context] digest mode=model status=ok durationMs=${Date.now() - startedAt} ` +
+      `segments=${segments.length} topicPatches=${applied.topicPatchCount}`,
+  );
+  return applied.digest;
 }
 
 async function countLag(channel: string, cursor: Cursor): Promise<number> {

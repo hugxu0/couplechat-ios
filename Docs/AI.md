@@ -58,7 +58,7 @@ messages 落库
 上下文维护在 `conversation/context.ts`（strategy `day-digest-v2`）：
 
 - 公聊与私聊同一套；**消化双方全部有效聊天**，不再只摘要「大橘会话」。
-- 约每 40 条有效消息（或空闲 10 分钟 / 最老消息 45 分钟）压成微段，再折入当日总览；贴纸与短寒暄（嗯/哈哈等）不计入微段。
+- 约每 40 条有效消息（或空闲 10 分钟 / 最老消息 45 分钟）压成微段，再以小型增量补丁折入当日总览；贴纸与短寒暄（嗯/哈哈等）不计入微段。微段任务使用无推理 20 秒上限，日总览补丁使用无推理 15 秒上限；日总览连续两次无有效补丁会熔断 10 分钟并立即走本地时段摘录，避免上游变慢时每段反复等待。
 - 任意主人消息后防抖调度追赶；Agent 回答不等待摘要模型，只读取已提交总览和最近原文。落后时在后台按微段阈值继续追赶，并在 prompt 中提示可用 `search_chat_messages`。
 - 日切后昨日总览归档；Agent 输入可带【昨日话题标题】一行（无细节）。
 - 状态保存在 `ai_runtime_state`（`context:v2:{channel}`），可重建，不是长期事实库；跨天稳定事实仍靠 Memory。
@@ -68,11 +68,12 @@ messages 落库
 
 与 Memory 批处理解耦，实现见 `server/src/ai/engagement.ts`：
 
-- **触发**：公聊微段写入并折入当日总览之后（跟上下文追赶节奏，而不是 80 条记忆批）。
+- **触发**：公聊微段写入并折入当日总览之后（跟上下文追赶节奏，而不是 80 条记忆批）；结束超过 20 分钟的历史微段只补上下文，不触发主动介入，避免部署或积压追赶时翻旧账。
 - **检测输入（精简）**：当日总览压缩版 + 本段 bullets + 最近约 14 条 compact 原文；不读整批聊天全文。
-- **输出**：`none | conflict | interject` + confidence + 短 reason；阈值与冷却（conflict 15 分钟 / interject 2 小时）后再排队 Agent。
+- **本地门闩**：只根据当前微段和最近原文决定是否调用分类模型；旧总览中的未决事项或情绪不会让门闩永久打开。冲突与缓和按出现先后判断，旧的缓和词不能掩盖后来的升级。
+- **输出**：`none | conflict | interject` + confidence + 短 reason；阈值、类型冷却（conflict 15 分钟 / interject 2 小时）和跨类型 5 分钟冷却后再排队 Agent。只有置信度至少 0.99 的冲突可越过跨类型冷却，不能越过 conflict 自身冷却。
 - **开口上下文**：只带 reason、话题提示、段要点与短原文；Agent 另有完整【今日聊天总览】+ 热窗口，不再灌 80 条主人消息。
-- **日志**：`[engagement] decision=...`（none / suppressed_threshold / suppressed_cooldown / emit）。
+- **日志**：`[engagement] decision=...`（skipped_stale / skipped_local_quiet / classifier_unavailable / invalid_output / none / suppressed_threshold / suppressed_cooldown / emit），只记录类型、置信度、耗时和冷却范围，不记录 reason、topicHint 或聊天正文。
 
 工具结果由 Agent 在同一轮继续处理，不重复塞进初始输入。
 
@@ -82,6 +83,8 @@ messages 落库
 - 行为要求预注入 user 后，默认不再调用 `get_daju_instructions`。
 - 后台介入线索不附带最近原文（热窗口已有）；Memory 批处理单条正文截断；日总览合并只送瘦身 JSON。
 - 输出预算：`GEN.reply` 等见 `settings.ts`，避免为闲聊预留过大 maxTokens。
+- 常规 Agent 最多运行 6 轮（工具附图后的多模态重跑最多 4 轮）。若模型把轮次全部用在工具调用上，会在 15 秒内追加一次**无工具收尾**：复用已经取得的工具结果，强制生成最终 JSON；收尾仍失败才发送兜底文案。
+- `ai.reply` 操作日志区分正常成功、超时和内部失败；内部失败即使已经发出兜底，也以 `error + degraded=true` 记录。无工具收尾成功仍算回复成功，并标记 `recoveredFromMaxTurns=true`。
 
 ## Memory
 
@@ -104,7 +107,7 @@ messages 落库
 
 `ai_memory.perspective` 区分 `people` 与 `daju`，`memory_kind` 区分 `standard`、`instruction` 和 `observation`。主人在当前对话中明确提出长期的大橘行为要求时，由回复 Agent 理解整句话并直接调用 `save_daju_instruction` 写入，不使用关键词规则，也不等待批量整理；仅当前一次的临时要求和推断偏好不会保存。大橘观察仍由后台整理器生成，必须引用至少两张基础记忆卡，并按有效期自动过期。普通人物检索默认只看 `people`，大橘行为要求由 Agent 自动注入，观察仅在复盘、分析和调解时按需读取。
 
-整理器按游标读取最多 80 条主人消息，基础提取模型只接收这批新消息，不再附带旧 Memory 正文，并使用独立的低推理强度与 120 秒上限，不继承对话任务的高推理配置。达到 80 条立即整理；20 条以上在空闲 15 分钟后整理，20 条以下空闲 60 分钟后整理，最老消息等待满 2 小时也会整理。模型输出 `memoryKey` 后，服务端先规范化再入库：people 标准卡为 `{layer}.{subject}.{topic}`；`state` 固定 `state.{subject}.recent`；`relationship` / 人物 `insight` 固定滚动键；大橘指令 `daju.instruction.{topic}`、观察 `daju.observation.{topic}`。随后按层处理：`fact/plan` 先做精确 key 匹配，未命中时才用同层同主体向量候选更新；`state` 按主体滚动；`event` 追加并以 key+内容幂等。关系与理解在基础卡写入后异步生成；大橘观察只允许引用本批实际写入的至少两张基础卡。卡片落库后不保存原始消息 ID、摘录或引用。无效 JSON、写入失败，或至少 12 条有效消息却返回零候选时不能推进游标；后台卡片写入会生成 Memory Sync V2 事件。
+整理器按游标读取最多 80 条主人消息，基础提取模型只接收这批新消息，不再附带旧 Memory 正文，并使用独立的低推理强度与 120 秒上限，不继承对话任务的高推理配置。达到 80 条立即整理；20 条以上在空闲 15 分钟后整理，20 条以下空闲 60 分钟后整理，最老消息等待满 2 小时也会整理。模型输出 `memoryKey` 后，服务端先规范化再入库：people 标准卡为 `{layer}.{subject}.{topic}`；`state` 固定 `state.{subject}.recent`；`relationship` / 人物 `insight` 固定滚动键；大橘指令 `daju.instruction.{topic}`、观察 `daju.observation.{topic}`。随后按层处理：`fact/plan` 先做精确 key 匹配，未命中时才用同层同主体向量候选更新；`state` 按主体滚动；`event` 追加并以 key+内容幂等。若至少 12 条有效消息中出现明确的完成、交付、结果、转折或修复线索，而基础输出没有可用 event，服务端只追加一次低温度聚焦复核，最多补一张 event；普通计划、等待和琐碎日常不会触发。关系与理解在基础卡写入后异步生成；大橘观察只允许引用本批实际写入的至少两张基础卡。卡片落库后不保存原始消息 ID、摘录或引用。无效 JSON、写入失败，或至少 12 条有效消息却返回零候选时不能推进游标；后台卡片写入会生成 Memory Sync V2 事件。每批日志只记录候选数、event 复核状态、成功层级和脱敏拒绝原因计数，不记录正文、memoryKey 或原消息。
 
 关键规则：
 
@@ -139,6 +142,8 @@ Memory 本地离线缓存尚未完成；runtime/tool 以 `conversation_id/couple
 
 工具不提供任意 SQL、任意数据库 CRUD 或跨用户私聊读取。
 事项动作始终以当前登录账号授权，模型给出的 `ownerName` 不能变成另一账号身份；shared 变更同步双方，personal 只作用于当前账号。结构化回答会主动使用合法 Markdown 标题、列表或表格，普通闲聊保持自然文本。
+
+每次工具执行生成一条结构化 `ai.tool` 操作日志，只记录工具名、状态、耗时、当前工具次数和本轮总次数；不记录参数、查询内容或工具结果。Streamable HTTP 客户端的例行 GET 探测继续返回 405，但该预期请求不写访问日志；POST 工具请求的异常仍正常记录。
 
 ## 今日推荐
 

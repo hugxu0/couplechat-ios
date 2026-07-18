@@ -25,6 +25,7 @@ export interface EngagementSegmentInput {
   id: string;
   dayKey: string;
   timeRangeLabel: string;
+  endedAt: number;
   messageCount: number;
   bullets: string[];
 }
@@ -47,6 +48,9 @@ const COOLDOWNS_MS: Record<EngagementKind, number> = {
   conflict: 15 * 60 * 1000,
   interject: 2 * 60 * 60 * 1000,
 };
+export const ENGAGEMENT_GLOBAL_COOLDOWN_MS = 5 * 60 * 1000;
+export const ENGAGEMENT_CONFLICT_GLOBAL_OVERRIDE = 0.99;
+export const ENGAGEMENT_MAX_SEGMENT_AGE_MS = 20 * 60 * 1000;
 const THRESHOLDS: Record<EngagementKind, number> = {
   conflict: 0.7,
   interject: 0.78,
@@ -63,7 +67,38 @@ const INTERJECT_RE =
   /未决|明天|周末|一起|约|订票|订房|买不买|去哪|怎么办|纠结|选哪个|要不要|记得|别忘|提醒/;
 
 let handler: EngagementHandler | null = null;
-const lastFiredAt: Partial<Record<EngagementKind, number>> = {};
+export interface EngagementCooldownSnapshot extends Partial<Record<EngagementKind, number>> {
+  global?: number;
+}
+
+export interface EngagementCooldownBlock {
+  scope: "kind" | "global";
+  remainingMs: number;
+}
+
+export function engagementCooldownBlock(
+  kind: EngagementKind,
+  confidence: number,
+  now: number,
+  snapshot: EngagementCooldownSnapshot,
+): EngagementCooldownBlock | null {
+  const kindRemaining = COOLDOWNS_MS[kind] - (now - (snapshot[kind] ?? 0));
+  if (kindRemaining > 0) return { scope: "kind", remainingMs: kindRemaining };
+  const globalRemaining = ENGAGEMENT_GLOBAL_COOLDOWN_MS - (now - (snapshot.global ?? 0));
+  const canOverrideGlobal = kind === "conflict"
+    && confidence >= ENGAGEMENT_CONFLICT_GLOBAL_OVERRIDE;
+  return globalRemaining > 0 && !canOverrideGlobal
+    ? { scope: "global", remainingMs: globalRemaining }
+    : null;
+}
+
+export function isEngagementSegmentStale(endedAt: number, now: number): boolean {
+  return !Number.isFinite(endedAt)
+    || endedAt <= 0
+    || now - endedAt > ENGAGEMENT_MAX_SEGMENT_AGE_MS;
+}
+
+const lastFiredAt: EngagementCooldownSnapshot = {};
 const running = new Set<string>();
 const COOLDOWN_STATE_KEY = "engagement:cooldown:v1";
 let cooldownLoaded = false;
@@ -78,9 +113,10 @@ async function ensureCooldownLoaded(): Promise<void> {
   try {
     const raw = await readRuntimeState(COOLDOWN_STATE_KEY);
     if (!raw) return;
-    const parsed = JSON.parse(raw) as Partial<Record<EngagementKind, number>>;
+    const parsed = JSON.parse(raw) as EngagementCooldownSnapshot;
     if (typeof parsed.conflict === "number") lastFiredAt.conflict = parsed.conflict;
     if (typeof parsed.interject === "number") lastFiredAt.interject = parsed.interject;
+    if (typeof parsed.global === "number") lastFiredAt.global = parsed.global;
   } catch {
     // 损坏状态忽略，按内存默认
   }
@@ -92,6 +128,7 @@ async function persistCooldowns(): Promise<void> {
     JSON.stringify({
       conflict: lastFiredAt.conflict ?? 0,
       interject: lastFiredAt.interject ?? 0,
+      global: lastFiredAt.global ?? 0,
     }),
   );
 }
@@ -149,33 +186,34 @@ function resolveRequester(recent: Awaited<ReturnType<typeof recentConversationMe
 
 /**
  * 本地预过滤：明显无介入价值则跳过模型。
- * - 有冲突词且未缓和 → 必须过模型
- * - 有未决/安排信号 → 过模型
- * - 总览情绪含争/吵 → 过模型
- * - 其余 skip
+ * - 只看当前微段与最近原文，避免旧未决/旧情绪让门闩永久打开
+ * - 后出现的冲突覆盖更早的缓和；冲突后已明确缓和则跳过
+ * - 当前仍有安排/选择信号时才考虑主动搭话
  */
 export function localEngagementGate(
-  digest: EngagementDigestInput,
+  _digest: EngagementDigestInput,
   segment: EngagementSegmentInput,
   recentLines: string[],
 ): "skip" | "run" {
-  const haystack = [
-    digest.moodLine,
-    ...digest.openLoops,
-    ...digest.topics.flatMap((topic) => [topic.title, ...topic.points.slice(0, 2)]),
+  const currentText = [
     ...segment.bullets,
     ...recentLines,
   ].join("\n");
 
-  const calmed = CALM_RE.test(haystack);
-  const conflictish = CONFLICT_RE.test(haystack) || /争|吵|冷战|疏离/.test(digest.moodLine);
-  if (conflictish && !calmed) return "run";
-  if (digest.openLoops.length > 0) return "run";
-  if (INTERJECT_RE.test(haystack)) return "run";
-  if (segment.bullets.some((bullet) => CONFLICT_RE.test(bullet) || INTERJECT_RE.test(bullet))) {
-    return "run";
+  const lastIndex = (pattern: RegExp): number => {
+    const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+    let found = -1;
+    for (const match of currentText.matchAll(new RegExp(pattern.source, flags))) {
+      found = match.index ?? found;
+    }
+    return found;
+  };
+  const conflictAt = lastIndex(CONFLICT_RE);
+  if (conflictAt >= 0) {
+    // 只把“冲突之后出现的缓和”视为已解决；旧的爱意/道歉不能掩盖后来的升级。
+    return lastIndex(CALM_RE) > conflictAt ? "skip" : "run";
   }
-  return "skip";
+  return INTERJECT_RE.test(currentText) ? "run" : "skip";
 }
 
 export function notifyCoupleSegmentCommitted(input: {
@@ -184,8 +222,8 @@ export function notifyCoupleSegmentCommitted(input: {
 }): void {
   void evaluateCoupleEngagement(input).catch((error) => {
     console.warn(
-      "[engagement] 分类失败:",
-      error instanceof Error ? error.message : error,
+      `[engagement] decision=error stage=evaluate errorType=` +
+        `${error instanceof Error ? error.name : "unknown"}`,
     );
   });
 }
@@ -202,6 +240,13 @@ async function evaluateCoupleEngagement(input: {
   running.add(channel);
   try {
     await ensureCooldownLoaded();
+    const segmentAgeMs = Date.now() - input.segment.endedAt;
+    if (isEngagementSegmentStale(input.segment.endedAt, Date.now())) {
+      console.log(
+        `[engagement] decision=skipped_stale segmentAgeMs=${Math.max(0, segmentAgeMs)}`,
+      );
+      return;
+    }
     const recent = await recentConversationMessages(channel, RECENT_RAW_LINES);
     const recentLines = recent
       .map((message) => compactLine(message, 100))
@@ -214,6 +259,7 @@ async function evaluateCoupleEngagement(input: {
       return;
     }
 
+    const classificationStartedAt = Date.now();
     const output = await chat({
       profile: "task",
       scope: "engagement",
@@ -226,6 +272,13 @@ async function evaluateCoupleEngagement(input: {
       ].join("\n"),
       gen: GEN.engagement,
     });
+    const classificationDurationMs = Date.now() - classificationStartedAt;
+    if (!output) {
+      console.warn(
+        `[engagement] decision=classifier_unavailable durationMs=${classificationDurationMs}`,
+      );
+      return;
+    }
 
     const parsed = extractJson<{
       kind?: string;
@@ -233,6 +286,12 @@ async function evaluateCoupleEngagement(input: {
       reason?: string;
       topicHint?: string;
     }>(output);
+    if (!parsed) {
+      console.warn(
+        `[engagement] decision=invalid_output durationMs=${classificationDurationMs}`,
+      );
+      return;
+    }
 
     const kindRaw = String(parsed?.kind ?? "none").toLowerCase();
     const kind = kindRaw === "conflict" || kindRaw === "interject" ? kindRaw : "none";
@@ -242,7 +301,8 @@ async function evaluateCoupleEngagement(input: {
 
     if (kind === "none") {
       console.log(
-        `[engagement] decision=none conf=${confidence.toFixed(2)} reason=${reason || "—"}`,
+        `[engagement] decision=none conf=${confidence.toFixed(2)} ` +
+          `durationMs=${classificationDurationMs}`,
       );
       return;
     }
@@ -250,23 +310,28 @@ async function evaluateCoupleEngagement(input: {
     const threshold = THRESHOLDS[kind];
     if (confidence < threshold) {
       console.log(
-        `[engagement] decision=suppressed_threshold kind=${kind} conf=${confidence.toFixed(2)} need>=${threshold} reason=${reason || "—"}`,
+        `[engagement] decision=suppressed_threshold kind=${kind} ` +
+          `conf=${confidence.toFixed(2)} need=${threshold} durationMs=${classificationDurationMs}`,
       );
       return;
     }
 
     const now = Date.now();
-    const lastAt = lastFiredAt[kind] ?? 0;
-    const coolLeft = COOLDOWNS_MS[kind] - (now - lastAt);
-    if (coolLeft > 0) {
+    const cooldown = engagementCooldownBlock(kind, confidence, now, lastFiredAt);
+    if (cooldown) {
       console.log(
-        `[engagement] decision=suppressed_cooldown kind=${kind} conf=${confidence.toFixed(2)} cdLeft=${Math.ceil(coolLeft / 60000)}m reason=${reason || "—"}`,
+        `[engagement] decision=suppressed_cooldown kind=${kind} ` +
+          `scope=${cooldown.scope} conf=${confidence.toFixed(2)} ` +
+          `cdLeftMs=${cooldown.remainingMs} durationMs=${classificationDurationMs}`,
       );
       return;
     }
 
     if (!handler) {
-      console.log(`[engagement] decision=no_handler kind=${kind} conf=${confidence.toFixed(2)}`);
+      console.log(
+        `[engagement] decision=no_handler kind=${kind} ` +
+          `conf=${confidence.toFixed(2)} durationMs=${classificationDurationMs}`,
+      );
       return;
     }
 
@@ -287,9 +352,11 @@ async function evaluateCoupleEngagement(input: {
     };
 
     lastFiredAt[kind] = now;
+    lastFiredAt.global = now;
     await persistCooldowns().catch(() => undefined);
     console.log(
-      `[engagement] decision=emit kind=${kind} conf=${confidence.toFixed(2)} topic=${topicHint || "—"} reason=${reason || "—"}`,
+      `[engagement] decision=emit kind=${kind} conf=${confidence.toFixed(2)} ` +
+        `durationMs=${classificationDurationMs}`,
     );
 
     // 高置信冲突时顺带刷新关系卡，供后续 Agent 只读工具更准（不阻塞开口）。

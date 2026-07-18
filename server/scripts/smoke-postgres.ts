@@ -230,6 +230,80 @@ async function main() {
     );
     assertOk("后台介入 Agent 超时保持沉默", backgroundTimeoutReplies.length === 0);
 
+    const failureOperationLines: string[] = [];
+    const originalConsoleInfo = console.info;
+    console.info = (...values: unknown[]) => {
+      failureOperationLines.push(values.map(String).join(" "));
+    };
+    try {
+      await runReplyTaskWithTimeout(aiTrigger, timeoutSink, async (state) => {
+        state.emitted = true;
+        state.markFailure(new Error("synthetic_agent_failure"));
+      });
+    } finally {
+      console.info = originalConsoleInfo;
+    }
+    const failureOperation = failureOperationLines
+      .map((line) => {
+        try {
+          return JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .find((entry) => entry?.operation === "ai.reply");
+    assertOk(
+      "Agent 内部失败即使已发兜底也记录为降级失败",
+      failureOperation?.status === "error" &&
+        failureOperation.emitted === true &&
+        failureOperation.degraded === true,
+    );
+
+    const { recordAgentTool } = await import("../src/ai/mcp/runContext");
+    const toolOperationLines: string[] = [];
+    console.info = (...values: unknown[]) => {
+      toolOperationLines.push(values.map(String).join(" "));
+    };
+    try {
+      await recordAgentTool({
+        identity: {
+          traceId: "smoke-tool-trace",
+          requesterUsername: "smoke",
+          requesterName: "测试用户",
+          storedChannel: "ai:smoke",
+          expiresAt: Date.now() + 60_000,
+        },
+        trace: {
+          id: "smoke-tool-trace",
+          ts: Date.now(),
+          status: "running",
+          channel: "ai:smoke",
+          requesterName: "测试用户",
+          question: "",
+        },
+        actions: [],
+        citations: [],
+        usedVision: false,
+        toolCounts: {},
+      }, "search_facts", { query: "never-log-tool-arguments" }, async () => ({
+        secret: "never-log-tool-result",
+      }));
+    } finally {
+      console.info = originalConsoleInfo;
+    }
+    const toolOperationLine = toolOperationLines.find((line) => line.includes("\"operation\":\"ai.tool\""));
+    const toolOperation = toolOperationLine
+      ? JSON.parse(toolOperationLine) as Record<string, unknown>
+      : null;
+    assertOk(
+      "Agent 工具日志只记录名称、状态、耗时和次数",
+      toolOperation?.status === "ok" &&
+        toolOperation.tool === "search_facts" &&
+        toolOperation.callIndex === 1 &&
+        !toolOperationLine?.includes("never-log-tool-arguments") &&
+        !toolOperationLine?.includes("never-log-tool-result"),
+    );
+
     const startedQuestions: string[] = [];
     let releaseFirst: (() => void) | undefined;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -473,6 +547,7 @@ async function main() {
     const healthResponse = await app.inject({ method: "GET", url: "/health" });
     const liveResponse = await app.inject({ method: "GET", url: "/live" });
     const readyResponse = await app.inject({ method: "GET", url: "/ready" });
+    const mcpGetResponse = await app.inject({ method: "GET", url: "/api/ai-mcp" });
     const bootstrapResponse = await app.inject({
       method: "GET", url: "/api/bootstrap", headers: { authorization },
     });
@@ -519,6 +594,7 @@ async function main() {
         wrongChannelReferenceResponse.statusCode === 404,
     );
     assertOk("那年今日接口已完整退役", retiredOnThisDayResponse.statusCode === 404);
+    assertOk("AI MCP GET 探测继续保持 405 契约", mcpGetResponse.statusCode === 405);
     assertOk(
       "签名媒体路由拒绝伪造签名和裸路径旁路",
       healthResponse.statusCode === 200 && healthResponse.json().database === "ok" &&
@@ -568,6 +644,146 @@ async function main() {
     await runtimeState.writeRuntimeState("smoke", "ok");
     assertOk("AI 运行状态读写", (await runtimeState.readRuntimeState("smoke")) === "ok");
 
+    const {
+      CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS,
+      applyDigestPatch,
+      isContextDigestCircuitOpen,
+      nextContextDigestCircuitState,
+    } = await import("../src/ai/conversation/context");
+    const circuitNow = 10_000_000;
+    const circuitAfterOneFailure = nextContextDigestCircuitState(
+      { failures: 0, openUntil: 0 },
+      false,
+      circuitNow,
+    );
+    const circuitAfterTwoFailures = nextContextDigestCircuitState(
+      circuitAfterOneFailure,
+      false,
+      circuitNow + 1,
+    );
+    const recoveredCircuit = nextContextDigestCircuitState(
+      circuitAfterTwoFailures,
+      true,
+      circuitNow + CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS + 2,
+    );
+    assertOk(
+      "上下文日总览连续失败后熔断，成功探测后恢复",
+      !isContextDigestCircuitOpen(circuitAfterOneFailure, circuitNow) &&
+        isContextDigestCircuitOpen(circuitAfterTwoFailures, circuitNow + 2) &&
+        !isContextDigestCircuitOpen(
+          circuitAfterTwoFailures,
+          circuitNow + CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS + 2,
+        ) &&
+        recoveredCircuit.failures === 0 &&
+        recoveredCircuit.openUntil === 0,
+    );
+    const patchedDigest = applyDigestPatch({
+      dayKey: "2026-07-18",
+      topics: [{
+        id: "topic_trip",
+        title: "周末出行",
+        status: "open",
+        actors: ["both"],
+        points: ["正在比较路线"],
+        lastAt: circuitNow - 1_000,
+      }],
+      decisions: [],
+      openLoops: ["决定是否订票"],
+      moodLine: "",
+      updatedAt: circuitNow - 1_000,
+    }, {
+      topics: [{
+        matchId: "topic_trip",
+        title: "周末出行",
+        status: "done",
+        actors: ["both"],
+        points: ["已经买好车票"],
+      }],
+      decisionsAdd: ["决定坐高铁"],
+      openLoopsClose: ["决定是否订票"],
+      moodLine: "安排已经落定",
+    }, circuitNow);
+    assertOk(
+      "上下文日总览补丁复用话题并增量关闭未决事项",
+      patchedDigest?.digest.topics.length === 1 &&
+        patchedDigest.digest.topics[0].id === "topic_trip" &&
+        patchedDigest.digest.topics[0].status === "done" &&
+        patchedDigest.digest.topics[0].points.includes("已经买好车票") &&
+        patchedDigest.digest.decisions.includes("决定坐高铁") &&
+        patchedDigest.digest.openLoops.length === 0 &&
+        patchedDigest.digest.moodLine === "安排已经落定",
+    );
+
+    const {
+      ENGAGEMENT_CONFLICT_GLOBAL_OVERRIDE,
+      ENGAGEMENT_MAX_SEGMENT_AGE_MS,
+      engagementCooldownBlock,
+      isEngagementSegmentStale,
+      localEngagementGate,
+    } = await import("../src/ai/engagement");
+    const engagementDigest = {
+      dayKey: "2026-07-18",
+      topics: [],
+      openLoops: ["明天记得订票"],
+      decisions: [],
+      moodLine: "早些时候有争执",
+    };
+    const cooldownNow = 20_000_000;
+    const engagementSegment = (bullets: string[]) => ({
+      id: "seg_smoke",
+      dayKey: "2026-07-18",
+      timeRangeLabel: "17:00–17:10",
+      endedAt: cooldownNow,
+      messageCount: 12,
+      bullets,
+    });
+    assertOk(
+      "主动搭话只看当前线索，冲突按先后缓和并受跨类型冷却保护",
+      localEngagementGate(
+        engagementDigest,
+        engagementSegment(["两人正在安静看电影"]),
+        ["刚聊到电影剧情"],
+      ) === "skip" &&
+        localEngagementGate(
+          engagementDigest,
+          engagementSegment(["之前说了抱抱"]),
+          ["随后又说你太过分了"],
+        ) === "run" &&
+        localEngagementGate(
+          engagementDigest,
+          engagementSegment(["刚才争执得很厉害"]),
+          ["现在已经和好了"],
+        ) === "skip" &&
+        localEngagementGate(
+          engagementDigest,
+          engagementSegment(["周末去哪，选哪个还没决定"]),
+          [],
+        ) === "run" &&
+        engagementCooldownBlock(
+          "conflict",
+          ENGAGEMENT_CONFLICT_GLOBAL_OVERRIDE - 0.01,
+          cooldownNow,
+          { global: cooldownNow - 1_000 },
+        )?.scope === "global" &&
+        engagementCooldownBlock(
+          "conflict",
+          ENGAGEMENT_CONFLICT_GLOBAL_OVERRIDE,
+          cooldownNow,
+          { global: cooldownNow - 1_000 },
+        ) === null &&
+        engagementCooldownBlock(
+          "interject",
+          1,
+          cooldownNow,
+          { interject: cooldownNow - 1_000, global: cooldownNow - 1_000 },
+        )?.scope === "kind" &&
+        !isEngagementSegmentStale(cooldownNow, cooldownNow) &&
+        isEngagementSegmentStale(
+          cooldownNow - ENGAGEMENT_MAX_SEGMENT_AGE_MS - 1,
+          cooldownNow,
+        ),
+    );
+
     const { rankChatSearchRows, searchTerms } = await import("../src/ai/conversation/search");
     const searchRow = (id: string, text: string, ts: number) => ({
       id, channel: "couple", sender: user.username, sender_name: user.name, kind: "user", type: "text",
@@ -596,18 +812,32 @@ async function main() {
     const ownerTiedMessages = await ownerTextMessagesAfter("couple", { ts: tiedTs, id: "cursor-smoke-a" }, 30);
     const {
       MEMORY_SOURCE_BATCH_SIZE,
+      MEMORY_EVENT_EVIDENCE_THRESHOLD,
       memoryExtractionDelay,
+      memoryEventEvidenceScore,
       shouldExtractMemoryBatch,
+      shouldRecoverMemoryEvent,
       shouldRetryEmptyMemoryBatch,
     } = await import("../src/ai/memory/extractor");
+    const completedMilestoneScore = memoryEventEvidenceScore([
+      "我已经把表格和图制作完成，并通过微信发给你了",
+    ]);
+    const futurePlanScore = memoryEventEvidenceScore([
+      "我计划明天把表格做完，晚点发给你",
+    ]);
     assertOk(
-      "Memory 按80条硬上限与分段空闲窗口整理，并使用 (ts,id) 游标",
+      "Memory 按80条硬上限整理，并只对明确完成节点补做 event 复核",
       MEMORY_SOURCE_BATCH_SIZE === 80 &&
         !shouldExtractMemoryBatch(79) && shouldExtractMemoryBatch(80) && shouldExtractMemoryBatch(1, true) &&
         memoryExtractionDelay(20, tiedTs, tiedTs, tiedTs) === 15 * 60 * 1000 &&
         !shouldRetryEmptyMemoryBatch(11, 0) &&
         shouldRetryEmptyMemoryBatch(12, 0) &&
         !shouldRetryEmptyMemoryBatch(80, 1) &&
+        completedMilestoneScore >= MEMORY_EVENT_EVIDENCE_THRESHOLD &&
+        futurePlanScore === 0 &&
+        !shouldRecoverMemoryEvent(11, completedMilestoneScore, false) &&
+        shouldRecoverMemoryEvent(12, completedMilestoneScore, false) &&
+        !shouldRecoverMemoryEvent(80, completedMilestoneScore, true) &&
         tiedMessages.some((message) => message.id === "cursor-smoke-b") &&
         !tiedMessages.some((message) => message.id === "cursor-smoke-a") &&
         ownerTiedMessages.some((message) => message.id === "cursor-smoke-b"),

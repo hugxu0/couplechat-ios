@@ -30,9 +30,14 @@ export interface Trigger {
 export interface ResponseRunState {
   readonly cancelled: boolean;
   readonly signal: AbortSignal;
+  readonly failure: unknown | null;
+  readonly recoveredFromMaxTurns: boolean;
   emitted: boolean;
   /** 超时或正常路径谁先 claim 谁负责发用户可见文案，避免双发。 */
   claimEmit(): boolean;
+  /** respond 会吞掉内部异常以发送兜底；在这里保留真实终态供操作日志判定。 */
+  markFailure(error: unknown): void;
+  markRecoveredFromMaxTurns(): void;
   cancel(): void;
 }
 
@@ -45,10 +50,18 @@ function sleep(ms: number) {
 
 function createRunState(): ResponseRunState {
   let claimed = false;
+  let failure: unknown | null = null;
+  let recoveredFromMaxTurns = false;
   const controller = new AbortController();
   return {
     get cancelled() {
       return controller.signal.aborted;
+    },
+    get failure() {
+      return failure;
+    },
+    get recoveredFromMaxTurns() {
+      return recoveredFromMaxTurns;
     },
     signal: controller.signal,
     emitted: false,
@@ -56,6 +69,12 @@ function createRunState(): ResponseRunState {
       if (claimed) return false;
       claimed = true;
       return true;
+    },
+    markFailure(error) {
+      failure ??= error;
+    },
+    markRecoveredFromMaxTurns() {
+      recoveredFromMaxTurns = true;
     },
     cancel() {
       controller.abort();
@@ -75,6 +94,7 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
     const result = await runAgentReply(trigger, trace, state.signal);
     traceTiming(trace, "agent", startedAt);
     if (!result) throw new Error("Agent 没有生成有效结果");
+    if (result.recoveredFromMaxTurns) state.markRecoveredFromMaxTurns();
     if (!result.replies.length) {
       if (background) {
         traceReply(trace, {
@@ -138,6 +158,7 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
     }
   } catch (error) {
     failed = true;
+    state.markFailure(error);
     if (!background) sink.activity?.(trigger, "failed");
     const message = error instanceof Error ? error.message : String(error);
     traceError(trace, message);
@@ -203,9 +224,20 @@ export async function runReplyTaskWithTimeout(
     throw error;
   } finally {
     if (timer) clearTimeout(timer);
+    const terminalFailure = failure ?? state.failure;
     if (timedOut) operation.timeout({ emitted: state.emitted });
-    else if (failure) operation.failure(errorCodeFor(failure), { emitted: state.emitted });
-    else operation.success({ emitted: state.emitted });
+    else if (terminalFailure) {
+      operation.failure(errorCodeFor(terminalFailure), {
+        emitted: state.emitted,
+        degraded: state.emitted,
+        recoveredFromMaxTurns: state.recoveredFromMaxTurns,
+      });
+    } else {
+      operation.success({
+        emitted: state.emitted,
+        recoveredFromMaxTurns: state.recoveredFromMaxTurns,
+      });
+    }
   }
 }
 

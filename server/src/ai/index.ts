@@ -121,7 +121,8 @@ function submitEngagementReply(io: Server, signal: EngagementSignal): void {
   };
   const result = queueRespond(trigger, makeSink(io));
   console.log(
-    `[ai] engagement→Agent kind=${signal.kind} conf=${signal.confidence.toFixed(2)} topic=${signal.topicHint || "—"} queue=${result}`,
+    `[ai] engagement→Agent kind=${signal.kind} ` +
+      `conf=${signal.confidence.toFixed(2)} queue=${result}`,
   );
 }
 

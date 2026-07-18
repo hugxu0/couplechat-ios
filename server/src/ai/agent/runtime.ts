@@ -27,6 +27,7 @@ export interface AgentReplyResult {
   citations: Citation[];
   usedVision: boolean;
   rawOutput: string;
+  recoveredFromMaxTurns: boolean;
 }
 
 function providerConfig() {
@@ -280,6 +281,8 @@ export async function runAgentReply(
         traceIncludeSensitiveData: false,
         modelSettings,
       });
+      let recoveredFromMaxTurns = false;
+      const recoveryRawResponses: unknown[] = [];
       try {
         const agent = new Agent({
           name: "大橘",
@@ -292,8 +295,87 @@ export async function runAgentReply(
         const result = await runner.run(agent, toModelInput(text, imageUrls), {
           maxTurns,
           signal: controller.signal,
+          errorHandlers: {
+            maxTurns: async ({ runData }) => {
+              const recoveryStartedAt = Date.now();
+              const recoveryController = new AbortController();
+              const abortRecovery = () => recoveryController.abort();
+              if (controller.signal.aborted) recoveryController.abort();
+              else controller.signal.addEventListener("abort", abortRecovery, { once: true });
+              const recoveryTimer = setTimeout(
+                () => recoveryController.abort(),
+                GEN.replyRecovery.timeoutMs ?? 15_000,
+              );
+              try {
+                const recoveryModelSettings = {
+                  ...baseModelSettings,
+                  maxTokens: GEN.replyRecovery.maxTokens,
+                  temperature: GEN.replyRecovery.temperature,
+                  reasoning: useResponses
+                    ? responsesReasoningSettings(GEN.replyRecovery.reasoningEffort)
+                    : GEN.replyRecovery.reasoningEffort
+                      ? { effort: GEN.replyRecovery.reasoningEffort }
+                      : undefined,
+                  store: false,
+                } as const;
+                const finalizer = new Agent({
+                  name: "大橘收尾",
+                  instructions: [
+                    instructions(trigger),
+                    "【工具收尾】工具阶段已经结束，禁止再调用任何工具。只根据对话和已有工具结果直接作答；证据不足就明确说没找到，不得编造。",
+                  ].join("\n\n"),
+                  model: providerSettings.model,
+                  modelSettings: recoveryModelSettings,
+                });
+                const finalizerRunner = new Runner({
+                  modelProvider: provider,
+                  tracingDisabled: true,
+                  traceIncludeSensitiveData: false,
+                  modelSettings: recoveryModelSettings,
+                });
+                const finalizerInput: AgentInputItem[] = [
+                  ...runData.history,
+                  {
+                    role: "user",
+                    content:
+                      '现在停止检索并收束答案。最终只输出 JSON：{"replies":["..."]}；后台候选仍可输出 {"replies":[]}。',
+                  },
+                ];
+                const finalResult = await finalizerRunner.run(finalizer, finalizerInput, {
+                  maxTurns: 1,
+                  signal: recoveryController.signal,
+                });
+                const finalOutput = typeof finalResult.finalOutput === "string"
+                  ? finalResult.finalOutput.trim()
+                  : JSON.stringify(finalResult.finalOutput ?? "");
+                if (!finalOutput) throw new Error("empty_max_turns_recovery");
+                recoveryRawResponses.push(...finalResult.rawResponses);
+                recoveredFromMaxTurns = true;
+                console.warn(
+                  `[ai] max_turns_recovery status=ok origin=${trigger.origin ?? "user"} ` +
+                    `toolCalls=${Object.values(toolRun.toolCounts).reduce((sum, count) => sum + count, 0)} ` +
+                    `durationMs=${Date.now() - recoveryStartedAt}`,
+                );
+                return { finalOutput };
+              } catch (error) {
+                console.warn(
+                  `[ai] max_turns_recovery status=error origin=${trigger.origin ?? "user"} ` +
+                    `errorType=${error instanceof Error ? error.name : "unknown"} ` +
+                    `durationMs=${Date.now() - recoveryStartedAt}`,
+                );
+                return undefined;
+              } finally {
+                clearTimeout(recoveryTimer);
+                controller.signal.removeEventListener("abort", abortRecovery);
+              }
+            },
+          },
         });
-        return { result, workerRawResponses: [...result.rawResponses] };
+        return {
+          result,
+          workerRawResponses: [...result.rawResponses, ...recoveryRawResponses],
+          recoveredFromMaxTurns,
+        };
       } finally {
         await provider.close().catch(() => {});
       }
@@ -301,6 +383,7 @@ export async function runAgentReply(
 
     let execution = await runOnce(userText, activeImageUrls, 6);
     let totalTurns = execution.workerRawResponses.length;
+    let recoveredFromMaxTurns = execution.recoveredFromMaxTurns;
 
     // 工具请求附着了另一组图：用「同一问题 + 新图」再跑一轮多模态，结果以本轮为准。
     const pending = toolRun.pendingImageAttach;
@@ -318,6 +401,7 @@ export async function runAgentReply(
       console.log(`[ai] multimodal re-run with ${activeImageUrls.length} image(s)`);
       execution = await runOnce(userText, activeImageUrls, 4);
       totalTurns += execution.workerRawResponses.length;
+      recoveredFromMaxTurns ||= execution.recoveredFromMaxTurns;
     }
 
     const { result, workerRawResponses } = execution;
@@ -341,6 +425,7 @@ export async function runAgentReply(
       citations,
       usedVision: usedVision || toolRun.usedVision || activeImageUrls.length > 0,
       rawOutput,
+      recoveredFromMaxTurns,
     };
   } finally {
     clearTimeout(timer);

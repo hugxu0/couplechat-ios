@@ -49,6 +49,48 @@ export const MEMORY_BUSY_IDLE_MS = 15 * 60 * 1000;
 export const MEMORY_QUIET_IDLE_MS = 60 * 60 * 1000;
 export const MEMORY_MAX_BATCH_AGE_MS = 2 * 60 * 60 * 1000;
 export const MEMORY_EMPTY_RETRY_THRESHOLD = 12;
+export const MEMORY_EVENT_RECOVERY_MIN_MESSAGES = 12;
+export const MEMORY_EVENT_EVIDENCE_THRESHOLD = 2;
+
+const EVENT_PAST_CONTEXT_RE =
+  /(?:已|已经|刚刚|刚才|终于|后来|最终|这次|今天|上午|下午|晚上|昨晚|昨天)/u;
+const EVENT_OUTCOME_RE =
+  /(?:完成|做完|弄完|结束|成功|失败|解决|提交|发给|发送|交给|收到|拿到|制作|下载|测出|称出|检查出|确诊|住院|手术|到达|回到|见面|和好|争执|吵架|赢了|输了|购买|退款)/u;
+const EVENT_STRONG_RE =
+  /(?:终于完成|顺利完成|已经解决|成功提交|已经发给|已经交给|检查结果|确诊|住院|手术|见面了|和好了|吵了一架|发生争执|赢了一局|拿到结果)/u;
+const EVENT_FUTURE_ONLY_RE =
+  /^(?:(?:我|我们|她|他|小旭|小偲)\s*)?(?:准备|计划|打算|想要|等会|稍后|晚点|明天|后天|下次|以后|到时候)/u;
+
+/**
+ * 只判断是否值得让模型再检查一次 event，不直接把关键词写成记忆。
+ * 分数最多 4；明确完成/结果记 2，较弱的结果线索记 1。
+ */
+export function memoryEventEvidenceScore(texts: string[]): number {
+  let score = 0;
+  for (const raw of texts) {
+    const text = raw.replace(/\s+/g, " ").trim().slice(0, 400);
+    if (!text) continue;
+    const hasPastContext = EVENT_PAST_CONTEXT_RE.test(text);
+    if (EVENT_FUTURE_ONLY_RE.test(text) && !hasPastContext) continue;
+    if (EVENT_STRONG_RE.test(text) || (hasPastContext && EVENT_OUTCOME_RE.test(text))) {
+      score += 2;
+    } else if (/(?:结果|进度|后来|最终|这次)/u.test(text) && EVENT_OUTCOME_RE.test(text)) {
+      score += 1;
+    }
+    if (score >= 4) return 4;
+  }
+  return score;
+}
+
+export function shouldRecoverMemoryEvent(
+  modelMessageCount: number,
+  evidenceScore: number,
+  hasUsableEventCandidate: boolean,
+): boolean {
+  return modelMessageCount >= MEMORY_EVENT_RECOVERY_MIN_MESSAGES
+    && evidenceScore >= MEMORY_EVENT_EVIDENCE_THRESHOLD
+    && !hasUsableEventCandidate;
+}
 
 export function memoryExtractionDelay(
   sourceMessageCount: number,
@@ -89,11 +131,11 @@ function systemPrompt(): string {
     "changes 只允许 fact、event、plan、state；禁止 relationship、insight、engagement 和 instruction。高层关系/理解由另一阶段根据基础卡生成。",
     `人物 username：${people}。subjects 必须且只能是单个逻辑主体 xu、si 或 both；它表示内容属于谁，不是发言人。只属于一人的事情归该人，只有共同参与、共同承担或两人的整体状态才用 both。`,
     "fact：稳定且以后值得直接查询的原子事实，例如身份、偏好、习惯、健康禁忌、工作、家庭和重要人物。",
-    "event：已经发生且以后值得回忆或检索的一次经历，约 50~120 字，独立写清人物、时间线索、事情和结果。不要把每句日常聊天都变成 event。",
+    "event：已经发生且以后值得回忆或检索的一次经历，约 50~120 字，独立写清人物、时间线索、事情和结果。完成一个阶段、交付/发送成果、得到结果、解决问题、一次争执与修复、健康事件、见面出行或有意义的输赢，都可以是 event；即使同一主题还应写 state/plan，也不要漏掉已经完成的独立节点。",
     "plan：未来安排、承诺或准备做的事；必须给 validHours，未明确期限默认 720 小时。完成、取消或明确否定旧计划时输出对应 operation。",
     "state：近三天滚动近况，可记录活动、健康、情绪、正在讨论的主题、双方观点和分歧。每个主体本批最多一张，内容应具体连贯，validHours 默认 72 小时。",
     "operation 只能是 upsert|append|retract|complete|cancel。fact/plan 更新时复用稳定 memoryKey；state 使用 state.{subject}.recent；其他 key 使用 {layer}.{subject}.{topic}。",
-    "连续的同一次经历合并成一张 event；近况里的琐碎活动不要重复生成为 event。玩笑、问句、未确认猜测、辱骂中的人格判断不保存。不得编造日期，不得输出或引用消息 ID。",
+    "连续的同一次经历合并成一张 event；只有计划、仍在等待、没有结果的普通过程，以及刷视频/吃饭/寒暄等琐碎活动不要生成 event。玩笑、问句、未确认猜测、辱骂中的人格判断不保存。不得编造日期，不得输出或引用消息 ID。",
     `本批经过低信息量过滤后若仍有至少 ${MEMORY_EMPTY_RETRY_THRESHOLD} 条真实交流，并出现活动、感受、健康、争执、决定、计划或持续讨论主题，至少输出一张 state；只有确实没有任何可整理信息时 changes 才能为空。`,
     "dajuChanges 只允许 observation；必须引用本批实际 changes 中至少两个 sourceMemoryKeys，默认有效 30 天。主人对大橘的长期行为要求由对话 Agent 直接保存，这里不得生成 instruction。",
     "confidence 范围 0~1，importance 范围 1~5，changes 最多 40 条。示例仅说明字段，不得复制示例正文。",
@@ -108,6 +150,95 @@ function messageLine(message: LogMessage): string {
 }
 
 const BASE_MEMORY_LAYERS = new Set<MemoryLayer>(["fact", "event", "plan", "state"]);
+
+type CandidateLayerLabel = MemoryLayer | "daju" | "unknown";
+type CandidateRejectReason =
+  | "invalid_layer"
+  | "invalid_operation"
+  | "invalid_subject"
+  | "missing_key"
+  | "missing_content"
+  | "duplicate_state"
+  | "target_not_found"
+  | "invalid_transition"
+  | "transition_failed"
+  | "invalid_observation"
+  | "missing_sources"
+  | "store_rejected";
+
+interface CandidateAudit {
+  accepted: Map<CandidateLayerLabel, number>;
+  rejected: Map<CandidateRejectReason, number>;
+}
+
+const MEMORY_OPERATIONS = new Set(["upsert", "append", "retract", "complete", "cancel"]);
+
+function increment<K>(map: Map<K, number>, key: K): void {
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
+
+function candidateLayerLabel(item: ExtractedMemory): CandidateLayerLabel {
+  return BASE_MEMORY_LAYERS.has(item.layer as MemoryLayer)
+    ? item.layer as MemoryLayer
+    : "unknown";
+}
+
+function rejectCandidate(
+  audit: CandidateAudit,
+  reason: CandidateRejectReason,
+): void {
+  increment(audit.rejected, reason);
+}
+
+function acceptCandidate(audit: CandidateAudit, layer: CandidateLayerLabel): void {
+  increment(audit.accepted, layer);
+}
+
+function formatCounts<K extends string>(map: Map<K, number>, order?: readonly K[]): string {
+  const keys = order
+    ? order.filter((key) => map.has(key))
+    : [...map.keys()].sort();
+  return keys.length ? keys.map((key) => `${key}:${map.get(key)}`).join(",") : "none";
+}
+
+function hasUsableEventCandidate(items: ExtractedMemory[]): boolean {
+  return items.some((item) => {
+    const operation = item.operation ?? "upsert";
+    return item.layer === "event"
+      && (operation === "upsert" || operation === "append")
+      && Boolean(item.memoryKey?.trim())
+      && Boolean(item.content?.trim())
+      && normalizedMemorySubjects(item.subjects ?? []).length === 1;
+  });
+}
+
+async function recoverEventCandidate(
+  channel: string,
+  messages: LogMessage[],
+): Promise<ExtractedMemory | null> {
+  const output = await chat({
+    profile: "task",
+    scope: "memory.event_recovery",
+    system: [
+      "你是基础记忆的 event 漏检复核器，只复核本批是否存在一个已完成且值得以后回忆/检索的独立节点。",
+      "可接受：完成阶段或交付成果、得到明确结果、问题解决或失败收尾、争执与修复、健康事件、见面出行、重要购买或有意义的输赢。",
+      "拒绝：只有计划、仍在等待且无结果、普通刷视频/吃饭/寒暄、问句、玩笑和未确认猜测。",
+      "即使该经历同时适合 state 或 plan，只要已有明确完成节点，仍可输出 event。",
+      "subjects 只能是 xu、si、both 之一；memoryKey 使用 event.{subject}.{topic}；正文 50~120 字，不编造日期，不引用消息 ID。",
+      '只输出 JSON：{"event":null} 或 {"event":{"memoryKey":"event.si.topic","subjects":["si"],"content":"...","confidence":0.9,"importance":3}}。',
+    ].join("\n"),
+    user: `【待复核消息，频道=${channel}】\n${messages.map(messageLine).join("\n")}`,
+    gen: GEN.eventRecovery,
+  });
+  const parsed = extractJson<{ event?: ExtractedMemory | null }>(output);
+  if (!parsed?.event) return null;
+  return {
+    ...parsed.event,
+    operation: "append",
+    layer: "event",
+    metadata: { ...parsed.event.metadata, eventRecovery: true },
+  };
+}
 
 async function scanChannel(channel: string, force = false): Promise<void> {
   if (running.has(channel)) return;
@@ -158,24 +289,57 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     if (!parsed || !Array.isArray(parsed.changes)) throw new Error("基础记忆 JSON 无效");
     const candidateChanges = parsed.changes.slice(0, 40);
     const candidateDajuChanges = (parsed.dajuChanges ?? []).slice(0, 20);
+    const originalBaseCandidateCount = candidateChanges.length;
+    const eventEvidenceScore = memoryEventEvidenceScore(modelMessages.map((message) => message.text));
+    let eventRecoveryStatus: "skipped" | "added" | "none" | "failed" = "skipped";
+    if (shouldRecoverMemoryEvent(
+      modelMessages.length,
+      eventEvidenceScore,
+      hasUsableEventCandidate(candidateChanges),
+    )) {
+      try {
+        const recovered = await recoverEventCandidate(channel, modelMessages);
+        eventRecoveryStatus = recovered ? "added" : "none";
+        if (recovered) candidateChanges.push(recovered);
+      } catch {
+        // 这是增强路径；主提取已有可用候选时，不能因复核服务超时阻塞整批 Memory。
+        eventRecoveryStatus = "failed";
+      }
+    }
     if (shouldRetryEmptyMemoryBatch(modelMessages.length, candidateChanges.length)) {
       throw new Error(
         `基础记忆模型对 ${modelMessages.length} 条有效消息返回零候选，保留游标等待重试`,
       );
     }
 
-    let saved = 0;
+    let baseSaved = 0;
+    let dajuSaved = 0;
+    const audit: CandidateAudit = { accepted: new Map(), rejected: new Map() };
     const stateSubjects = new Set<string>();
     const savedBaseByKey = new Map<string, MemoryItem>();
     for (const item of candidateChanges) {
       const operation = item.operation ?? "upsert";
-      if (!item.layer || !BASE_MEMORY_LAYERS.has(item.layer as MemoryLayer)) continue;
+      const layerLabel = candidateLayerLabel(item);
+      if (!MEMORY_OPERATIONS.has(operation)) {
+        rejectCandidate(audit, "invalid_operation");
+        continue;
+      }
+      if (!item.layer || !BASE_MEMORY_LAYERS.has(item.layer as MemoryLayer)) {
+        rejectCandidate(audit, "invalid_layer");
+        continue;
+      }
       const layer = item.layer as MemoryLayer;
       const subjects = normalizedMemorySubjects(item.subjects ?? []);
-      if (subjects.length !== 1) continue;
+      if (subjects.length !== 1) {
+        rejectCandidate(audit, "invalid_subject");
+        continue;
+      }
       const subject = subjects[0];
       const memoryKey = layer === "state" ? `state.${subject}.recent` : item.memoryKey;
-      if (!memoryKey) continue;
+      if (!memoryKey) {
+        rejectCandidate(audit, "missing_key");
+        continue;
+      }
 
       if (["retract", "complete", "cancel"].includes(operation)) {
         const target = await findActiveMemoryByKey({
@@ -186,20 +350,37 @@ async function scanChannel(channel: string, force = false): Promise<void> {
           memoryKey,
           subjects,
         });
-        if (!target) continue;
-        if ((operation === "complete" || operation === "cancel") && target.layer !== "plan") continue;
+        if (!target) {
+          rejectCandidate(audit, "target_not_found");
+          continue;
+        }
+        if ((operation === "complete" || operation === "cancel") && target.layer !== "plan") {
+          rejectCandidate(audit, "invalid_transition");
+          continue;
+        }
         const status = operation === "complete" ? "completed" : operation === "cancel" ? "cancelled" : "retracted";
         if (await transitionMemory({
           memoryId: target.id,
           scope: channel,
           status,
           reason: item.reason,
-        })) saved += 1;
+        })) {
+          baseSaved += 1;
+          acceptCandidate(audit, layerLabel);
+        } else {
+          rejectCandidate(audit, "transition_failed");
+        }
         continue;
       }
 
-      if (!item.content) continue;
-      if (layer === "state" && stateSubjects.has(subject)) continue;
+      if (!item.content?.trim()) {
+        rejectCandidate(audit, "missing_content");
+        continue;
+      }
+      if (layer === "state" && stateSubjects.has(subject)) {
+        rejectCandidate(audit, "duplicate_state");
+        continue;
+      }
       if (layer === "state") stateSubjects.add(subject);
 
       const baseTime = sourceMessages.at(-1)?.ts ?? Date.now();
@@ -248,22 +429,36 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         validUntil: validHours && (layer === "state" || layer === "plan")
           ? baseTime + validHours * 60 * 60 * 1000
           : null,
-        metadata: { ...item.metadata, updateReason: item.reason ?? "", extractorVersion: 4 },
+        metadata: { ...item.metadata, updateReason: item.reason ?? "", extractorVersion: 5 },
         targetMemoryId: targetForUpdate?.id,
       };
       const stored = await addMemory(candidate, SYSTEM_MEMORY_SYNC);
       if (stored) {
-        saved += 1;
+        baseSaved += 1;
+        acceptCandidate(audit, layerLabel);
         savedBaseByKey.set(memoryKey, stored);
         savedBaseByKey.set(stored.memoryKey, stored);
         if (layer === "state") await archiveSiblingMemories(stored.id, true);
+      } else {
+        rejectCandidate(audit, "store_rejected");
       }
     }
 
     for (const item of candidateDajuChanges) {
       const operation = item.operation ?? "upsert";
+      if (!MEMORY_OPERATIONS.has(operation)) {
+        rejectCandidate(audit, "invalid_operation");
+        continue;
+      }
       const subjects = normalizedMemorySubjects(item.subjects ?? []);
-      if (!item.memoryKey || subjects.length !== 1) continue;
+      if (!item.memoryKey) {
+        rejectCandidate(audit, "missing_key");
+        continue;
+      }
+      if (subjects.length !== 1) {
+        rejectCandidate(audit, "invalid_subject");
+        continue;
+      }
       const target = await findActiveMemoryByKey({
         scope: channel,
         layer: "insight",
@@ -273,25 +468,39 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         subjects,
       });
       if (["retract", "complete", "cancel"].includes(operation)) {
-        if (!target) continue;
+        if (!target) {
+          rejectCandidate(audit, "target_not_found");
+          continue;
+        }
         const status = operation === "complete" ? "completed" : operation === "cancel" ? "cancelled" : "retracted";
         if (await transitionMemory({
           memoryId: target.id,
           scope: channel,
           status,
           reason: item.reason,
-        })) saved += 1;
+        })) {
+          dajuSaved += 1;
+          acceptCandidate(audit, "daju");
+        } else {
+          rejectCandidate(audit, "transition_failed");
+        }
         continue;
       }
 
       const kind = item.kind;
-      if (!item.content || !item.memoryKey || kind !== "observation") continue;
+      if (!item.content?.trim() || kind !== "observation") {
+        rejectCandidate(audit, "invalid_observation");
+        continue;
+      }
       const layer = "insight";
       const sourceMemoryIds = [...new Set(item.sourceMemoryKeys ?? [])]
         .map((key) => savedBaseByKey.get(key)?.id)
         .filter((id): id is string => Boolean(id))
         .slice(0, 20);
-      if (sourceMemoryIds.length < 2) continue;
+      if (sourceMemoryIds.length < 2) {
+        rejectCandidate(audit, "missing_sources");
+        continue;
+      }
 
       const baseTime = sourceMessages.at(-1)?.ts ?? Date.now();
       const suppliedValidHours = Number(item.validHours);
@@ -322,11 +531,15 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         targetMemoryId: target?.id,
       }, SYSTEM_MEMORY_SYNC);
       if (stored) {
-        saved += 1;
+        dajuSaved += 1;
+        acceptCandidate(audit, "daju");
         await archiveSiblingMemories(stored.id, false);
+      } else {
+        rejectCandidate(audit, "store_rejected");
       }
     }
 
+    const saved = baseSaved + dajuSaved;
     await advanceMemoryCursor(channel, nextCursor);
     await reconcileMemoryLifecycle();
     // 同一频道仍串行派生，避免共享 task provider 并发堆积；手动 HTTP
@@ -341,11 +554,23 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     }
     console.log(
       `[memory] ${channel} 整理 ${modelMessages.length}/${sourceMessages.length} 条消息，` +
-        `候选 ${candidateChanges.length}/${candidateDajuChanges.length}，写入/更新 ${saved} 条基础记忆`,
+        `候选=${originalBaseCandidateCount}/${candidateDajuChanges.length} ` +
+        `event复核=${eventRecoveryStatus}:${eventEvidenceScore} ` +
+        `保存=${baseSaved}/${dajuSaved} ` +
+        `层级=${formatCounts(audit.accepted, ["fact", "event", "plan", "state", "daju", "unknown"])}`,
     );
-    if (candidateChanges.length > 0 && saved === 0) {
+    if (audit.rejected.size > 0) {
       console.warn(
-        `[memory] ${channel} 模型返回 ${candidateChanges.length} 条基础候选但全部被校验或排除规则拒绝`,
+        `[memory] ${channel} 候选拒绝=${formatCounts(audit.rejected)}`,
+      );
+    }
+    if (
+      eventEvidenceScore >= MEMORY_EVENT_EVIDENCE_THRESHOLD
+      && (audit.accepted.get("event") ?? 0) === 0
+    ) {
+      console.warn(
+        `[memory] ${channel} 存在明确事件线索但未保存 event ` +
+          `evidence=${eventEvidenceScore} recovery=${eventRecoveryStatus}`,
       );
     }
   } finally {

@@ -8,7 +8,7 @@
 |---|---|---|
 | 客户端源码与 CI | `fffd0bd6880382c31d8611e73ebc8d1c021a2426` / run `29588581647` | 当前工作分支的 Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
 | 最近 iOS 产物 | `fffd0bd6880382c31d8611e73ebc8d1c021a2426` / run `29588584761` | Xcode 26.3 unsigned IPA 归档和下载校验通过，版本 `0.2.0 (11)` |
-| 服务端本地验证 | 2026-07-18 | 全栈审计优化后 `npm run check` 通过（登录限流、媒体 TTL 签名、`(ts,id)` 分页、AI Trace 脱敏、队列终态等） |
+| 服务端本地验证 | 2026-07-18 | 全栈审计优化后 `npm run check` 通过（上下文摘要熔断、Memory event 复核、主动搭话门闩、Agent max-turn 收尾、工具日志脱敏和队列真实终态等） |
 | 生产环境 | 2026-07-18 | 固定 RELEASE `6e758b8ad17dbb51f27ec69978cd4c54d7d90fc3` 已发布，schema v32 未变化；容器零重启，源站与公开 `/live`、`/health`、`/ready`、Socket 均通过，AI/Memory 修复已生效 |
 
 本机旧 IPA、tar、展开 release 或备份目录不属于生产证据。服务器细节见 [SERVER.md](SERVER.md)，签名与侧载见 [IOS.md](IOS.md)。

@@ -30,6 +30,8 @@ export async function registerAiMcpRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.get("/api/ai-mcp", async (_request, reply) => reply.code(405).send({ error: "method_not_allowed" }));
+  // Streamable HTTP 客户端会例行探测 GET；保留 405 契约，但不让正常握手污染访问日志。
+  app.get("/api/ai-mcp", { logLevel: "silent" }, async (_request, reply) =>
+    reply.code(405).send({ error: "method_not_allowed" }));
   app.delete("/api/ai-mcp", async (_request, reply) => reply.code(405).send({ error: "method_not_allowed" }));
 }

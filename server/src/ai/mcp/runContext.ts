@@ -3,6 +3,8 @@ import { config } from "../../config";
 import type { AiAction } from "../actions/personalItems";
 import type { Citation } from "../provider";
 import type { TraceEntry } from "../debug/trace";
+import { startOperation } from "../../observability/operationLog";
+import { errorCodeFor, errorCodes } from "../../errors/errorCodes";
 
 export interface AgentRunIdentity {
   traceId: string;
@@ -110,8 +112,15 @@ export async function recordAgentTool<T>(
     draft_personal_item_action: 6,
   };
   const totalCalls = Object.values(run.toolCounts).reduce((sum, count) => sum + count, 0);
+  const operation = startOperation("ai.tool", {
+    channel: run.identity.storedChannel,
+    tool: name,
+    callIndex: nextCount,
+    totalCallIndex: totalCalls,
+  });
   const limit = perToolLimits[name] ?? 2;
   if (nextCount > limit || totalCalls > 14) {
+    operation.failure(errorCodes.rateLimited, { reason: "tool_budget" });
     throw new Error("本轮检索预算已用完。请停止调用工具，根据已有可靠证据回答；证据不足就明确说无法确认。 ");
   }
   const startedAt = Date.now();
@@ -124,9 +133,11 @@ export async function recordAgentTool<T>(
     entry.result = config.isProduction
       ? `[redacted len=${raw.length}]`
       : raw.slice(0, 12_000);
+    operation.success();
     return result;
   } catch (error) {
     entry.error = error instanceof Error ? error.message : String(error);
+    operation.failure(errorCodeFor(error));
     throw error;
   } finally {
     entry.durationMs = Date.now() - startedAt;
