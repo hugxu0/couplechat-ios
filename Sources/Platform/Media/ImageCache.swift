@@ -11,6 +11,7 @@ final class ImageCache {
     static let shared = ImageCache()
 
     private let memory = NSCache<NSString, UIImage>()
+    private let fullResolutionMemory = NSCache<NSString, UIImage>()
     private let sizeLock = NSLock()
     private var imageSizes: [String: CGSize] = [:]
     private let inFlightLock = NSLock()
@@ -25,7 +26,9 @@ final class ImageCache {
     private static let downloadGate = MediaDownloadGate(limit: 4)
     private static let cacheFormatMarker = ".stable-media-v2"
     private static let maxDecodedPixelSize = 2_400
+    private static let maxFullResolutionPixelSize = 6_144
     private static let maxAnimatedPixelSize = 600
+    private static let fullResolutionKeyPrefix = "full:"
 
     private init() {
         let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -45,6 +48,8 @@ final class ImageCache {
             }
         }
         memory.countLimit = 240
+        fullResolutionMemory.countLimit = 2
+        fullResolutionMemory.totalCostLimit = 192 * 1_024 * 1_024
         ioQueue.async { [directory] in
             MediaCacheStorage.trim(directory: directory, maxBytes: Self.maxDiskBytes)
         }
@@ -68,6 +73,10 @@ final class ImageCache {
     /// 仅查内存缓存（主线程安全、极快）。命中就不用走异步、也不闪占位。
     func memoryImage(for url: URL) -> UIImage? {
         memory.object(forKey: Self.cacheIdentity(for: url) as NSString)
+    }
+
+    func fullResolutionMemoryImage(for url: URL) -> UIImage? {
+        fullResolutionMemory.object(forKey: Self.cacheIdentity(for: url) as NSString)
     }
 
     /// 图片解码后的尺寸独立于 NSCache 保存。系统在后台可能清理已解码图片，
@@ -133,6 +142,78 @@ final class ImageCache {
             }
         }
         return result
+    }
+
+    /// 全屏浏览使用原文件，并以独立的小容量内存缓存保存高分辨率显示副本。
+    /// 这样气泡的 720px 预览不会污染原图命中，同时最多只常驻两张大图。
+    func fullResolutionImage(for url: URL) async -> UIImage? {
+        if let hit = fullResolutionMemoryImage(for: url) { return hit }
+        let identity = Self.fullResolutionKeyPrefix + Self.cacheIdentity(for: url)
+        let entry = inFlightLock.withLock {
+            if let existing = inFlight[identity] {
+                return existing
+            }
+            let id = UUID()
+            let task = Task { [weak self] in
+                await self?.loadFullResolutionImage(for: url)
+            }
+            let entry = (id: id, task: task)
+            inFlight[identity] = entry
+            return entry
+        }
+        let result = await entry.task.value
+        inFlightLock.withLock {
+            if inFlight[identity]?.id == entry.id {
+                inFlight.removeValue(forKey: identity)
+            }
+        }
+        return result
+    }
+
+    private func loadFullResolutionImage(for url: URL) async -> UIImage? {
+        let file = fileURL(for: url)
+        let cachedData = await Task.detached(priority: .userInitiated) { () -> Data? in
+            let source = url.isFileURL ? url : file
+            return try? Data(contentsOf: source)
+        }.value
+        let data: Data
+        let shouldPersist: Bool
+        if let cachedData {
+            data = cachedData
+            shouldPersist = false
+            if !url.isFileURL {
+                ioQueue.async { MediaCacheStorage.touch(file) }
+            }
+        } else {
+            guard !url.isFileURL,
+                  let downloaded = await downloadImageData(for: url) else { return nil }
+            data = downloaded
+            shouldPersist = true
+        }
+        guard !Task.isCancelled else { return nil }
+        let decoded = await Task.detached(priority: .userInitiated) {
+            Self.decodeForDisplay(data, maxPixelSize: Self.maxFullResolutionPixelSize)
+        }.value
+        guard let decoded, !Task.isCancelled else { return nil }
+        storeFullResolutionInMemory(decoded, for: url)
+        if shouldPersist {
+            ioQueue.async {
+                do {
+                    try data.write(to: file)
+                    MediaCacheStorage.protect(file)
+                    MediaCacheStorage.touch(file)
+                    MediaCacheStorage.trim(
+                        directory: self.directory,
+                        maxBytes: Self.maxDiskBytes,
+                        preserving: [file])
+                } catch {
+                    print(
+                        "[ImageCache] ⚠️ 原图缓存写入失败 "
+                        + "url=\(file.lastPathComponent): \(error.localizedDescription)")
+                }
+            }
+        }
+        return decoded
     }
 
     private func loadImage(for url: URL) async -> UIImage? {
@@ -288,6 +369,7 @@ final class ImageCache {
     private func remove(for url: URL) async {
         let identity = Self.cacheIdentity(for: url)
         memory.removeObject(forKey: identity as NSString)
+        fullResolutionMemory.removeObject(forKey: identity as NSString)
         sizeLock.lock()
         imageSizes.removeValue(forKey: identity)
         sizeLock.unlock()
@@ -295,10 +377,13 @@ final class ImageCache {
         previewFailures.removeValue(forKey: identity)
         previewFailureLock.unlock()
         inFlightLock.lock()
-        let task = inFlight.removeValue(forKey: identity)?.task
+        let tasks = [
+            inFlight.removeValue(forKey: identity)?.task,
+            inFlight.removeValue(forKey: Self.fullResolutionKeyPrefix + identity)?.task,
+        ].compactMap { $0 }
         inFlightLock.unlock()
-        task?.cancel()
-        if let task { _ = await task.value }
+        tasks.forEach { $0.cancel() }
+        for task in tasks { _ = await task.value }
         let file = fileURL(for: url)
         await withCheckedContinuation { continuation in
             ioQueue.async { [fileManager] in
@@ -338,6 +423,7 @@ final class ImageCache {
 
     private func clearMemoryAndTasks() -> [Task<UIImage?, Never>] {
         memory.removeAllObjects()
+        fullResolutionMemory.removeAllObjects()
         sizeLock.lock()
         imageSizes.removeAll()
         sizeLock.unlock()
@@ -357,7 +443,10 @@ final class ImageCache {
         _ = FileManager.default.createFile(atPath: marker.path, contents: Data())
     }
 
-    private static func decodeForDisplay(_ data: Data) -> UIImage? {
+    private static func decodeForDisplay(
+        _ data: Data,
+        maxPixelSize: Int = maxDecodedPixelSize
+    ) -> UIImage? {
         guard Int64(data.count) <= maxDownloadBytes,
               let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         if isAnimatedSource(source),
@@ -367,7 +456,7 @@ final class ImageCache {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxDecodedPixelSize,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
             kCGImageSourceShouldCacheImmediately: true,
         ]
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
@@ -376,6 +465,17 @@ final class ImageCache {
 
     private func storeInMemory(_ image: UIImage, for url: URL) {
         memory.setObject(image, forKey: Self.cacheIdentity(for: url) as NSString)
+        rememberImageSize(image.size, for: url)
+    }
+
+    private func storeFullResolutionInMemory(_ image: UIImage, for url: URL) {
+        let scale = max(image.scale, 1)
+        let pixels = Int64(image.size.width * scale) * Int64(image.size.height * scale)
+        let cost = Int(min(pixels * 4, Int64(Int.max)))
+        fullResolutionMemory.setObject(
+            image,
+            forKey: Self.cacheIdentity(for: url) as NSString,
+            cost: cost)
         rememberImageSize(image.size, for: url)
     }
 

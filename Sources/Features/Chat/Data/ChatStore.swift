@@ -108,6 +108,8 @@ final class ChatStore: ObservableObject {
         },
         onConnectionUnavailable: { [weak self] in
             self?.messageStore.markPendingWaitingToSend()
+            self?.partnerOnline = false
+            self?.presenceKnown = false
         },
         onUnauthorized: { [weak self] in self?.auth.verifySessionOrLogout() })
     private lazy var eventRouter = RealtimeEventRouter(
@@ -217,7 +219,7 @@ final class ChatStore: ObservableObject {
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
             completeStickerInitialSync(for: session)
-            auth.activate(session, accounts: snapshot.accounts, persist: false)
+            auth.applyAccounts(snapshot.accounts, for: session)
             await recoverSyncV2()
         } catch BootstrapError.unauthorized {
             StickerStore.shared.deactivate()
@@ -249,7 +251,7 @@ final class ChatStore: ObservableObject {
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
             completeStickerInitialSync(for: session)
-            auth.activate(session, accounts: snapshot.accounts, persist: false)
+            auth.applyAccounts(snapshot.accounts, for: session)
             await recoverSyncV2()
         } catch BootstrapError.unauthorized {
             logout()
@@ -287,12 +289,15 @@ final class ChatStore: ObservableObject {
     @discardableResult
     private func refreshBootstrap() async -> Bool {
         guard let session = auth.session else { return false }
+        let generation = auth.sessionGeneration
         do {
             let snapshot = try await fetchBootstrap(session: session)
+            guard auth.sessionGeneration == generation,
+                  auth.session?.token == session.token else { return false }
             await messageStore.applyBootstrap(snapshot, session: session)
             shared.applySharedInit(snapshot.sharedState)
             completeStickerInitialSync(for: session)
-            auth.activate(session, accounts: snapshot.accounts, persist: false)
+            guard auth.applyAccounts(snapshot.accounts, for: session) else { return false }
             realtime.setLastError(nil)
             return true
         } catch BootstrapError.unauthorized {

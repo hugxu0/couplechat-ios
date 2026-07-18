@@ -88,6 +88,19 @@ final class AuthStore: ObservableObject {
         partner = accounts.first { $0.username != newSession.username }
     }
 
+    /// bootstrap 只刷新当前会话可见账号，不能推进 sessionGeneration。
+    /// Socket 事件在绑定时会捕获 generation；把普通快照刷新误当成登录切换，
+    /// 会令 presence/message 等后续事件全部被旧会话门闩丢弃。
+    @discardableResult
+    func applyAccounts(_ newAccounts: [Account], for expectedSession: Session) -> Bool {
+        guard session?.token == expectedSession.token,
+              session?.username == expectedSession.username,
+              session?.deviceId == expectedSession.deviceId else { return false }
+        accounts = newAccounts
+        partner = newAccounts.first { $0.username != expectedSession.username }
+        return true
+    }
+
     // MARK: - 登出
 
     func logout() async {

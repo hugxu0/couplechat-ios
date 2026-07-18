@@ -2,9 +2,15 @@ import SwiftUI
 
 // 走 ImageCache 的图片视图，命中缓存立即出图（不闪 loading），未命中再异步下载。
 
+enum CachedImageLoadingMode: String {
+    case preview
+    case original
+}
+
 struct CachedImage<Placeholder: View>: View {
     let url: URL?
     var contentMode: ContentMode = .fill
+    var loadingMode: CachedImageLoadingMode = .preview
     var onImageSizeChange: ((CGSize) -> Void)?
     let placeholder: () -> Placeholder
 
@@ -13,11 +19,13 @@ struct CachedImage<Placeholder: View>: View {
     init(
         url: URL?,
         contentMode: ContentMode = .fill,
+        loadingMode: CachedImageLoadingMode = .preview,
         onImageSizeChange: ((CGSize) -> Void)? = nil,
         @ViewBuilder placeholder: @escaping () -> Placeholder
     ) {
         self.url = url
         self.contentMode = contentMode
+        self.loadingMode = loadingMode
         self.onImageSizeChange = onImageSizeChange
         self.placeholder = placeholder
     }
@@ -36,10 +44,23 @@ struct CachedImage<Placeholder: View>: View {
                 placeholder()
             }
         }
-        .task(id: url) {
+        .task(id: loadIdentity) {
             guard let url else { image = nil; return }
-            // 内存命中同步取，避免闪一下占位；否则后台异步加载
-            if let hit = ImageCache.shared.memoryImage(for: url) {
+            if loadingMode == .original {
+                if let hit = ImageCache.shared.fullResolutionMemoryImage(for: url) {
+                    image = hit
+                    return
+                }
+                // 先显示缩略图，再用原文件的高分辨率解码结果无闪烁替换。
+                image = await ImageCache.shared.previewImage(
+                    for: url,
+                    thumbnailURL: ServerConfig.mediaThumbnailURL(for: url))
+                guard !Task.isCancelled else { return }
+                if let original = await ImageCache.shared.fullResolutionImage(for: url),
+                   !Task.isCancelled {
+                    image = original
+                }
+            } else if let hit = ImageCache.shared.memoryImage(for: url) {
                 image = hit
             } else {
                 image = await ImageCache.shared.previewImage(
@@ -51,6 +72,10 @@ struct CachedImage<Placeholder: View>: View {
             guard let size, size.width > 0, size.height > 0 else { return }
             onImageSizeChange?(size)
         }
+    }
+
+    private var loadIdentity: String {
+        "\(loadingMode.rawValue):\(url?.absoluteString ?? "none")"
     }
 }
 

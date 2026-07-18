@@ -74,6 +74,7 @@ struct MediaPagerView: View {
                             item: item,
                             // 仅保留当前页与相邻页；避免一次打开同时下载多张 50 MiB 原图。
                             shouldLoadMedia: abs(index - selectedIndex) <= 1,
+                            loadsOriginal: index == selectedIndex,
                             isFavorite: favorites.contains(item),
                             onSave: { save(item) },
                             onToggleFavorite: { toggleFavorite(item) },
@@ -144,6 +145,7 @@ struct MediaPagerView: View {
 private struct MediaPage: View {
     let item: MediaBrowserItem
     let shouldLoadMedia: Bool
+    let loadsOriginal: Bool
     let isFavorite: Bool
     let onSave: () -> Void
     let onToggleFavorite: () -> Void
@@ -160,6 +162,7 @@ private struct MediaPage: View {
                     ZoomableRemoteImage(
                         url: url,
                         size: geometry.size,
+                        loadingMode: loadsOriginal ? .original : .preview,
                         onScaleChange: onZoomScaleChange,
                         onImageSizeChange: { value in
                             guard value.width > 0, value.height > 0 else { return }
@@ -264,6 +267,7 @@ private struct MediaViewerTransitionTarget: UIViewRepresentable {
 private struct ZoomableRemoteImage: View {
     let url: URL
     let size: CGSize
+    let loadingMode: CachedImageLoadingMode
     let onScaleChange: (CGFloat) -> Void
     let onImageSizeChange: (CGSize) -> Void
 
@@ -284,7 +288,12 @@ private struct ZoomableRemoteImage: View {
     }
 
     var body: some View {
-        CachedImage(url: url, contentMode: .fit, onImageSizeChange: onImageSizeChange) {
+        CachedImage(
+            url: url,
+            contentMode: .fit,
+            loadingMode: loadingMode,
+            onImageSizeChange: onImageSizeChange
+        ) {
             ProgressView().tint(.white)
         }
         .frame(maxWidth: size.width, maxHeight: size.height)
