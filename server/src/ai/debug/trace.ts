@@ -1,6 +1,8 @@
-// Trace 只保留在当前非生产调试进程的内存中，不写入磁盘。
+// Trace 只保留在当前进程内存中，不写入磁盘。
+// 生产环境只保留元数据，不写完整 prompt / 工具结果 / 私聊正文。
 
 import { nanoid } from "nanoid";
+import { config } from "../../config";
 
 export interface TraceEntry {
   id: string;
@@ -44,6 +46,13 @@ export interface TraceEntry {
 const liveTraces = new Map<string, TraceEntry>();
 const MAX_LIVE_TRACES = 100;
 
+function redactQuestion(question: string): string {
+  if (!config.isProduction) return question;
+  const trimmed = question.trim();
+  if (!trimmed) return "";
+  return `[redacted len=${trimmed.length}]`;
+}
+
 export function traceBegin(channel: string, requesterName: string, question: string, id?: string): TraceEntry {
   const trace: TraceEntry = {
     id: id || nanoid(12),
@@ -51,7 +60,7 @@ export function traceBegin(channel: string, requesterName: string, question: str
     status: "running",
     channel,
     requesterName,
-    question,
+    question: redactQuestion(question),
     timings: {},
   };
   liveTraces.set(trace.id, trace);
@@ -83,8 +92,29 @@ export async function redactTraceForMessage(messageId: string): Promise<void> {
 
 export function traceReply(
   trace: TraceEntry,
-    data: { stage: string; usedVision: boolean; wantsSearch: boolean; replies: string[]; actions: unknown[]; rawOutput?: string },
+  data: {
+    stage: string;
+    usedVision: boolean;
+    wantsSearch: boolean;
+    replies: string[];
+    actions: unknown[];
+    rawOutput?: string;
+  },
 ) {
+  if (config.isProduction) {
+    trace.reply = {
+      stage: data.stage,
+      usedVision: data.usedVision,
+      wantsSearch: data.wantsSearch,
+      replies: data.replies.map((text) => `[redacted len=${text.length}]`),
+      actions: data.actions.map((action) =>
+        typeof action === "object" && action !== null
+          ? { type: (action as { type?: string }).type ?? "action" }
+          : "action",
+      ),
+    };
+    return;
+  }
   trace.reply = data;
 }
 
@@ -92,9 +122,39 @@ export function traceError(trace: TraceEntry, message: string) {
   trace.error = message;
 }
 
+export function tracePrompt(trace: TraceEntry, prompt: { system: string; user: string }): void {
+  if (config.isProduction) {
+    trace.prompt = {
+      system: `[redacted len=${prompt.system.length}]`,
+      user: `[redacted len=${prompt.user.length}]`,
+    };
+    return;
+  }
+  trace.prompt = prompt;
+}
+
 export function traceFlush(trace: TraceEntry): void {
   trace.status = "completed";
   trace.finishedTs = Date.now();
   trace.timings = trace.timings ?? {};
   trace.timings.total = trace.finishedTs - trace.ts;
+  if (config.isProduction) {
+    // 生产不保留工具正文与模型全文。
+    if (trace.agent?.toolCalls) {
+      trace.agent = {
+        ...trace.agent,
+        toolCalls: trace.agent.toolCalls.map((call) => ({
+          name: call.name,
+          args: {},
+          startedAt: call.startedAt,
+          durationMs: call.durationMs,
+          result: call.result ? `[redacted len=${call.result.length}]` : "",
+          error: call.error ? call.error.slice(0, 200) : "",
+        })),
+        finalOutput: trace.agent.finalOutput
+          ? `[redacted len=${trace.agent.finalOutput.length}]`
+          : undefined,
+      };
+    }
+  }
 }

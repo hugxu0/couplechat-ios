@@ -30,6 +30,8 @@ export interface Trigger {
 export interface ResponseRunState {
   cancelled: boolean;
   emitted: boolean;
+  /** 超时或正常路径谁先 claim 谁负责发用户可见文案，避免双发。 */
+  claimEmit(): boolean;
 }
 
 const FAILURE_REPLY = "我刚刚没接稳这句话，但我还在。你再发一次，我马上接住。";
@@ -37,6 +39,19 @@ const TIMEOUT_REPLY = "我这次想得有点久，先没接稳。你再喊我一
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createRunState(): ResponseRunState {
+  let claimed = false;
+  return {
+    cancelled: false,
+    emitted: false,
+    claimEmit() {
+      if (claimed) return false;
+      claimed = true;
+      return true;
+    },
+  };
 }
 
 async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunState): Promise<void> {
@@ -96,6 +111,7 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
     const emitStartedAt = Date.now();
     for (let index = 0; index < result.replies.length; index += 1) {
       if (state.cancelled) break;
+      if (index === 0 && !state.claimEmit()) break;
       if (index > 0) await sleep(PACE.replyGapMinMs + Math.floor(Math.random() * PACE.replyGapJitterMs));
       if (state.cancelled) break;
       const isLast = index === result.replies.length - 1;
@@ -117,7 +133,7 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
     const message = error instanceof Error ? error.message : String(error);
     traceError(trace, message);
     console.warn("[ai] Agent 应答失败:", message);
-    if (!background && !state.cancelled && !state.emitted) {
+    if (!background && !state.cancelled && !state.emitted && state.claimEmit()) {
       await sink.emit(trigger.storedChannel, FAILURE_REPLY, true);
       state.emitted = true;
       traceReply(trace, {
@@ -144,7 +160,7 @@ export async function runReplyTaskWithTimeout(
   task: ReplyTask,
   timeoutMs: number = PACE.respondTimeoutMs,
 ): Promise<void> {
-  const state: ResponseRunState = { cancelled: false, emitted: false };
+  const state = createRunState();
   const operation = startOperation("ai.reply", {
     requestId: trigger.messageId ?? "background",
     channel: trigger.storedChannel,
@@ -160,7 +176,7 @@ export async function runReplyTaskWithTimeout(
         state.cancelled = true;
         timedOut = true;
         console.warn(`[ai] 应答超时，已释放频道队列: ${trigger.storedChannel}`);
-        if (!background && !state.emitted) {
+        if (!background && !state.emitted && state.claimEmit()) {
           await sink.emit(trigger.storedChannel, TIMEOUT_REPLY, true).catch(() => undefined);
           state.emitted = true;
         }
@@ -216,7 +232,13 @@ export class ReplyQueue {
     this.queues.set(trigger.storedChannel, queue);
     const item = { trigger, sink };
     if (queue.deferred || queue.pending >= this.maxPending) {
+      const dropped = queue.deferred;
       queue.deferred = item;
+      if (dropped) {
+        // 被合并掉的请求需要关闭 activity，避免客户端一直 generating。
+        const background = dropped.trigger.origin === "conflict" || dropped.trigger.origin === "interject";
+        if (!background) dropped.sink.activity?.(dropped.trigger, "failed");
+      }
       console.warn(`[ai] 频道队列繁忙，已合并为最新请求: ${trigger.storedChannel}`);
       return "coalesced";
     }

@@ -10,6 +10,7 @@ import { redactTraceForMessage } from "../ai/debug/trace";
 import { conversationIdentity, conversationIdentityIn } from "../auth/identity";
 import { appendSyncEvent } from "../sync/events";
 import { enqueueTranscriptForMessage } from "../transcription/service";
+import { refreshSignedMediaUrl } from "../upload/mediaAccess";
 
 export type SendMessageInput = SendMessagePayload;
 export interface FetchMessagesInput {
@@ -18,6 +19,10 @@ export interface FetchMessagesInput {
   after?: number;
   before?: number;
   around?: number;
+  /** 与 before 组成 (ts,id) 游标；缺省时仅 ts（兼容旧客户端）。 */
+  beforeId?: string;
+  afterId?: string;
+  sinceId?: string;
   limit?: number;
 }
 
@@ -35,6 +40,17 @@ function readJson(value: string | null): unknown {
   }
 }
 
+function mapAttachments(value: unknown): ClientMessageAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.map((item) => {
+    const attachment = item as ClientMessageAttachment;
+    return {
+      ...attachment,
+      url: refreshSignedMediaUrl(attachment.url) ?? attachment.url,
+    };
+  });
+}
+
 function mapMessage(row: MessageRow, clientChannel?: ClientChannel): ClientMessage {
   const reply = readJson(row.reply_json);
   const replyObject = typeof reply === "object" && reply !== null ? (reply as Record<string, unknown>) : undefined;
@@ -45,11 +61,11 @@ function mapMessage(row: MessageRow, clientChannel?: ClientChannel): ClientMessa
     kind: row.kind as MessageKind,
     type: row.type as MessageType,
     text: row.text,
-    url: row.url ?? undefined,
+    url: refreshSignedMediaUrl(row.url) ?? row.url ?? undefined,
     replyTo: typeof replyObject?.id === "string" ? replyObject.id : undefined,
     replyPreview: typeof replyObject?.preview === "string" ? replyObject.preview : undefined,
     meta: readJson(row.meta_json),
-    attachments: (readJson(row.attachments_json) as ClientMessageAttachment[] | undefined) ?? undefined,
+    attachments: mapAttachments(readJson(row.attachments_json)),
     recalledText: row.recalled_text ?? undefined,
     channel: clientChannel ?? toClientChannel(row.channel as StoredChannel),
     ts: row.ts,
@@ -63,6 +79,34 @@ function mapMessage(row: MessageRow, clientChannel?: ClientChannel): ClientMessa
       version: row.transcript_version ?? 0,
     } : undefined,
   };
+}
+
+/** 复合游标：有 id 时用 (ts,id)；仅有 ts 时退回旧语义。 */
+function beforeClause(alias: string, ts: number, id?: string): { sql: string; params: Array<string | number> } {
+  if (id) {
+    return {
+      sql: `(${alias}.ts < ? OR (${alias}.ts = ? AND ${alias}.id < ?))`,
+      params: [ts, ts, id],
+    };
+  }
+  return { sql: `${alias}.ts < ?`, params: [ts] };
+}
+
+function afterClause(alias: string, ts: number, id?: string, inclusive = false): { sql: string; params: Array<string | number> } {
+  if (id) {
+    if (inclusive) {
+      return {
+        sql: `(${alias}.ts > ? OR (${alias}.ts = ? AND ${alias}.id >= ?))`,
+        params: [ts, ts, id],
+      };
+    }
+    return {
+      sql: `(${alias}.ts > ? OR (${alias}.ts = ? AND ${alias}.id > ?))`,
+      params: [ts, ts, id],
+    };
+  }
+  if (inclusive) return { sql: `${alias}.ts >= ?`, params: [ts] };
+  return { sql: `${alias}.ts > ?`, params: [ts] };
 }
 
 const messageProjection = `message.*,
@@ -88,24 +132,27 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
     const storedChannel = identity.storedChannel;
     const ts = Date.now();
 
-    // clientId 是客户端离线队列的幂等键：重试必须返回原消息，不能重复写入。
-    if (input.clientId) {
-      const existing = user.deviceId
-          ? await db.get<MessageRow>(
-            `SELECT ${messageProjection} FROM messages message
-             LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
-             WHERE message.conversation_id = ? AND message.sender_account_id = ?
-             AND message.origin_device_id = ? AND message.client_id = ?`,
-            [identity.conversationId, identity.accountId, user.deviceId, input.clientId],
-          )
+    const loadByClientId = async () => {
+      if (!input.clientId) return undefined;
+      return user.deviceId
+        ? await db.get<MessageRow>(
+          `SELECT ${messageProjection} FROM messages message
+           LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
+           WHERE message.conversation_id = ? AND message.sender_account_id = ?
+           AND message.origin_device_id = ? AND message.client_id = ?`,
+          [identity.conversationId, identity.accountId, user.deviceId, input.clientId],
+        )
         : await db.get<MessageRow>(`SELECT ${messageProjection} FROM messages message
             LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
             WHERE message.sender = ? AND message.client_id = ?`, [
             user.username,
             input.clientId,
           ]);
-      if (existing) return mapMessage(existing, input.channel);
-    }
+    };
+
+    // clientId 是客户端离线队列的幂等键：重试必须返回原消息，不能重复写入。
+    const existingByClientId = await loadByClientId();
+    if (existingByClientId) return mapMessage(existingByClientId, input.channel);
 
     const requiresUpload = ["image", "video", "voice", "file"].includes(input.type) && !input.attachments?.length;
     let attachmentURL: string | null = input.url ?? null;
@@ -178,30 +225,40 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
       server_seq: null,
     };
 
-    await db.run(
-      `INSERT INTO messages
-        (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json,
-         attachments_json, ts, client_id, conversation_id, sender_account_id, origin_device_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        row.id,
-        row.channel,
-        row.sender,
-        row.sender_name,
-        row.kind,
-        row.type,
-        row.text,
-        row.url,
-        row.reply_json,
-        row.meta_json,
-        row.attachments_json,
-        row.ts,
-        row.client_id,
-        row.conversation_id,
-        row.sender_account_id,
-        row.origin_device_id,
-      ],
-    );
+    try {
+      await db.run(
+        `INSERT INTO messages
+          (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json,
+           attachments_json, ts, client_id, conversation_id, sender_account_id, origin_device_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          row.id,
+          row.channel,
+          row.sender,
+          row.sender_name,
+          row.kind,
+          row.type,
+          row.text,
+          row.url,
+          row.reply_json,
+          row.meta_json,
+          row.attachments_json,
+          row.ts,
+          row.client_id,
+          row.conversation_id,
+          row.sender_account_id,
+          row.origin_device_id,
+        ],
+      );
+    } catch (error) {
+      // 并发重试可能撞唯一索引：回查原消息而不是 500。
+      const code = (error as { code?: string })?.code;
+      if (input.clientId && (code === "23505" || String(error).includes("unique"))) {
+        const raced = await loadByClientId();
+        if (raced) return mapMessage(raced, input.channel);
+      }
+      throw error;
+    }
 
     if (upload) {
       const bound = await db.run(
@@ -306,69 +363,88 @@ export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
   if (!identity) return [];
   const conversationId = identity.conversationId;
   const limit = Math.min(Math.max(input.limit ?? 80, 1), 300);
+  const projection = `SELECT ${messageProjection} FROM messages message
+     LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id`;
 
   if (input.after !== undefined && input.before !== undefined) {
+    const after = afterClause("message", input.after, input.afterId, true);
+    const before = beforeClause("message", input.before, input.beforeId);
     const rows = await all<MessageRow>(
-      `SELECT ${messageProjection} FROM messages message
-       LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
-       WHERE message.conversation_id = ? AND message.ts >= ? AND message.ts < ?
-       ORDER BY message.ts ASC LIMIT ?`,
-      [conversationId, input.after, input.before, limit],
+      `${projection}
+       WHERE message.conversation_id = ? AND ${after.sql} AND ${before.sql}
+       ORDER BY message.ts ASC, message.id ASC LIMIT ?`,
+      [conversationId, ...after.params, ...before.params, limit],
     );
     return rows.map((row) => mapMessage(row, input.channel));
   }
 
   if (input.before !== undefined) {
+    const before = beforeClause("message", input.before, input.beforeId);
     const rows = await all<MessageRow>(
-      `SELECT ${messageProjection} FROM messages message
-       LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
-       WHERE message.conversation_id = ? AND message.ts < ? ORDER BY message.ts DESC LIMIT ?`,
-      [conversationId, input.before, limit],
+      `${projection}
+       WHERE message.conversation_id = ? AND ${before.sql}
+       ORDER BY message.ts DESC, message.id DESC LIMIT ?`,
+      [conversationId, ...before.params, limit],
     );
     return rows.reverse().map((row) => mapMessage(row, input.channel));
   }
 
   if (input.since !== undefined) {
+    const since = afterClause("message", input.since, input.sinceId, false);
     const rows = await all<MessageRow>(
-      `SELECT ${messageProjection} FROM messages message
-       LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
-       WHERE message.conversation_id = ? AND message.ts > ? ORDER BY message.ts ASC LIMIT ?`,
-      [conversationId, input.since, limit],
+      `${projection}
+       WHERE message.conversation_id = ? AND ${since.sql}
+       ORDER BY message.ts ASC, message.id ASC LIMIT ?`,
+      [conversationId, ...since.params, limit],
     );
     return rows.map((row) => mapMessage(row, input.channel));
   }
 
   if (input.after !== undefined) {
+    const after = afterClause("message", input.after, input.afterId, true);
     const rows = await all<MessageRow>(
-      `SELECT ${messageProjection} FROM messages message
-       LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
-       WHERE message.conversation_id = ? AND message.ts >= ? ORDER BY message.ts ASC LIMIT ?`,
-      [conversationId, input.after, limit],
+      `${projection}
+       WHERE message.conversation_id = ? AND ${after.sql}
+       ORDER BY message.ts ASC, message.id ASC LIMIT ?`,
+      [conversationId, ...after.params, limit],
     );
     return rows.map((row) => mapMessage(row, input.channel));
   }
 
   if (input.around) {
     const half = Math.max(Math.floor(limit / 2), 1);
-    const before = await all<MessageRow>(
-      `SELECT ${messageProjection} FROM messages message
-       LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
-       WHERE message.conversation_id = ? AND message.ts < ? ORDER BY message.ts DESC LIMIT ?`,
-      [conversationId, input.around, half],
+    const before = beforeClause("message", input.around, undefined);
+    const after = afterClause("message", input.around, undefined, false);
+    const older = await all<MessageRow>(
+      `${projection}
+       WHERE message.conversation_id = ? AND ${before.sql}
+       ORDER BY message.ts DESC, message.id DESC LIMIT ?`,
+      [conversationId, ...before.params, half],
     );
-    const after = await all<MessageRow>(
-      `SELECT ${messageProjection} FROM messages message
-       LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
-       WHERE message.conversation_id = ? AND message.ts > ? ORDER BY message.ts ASC LIMIT ?`,
-      [conversationId, input.around, half],
+    // around 锚点毫秒内的消息也纳入（含同 ts 全 id 段），减少漏行。
+    const aroundEqual = await all<MessageRow>(
+      `${projection}
+       WHERE message.conversation_id = ? AND message.ts = ?
+       ORDER BY message.ts ASC, message.id ASC LIMIT ?`,
+      [conversationId, input.around, limit],
     );
-    return [...before.reverse(), ...after].map((row) => mapMessage(row, input.channel));
+    const newer = await all<MessageRow>(
+      `${projection}
+       WHERE message.conversation_id = ? AND ${after.sql}
+       ORDER BY message.ts ASC, message.id ASC LIMIT ?`,
+      [conversationId, ...after.params, half],
+    );
+    const merged = new Map<string, MessageRow>();
+    for (const row of [...older.reverse(), ...aroundEqual, ...newer]) merged.set(row.id, row);
+    return [...merged.values()]
+      .sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id))
+      .slice(0, limit)
+      .map((row) => mapMessage(row, input.channel));
   }
 
   const rows = await all<MessageRow>(
-    `SELECT ${messageProjection} FROM messages message
-     LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
-     WHERE message.conversation_id = ? ORDER BY message.ts DESC LIMIT ?`,
+    `${projection}
+     WHERE message.conversation_id = ? ORDER BY message.ts DESC, message.id DESC LIMIT ?`,
     [conversationId, limit],
   );
   return rows.reverse().map((row) => mapMessage(row, input.channel));
@@ -467,9 +543,18 @@ export async function recallMessage(user: AuthUser, id: string) {
       "SELECT * FROM uploads WHERE message_id = ? OR (url = ? AND purpose = 'message') FOR UPDATE",
       [id, existing.url ?? ""],
     );
-    const replies = await db.all<{ id: string; reply_json: string }>(
-      "SELECT id, reply_json FROM messages WHERE reply_json IS NOT NULL FOR UPDATE",
-    );
+    // 只清本会话内引用，避免全表 FOR UPDATE。
+    const replies = existing.conversation_id
+      ? await db.all<{ id: string; reply_json: string }>(
+        `SELECT id, reply_json FROM messages
+          WHERE conversation_id = ? AND reply_json IS NOT NULL FOR UPDATE`,
+        [existing.conversation_id],
+      )
+      : await db.all<{ id: string; reply_json: string }>(
+        `SELECT id, reply_json FROM messages
+          WHERE channel = ? AND reply_json IS NOT NULL FOR UPDATE`,
+        [existing.channel],
+      );
     for (const reply of replies) {
       try {
         const value = JSON.parse(reply.reply_json) as { id?: unknown };
@@ -496,11 +581,9 @@ export async function recallMessage(user: AuthUser, id: string) {
       await db.run("DELETE FROM uploads WHERE id = ?", [uploadItem.id]);
     }
     await db.run("DELETE FROM ai_runtime_state WHERE key = ?", [`context:${existing.channel}`]);
-    // 旧三张 AI 表没有 evidence 外键，无法定向证明内容来源；它们已不再被 runtime
-    // 使用，撤回时清空比继续保留可能含原文的历史派生更符合硬删除语义。
-    await db.run("DELETE FROM ai_facts");
+    await db.run("DELETE FROM ai_runtime_state WHERE key = ?", [`context:v2:${existing.channel}`]);
+    // 旧 legacy AI 表仅按 channel 清理 episodes；不再全局清空 ai_facts/ai_docs。
     await db.run("DELETE FROM ai_episodes WHERE channel = ?", [existing.channel]);
-    await db.run("DELETE FROM ai_docs");
 
     const conversation = existing.conversation_id
       ? await db.get<{ id: string; couple_id: string | null; owner_account_id: string | null }>(

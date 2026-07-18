@@ -455,17 +455,31 @@ final class ChatLocalDatabase {
         return parseMessageRow(stmt)
     }
     
-    func fetchMessages(channel: String, beforeTimestamp: Double, limit: Int) -> [ChatMessage] {
+    func fetchMessages(
+        channel: String,
+        beforeTimestamp: Double,
+        beforeId: String? = nil,
+        limit: Int
+    ) -> [ChatMessage] {
         databaseLock.lock()
         defer { databaseLock.unlock() }
         var messages: [ChatMessage] = []
-        let sql = """
-        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText, attachmentsJson
-        FROM messages 
-        WHERE channel = ? AND ts < ? 
-        ORDER BY ts DESC 
-        LIMIT ?;
-        """
+        let useComposite = !(beforeId ?? "").isEmpty
+        let sql = useComposite
+            ? """
+            SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText, attachmentsJson
+            FROM messages
+            WHERE channel = ? AND (ts < ? OR (ts = ? AND id < ?))
+            ORDER BY ts DESC, id DESC
+            LIMIT ?;
+            """
+            : """
+            SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText, attachmentsJson
+            FROM messages
+            WHERE channel = ? AND ts < ?
+            ORDER BY ts DESC, id DESC
+            LIMIT ?;
+            """
         
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -474,7 +488,13 @@ final class ChatLocalDatabase {
         
         sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
         sqlite3_bind_double(stmt, 2, beforeTimestamp)
-        sqlite3_bind_int(stmt, 3, Int32(limit))
+        if useComposite {
+            sqlite3_bind_double(stmt, 3, beforeTimestamp)
+            sqlite3_bind_text(stmt, 4, beforeId, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int(stmt, 5, Int32(limit))
+        } else {
+            sqlite3_bind_int(stmt, 3, Int32(limit))
+        }
         
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let msg = parseMessageRow(stmt) {

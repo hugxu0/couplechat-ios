@@ -368,12 +368,16 @@ async function main() {
     const { signedMediaURL, signMediaId, verifyMediaSignature, parseRequestedByteRange } = await import("../src/upload/mediaAccess");
     const signedURL = new URL(signedMediaURL("up_signature_123"));
     const signature = signedURL.searchParams.get("sig") ?? "";
+    const exp = Number(signedURL.searchParams.get("exp") ?? "0");
+    const signed = signMediaId("up_signature_123", exp);
     assertOk(
-      "新媒体 URL 使用 HMAC 签名",
+      "新媒体 URL 使用 HMAC 签名与过期时间",
       signedURL.pathname === "/media/up_signature_123" &&
-        signature === signMediaId("up_signature_123") &&
-        verifyMediaSignature("up_signature_123", signature) &&
-        !verifyMediaSignature("up_signature_456", signature),
+        Number.isFinite(exp) && exp > Date.now() &&
+        signature === signed.sig &&
+        verifyMediaSignature("up_signature_123", signature, exp) &&
+        !verifyMediaSignature("up_signature_456", signature, exp) &&
+        !verifyMediaSignature("up_signature_123", signature, Date.now() - 1_000),
     );
     const suffixRange = parseRequestedByteRange("bytes=-500", 10_000);
     assertOk(
@@ -659,9 +663,15 @@ async function main() {
     console.log("[5/5] 清理…");
     await db.closeDatabase();
   } finally {
-    await closeDatabase?.().catch(() => undefined);
-    await pg.stop();
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    // 嵌入式 PG / 连接池偶发 stop 挂起；限时清理后靠 process.exit 收尾。
+    await Promise.race([
+      (async () => {
+        await closeDatabase?.().catch(() => undefined);
+        await pg.stop().catch(() => undefined);
+        fs.rmSync(dataDir, { recursive: true, force: true });
+      })(),
+      new Promise<void>((resolve) => setTimeout(resolve, 8_000)),
+    ]);
   }
   console.log(failureCount > 0 ? `冒烟测试有 ${failureCount} 个失败项 ✗` : "冒烟测试全部通过 ✓");
   if (failureCount > 0) throw new Error(`冒烟测试有 ${failureCount} 个失败项`);

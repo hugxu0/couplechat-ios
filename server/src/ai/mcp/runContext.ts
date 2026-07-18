@@ -120,7 +120,10 @@ export async function recordAgentTool<T>(
   run.trace.agent.toolCalls.push(entry);
   try {
     const result = await work();
-    entry.result = JSON.stringify(result).slice(0, 12_000);
+    const raw = JSON.stringify(result);
+    entry.result = config.isProduction
+      ? `[redacted len=${raw.length}]`
+      : raw.slice(0, 12_000);
     return result;
   } catch (error) {
     entry.error = error instanceof Error ? error.message : String(error);

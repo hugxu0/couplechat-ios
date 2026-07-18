@@ -72,6 +72,18 @@ extension ChatViewController {
     }
 
     func sendSingleMedia(_ item: ChatPendingMedia) {
+        // 视频（及已有本地文件）优先 file 管线，避免二次 Data 拷贝。
+        if item.messageType == "video" || item.messageType == "file",
+           let fileURL = item.localPreviewURL {
+            store.sendMediaFile(
+                fileURL: fileURL,
+                mimeType: item.mimeType,
+                preferredType: item.messageType,
+                localPreviewURL: item.localPreviewURL,
+                channel: channel,
+                displayText: nil)
+            return
+        }
         store.sendMedia(
             data: item.data,
             mimeType: item.mimeType,
@@ -84,11 +96,12 @@ extension ChatViewController {
     func sendFile(_ url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else { return }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size > 0, size <= 50 * 1024 * 1024 else { return }
         let type = UTType(filenameExtension: url.pathExtension)
         stickToLatestAfterNextReload = true
-        store.sendMedia(
-            data: data,
+        store.sendMediaFile(
+            fileURL: url,
             mimeType: type?.preferredMIMEType ?? "application/octet-stream",
             preferredType: "file",
             localPreviewURL: nil,

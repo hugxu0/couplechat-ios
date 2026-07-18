@@ -9,12 +9,16 @@ import { startOperation } from "../observability/operationLog";
 
 const channelSchema = z.enum(["couple", "ai"]);
 const optionalTimestamp = z.coerce.number().finite().optional();
+const optionalMessageId = z.string().trim().min(1).max(128).optional();
 const messagesQuerySchema = z.object({
   channel: channelSchema,
   since: optionalTimestamp,
   after: optionalTimestamp,
   before: optionalTimestamp,
   around: optionalTimestamp,
+  beforeId: optionalMessageId,
+  afterId: optionalMessageId,
+  sinceId: optionalMessageId,
   limit: z.coerce.number().int().min(1).max(300).default(80),
 });
 const messageParamsSchema = z.object({ id: z.string().min(1).max(128) });

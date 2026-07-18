@@ -6,6 +6,8 @@ import UIKit
 final class AuthStore: ObservableObject {
     @Published var session: Session?
     @Published private(set) var accounts: [Account] = []
+    /// 单调递增；logout/login 后旧 Task 必须比对后丢弃结果。
+    @Published private(set) var sessionGeneration: UInt64 = 0
     @Published var partner: Account? {
         didSet {
             if let partner, let data = try? JSONEncoder().encode(partner) {
@@ -80,6 +82,7 @@ final class AuthStore: ObservableObject {
 
     func activate(_ newSession: Session, accounts: [Account], persist: Bool) {
         if persist { Keychain.saveSession(newSession) }
+        sessionGeneration &+= 1
         session = newSession
         self.accounts = accounts
         partner = accounts.first { $0.username != newSession.username }
@@ -87,7 +90,18 @@ final class AuthStore: ObservableObject {
 
     // MARK: - 登出
 
-    func logout() {
+    func logout() async {
+        sessionGeneration &+= 1
+        Keychain.clearSession()
+        session = nil
+        partner = nil
+        accounts = []
+        await persistence.close()
+    }
+
+    /// 兼容同步调用点：推进 generation 并异步关库。
+    func logoutSync() {
+        sessionGeneration &+= 1
         Keychain.clearSession()
         session = nil
         partner = nil
@@ -140,7 +154,7 @@ final class AuthStore: ObservableObject {
             guard let (_, resp) = try? await httpClient.data(for: req),
                   let http = resp as? HTTPURLResponse else { return }
             if http.statusCode == 401 {
-                logout()
+                logoutSync()
             }
         }
     }

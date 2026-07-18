@@ -8,8 +8,8 @@
 |---|---|---|
 | 客户端源码与 CI | `fffd0bd6880382c31d8611e73ebc8d1c021a2426` / run `29588581647` | 当前工作分支的 Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
 | 最近 iOS 产物 | `fffd0bd6880382c31d8611e73ebc8d1c021a2426` / run `29588584761` | Xcode 26.3 unsigned IPA 归档和下载校验通过，版本 `0.2.0 (11)` |
-| 服务端本地验证 | 2026-07-18 | `371bfcd16db0d8420bbb75a79626bb365c67c00d` 上 `npm run check` / `typecheck` 通过（含 AI 日总览、engagement、主模型多模态识图改动） |
-| 生产环境 | 2026-07-18 | 美国唯一可写源站运行 `371bfcd16db0d8420bbb75a79626bb365c67c00d`、schema v31；普通代码发布（`RUN_MIGRATIONS=false`）成功，回滚镜像指向前一版 `756e8f331774699a118005437d4d63172f381c06`；本机 `/ready` 与公开入口 `https://hoo66.top/live|health|ready` 通过；对话主模型仍为 `gpt-5.6-luna`（responses），识图改为主模型多模态（不再依赖独立 `AI_VISION`） |
+| 服务端本地验证 | 2026-07-18 | 全栈审计优化后 `npm run check` 通过（登录限流、媒体 TTL 签名、`(ts,id)` 分页、AI Trace 脱敏、队列终态等） |
+| 生产环境 | 2026-07-18 | 上次核验 RELEASE 为 `b3f9f57`（纯图占位修复）；本批全栈优化待固定 SHA 发布后更新；schema v31 无新 migration |
 
 本机旧 IPA、tar、展开 release 或备份目录不属于生产证据。服务器细节见 [SERVER.md](SERVER.md)，签名与侧载见 [IOS.md](IOS.md)。
 
@@ -75,11 +75,11 @@
 
 ### 当前使用风险
 
-- **SYNC-002 同毫秒分页**：`/api/messages` 仍以毫秒 `ts` 作为方向边界，同一毫秒多条消息可能重复、停滞或跳过；目标是 `(ts,id)` 复合游标或服务端序号。
+- **SYNC-002 同毫秒分页**：已支持可选 `beforeId`/`afterId`/`sinceId` 与客户端上拉下拉对齐；仅传 `ts` 的旧调用仍有同毫秒边角风险。
 - **IOS-003 开发构建连接生产**：没有独立开发服务前，开发构建不能执行破坏性操作或批量写入。
-- **IOS-004 大文件主线程读取**：附件、壁纸和部分媒体缓存仍可能使用 `Data(contentsOf:)`，最大 50 MB 时可能造成卡顿和内存峰值。
-- **IOS-007 账号切换竞态**：登出、SQLite close、下一账号 open 和 Socket 任务尚无统一 session generation，旧任务晚到可能影响新账号状态。
-- **UPLOAD-001 临时文件**：崩溃遗留的 `.uploading` 文件缺少完整 lease/超时判定，备份遇到不安全文件时会停止。
+- **IOS-004 大文件主线程读取**：视频/文件发送已优先 file 复制管线；图片选图与壁纸缓存仍可能整包 `Data`。
+- **IOS-007 账号切换竞态**：已增加 `sessionGeneration` 与 logout await close；Socket 全路径 generation 门闩仍可继续收紧。
+- **UPLOAD-001 临时文件**：已增加超时 `.uploading` 扫描与 cleanup 路径沙箱；备份策略仍依赖私有 runbook。
 
 ### 生产安全风险
 

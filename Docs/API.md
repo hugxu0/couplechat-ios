@@ -50,12 +50,13 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 |---|---|
 | `channel` | 必填，`couple` 或 `ai` |
 | `since` | 返回该时间之后的消息 |
-| `after` | 向更新方向分页 |
+| `after` | 向更新方向分页（含起点） |
 | `before` | 向更早方向分页 |
-| `around` | 获取某个时间附近的消息 |
+| `around` | 获取某个时间附近的消息（含同毫秒行） |
+| `beforeId` / `afterId` / `sinceId` | 可选，与对应时间戳组成 `(ts,id)` 复合游标；缺省时仅 `ts`（兼容旧客户端） |
 | `limit` | `1...300`，默认 `80` |
 
-响应为 `{ ok, list, total }`。`after` 与 `before` 可以组合，服务端返回半开区间 `[after,before)`，当前客户端用它做有界核对；`around`、`since` 与方向分页不要组合。现有边界只有毫秒时间戳，同毫秒多消息的稳定游标问题见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+响应为 `{ ok, list, total }`。`after` 与 `before` 可以组合；`around`、`since` 与方向分页不要组合。推荐始终带上锚点消息 `id`，避免同毫秒漏重。
 
 `GET /api/messages/:id` 必须带 `channel=couple|ai`，响应为 `{ ok, message }`。服务端先按当前账号解析共享空间，再以共享空间和消息 ID 联合查询；找不到或不属于当前共享空间时统一返回 `404 not_found`。客户端只在点击引用预览且原消息不在内存或本地数据库时使用该接口，取回后继续加载消息附近的有界窗口。
 
@@ -64,7 +65,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `POST` | `/api/upload?purpose=message|avatar|sticker|album` | multipart 单文件上传，最大 50 MB |
-| `GET` | `/media/:id?sig=...` | 当前签名媒体地址 |
+| `GET` | `/media/:id?sig=...&exp=...` | 签名媒体地址；新签发含 `exp`（默认 TTL 24h，可用 `MEDIA_URL_TTL_SECONDS`）；无 `exp` 的历史签名仍兼容 |
 | `GET` | `/uploads/:filename` | 已有消息的兼容媒体地址 |
 
 上传成功返回 `id`、`url`、`mimeType`、`size` 和 `type`。发送媒体消息时必须使用返回的 `id` 作为 `uploadId`。

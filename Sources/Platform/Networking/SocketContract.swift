@@ -31,15 +31,31 @@ struct MessagePageRequest {
     let after: Double?
     let before: Double?
     let around: Double?
+    /// 与 before/after/since 组成 (ts,id) 复合游标，避免同毫秒漏重。
+    let beforeId: String?
+    let afterId: String?
+    let sinceId: String?
     let limit: Int
 
-    init(channel: ChatChannel, since: Double? = nil, after: Double? = nil,
-         before: Double? = nil, around: Double? = nil, limit: Int) {
+    init(
+        channel: ChatChannel,
+        since: Double? = nil,
+        after: Double? = nil,
+        before: Double? = nil,
+        around: Double? = nil,
+        beforeId: String? = nil,
+        afterId: String? = nil,
+        sinceId: String? = nil,
+        limit: Int
+    ) {
         self.channel = channel.rawValue
         self.since = since
         self.after = after
         self.before = before
         self.around = around
+        self.beforeId = beforeId
+        self.afterId = afterId
+        self.sinceId = sinceId
         self.limit = limit
     }
 }

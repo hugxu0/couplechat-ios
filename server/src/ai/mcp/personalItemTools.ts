@@ -43,6 +43,7 @@ export function registerPersonalItemTools(server: McpServer, run: AgentToolRun):
         clauses.push("(scope = 'shared' OR (scope = 'personal' AND owner = ?))");
         params.push(run.identity.requesterUsername);
       }
+      clauses.push("deleted_at IS NULL");
       if (args.kind && args.kind !== "all") { clauses.push("kind = ?"); params.push(args.kind); }
       if (!args.includeDone) clauses.push("is_done = 0");
       params.push(safeLimit(args.limit, 20, 30));

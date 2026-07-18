@@ -117,11 +117,19 @@ extension ChatViewController: PHPickerViewControllerDelegate {
     }
 
     private func loadVideo(from provider: NSItemProvider) async -> ChatPendingMedia? {
-        guard let url = await provider.loadFile(typeIdentifier: UTType.movie.identifier),
-              let data = try? Data(contentsOf: url) else { return nil }
+        guard let url = await provider.loadFile(typeIdentifier: UTType.movie.identifier) else { return nil }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size > 0, size <= 50 * 1024 * 1024 else { return nil }
+        // 视频预览只生成缩略图；真正发送走 fileURL 复制，避免整段视频进内存。
         let thumb = await videoThumbnail(url: url) ?? UIImage(systemName: "play.rectangle.fill") ?? UIImage()
         let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "video/mp4"
-        return ChatPendingMedia(id: UUID().uuidString, image: thumb, data: data, mimeType: mime, messageType: "video", localPreviewURL: url)
+        return ChatPendingMedia(
+            id: UUID().uuidString,
+            image: thumb,
+            data: Data(),
+            mimeType: mime,
+            messageType: "video",
+            localPreviewURL: url)
     }
 
     private func detectedImageMIMEType(_ data: Data) -> String? {

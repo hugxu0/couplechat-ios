@@ -68,16 +68,49 @@ actor OutboxProcessor {
         requiredLocalPaths(for: item).allSatisfy(FileManager.default.fileExists(atPath:))
     }
 
+    private static let maxMediaBytes = 50 * 1024 * 1024
+
     func persistMedia(
         data: Data,
         mimeType: String,
         clientId: String,
         username: String
     ) -> URL? {
-        guard data.count <= 50 * 1024 * 1024,
-              let applicationSupport = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask).first else { return nil }
+        guard data.count <= Self.maxMediaBytes else { return nil }
+        return writeOutboxFile(clientId: clientId, username: username, mimeType: mimeType) { destination in
+            try data.write(to: destination, options: .atomic)
+        }
+    }
+
+    /// 从已有文件复制到 outbox，避免视频/文件先整包读入内存再落盘。
+    func persistMediaFile(
+        source: URL,
+        mimeType: String,
+        clientId: String,
+        username: String
+    ) -> URL? {
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        guard let size = (try? source.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+              size > 0,
+              size <= Self.maxMediaBytes else { return nil }
+        return writeOutboxFile(clientId: clientId, username: username, mimeType: mimeType) { destination in
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: source, to: destination)
+        }
+    }
+
+    private func writeOutboxFile(
+        clientId: String,
+        username: String,
+        mimeType: String,
+        write: (URL) throws -> Void
+    ) -> URL? {
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask).first else { return nil }
         let safeUsername = username
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: ":", with: "_")
@@ -88,7 +121,7 @@ actor OutboxProcessor {
         let url = directory.appendingPathComponent(clientId).appendingPathExtension(ext)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try data.write(to: url, options: .atomic)
+            try write(url)
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             var mutableURL = url

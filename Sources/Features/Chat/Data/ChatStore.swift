@@ -93,11 +93,18 @@ final class ChatStore: ObservableObject {
         onSocketCreated: { [weak self] socket in self?.eventRouter.bind(socket) },
         onConnected: { [weak self] in
             guard let self, let session = self.auth.session else { return }
+            let generation = self.auth.sessionGeneration
             self.messageStore.flushPendingReadReceipts()
             self.messageStore.flushOutbox(session: session)
             self.shared.flushPendingWrites()
             self.startPersistentSyncLoop()
-            Task { await self.recoverSyncV2() }
+            Task {
+                // 前台重连时补 bootstrap + Sync，避免仅 tombstone 的 SyncV2 漏掉新消息。
+                guard self.auth.sessionGeneration == generation else { return }
+                _ = await self.refreshBootstrap()
+                guard self.auth.sessionGeneration == generation else { return }
+                await self.recoverSyncV2()
+            }
         },
         onUnauthorized: { [weak self] in self?.auth.verifySessionOrLogout() })
     private lazy var eventRouter = RealtimeEventRouter(
@@ -211,7 +218,7 @@ final class ChatStore: ObservableObject {
             await recoverSyncV2()
         } catch BootstrapError.unauthorized {
             StickerStore.shared.deactivate()
-            auth.logout()
+            await auth.logout()
         } catch {
             // 已登录用户离线启动时仍可查看有界本地缓存；连接恢复后前台刷新会补最新快照。
             realtime.setLastError(error.localizedDescription)
@@ -296,6 +303,7 @@ final class ChatStore: ObservableObject {
 
     func logout() {
         let sessionToRevoke = auth.session
+        let generation = auth.sessionGeneration
         stopPersistentSyncLoop()
         historySync.cancelForLogout()
         realtime.disconnect()
@@ -304,13 +312,17 @@ final class ChatStore: ObservableObject {
         resetTransientAIState()
         resetInteractionState()
         messageStore.resetPendingReadReceipts()
+        messageStore.clearAllChannels()
         realtime.setLastError(nil)
         StickerStore.shared.deactivate()
         MediaFavoriteStore.shared.deactivate()
         shared.deactivate()
-        auth.logout()
-        if let sessionToRevoke {
-            Task { await auth.revokeCurrentDevice(sessionToRevoke) }
+        Task {
+            await auth.logout()
+            // 若期间已登录新账号，不再 revoke 旧设备之外的操作。
+            guard let sessionToRevoke else { return }
+            await auth.revokeCurrentDevice(sessionToRevoke)
+            _ = generation
         }
     }
 
@@ -383,6 +395,28 @@ final class ChatStore: ObservableObject {
         Task {
             await messageStore.sendMedia(
                 data: data,
+                mimeType: mimeType,
+                preferredType: preferredType,
+                localPreviewURL: localPreviewURL,
+                channel: channel,
+                displayText: displayText,
+                session: session)
+        }
+    }
+
+    func sendMediaFile(
+        fileURL: URL,
+        mimeType: String,
+        preferredType: String,
+        localPreviewURL: URL?,
+        channel: ChatChannel = .couple,
+        displayText: String? = nil
+    ) {
+        guard let session = auth.session else { return }
+        if channel == .ai, preferredType == "image" { messageStore.aiReplying = true }
+        Task {
+            await messageStore.sendMediaFile(
+                fileURL: fileURL,
                 mimeType: mimeType,
                 preferredType: preferredType,
                 localPreviewURL: localPreviewURL,
@@ -659,6 +693,7 @@ final class ChatStore: ObservableObject {
 
     private func recoverSyncV2() async {
         guard !syncingV2, let session = auth.session else { return }
+        let generation = auth.sessionGeneration
         syncingV2 = true
         defer { syncingV2 = false }
         let defaults = UserDefaults.standard
@@ -668,6 +703,7 @@ final class ChatStore: ObservableObject {
         do {
             var hasMore = true
             while hasMore {
+                guard auth.sessionGeneration == generation, auth.session?.username == session.username else { return }
                 let page = try await syncV2.fetch(after: cursor, token: session.token)
                 guard Self.validatedSyncMessageChannels(page.events) != nil else {
                     throw SyncV2Error.invalidPayload
@@ -687,6 +723,7 @@ final class ChatStore: ObservableObject {
                 cursor = max(cursor, page.nextCursor)
                 hasMore = page.hasMore
             }
+            guard auth.sessionGeneration == generation, auth.session?.username == session.username else { return }
             defaults.set(Int(cursor), forKey: key)
             await syncV2.acknowledge(cursor, token: session.token)
             if !changedEntityTypes.isEmpty {

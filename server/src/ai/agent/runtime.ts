@@ -16,9 +16,10 @@ import { extractJson, extractReplyText, type Citation } from "../provider";
 import { beijingDateTime } from "../time";
 import { searchMemory, visibleMemoryScopes } from "../memory/store";
 import { resolveImageAttachment, sameImageSet } from "../imageAttachment";
-import type { TraceEntry } from "../debug/trace";
+import { tracePrompt, type TraceEntry } from "../debug/trace";
 import type { AiAction } from "../actions/personalItems";
 import type { Trigger } from "./replyQueue";
+import { refreshSignedMediaUrls } from "../../upload/mediaAccess";
 
 export interface AgentReplyResult {
   replies: string[];
@@ -142,13 +143,13 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
   if (!agentRuntimeEnabled() || !providerSettings) return null;
 
   const background = trigger.origin === "conflict" || trigger.origin === "interject";
-  const messageImageUrls = [...new Set(
-    (trigger.currentImageUrls?.length
+  const messageImageUrls = refreshSignedMediaUrls([
+    ...(trigger.currentImageUrls?.length
       ? trigger.currentImageUrls
       : trigger.currentImageUrl
         ? [trigger.currentImageUrl]
-        : []).filter(Boolean),
-  )].slice(0, 9);
+        : []),
+  ], { forAi: true }).slice(0, 9);
 
   // 开跑前：本条图，或问题像在问最近图 → 与问题一起进主模型（公聊分条发图主路径）。
   const imagePlan = background
@@ -159,7 +160,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
       currentImageUrls: messageImageUrls,
       question: trigger.question,
     });
-  let activeImageUrls = imagePlan.urls;
+  let activeImageUrls = refreshSignedMediaUrls(imagePlan.urls, { forAi: true });
   let usedVision = activeImageUrls.length > 0;
 
   const context = await buildConversationContext(trigger.storedChannel, trigger.messageId);
@@ -198,7 +199,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
       : "";
   let userText = buildUserText(activeImageUrls, initialNote);
 
-  trace.prompt = { system: instructions(trigger), user: userText };
+  tracePrompt(trace, { system: instructions(trigger), user: userText });
   trace.agent = {
     enabled: true,
     model: providerSettings.model,
@@ -297,7 +298,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
     // 工具请求附着了另一组图：用「同一问题 + 新图」再跑一轮多模态，结果以本轮为准。
     const pending = toolRun.pendingImageAttach;
     if (pending?.urls.length && !sameImageSet(pending.urls, activeImageUrls)) {
-      activeImageUrls = pending.urls;
+      activeImageUrls = refreshSignedMediaUrls(pending.urls, { forAi: true });
       usedVision = true;
       toolRun.pendingImageAttach = undefined;
       toolRun.identity.currentImageUrls = activeImageUrls;
@@ -306,7 +307,7 @@ export async function runAgentReply(trigger: Trigger, trace: TraceEntry): Promis
         activeImageUrls,
         "【视觉】已按工具请求附着最近图片组，请结合用户原问题直接看图回答。",
       );
-      trace.prompt = { system: instructions(trigger), user: userText };
+      tracePrompt(trace, { system: instructions(trigger), user: userText });
       console.log(`[ai] multimodal re-run with ${activeImageUrls.length} image(s)`);
       execution = await runOnce(userText, activeImageUrls, 4);
       totalTurns += execution.workerRawResponses.length;

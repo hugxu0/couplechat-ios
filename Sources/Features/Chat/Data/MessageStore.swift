@@ -406,6 +406,7 @@ final class MessageStore: ObservableObject {
         defer { loadingOlderChannels.remove(channel.rawValue) }
         let limit = 22
         let firstTs = first.ts
+        let firstId = first.id
         var attemptedCloudPage = false
 
         // 联网时云端页才是连续性的事实源。本地库可能因旧断点、系统中断或搜索
@@ -416,6 +417,7 @@ final class MessageStore: ObservableObject {
             let page = await remoteDataSource.fetchHistoryPage(
                 channel: channel,
                 before: firstTs,
+                beforeId: firstId,
                 limit: limit,
                 session: session)
             if page.error == nil {
@@ -433,7 +435,7 @@ final class MessageStore: ObservableObject {
 
         // 无网或云端请求失败时仍允许浏览已经保存到设备上的历史。
         let localOlder = await persistence.fetchMessages(
-            channel: channel.rawValue, beforeTimestamp: firstTs, limit: limit)
+            channel: channel.rawValue, beforeTimestamp: firstTs, beforeId: firstId, limit: limit)
         if !localOlder.isEmpty {
             updateMessages(channel) { current in
                 ChatMessageCollection.prependUnique(localOlder, to: &current)
@@ -442,7 +444,7 @@ final class MessageStore: ObservableObject {
         }
         guard !attemptedCloudPage else { return }
         let older = await fetchRemoteMessages(
-            MessagePageRequest(channel: channel, before: firstTs, limit: limit),
+            MessagePageRequest(channel: channel, before: firstTs, beforeId: firstId, limit: limit),
             context: "loadOlder:\(channel.rawValue)")
         guard !older.isEmpty else { return }
         guard await persistence.insertMessages(older) == older.count else {
@@ -463,6 +465,7 @@ final class MessageStore: ObservableObject {
         defer { loadingNewerChannels.remove(channel.rawValue) }
         let limit = 24
         let lastTs = last.ts
+        let lastId = last.id
 
         // 搜索定位后的内存窗口可能与“本机安装后的近期缓存”之间隔着很长缺口。
         // 联网时必须先向云端请求紧邻当前尾部的下一页，不能让本地孤立片段把时间线
@@ -472,6 +475,7 @@ final class MessageStore: ObservableObject {
             let page = await remoteDataSource.fetchNewerPage(
                 channel: channel,
                 since: lastTs,
+                sinceId: lastId,
                 limit: limit,
                 session: session)
             if page.error == nil {
@@ -539,6 +543,55 @@ final class MessageStore: ObservableObject {
         let createdAt = Date().timeIntervalSince1970 * 1000
         let durableURL = await outboxProcessor.persistMedia(
             data: data, mimeType: mimeType, clientId: clientId, username: session.username)
+        await finalizeMediaSend(
+            durableURL: durableURL,
+            preferredType: preferredType,
+            mimeType: mimeType,
+            localPreviewURL: localPreviewURL,
+            channel: channel,
+            displayText: displayText,
+            session: session,
+            clientId: clientId,
+            createdAt: createdAt)
+    }
+
+    /// 大文件优先走文件复制，不把整包 Data 二次写入 outbox。
+    func sendMediaFile(
+        fileURL: URL,
+        mimeType: String,
+        preferredType: String,
+        localPreviewURL: URL?,
+        channel: ChatChannel = .couple,
+        displayText: String? = nil,
+        session: Session
+    ) async {
+        let clientId = "tmp-" + UUID().uuidString
+        let createdAt = Date().timeIntervalSince1970 * 1000
+        let durableURL = await outboxProcessor.persistMediaFile(
+            source: fileURL, mimeType: mimeType, clientId: clientId, username: session.username)
+        await finalizeMediaSend(
+            durableURL: durableURL,
+            preferredType: preferredType,
+            mimeType: mimeType,
+            localPreviewURL: localPreviewURL ?? fileURL,
+            channel: channel,
+            displayText: displayText,
+            session: session,
+            clientId: clientId,
+            createdAt: createdAt)
+    }
+
+    private func finalizeMediaSend(
+        durableURL: URL?,
+        preferredType: String,
+        mimeType: String,
+        localPreviewURL: URL?,
+        channel: ChatChannel,
+        displayText: String?,
+        session: Session,
+        clientId: String,
+        createdAt: Double
+    ) async {
         let draft = PendingMessageFactory.media(
             type: preferredType,
             text: displayText,
@@ -668,6 +721,11 @@ final class MessageStore: ObservableObject {
             emit: { [weak self] channel, timestamp in
                 self?.emitReadReceipt(channel: channel, timestamp: timestamp) == true
             })
+    }
+
+    func clearAllChannels() {
+        messagesByChannel = [:]
+        aiReplying = false
     }
 
     func resetPendingReadReceipts() {

@@ -171,7 +171,7 @@ PostgreSQL sequence 的分配顺序不等于事务提交顺序。所有创建同
 
 ## 历史分页
 
-`/api/messages` 支持 `before`、`after`、`after + before`、`since` 和 `around`。方向边界当前仍只有毫秒 `ts`；同毫秒多消息不是稳定游标，是 [PROJECT.md](PROJECT.md) 中的 `SYNC-002`。目标是统一使用 `(ts,id)` 或服务端序号。
+`/api/messages` 支持 `before`、`after`、`after + before`、`since` 和 `around`，并可附带 `beforeId` / `afterId` / `sinceId` 组成 `(ts,id)` 复合游标。旧客户端只传毫秒 `ts` 时仍可用；新客户端应同时传锚点 `id`。
 
 完整历史始终有界加载，不能一次把所有聊天记录读入内存。
 

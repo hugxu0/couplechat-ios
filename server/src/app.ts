@@ -44,7 +44,12 @@ export async function buildApp(dependencies: AppDependencies = {}) {
     return reply.code(statusCode).send({ error: errorCode });
   });
 
-  await app.register(cors, { origin: true });
+  // 原生 App 不依赖浏览器 CORS；生产收紧，避免任意网页源带 token 调 API。
+  await app.register(cors, {
+    origin: config.isProduction
+      ? [config.publicBaseURL, new URL(config.publicBaseURL).origin]
+      : true,
+  });
   await app.register(multipart, {
     limits: {
       fileSize: 50 * 1024 * 1024,

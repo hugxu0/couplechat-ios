@@ -95,6 +95,12 @@ export const config = {
   barkIconURL: process.env.BARK_ICON_URL
     ?? new URL("/assets/couplechat-icon.png", publicBaseURL).toString(),
   tokenSecret,
+  /** 媒体 HMAC；未单独配置时回退 TOKEN_SECRET，便于轮换前兼容。 */
+  mediaSigningSecret: process.env.MEDIA_SIGNING_SECRET?.trim() || tokenSecret,
+  /** 新签名媒体 URL 默认有效期（秒）；历史无 exp 签名仍兼容。 */
+  mediaUrlTtlSeconds: Math.max(60, Number(process.env.MEDIA_URL_TTL_SECONDS ?? 86_400) || 86_400),
+  /** AI 多模态出站图 URL 更短 TTL，降低日志缓存长期可读风险。 */
+  mediaAiUrlTtlSeconds: Math.max(60, Number(process.env.MEDIA_AI_URL_TTL_SECONDS ?? 3_600) || 3_600),
   accountsSeed: process.env.COUPLECHAT_ACCOUNTS ?? "",
   appDeepLinkScheme: process.env.APP_DEEP_LINK_SCHEME ?? "couplechat://",
   dataDir: path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), ".data")),

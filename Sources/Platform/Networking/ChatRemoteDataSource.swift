@@ -57,10 +57,12 @@ struct ChatRemoteDataSource {
     func fetchHistoryPage(
         channel: ChatChannel,
         before: Double?,
+        beforeId: String? = nil,
         limit: Int,
         session: Session
     ) async -> ChatHistoryPage {
-        let request = MessagePageRequest(channel: channel, before: before, limit: limit)
+        let request = MessagePageRequest(
+            channel: channel, before: before, beforeId: beforeId, limit: limit)
         return await fetchPage(
             request,
             session: session,
@@ -70,10 +72,12 @@ struct ChatRemoteDataSource {
     func fetchNewerPage(
         channel: ChatChannel,
         since: Double,
+        sinceId: String? = nil,
         limit: Int,
         session: Session
     ) async -> ChatHistoryPage {
-        let request = MessagePageRequest(channel: channel, since: since, limit: limit)
+        let request = MessagePageRequest(
+            channel: channel, since: since, sinceId: sinceId, limit: limit)
         return await fetchPage(
             request,
             session: session,
@@ -151,6 +155,16 @@ struct ChatRemoteDataSource {
         for (name, value) in optionalItems {
             if let value {
                 query.append(URLQueryItem(name: name, value: String(value)))
+            }
+        }
+        let optionalIds: [(String, String?)] = [
+            ("beforeId", request.beforeId),
+            ("afterId", request.afterId),
+            ("sinceId", request.sinceId),
+        ]
+        for (name, value) in optionalIds {
+            if let value, !value.isEmpty {
+                query.append(URLQueryItem(name: name, value: value))
             }
         }
         components?.queryItems = query

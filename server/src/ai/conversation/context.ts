@@ -2,6 +2,7 @@
 // 目标：一天约 1000 条公聊时，晚上仍能知道早上聊过的话题大概。
 
 import { nanoid } from "nanoid";
+import { get } from "../../db";
 import { compactLine, compactLines, messagesAfter, recentConversationMessages, type LogMessage } from "./log";
 import { CONTEXT, GEN } from "../settings";
 import { chat, extractJson } from "../provider";
@@ -456,8 +457,16 @@ async function mergeSegmentsIntoDigest(
 }
 
 async function countLag(channel: string, cursor: Cursor): Promise<number> {
-  const rows = await messagesAfter(channel, cursor, 500);
-  return rows.filter(isContextMessage).length;
+  // 精确计数，避免 500 扫描上限低估「未消化」条数。
+  const row = await get<{ count: string | number }>(
+    `SELECT COUNT(*)::text AS count FROM messages
+      WHERE channel = ?
+        AND (ts > ? OR (ts = ? AND id > ?))
+        AND kind <> 'system'`,
+    [channel, cursor.ts, cursor.ts, cursor.id],
+  );
+  const count = Number(row?.count ?? 0);
+  return Number.isFinite(count) ? count : 0;
 }
 
 export async function ensureContextCaughtUp(

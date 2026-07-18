@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { all, run, type UploadRow } from "../db";
+import { config } from "../config";
 
 const ABANDONED_AFTER_MS = 24 * 60 * 60 * 1000;
+const UPLOADING_STALE_MS = 2 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BATCH_SIZE = 500;
 
@@ -9,6 +12,12 @@ interface FileCleanupRow {
   id: string;
   path: string;
   attempt_count: number;
+}
+
+function isPathInsideUploadDir(candidate: string): boolean {
+  const resolved = path.resolve(candidate);
+  const root = path.resolve(config.uploadDir);
+  return resolved === root || resolved.startsWith(root + path.sep);
 }
 
 /**
@@ -24,6 +33,15 @@ export async function drainFileCleanupQueue(): Promise<number> {
   let completed = 0;
   for (const row of rows) {
     try {
+      if (!isPathInsideUploadDir(row.path)) {
+        await run(
+          `UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ?
+           WHERE id = ? AND completed_at IS NULL`,
+          ["path_outside_upload_dir", row.id],
+        );
+        console.warn(`[upload] 拒绝清理越界路径 id=${row.id}`);
+        continue;
+      }
       await fs.rm(row.path, { force: true });
       completed += await run(
         `UPDATE file_cleanup_queue SET completed_at = ?, attempt_count = attempt_count + 1,
@@ -54,7 +72,9 @@ export async function cleanupAbandonedMessageUploads(now = Date.now()): Promise<
   let removed = 0;
   for (const row of rows) {
     try {
-      await fs.rm(row.path, { force: true });
+      if (isPathInsideUploadDir(row.path)) {
+        await fs.rm(row.path, { force: true });
+      }
       removed += await run(
         `DELETE FROM uploads upload WHERE upload.id = ?
            AND upload.purpose IN ('message', 'album') AND upload.message_id IS NULL
@@ -69,9 +89,39 @@ export async function cleanupAbandonedMessageUploads(now = Date.now()): Promise<
   return removed;
 }
 
+/** 清理崩溃遗留的 `.<name>.uploading` 临时文件（UPLOAD-001）。 */
+export async function cleanupStaleUploadingFiles(now = Date.now()): Promise<number> {
+  let removed = 0;
+  try {
+    const entries = await fs.readdir(config.uploadDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.startsWith(".") || !entry.name.endsWith(".uploading")) continue;
+      const fullPath = path.join(config.uploadDir, entry.name);
+      if (!isPathInsideUploadDir(fullPath)) continue;
+      try {
+        const stat = await fs.stat(fullPath);
+        if (now - stat.mtimeMs < UPLOADING_STALE_MS) continue;
+        await fs.rm(fullPath, { force: true });
+        removed += 1;
+      } catch {
+        // 单个文件失败不阻断批次
+      }
+    }
+  } catch (error) {
+    console.warn(`[upload] 扫描 .uploading 失败: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (removed > 0) console.info(`[upload] 已清理 ${removed} 个过期 .uploading 临时文件`);
+  return removed;
+}
+
 export function startUploadCleanup(): () => void {
   const runCleanup = () => {
-    void Promise.all([drainFileCleanupQueue(), cleanupAbandonedMessageUploads()]).catch((error) => {
+    void Promise.all([
+      drainFileCleanupQueue(),
+      cleanupAbandonedMessageUploads(),
+      cleanupStaleUploadingFiles(),
+    ]).catch((error) => {
       console.warn(`[upload] 定时清理失败: ${error instanceof Error ? error.message : String(error)}`);
     });
   };

@@ -721,11 +721,25 @@ export interface SearchMemoryInput {
   to?: number;
   limit?: number;
   sort?: MemorySearchSort;
+  /** 可选：与控制中心一致的 ownership 收紧。 */
+  coupleId?: string | null;
+  accountId?: string | null;
 }
 
 export async function searchMemory(input: SearchMemoryInput): Promise<Array<MemoryItem & { score: number; lexicalHits: number }>> {
   if (!input.layers.length || !input.scopes.length) return [];
   await expireMemoryStates();
+
+  let coupleId = input.coupleId;
+  let accountId = input.accountId;
+  if (coupleId === undefined && input.scopes.includes("couple")) {
+    coupleId = (await resolveMemoryOwner("couple"))?.coupleId ?? null;
+  }
+  if (accountId === undefined) {
+    const privateScope = input.scopes.find((scope) => scope.startsWith("ai:"));
+    if (privateScope) accountId = (await resolveMemoryOwner(privateScope))?.accountId ?? null;
+  }
+
   const clauses = [
     `layer IN (${input.layers.map(() => "?").join(",")})`,
     `scope IN (${input.scopes.map(() => "?").join(",")})`,
@@ -737,6 +751,14 @@ export async function searchMemory(input: SearchMemoryInput): Promise<Array<Memo
     ...input.scopes,
     ...(input.perspectives?.length ? input.perspectives : ["people"]),
   ];
+  if (coupleId) {
+    clauses.push("(couple_id IS NULL OR couple_id = ?)");
+    params.push(coupleId);
+  }
+  if (accountId) {
+    clauses.push("(owner_account_id IS NULL OR owner_account_id = ? OR scope = 'couple')");
+    params.push(accountId);
+  }
   if (input.kinds?.length) {
     clauses.push(`memory_kind IN (${input.kinds.map(() => "?").join(",")})`);
     params.push(...input.kinds);
