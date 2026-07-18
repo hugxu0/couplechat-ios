@@ -183,7 +183,7 @@ async function main() {
     );
     assertOk(
       "大橘日记不会再被旧短篇上限截断",
-      expandedDiaryBody.length > 520 && expandedDiaryBody.length <= 760,
+      expandedDiaryBody.length > 520 && expandedDiaryBody.length <= 640,
     );
     assertOk(
       "大橘日记只做基础格式检查",
