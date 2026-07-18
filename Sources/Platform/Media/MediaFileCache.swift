@@ -170,7 +170,7 @@ actor MediaFileCache {
 
     func stats() async -> DownloadedMediaCacheStats {
         await startupMaintenance.value
-        await Task.detached(priority: .utility) {
+        return await Task.detached(priority: .utility) {
             DownloadedMediaCacheStats(
                 voice: MediaCacheStorage.stats(at: MediaFileCacheIO.rootDirectory(for: .voice)),
                 files: MediaCacheStorage.stats(at: MediaFileCacheIO.rootDirectory(for: .file)))
