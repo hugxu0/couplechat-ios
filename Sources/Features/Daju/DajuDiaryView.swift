@@ -230,7 +230,8 @@ struct DajuDiaryView: View {
 
             AppSectionHeader(title: "最新一页", subtitle: "先看看大橘最近记住了什么")
             NavigationLink {
-                DajuDiaryDetailView(diary: diaries[0])
+                DajuDiaryDetailView(diary: diaries[0], onRegenerated: replaceDiary)
+                    .appSubpageChrome()
             } label: {
                 DajuDiaryFeaturedCard(diary: diaries[0])
             }
@@ -240,7 +241,8 @@ struct DajuDiaryView: View {
                 AppSectionHeader(title: "往日爪印", subtitle: "这些普通日子，都没有被忘记")
                 ForEach(Array(diaries.dropFirst())) { diary in
                     NavigationLink {
-                        DajuDiaryDetailView(diary: diary)
+                        DajuDiaryDetailView(diary: diary, onRegenerated: replaceDiary)
+                            .appSubpageChrome()
                     } label: {
                         DajuDiaryArchiveRow(diary: diary)
                     }
@@ -342,6 +344,14 @@ struct DajuDiaryView: View {
             noticeKind = .warning
             noticeText = "补写没有成功，稍后再试一次吧。"
         }
+    }
+
+    private func replaceDiary(_ diary: DajuDiary) {
+        diaries = diaries.map { $0.dayKey == diary.dayKey ? diary : $0 }
+        if !diaries.contains(where: { $0.dayKey == diary.dayKey }) {
+            diaries.append(diary)
+        }
+        diaries.sort { $0.dayKey > $1.dayKey }
     }
 }
 
@@ -447,7 +457,18 @@ private struct DajuDiaryArchiveRow: View {
 }
 
 private struct DajuDiaryDetailView: View {
-    let diary: DajuDiary
+    @EnvironmentObject private var store: ChatStore
+    @State private var diary: DajuDiary
+    @State private var isRegenerating = false
+    @State private var showsRegenerateConfirmation = false
+    @State private var regenerateError: String?
+    private let onRegenerated: (DajuDiary) -> Void
+    private let repository = DajuDiaryRepository()
+
+    init(diary: DajuDiary, onRegenerated: @escaping (DajuDiary) -> Void) {
+        _diary = State(initialValue: diary)
+        self.onRegenerated = onRegenerated
+    }
 
     var body: some View {
         ZStack {
@@ -543,5 +564,63 @@ private struct DajuDiaryDetailView: View {
         }
         .navigationTitle(diary.monthDayText)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showsRegenerateConfirmation = true
+                } label: {
+                    if isRegenerating {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
+                    }
+                }
+                .disabled(isRegenerating || store.session == nil)
+                .accessibilityLabel(isRegenerating ? "正在重新整理这篇日记" : "重新整理这篇日记")
+            }
+        }
+        .confirmationDialog(
+            "重新整理这一天？",
+            isPresented: $showsRegenerateConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("按原聊天重新整理") {
+                Task { await regenerate() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("大橘会重新挑选这一天最值得记住的主线，并覆盖当前这一页。原聊天不会改变。")
+        }
+        .alert(
+            "重新整理失败",
+            isPresented: Binding(
+                get: { regenerateError != nil },
+                set: { if !$0 { regenerateError = nil } }
+            )
+        ) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(regenerateError ?? "请稍后再试。")
+        }
+    }
+
+    private func regenerate() async {
+        guard let token = store.session?.token else {
+            regenerateError = "登录后才能重新整理日记。"
+            return
+        }
+        isRegenerating = true
+        defer { isRegenerating = false }
+        do {
+            guard let updated = try await repository.regenerate(token: token, dayKey: diary.dayKey) else {
+                regenerateError = "这一天暂时没有足够的共同聊天素材。"
+                return
+            }
+            diary = updated
+            onRegenerated(updated)
+            Haptics.light()
+        } catch {
+            regenerateError = "没有整理成功，请稍后再试。"
+        }
     }
 }

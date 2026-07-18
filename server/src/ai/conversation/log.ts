@@ -123,6 +123,31 @@ export async function ownerTextMessagesAfter(
   return rows.map(mapRow);
 }
 
+/**
+ * 读取某个时间点附近的少量共同聊天原文，供日记从总览回到真实语气与顺序。
+ * 调用方必须同时给出作息日起止边界；这里只返回主人消息，不含系统事件或大橘发言。
+ */
+export async function ownerConversationMessagesAround(
+  storedChannel: string,
+  anchorTs: number,
+  rangeStart: number,
+  rangeEnd: number,
+  limit: number,
+): Promise<LogMessage[]> {
+  const rows = await all<MessageRow>(
+    `SELECT * FROM (
+       SELECT * FROM messages
+       WHERE channel = ? AND ts >= ? AND ts < ?
+         AND kind = 'user' AND sender <> 'ai'
+       ORDER BY ABS(ts - ?) ASC, ts ASC, id ASC
+       LIMIT ?
+     ) AS nearby_messages
+     ORDER BY ts ASC, id ASC`,
+    [storedChannel, rangeStart, rangeEnd, anchorTs, Math.max(1, Math.min(20, limit))],
+  );
+  return rows.map(mapRow);
+}
+
 function bodyOf(m: LogMessage): string {
   if (m.type === "image") {
     const count = imageUrls(m).length;

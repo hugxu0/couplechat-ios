@@ -53,6 +53,13 @@ export const GEN = {
     reasoningEffort: "low",
   },
   dailyRecommendation: { maxTokens: 400, temperature: 0.75, timeoutMs: 30_000 },
+  /** 大橘日记选材：只挑一条主线和极少量陪衬，不负责写正文 */
+  diaryCurate: {
+    maxTokens: 320,
+    temperature: 0.15,
+    timeoutMs: 20_000,
+    reasoningEffort: "low",
+  },
   /** 大橘日记：固定短文 */
   diary: { maxTokens: 600, temperature: 0.7, timeoutMs: 45_000 },
 } satisfies Record<string, GenProfile>;

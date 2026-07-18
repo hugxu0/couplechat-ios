@@ -87,12 +87,20 @@ final class DajuDiaryRepository {
     }
 
     func ensureYesterday(token: String) async throws -> DajuDiary? {
+        try await ensure(token: token, payload: [:])
+    }
+
+    func regenerate(token: String, dayKey: String) async throws -> DajuDiary? {
+        try await ensure(token: token, payload: ["dayKey": dayKey, "force": true])
+    }
+
+    private func ensure(token: String, payload: [String: Any]) async throws -> DajuDiary? {
         var request = URLRequest(url: ServerConfig.baseURL.appendingPathComponent("api/v2/ai/diaries/ensure"))
         request.httpMethod = "POST"
-        request.timeoutInterval = 60
+        request.timeoutInterval = 90
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data("{}".utf8)
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         let (data, response) = try await httpClient.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 404 { return nil }

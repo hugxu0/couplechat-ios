@@ -151,7 +151,12 @@ async function main() {
         backupTables.join(",") === publicTables.join(","),
     );
 
-    const { buildDiaryFallback, normalizeDiaryBody } = await import("../src/ai/diary/service");
+    const {
+      buildDiaryFallback,
+      isUsableDiaryBody,
+      normalizeDiaryBody,
+      selectFallbackDiaryFocus,
+    } = await import("../src/ai/diary/service");
     const diaryFallback = buildDiaryFallback({
       moodLine: "两个人从忙乱慢慢聊到安心",
       topics: [{
@@ -177,6 +182,41 @@ async function main() {
         "最后，大橘把这一天轻轻收好，等以后再回来看看它长成了什么模样。",
       )
         .includes("\n\n"),
+    );
+    const mixedDiaryDigest = {
+      moodLine: "两个人从不安慢慢聊到安心",
+      topics: [
+        {
+          id: "topic_software",
+          title: "安装软件与检查账号",
+          status: "done",
+          actors: ["both"],
+          points: ["确认了手机和电脑上的版本"],
+        },
+        {
+          id: "topic_care",
+          title: "不安时仍愿意陪在一起",
+          status: "open",
+          actors: ["xu", "si"],
+          points: ["认真回应了对关系变化的担心"],
+        },
+      ],
+      decisions: ["明天再检查一次软件版本"],
+      openLoops: ["安装是否稳定仍待确认"],
+    };
+    const focusedDiary = selectFallbackDiaryFocus(mixedDiaryDigest);
+    const focusedFallback = buildDiaryFallback(mixedDiaryDigest, focusedDiary);
+    assertOk(
+      "大橘日记本地选材舍弃无关流水事项",
+      focusedDiary.topicIds[0] === "topic_care" &&
+        !focusedFallback.body.includes("安装软件") &&
+        focusedFallback.body.includes("不安时仍愿意陪在一起"),
+    );
+    assertOk(
+      "大橘日记拒绝清单式模型正文",
+      !isUsableDiaryBody(
+        "昨天聊了好多：先确认软件版本；还计算了零食总价；最后设置了提醒。".repeat(3),
+      ),
     );
 
     const legacyMembers = await db.all<{ username: string }>(
@@ -257,6 +297,20 @@ async function main() {
       "消息 (ts,id) 游标可区分同毫秒",
       cursorPage.some((row) => row.id === "smoke-cursor-a") &&
         !cursorPage.some((row) => row.id === "smoke-cursor-b"),
+    );
+    const { ownerConversationMessagesAround } = await import("../src/ai/conversation/log");
+    const nearbyDiaryMessages = await ownerConversationMessagesAround(
+      "couple",
+      cursorTs,
+      cursorTs - 1,
+      cursorTs + 1,
+      8,
+    );
+    assertOk(
+      "大橘日记原文窗口只返回边界内主人消息并保持正序",
+      nearbyDiaryMessages.map((message) => message.id).join(",") ===
+        "smoke-cursor-a,smoke-cursor-b" &&
+        nearbyDiaryMessages.every((message) => message.kind === "user" && message.sender !== "ai"),
     );
     const {
       fallbackRecommendation,
