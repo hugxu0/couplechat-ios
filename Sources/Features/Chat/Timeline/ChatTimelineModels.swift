@@ -225,7 +225,10 @@ enum ChatTimelineMetrics {
             return ceil(min(maxBubbleWidth, 196))
         }
         if message.meta?.confirm != nil { return ceil(min(maxBubbleWidth, 300)) }
-        let bodyWidth = measureTextWidth(text, font: .preferredFont(forTextStyle: .body), maxWidth: available)
+        let bodyWidth = ChatMarkdownRenderer.compactWidth(
+            for: text,
+            font: .preferredFont(forTextStyle: .body),
+            maxWidth: available)
         let replyWidth = measureTextWidth(message.replyPreview ?? "", font: .preferredFont(forTextStyle: .footnote), maxWidth: available)
         let replyMinimumWidth = message.replyPreview?.isEmpty == false ? min(available, 176) : 0
         let contentWidth = min(
@@ -334,9 +337,7 @@ enum ChatTimelineMetrics {
 
     private static func measureTextWidth(_ text: String, font: UIFont, maxWidth: CGFloat) -> CGFloat {
         guard !text.isEmpty else { return 0 }
-        // UIKit 会把包含空行的多段文本 boundingRect 宽度扩到约束上限，导致
-        // 大橘和对方新发的分段消息都像一整块横向卡片。气泡宽度只应取最长
-        // 逻辑行；真正过长的行仍由 maxWidth 负责换行。
+        // 引用预览使用普通 UILabel，不解析 Markdown；按最长逻辑行计算即可。
         let widestLine = text
             .components(separatedBy: .newlines)
             .filter { !$0.isEmpty }

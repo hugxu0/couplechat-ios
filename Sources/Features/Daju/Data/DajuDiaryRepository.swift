@@ -19,8 +19,50 @@ struct DajuDiary: Identifiable, Decodable, Equatable {
     }
 }
 
+extension DajuDiary {
+    var paragraphs: [String] {
+        let values = body
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return values.isEmpty ? [body] : values
+    }
+
+    var previewText: String {
+        paragraphs.joined(separator: " ")
+    }
+
+    var displayDate: String {
+        guard let parts = parsedDayKey else { return dayKey }
+        return "\(parts.year)年\(parts.month)月\(parts.day)日"
+    }
+
+    var monthDayText: String {
+        guard let parts = parsedDayKey else { return dayKey }
+        return "\(parts.month)月\(parts.day)日"
+    }
+
+    var dayNumberText: String {
+        guard let parts = parsedDayKey else { return "--" }
+        return String(format: "%02d", parts.day)
+    }
+
+    var monthText: String {
+        guard let parts = parsedDayKey else { return "日期" }
+        return "\(parts.month)月"
+    }
+
+    private var parsedDayKey: (year: Int, month: Int, day: Int)? {
+        let values = dayKey.split(separator: "-").compactMap { Int($0) }
+        guard values.count == 3 else { return nil }
+        return (values[0], values[1], values[2])
+    }
+}
+
 @MainActor
 final class DajuDiaryRepository {
+    static let changedNotification = Notification.Name("DajuDiaryRepository.changed")
+
     private let httpClient: any HTTPClient
 
     init(httpClient: any HTTPClient = URLSessionHTTPClient()) {
@@ -55,7 +97,9 @@ final class DajuDiaryRepository {
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 404 { return nil }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        return try JSONDecoder().decode(DiaryOneResponse.self, from: data).diary
+        let diary = try JSONDecoder().decode(DiaryOneResponse.self, from: data).diary
+        NotificationCenter.default.post(name: Self.changedNotification, object: nil)
+        return diary
     }
 }
 

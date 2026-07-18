@@ -88,6 +88,13 @@ enum ChatMarkdownRenderer {
         return cache
     }()
 
+    private static let compactWidthCache: NSCache<LayoutCacheKey, NSNumber> = {
+        let cache = NSCache<LayoutCacheKey, NSNumber>()
+        cache.countLimit = 512
+        cache.totalCostLimit = 128 * 1_024
+        return cache
+    }()
+
     private static let linkExpression = try! NSRegularExpression(
         pattern: #"\[([^\]]+)\]\(([^\s)]+)\)"#)
     private static let codeExpression = try! NSRegularExpression(pattern: #"`([^`]+)`"#)
@@ -234,6 +241,34 @@ enum ChatMarkdownRenderer {
         let size = CGSize(width: ceil(min(width, fitted.width)), height: ceil(fitted.height))
         layoutCache.setObject(NSValue(cgSize: size), forKey: cacheKey)
         return size
+    }
+
+    static func compactWidth(for markdown: String, font: UIFont, maxWidth: CGFloat) -> CGFloat {
+        guard !markdown.isEmpty, maxWidth > 0 else { return 0 }
+        let cacheKey = LayoutCacheKey(markdown: markdown, font: font, width: maxWidth)
+        if let cached = compactWidthCache.object(forKey: cacheKey) {
+            return CGFloat(truncating: cached)
+        }
+
+        // 先以允许的最大宽度确定当前行数，再寻找不会增加行数的最窄宽度。
+        // 直接裁剪整段自然宽度会让自动换行的短尾行把气泡撑满；按实际 UILabel
+        // 高度反向收紧后，两行内容会更均衡，同时不会被继续挤成三行。
+        let targetHeight = boundingSize(for: markdown, font: font, width: maxWidth).height
+        guard targetHeight > 0 else { return 0 }
+        var lowerBound: CGFloat = 1
+        var upperBound = maxWidth
+        for _ in 0..<10 {
+            let candidate = (lowerBound + upperBound) / 2
+            let candidateHeight = boundingSize(for: markdown, font: font, width: candidate).height
+            if candidateHeight <= targetHeight {
+                upperBound = candidate
+            } else {
+                lowerBound = candidate
+            }
+        }
+        let compactWidth = min(maxWidth, ceil(upperBound))
+        compactWidthCache.setObject(NSNumber(value: Double(compactWidth)), forKey: cacheKey)
+        return compactWidth
     }
 
     private static func renderedLine(

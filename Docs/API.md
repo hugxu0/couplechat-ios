@@ -68,7 +68,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | `GET` | `/api/v2/ai/diaries/:dayKey` | 单日日记 |
 | `POST` | `/api/v2/ai/diaries/ensure` | 确保昨日或指定 `dayKey` 日记（body 可选 `{ dayKey, force }`） |
 
-只读 couple 材料；无信号日返回 `404 empty_or_unavailable`。
+列表与详情中的日记对象为 `{ id, coupleId, dayKey, title, body, source, createdAt, updatedAt }`，`body` 可包含以 `\n\n` 分隔的自然段。只读 couple 材料；无信号日返回 `404 empty_or_unavailable`。`ensure` 默认幂等返回已有日记；`force: true` 对指定日或昨日重新生成并更新同一作息日记录。
 
 ### 上传与媒体
 

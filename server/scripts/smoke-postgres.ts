@@ -151,6 +151,34 @@ async function main() {
         backupTables.join(",") === publicTables.join(","),
     );
 
+    const { buildDiaryFallback, normalizeDiaryBody } = await import("../src/ai/diary/service");
+    const diaryFallback = buildDiaryFallback({
+      moodLine: "两个人从忙乱慢慢聊到安心",
+      topics: [{
+        title: "周末去公园走走",
+        status: "open",
+        points: ["商量了想带的零食，也记得看天气"],
+      }],
+      decisions: ["周六上午再确认天气"],
+      openLoops: ["出门时间还没有定"],
+    });
+    assertOk(
+      "大橘日记兜底保留事实并形成可读段落",
+      diaryFallback.title.length > 0 &&
+        diaryFallback.body.includes("周末去公园走走") &&
+        diaryFallback.body.includes("\n\n") &&
+        !diaryFallback.body.startsWith("情绪："),
+    );
+    assertOk(
+      "大橘日记单段模型输出会按完整句子整理",
+      normalizeDiaryBody(
+        "第一件小事被认真地记住了，那些细节也留在了今天的纸页上。" +
+        "第二件小事同样得到了回应，两个人慢慢把没有说完的话说完整。" +
+        "最后，大橘把这一天轻轻收好，等以后再回来看看它长成了什么模样。",
+      )
+        .includes("\n\n"),
+    );
+
     const legacyMembers = await db.all<{ username: string }>(
       `SELECT account.username FROM couple_members member
        JOIN accounts account ON account.id = member.account_id

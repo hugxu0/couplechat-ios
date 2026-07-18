@@ -36,7 +36,7 @@ export async function registerDiaryRoutes(app: FastifyInstance) {
     if (!body.success) return reply.code(400).send({ error: errorCodes.invalidRequest });
     const diary = body.data.dayKey
       ? await ensureDiaryForDay(body.data.dayKey, { force: body.data.force })
-      : await ensureYesterdayDiary();
+      : await ensureYesterdayDiary(Date.now(), { force: body.data.force });
     if (!diary) return reply.code(404).send({ error: errorCodes.notFound, reason: "empty_or_unavailable" });
     return { ok: true, diary };
   });

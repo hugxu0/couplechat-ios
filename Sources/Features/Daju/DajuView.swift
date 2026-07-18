@@ -65,20 +65,9 @@ struct DajuView: View {
                                 kind: kind, token: session.token, username: session.username)
                         }
                     })
-                Button {
+                DajuDiaryEntryCard(token: session.token) {
                     showDiary = true
-                } label: {
-                    HStack {
-                        Image(systemName: "book.closed.fill")
-                        Text("大橘日记")
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .foregroundStyle(DS.Palette.textSecondary)
-                    }
-                    .padding()
-                    .background(DS.Palette.cardSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
-                .buttonStyle(.plain)
 
                 if viewModel.usingCachedSnapshot {
                     StatusBanner(text: "网络暂不可用，正在展示上次同步的大橘状态", kind: .info)
