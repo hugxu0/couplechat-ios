@@ -6,10 +6,10 @@
 
 | 层级 | 最后核验 | 结论 |
 |---|---|---|
-| 客户端源码与 CI | `fd18ef63108765f5fe2ba6e0994de5eb94c6be1c` / run `29663631689` | Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
-| 最近 iOS 产物 | `fd18ef63108765f5fe2ba6e0994de5eb94c6be1c` / run `29663632882` | Xcode 26.3 unsigned IPA 归档、内容校验和下载校验通过，版本 `0.2.0 (13)` |
-| 服务端本地验证 | 2026-07-19 | `npm run check` 通过；覆盖大橘完整公聊窗口、单次模型写作入口、长篇正文容量与最小格式兜底，以及 schema v32 全部持久化表的备份策略覆盖 |
-| 生产环境 | 2026-07-19 | 固定 RELEASE `2134cb8d3ed992b55a1404393845c8f3591d019a` 已发布，前一 release `1fb9ee14ddac7081a3a679338ce132fde04781bd` 保留回滚镜像，schema v32 未变化；发布入口的美国本机、私有 origin、公开入口三层健康、固定账号与 Socket 均通过；未执行 migration、备份、恢复或停写 |
+| 客户端源码与 CI | `e9fe4917f94da776bee49965d556319d6becf932` / run `29665828667` | Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
+| 最近 iOS 产物 | `e9fe4917f94da776bee49965d556319d6becf932` / run `29665982759` | Xcode 26.3 unsigned IPA 归档、内容校验和下载校验通过，版本 `0.2.0 (13)`；SHA256 `B9E6E94A4B4373D0E52DA55A88F504E87A2CB0E7DD960565CDA7531B09F5A1FF` |
+| 服务端本地验证 | 2026-07-19 | `npm run check` 通过；覆盖大橘完整公聊窗口、单次模型写作入口、500 字左右正文容量与最小格式兜底，以及 schema v32 全部持久化表的备份策略覆盖 |
+| 生产环境 | 2026-07-19 | 固定 RELEASE `e9fe4917f94da776bee49965d556319d6becf932` 已发布，前一 release `2134cb8d3ed992b55a1404393845c8f3591d019a` 保留回滚镜像，schema v32 未变化；发布入口的美国本机、私有 origin、公开入口三层健康、固定账号与 Socket 均通过；未执行 migration、备份、恢复或停写 |
 
 本机旧 IPA、tar、展开 release 或备份目录不属于生产证据。服务器细节见 [SERVER.md](SERVER.md)，签名与侧载见 [IOS.md](IOS.md)。
 
