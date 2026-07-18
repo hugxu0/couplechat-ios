@@ -148,6 +148,22 @@ export async function ownerConversationMessagesAround(
   return rows.map(mapRow);
 }
 
+/** 读取一个作息日内的完整非系统聊天，供大橘日记直接通读。 */
+export async function conversationMessagesInRange(
+  storedChannel: string,
+  rangeStart: number,
+  rangeEnd: number,
+  limit = 3000,
+): Promise<LogMessage[]> {
+  const rows = await all<MessageRow>(
+    `SELECT * FROM messages
+     WHERE channel = ? AND ts >= ? AND ts < ? AND kind <> 'system'
+     ORDER BY ts ASC, id ASC LIMIT ?`,
+    [storedChannel, rangeStart, rangeEnd, Math.max(1, Math.min(5000, limit))],
+  );
+  return rows.map(mapRow);
+}
+
 function bodyOf(m: LogMessage): string {
   if (m.type === "image") {
     const count = imageUrls(m).length;

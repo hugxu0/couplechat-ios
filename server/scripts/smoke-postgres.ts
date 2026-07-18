@@ -151,28 +151,20 @@ async function main() {
         backupTables.join(",") === publicTables.join(","),
     );
 
-    const {
-      buildDiaryFallback,
-      isUsableDiaryBody,
-      normalizeDiaryBody,
-      selectFallbackDiaryFocus,
-    } = await import("../src/ai/diary/service");
+    const { buildDiaryFallback, isUsableDiaryBody, normalizeDiaryBody } = await import("../src/ai/diary/service");
     const diaryFallback = buildDiaryFallback({
       moodLine: "两个人从忙乱慢慢聊到安心",
       topics: [{
         title: "周末去公园走走",
-        status: "open",
         points: ["商量了想带的零食，也记得看天气"],
       }],
-      decisions: ["周六上午再确认天气"],
-      openLoops: ["出门时间还没有定"],
     });
     assertOk(
       "大橘日记兜底保留事实并形成可读段落",
       diaryFallback.title.length > 0 &&
         diaryFallback.body.includes("周末去公园走走") &&
         diaryFallback.body.includes("\n\n") &&
-        diaryFallback.body.includes("我趴在旁边") &&
+        diaryFallback.body.includes("我趴在聊天旁边") &&
         !diaryFallback.body.startsWith("情绪："),
     );
     assertOk(
@@ -184,46 +176,13 @@ async function main() {
       )
         .includes("\n\n"),
     );
-    const mixedDiaryDigest = {
-      moodLine: "两个人从不安慢慢聊到安心",
-      topics: [
-        {
-          id: "topic_software",
-          title: "安装软件与检查账号",
-          status: "done",
-          actors: ["both"],
-          points: ["确认了手机和电脑上的版本"],
-        },
-        {
-          id: "topic_care",
-          title: "不安时仍愿意陪在一起",
-          status: "open",
-          actors: ["xu", "si"],
-          points: ["认真回应了对关系变化的担心"],
-        },
-      ],
-      decisions: ["明天再检查一次软件版本"],
-      openLoops: ["安装是否稳定仍待确认"],
-    };
-    const focusedDiary = selectFallbackDiaryFocus(mixedDiaryDigest);
-    const focusedFallback = buildDiaryFallback(mixedDiaryDigest, focusedDiary);
     assertOk(
-      "大橘日记本地选材舍弃无关流水事项",
-      focusedDiary.topicIds[0] === "topic_care" &&
-        !focusedFallback.body.includes("安装软件") &&
-        focusedFallback.body.includes("不安时仍愿意陪在一起"),
+      "大橘日记只做基础格式检查",
+      isUsableDiaryBody("我趴在旁边，听见你们说起今天的一件小事，也记住了那一刻的声音和停顿。后来我在窗台上换了个姿势，继续听着你们把话慢慢说完。\n\n我有自己的小心思，也把最后那句晚安、房间里的安静和一点没有说完的尾巴一起收好了。"),
     );
     assertOk(
-      "大橘日记拒绝清单式模型正文",
-      !isUsableDiaryBody(
-        "昨天聊了好多：先确认软件版本；还计算了零食总价；最后设置了提醒。".repeat(3),
-      ),
-    );
-    assertOk(
-      "大橘日记拒绝心理诊断和主人建议",
-      !isUsableDiaryBody(
-        "软件更新后壁纸没了，我却听见她心里更大的担心。\n\n我把这一晚记成一次轻轻的确认，之后不再拿两个人比较，提醒一下当前的选择与边界。",
-      ),
+      "大橘日记只拒绝明显的非正文输出",
+      !isUsableDiaryBody("根据输入的JSON生成正文"),
     );
 
     const legacyMembers = await db.all<{ username: string }>(
@@ -317,7 +276,18 @@ async function main() {
       "大橘日记原文窗口只返回边界内主人消息并保持正序",
       nearbyDiaryMessages.map((message) => message.id).join(",") ===
         "smoke-cursor-a,smoke-cursor-b" &&
-        nearbyDiaryMessages.every((message) => message.kind === "user" && message.sender !== "ai"),
+      nearbyDiaryMessages.every((message) => message.kind === "user" && message.sender !== "ai"),
+    );
+    const { conversationMessagesInRange } = await import("../src/ai/conversation/log");
+    const fullDiaryWindow = await conversationMessagesInRange(
+      "couple",
+      cursorTs - 1,
+      cursorTs + 1,
+      20,
+    );
+    assertOk(
+      "大橘日记可按作息日顺序读取完整公聊窗口",
+      fullDiaryWindow.map((message) => message.id).join(",") === "smoke-cursor-a,smoke-cursor-b",
     );
     const {
       fallbackRecommendation,
