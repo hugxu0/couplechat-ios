@@ -98,8 +98,6 @@ extension ChatViewController: PHPickerViewControllerDelegate {
         return nil
     }
 
-    private var didShowLivePhotoNoticeThisSession = false
-
     @MainActor
     private func presentLivePhotoStaticNoticeIfNeeded() {
         guard !didShowLivePhotoNoticeThisSession, presentedViewController == nil else { return }

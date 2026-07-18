@@ -63,6 +63,8 @@ final class ChatViewController: UIViewController {
     var replyTarget: ChatMessage?
     var pendingMedia: [ChatPendingMedia] = []
     var photoPickerPurpose: PhotoPickerPurpose = .messageMedia
+    /// Live Photo 静图提示本会话只弹一次（属性须在类型本体，不能放 extension）。
+    var didShowLivePhotoNoticeThisSession = false
     var isChatVisible = false
     var hasCompletedEntryBootstrap = false
     var entryBootstrapTask: Task<Void, Never>?
