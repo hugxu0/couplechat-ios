@@ -5,6 +5,7 @@ struct DajuView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = DajuViewModel()
     @State private var showAIChat = false
+    @State private var showDiary = false
     @State private var isVisible = false
 
     var body: some View {
@@ -24,6 +25,9 @@ struct DajuView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showAIChat) {
                 ChatView(channel: .ai).appSubpageChrome()
+            }
+            .navigationDestination(isPresented: $showDiary) {
+                DajuDiaryView().appSubpageChrome()
             }
             .task(id: store.session?.username) {
                 guard let session = store.session else { return }
@@ -61,6 +65,21 @@ struct DajuView: View {
                                 kind: kind, token: session.token, username: session.username)
                         }
                     })
+                Button {
+                    showDiary = true
+                } label: {
+                    HStack {
+                        Image(systemName: "book.closed.fill")
+                        Text("大橘日记")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(DS.Palette.textSecondary)
+                    }
+                    .padding()
+                    .background(DS.Palette.cardSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
                 if viewModel.usingCachedSnapshot {
                     StatusBanner(text: "网络暂不可用，正在展示上次同步的大橘状态", kind: .info)
                 } else if let message = viewModel.errorMessage {

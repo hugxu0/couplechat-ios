@@ -81,8 +81,16 @@ extension ChatViewController: PHPickerViewControllerDelegate {
 
     private func loadPendingMedia(from result: PHPickerResult) async -> ChatPendingMedia? {
         let provider = result.itemProvider
-        // Live Photo 只取静态图，不再上传配对视频资源。
-        if let image = await loadImage(from: provider) { return image }
+        let isLivePhoto = provider.hasItemConformingToTypeIdentifier(UTType.livePhoto.identifier)
+        // Live Photo 当前只取静态图（配对视频尚未完整实现）；UI 会提示。
+        if let image = await loadImage(from: provider, markLivePhoto: isLivePhoto) {
+            if isLivePhoto {
+                await MainActor.run {
+                    self.presentLivePhotoStaticNoticeIfNeeded()
+                }
+            }
+            return image
+        }
         if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier),
            let video = await loadVideo(from: provider) {
             return video
@@ -90,14 +98,48 @@ extension ChatViewController: PHPickerViewControllerDelegate {
         return nil
     }
 
-    private func loadImage(from provider: NSItemProvider) async -> ChatPendingMedia? {
+    private var didShowLivePhotoNoticeThisSession = false
+
+    @MainActor
+    private func presentLivePhotoStaticNoticeIfNeeded() {
+        guard !didShowLivePhotoNoticeThisSession, presentedViewController == nil else { return }
+        didShowLivePhotoNoticeThisSession = true
+        let alert = UIAlertController(
+            title: "实况照片",
+            message: "当前版本会按静态图发送，不会上传配对视频。",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        present(alert, animated: true)
+    }
+
+    private func loadImage(from provider: NSItemProvider, markLivePhoto: Bool = false) async -> ChatPendingMedia? {
         let identifiers = [
             UTType.gif.identifier, UTType.webP.identifier,
             UTType.png.identifier, UTType.jpeg.identifier, UTType.image.identifier,
         ]
         for identifier in identifiers where provider.hasItemConformingToTypeIdentifier(identifier) {
+            // 优先 file 表示，减少整包 Data 峰值；失败再 loadData。
+            if let fileURL = await provider.loadFile(typeIdentifier: identifier) {
+                let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                guard size > 0, size <= 50 * 1024 * 1024 else { continue }
+                // 预览仍需解码小缩略图；发送走 fileURL。
+                let previewData = try? Data(contentsOf: fileURL, options: [.mappedIfSafe])
+                guard let previewData,
+                      let image = UIImage(data: previewData) else { continue }
+                let mime = detectedImageMIMEType(previewData)
+                    ?? UTType(identifier)?.preferredMIMEType
+                    ?? "image/jpeg"
+                return ChatPendingMedia(
+                    id: UUID().uuidString,
+                    image: image,
+                    data: Data(),
+                    mimeType: mime,
+                    messageType: "image",
+                    localPreviewURL: fileURL)
+            }
             if let data = await provider.loadData(typeIdentifier: identifier),
                let image = UIImage(data: data) {
+                guard data.count <= 50 * 1024 * 1024 else { continue }
                 let mime = detectedImageMIMEType(data)
                     ?? UTType(identifier)?.preferredMIMEType
                     ?? "image/jpeg"
@@ -113,6 +155,7 @@ extension ChatViewController: PHPickerViewControllerDelegate {
                     localPreviewURL: previewURL)
             }
         }
+        _ = markLivePhoto
         return nil
     }
 

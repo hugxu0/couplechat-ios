@@ -13,6 +13,9 @@ final class RealtimeEventRouter {
     private let setPresenceKnown: (Bool) -> Void
     private let onIncomingInteraction: (ChatMessage) -> Void
     private weak var activeSocket: SocketIOClient?
+    /// bind 时捕获，事件回调必须匹配，防止旧 socket / 旧账号写入。
+    private var boundGeneration: UInt64 = 0
+    private var boundUsername: String?
 
     nonisolated static func validatedChannel(from value: Any?) -> ChatChannel? {
         guard let rawChannel = value as? String else { return nil }
@@ -39,6 +42,8 @@ final class RealtimeEventRouter {
 
     func bind(_ s: SocketIOClient) {
         activeSocket = s
+        boundGeneration = auth.sessionGeneration
+        boundUsername = auth.session?.username
         bindNewMessage(s)
         bindReadUpdate(s)
         bindMessageRecall(s)
@@ -51,13 +56,21 @@ final class RealtimeEventRouter {
         bindPersonalItemChanged(s)
     }
 
+    /// 当前事件是否仍属于绑定该 socket 时的会话代次。
+    private func isLiveSocket(_ s: SocketIOClient) -> Bool {
+        activeSocket === s
+            && auth.sessionGeneration == boundGeneration
+            && auth.session?.username == boundUsername
+            && auth.session != nil
+    }
+
     private func bindNewMessage(_ s: SocketIOClient) {
         s.on(SocketEvent.messageNew.rawValue) { [weak self] data, _ in
             guard let dict = data.first as? [String: Any],
                   let msg = MessageStore.parseMessage(dict, context: "message:new"),
                   let channel = Self.validatedChannel(from: msg.channel) else { return }
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.isLiveSocket(s) else { return }
                 self.messageStore.upsert(msg, in: channel)
                 self.onIncomingInteraction(msg)
                 if msg.sender == "ai" {
@@ -77,7 +90,10 @@ final class RealtimeEventRouter {
                   let user = dict["user"] as? String,
                   let ts = (dict["ts"] as? NSNumber)?.doubleValue,
                   let channel = Self.validatedChannel(from: dict["channel"]) else { return }
-            Task { @MainActor in self?.messageStore.setReadState(channel, user: user, ts: ts) }
+            Task { @MainActor in
+                guard let self, self.isLiveSocket(s) else { return }
+                self.messageStore.setReadState(channel, user: user, ts: ts)
+            }
         }
     }
 
@@ -87,7 +103,7 @@ final class RealtimeEventRouter {
                   let id = dict["id"] as? String,
                   let channel = Self.validatedChannel(from: dict["channel"]) else { return }
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.isLiveSocket(s) else { return }
                 if !(await self.messageStore.applyRecall(id: id, channel: channel)) {
                     print("[RealtimeEventRouter] 撤回事件等待本地持久化重试 id=\(id)")
                 }
@@ -101,7 +117,7 @@ final class RealtimeEventRouter {
                   let id = dict["id"] as? String else { return }
             let metaDict = dict["meta"] as? [String: Any]
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.isLiveSocket(s) else { return }
                 if !(await self.messageStore.applyMessageUpdate(id: id, meta: metaDict)) {
                     print("[RealtimeEventRouter] 消息更新等待后续同步重试 id=\(id)")
                 }
@@ -112,14 +128,20 @@ final class RealtimeEventRouter {
     private func bindAITyping(_ s: SocketIOClient) {
         s.on(SocketEvent.aiTyping.rawValue) { [weak self] data, _ in
             let typing = (data.first as? Bool) ?? true
-            Task { @MainActor in self?.messageStore.aiTyping = typing }
+            Task { @MainActor in
+                guard let self, self.isLiveSocket(s) else { return }
+                self.messageStore.aiTyping = typing
+            }
         }
     }
 
     private func bindAIReplying(_ s: SocketIOClient) {
         s.on(SocketEvent.aiReplying.rawValue) { [weak self] data, _ in
             let replying = (data.first as? Bool) ?? true
-            Task { @MainActor in self?.messageStore.aiReplying = replying }
+            Task { @MainActor in
+                guard let self, self.isLiveSocket(s) else { return }
+                self.messageStore.aiReplying = replying
+            }
         }
     }
 
@@ -134,8 +156,7 @@ final class RealtimeEventRouter {
                 requesterUsername: dict["requesterUsername"] as? String,
                 phase: phase)
             Task { @MainActor in
-                guard let self else { return }
-                guard self.activeSocket === s else { return }
+                guard let self, self.isLiveSocket(s) else { return }
                 if activity.isVisible {
                     self.setAIActivity(channel.rawValue, activity)
                 } else {
@@ -150,7 +171,7 @@ final class RealtimeEventRouter {
             guard let dict = data.first as? [String: Any],
                   let online = dict["online"] as? [String] else { return }
             Task { @MainActor in
-                guard let self, let me = self.auth.session else { return }
+                guard let self, self.isLiveSocket(s), let me = self.auth.session else { return }
                 self.setPartnerOnline(online.contains { $0 != me.username })
                 self.setPresenceKnown(true)
             }
@@ -160,7 +181,10 @@ final class RealtimeEventRouter {
     private func bindSharedUpdate(_ s: SocketIOClient) {
         s.on(SocketEvent.sharedUpdate.rawValue) { [weak self] data, _ in
             guard let update = data.first as? [String: Any] else { return }
-            Task { @MainActor in self?.shared.applySharedUpdate(update) }
+            Task { @MainActor in
+                guard let self, self.isLiveSocket(s) else { return }
+                self.shared.applySharedUpdate(update)
+            }
         }
     }
 
@@ -170,16 +194,19 @@ final class RealtimeEventRouter {
                   let itemDict = dict["item"] as? [String: Any],
                   let action = dict["action"] as? String else { return }
             if dict["source"] as? String == "ai" {
-                NotificationCenter.default.post(
-                    name: PersonalItemsRepository.changedNotification,
-                    object: nil,
-                    userInfo: ["action": action, "item": itemDict])
+                Task { @MainActor in
+                    guard let self, self.isLiveSocket(s) else { return }
+                    NotificationCenter.default.post(
+                        name: PersonalItemsRepository.changedNotification,
+                        object: nil,
+                        userInfo: ["action": action, "item": itemDict])
+                }
                 return
             }
             let scope = itemDict["scope"] as? String ?? "personal"
             guard scope == "shared" else { return }
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.isLiveSocket(s) else { return }
                 let itemOwner = itemDict["owner"] as? String ?? ""
                 if itemOwner != self.auth.session?.username {
                     NotificationCenter.default.post(

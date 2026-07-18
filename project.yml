@@ -51,10 +51,17 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         ITSAppUsesNonExemptEncryption: false
-        SERVER_BASE_URL: https://hoo66.top
+        SERVER_BASE_URL: $(SERVER_BASE_URL)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hugxu0.couplechat.native
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.9"
+        SERVER_BASE_URL: https://hoo66.top
+      configs:
+        Debug:
+          # 本机联调可改为 http://127.0.0.1:8080；默认仍连生产时会有 DEBUG 横幅提示。
+          SERVER_BASE_URL: https://hoo66.top
+        Release:
+          SERVER_BASE_URL: https://hoo66.top

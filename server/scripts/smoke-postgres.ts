@@ -110,6 +110,7 @@ async function main() {
       [29, "daily_recommendations"],
       [30, "daju_memory_perspective"],
       [31, "recommendation_open_category"],
+      [32, "ai_daily_diaries"],
     ] as const;
     assertOk(
       "数据库结构版本完整",
@@ -136,6 +137,40 @@ async function main() {
     assertOk(
       "媒体消息要求 uploadId",
       !sendMessageSchema.safeParse({ channel: "couple", type: "image", text: "[图片]" }).success,
+    );
+    const { questionLikelyNeedsImages, questionLooksLikeImageReaction } = await import(
+      "../src/ai/imageAttachment"
+    );
+    assertOk(
+      "问图预判：明确看图才命中；短评价可作 reaction",
+      questionLikelyNeedsImages("这张图是什么") &&
+        !questionLikelyNeedsImages("今天天气真好") &&
+        questionLooksLikeImageReaction("好看吗") &&
+        questionLooksLikeImageReaction("真可爱"),
+    );
+    // 复合游标：同 ts 不同 id 时 beforeId 生效（直接 SQL）；时间戳放在夹具早期，避免影响最新已读锚点。
+    const cursorTs = now - 200 * 60_000;
+    await db.run(
+      `INSERT INTO messages
+       (id, channel, sender, sender_name, kind, type, text, ts, conversation_id, sender_account_id)
+       VALUES (?, 'couple', 'xu', '小旭', 'user', 'text', ?, ?, 'conv_legacy_couple', 'acc_legacy_xu'),
+              (?, 'couple', 'si', '小偲', 'user', 'text', ?, ?, 'conv_legacy_couple', 'acc_legacy_si')`,
+      [
+        "smoke-cursor-a", "同毫秒A", cursorTs,
+        "smoke-cursor-b", "同毫秒B", cursorTs,
+      ],
+    );
+    const cursorPage = await db.all<{ id: string }>(
+      `SELECT id FROM messages
+        WHERE conversation_id = 'conv_legacy_couple'
+          AND (ts < ? OR (ts = ? AND id < ?))
+        ORDER BY ts DESC, id DESC LIMIT 5`,
+      [cursorTs, cursorTs, "smoke-cursor-b"],
+    );
+    assertOk(
+      "消息 (ts,id) 游标可区分同毫秒",
+      cursorPage.some((row) => row.id === "smoke-cursor-a") &&
+        !cursorPage.some((row) => row.id === "smoke-cursor-b"),
     );
     const {
       fallbackRecommendation,

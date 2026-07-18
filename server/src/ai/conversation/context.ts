@@ -591,7 +591,41 @@ async function runCatchUp(
   return { incomplete, lagMessageCount };
 }
 
-/** 新消息后防抖追赶（不阻塞发送路径）。 */
+/** 落后时后台继续追赶的预算（毫秒），不阻塞发送。 */
+const BACKGROUND_CATCHUP_BUDGET_MS = 120_000;
+const BACKGROUND_CATCHUP_GAP_MS = 5_000;
+const backgroundTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleBackgroundCatchUp(channel: string): void {
+  if (backgroundTimers.has(channel)) return;
+  backgroundTimers.set(
+    channel,
+    setTimeout(() => {
+      backgroundTimers.delete(channel);
+      void ensureContextCaughtUp(channel, {
+        force: true,
+        budgetMs: BACKGROUND_CATCHUP_BUDGET_MS,
+      })
+        .then((result) => {
+          if (result.incomplete) {
+            console.log(
+              `[context] ${channel} 后台追赶未完成 lag≈${result.lagMessageCount}，继续排队`,
+            );
+            scheduleBackgroundCatchUp(channel);
+          }
+        })
+        .catch((error) => {
+          console.warn(
+            `[context] ${channel} 后台追赶失败:`,
+            error instanceof Error ? error.message : error,
+          );
+          scheduleBackgroundCatchUp(channel);
+        });
+    }, BACKGROUND_CATCHUP_GAP_MS),
+  );
+}
+
+/** 新消息后防抖追赶（不阻塞发送路径）。落后时自动转入后台长预算追赶。 */
 export function scheduleContextCatchUp(channel: string): void {
   const existing = scheduleTimers.get(channel);
   if (existing) clearTimeout(existing);
@@ -600,12 +634,17 @@ export function scheduleContextCatchUp(channel: string): void {
     void ensureContextCaughtUp(channel, {
       force: false,
       budgetMs: CONTEXT.catchUpBudgetMs,
-    }).catch((error) => {
-      console.warn(
-        `[context] ${channel} 追赶失败:`,
-        error instanceof Error ? error.message : error,
-      );
-    });
+    })
+      .then((result) => {
+        if (result.incomplete) scheduleBackgroundCatchUp(channel);
+      })
+      .catch((error) => {
+        console.warn(
+          `[context] ${channel} 追赶失败:`,
+          error instanceof Error ? error.message : error,
+        );
+        scheduleBackgroundCatchUp(channel);
+      });
   }, CONTEXT.scheduleDebounceMs));
 }
 

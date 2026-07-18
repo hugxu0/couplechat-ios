@@ -1310,6 +1310,25 @@ export const schemaMigrations: readonly SchemaMigration[] = [
     ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS category TEXT;
     `,
   },
+  {
+    version: 32,
+    name: "ai_daily_diaries",
+    sql: `
+    CREATE TABLE IF NOT EXISTS ai_daily_diaries (
+      id TEXT PRIMARY KEY,
+      couple_id TEXT NOT NULL,
+      day_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'auto',
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE(couple_id, day_key)
+    );
+    CREATE INDEX IF NOT EXISTS ai_daily_diaries_couple_day_idx
+      ON ai_daily_diaries(couple_id, day_key DESC);
+    `,
+  },
 ];
 
 export async function migrate(

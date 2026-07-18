@@ -11,6 +11,7 @@ import { socketEvents } from "./contracts/realtime";
 import { shutdownServer } from "./lifecycle/shutdown";
 import { createTranscriptScheduler } from "./transcription/scheduler";
 import { createRecommendationScheduler } from "./daily/scheduler";
+import { createDiaryScheduler } from "./ai/diary/scheduler";
 
 async function main() {
   await initDatabase();
@@ -35,10 +36,12 @@ async function main() {
   const reminderScheduler = createReminderScheduler();
   const transcriptScheduler = createTranscriptScheduler();
   const recommendationScheduler = createRecommendationScheduler();
+  const diaryScheduler = createDiaryScheduler();
   if (config.scheduledJobsEnabled) {
     reminderScheduler.start();
     transcriptScheduler.start();
     recommendationScheduler.start();
+    diaryScheduler.start();
   }
   await app.listen({ host: config.host, port: config.port });
   const stopUploadCleanup = config.scheduledJobsEnabled ? startUploadCleanup() : () => undefined;
@@ -53,6 +56,7 @@ async function main() {
           reminderScheduler.stop();
           transcriptScheduler.stop();
           recommendationScheduler.stop();
+          diaryScheduler.stop();
           shutdownAi();
         },
         stopUploadCleanup,

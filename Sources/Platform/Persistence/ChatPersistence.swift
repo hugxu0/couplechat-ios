@@ -47,6 +47,9 @@ protocol ChatPersistenceProtocol: Actor {
     @discardableResult
     func saveSharedState(key: String, valueJson: String, updatedBy: String, updatedAt: Double) -> Bool
     func loadSharedState() -> [String: Any]
+    func metaValue(forKey key: String) -> String?
+    @discardableResult
+    func setMetaValue(_ value: String, forKey key: String) -> Bool
 }
 
 /// The only production owner of the SQLite connection. UI-facing stores await this
@@ -150,4 +153,9 @@ actor ChatPersistence: ChatPersistenceProtocol {
         database.saveSharedState(key: key, valueJson: valueJson, updatedBy: updatedBy, updatedAt: updatedAt)
     }
     func loadSharedState() -> [String: Any] { database.loadSharedState() }
+    func metaValue(forKey key: String) -> String? { database.metaValue(forKey: key) }
+    @discardableResult
+    func setMetaValue(_ value: String, forKey key: String) -> Bool {
+        database.setMetaValue(value, forKey: key)
+    }
 }

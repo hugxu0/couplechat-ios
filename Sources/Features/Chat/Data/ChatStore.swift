@@ -697,8 +697,16 @@ final class ChatStore: ObservableObject {
         syncingV2 = true
         defer { syncingV2 = false }
         let defaults = UserDefaults.standard
-        let key = "sync.v2.cursor.\(session.username).\(Keychain.installationID())"
-        var cursor = Int64(defaults.object(forKey: key) as? Int ?? 0)
+        let legacyKey = "sync.v2.cursor.\(session.username).\(Keychain.installationID())"
+        let metaKey = "sync.v2.cursor.\(Keychain.installationID())"
+        // 优先账号库 app_meta；兼容旧 UserDefaults 游标并迁移一次。
+        var cursor = Int64((await persistence.metaValue(forKey: metaKey)).flatMap(Int64.init) ?? 0)
+        if cursor == 0, let legacy = defaults.object(forKey: legacyKey) as? Int {
+            cursor = Int64(legacy)
+            if cursor > 0 {
+                _ = await persistence.setMetaValue(String(cursor), forKey: metaKey)
+            }
+        }
         var changedEntityTypes = Set<String>()
         do {
             var hasMore = true
@@ -721,10 +729,12 @@ final class ChatStore: ObservableObject {
                 }
                 changedEntityTypes.formUnion(page.events.map(\.entityType))
                 cursor = max(cursor, page.nextCursor)
+                // 按页推进：与本页 delete 落库同代次后写入，减少崩溃窗口。
+                _ = await persistence.setMetaValue(String(cursor), forKey: metaKey)
+                defaults.set(Int(cursor), forKey: legacyKey)
                 hasMore = page.hasMore
             }
             guard auth.sessionGeneration == generation, auth.session?.username == session.username else { return }
-            defaults.set(Int(cursor), forKey: key)
             await syncV2.acknowledge(cursor, token: session.token)
             if !changedEntityTypes.isEmpty {
                 NotificationCenter.default.post(

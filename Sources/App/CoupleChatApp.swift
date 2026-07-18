@@ -38,6 +38,22 @@ struct CoupleChatApp: App {
         .environmentObject(mediaFavorites)
         .preferredColorScheme(theme.appearance.colorScheme)
         .tint(theme.accent.color)
+#if DEBUG
+        .overlay(alignment: .top) {
+            if ServerConfig.shouldWarnProductionInDebug {
+                Text(ServerConfig.allowDebugProductionWrites
+                     ? "DEBUG · 生产写入已临时开启"
+                     : "DEBUG · 正在连接生产 \(ServerConfig.baseURL.host ?? "")")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.orange.opacity(0.92), in: Capsule())
+                    .foregroundStyle(.white)
+                    .padding(.top, 4)
+                    .allowsHitTesting(false)
+            }
+        }
+#endif
         .onOpenURL { deepLinks.handle($0) }
         .task(id: store.session?.username) {
             theme.activateAccount(store.session?.username)

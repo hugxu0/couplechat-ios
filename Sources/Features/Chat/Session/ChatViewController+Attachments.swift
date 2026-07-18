@@ -72,9 +72,10 @@ extension ChatViewController {
     }
 
     func sendSingleMedia(_ item: ChatPendingMedia) {
-        // 视频（及已有本地文件）优先 file 管线，避免二次 Data 拷贝。
-        if item.messageType == "video" || item.messageType == "file",
-           let fileURL = item.localPreviewURL {
+        // 有本地文件时优先 file 管线（图/视频/文件），避免二次整包 Data 写入 outbox。
+        if let fileURL = item.localPreviewURL,
+           FileManager.default.fileExists(atPath: fileURL.path),
+           item.messageType == "image" || item.messageType == "video" || item.messageType == "file" {
             store.sendMediaFile(
                 fileURL: fileURL,
                 mimeType: item.mimeType,

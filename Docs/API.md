@@ -60,6 +60,16 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 
 `GET /api/messages/:id` 必须带 `channel=couple|ai`，响应为 `{ ok, message }`。服务端先按当前账号解析共享空间，再以共享空间和消息 ID 联合查询；找不到或不属于当前共享空间时统一返回 `404 not_found`。客户端只在点击引用预览且原消息不在内存或本地数据库时使用该接口，取回后继续加载消息附近的有界窗口。
 
+### 大橘日记
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/api/v2/ai/diaries?limit=` | 列表（按 dayKey 倒序） |
+| `GET` | `/api/v2/ai/diaries/:dayKey` | 单日日记 |
+| `POST` | `/api/v2/ai/diaries/ensure` | 确保昨日或指定 `dayKey` 日记（body 可选 `{ dayKey, force }`） |
+
+只读 couple 材料；无信号日返回 `404 empty_or_unavailable`。
+
 ### 上传与媒体
 
 | 方法 | 路径 | 用途 |

@@ -3,7 +3,7 @@ import SQLite3
 
 final class ChatLocalDatabase {
     static let shared = ChatLocalDatabase()
-    private static let schemaVersion: Int32 = 6
+    private static let schemaVersion: Int32 = 7
     private var db: OpaquePointer?
     private(set) var currentDatabaseURL: URL?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -186,6 +186,13 @@ final class ChatLocalDatabase {
         CREATE INDEX IF NOT EXISTS idx_pending_outbound_created
             ON pending_outbound_messages(createdAt);
         """
+
+        let appMetaSQL = """
+        CREATE TABLE IF NOT EXISTS app_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """
         
         guard execute(sql: messagesSQL),
               ensureMessageColumns(),
@@ -195,6 +202,7 @@ final class ChatLocalDatabase {
               execute(sql: sharedStateSQL),
               execute(sql: outboxSQL),
               ensureOutboxColumns(),
+              execute(sql: appMetaSQL),
               migrateHardDeletedRecalls(from: currentVersion),
               execute(sql: "PRAGMA user_version = \(Self.schemaVersion);"),
               execute(sql: "COMMIT;") else { return false }
@@ -883,6 +891,36 @@ final class ChatLocalDatabase {
         return rows
     }
     
+    func metaValue(forKey key: String) -> String? {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        guard db != nil else { return nil }
+        let sql = "SELECT value FROM app_meta WHERE key = ? LIMIT 1;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return readText(stmt, index: 0)
+    }
+
+    @discardableResult
+    func setMetaValue(_ value: String, forKey key: String) -> Bool {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        guard db != nil else { return false }
+        let sql = """
+        INSERT INTO app_meta(key, value) VALUES(?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
     func searchMessages(query: String, channel: String) -> [ChatMessage] {
         databaseLock.lock()
         defer { databaseLock.unlock() }

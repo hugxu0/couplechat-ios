@@ -68,7 +68,7 @@ AGENTS.md               全仓库安全、验证和交付规则
 | `server/src/contracts/realtime.ts` | 服务端 Socket 协议权威定义 |
 | `server/src/db/client.ts` | PostgreSQL pool 与连接生命周期 |
 | `server/src/db/transaction.ts` | 事务边界 |
-| `server/src/db/migrate.ts` | v1–v31 migration；只能追加 |
+| `server/src/db/migrate.ts` | v1–v32 migration；只能追加 |
 | `server/src/sync/events.ts` | Sync 事件统一写入和提交顺序保护 |
 | `server/src/sync/v2Routes.ts` | Sync V2 拉取与 ack |
 | `server/src/chat/messageService.ts` | 消息读写、分页、搜索和撤回 |

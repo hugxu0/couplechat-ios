@@ -5,6 +5,7 @@ import { accounts } from "./accounts";
 import { compactLine, recentConversationMessages } from "./conversation/log";
 import { chat, extractJson } from "./provider";
 import { GEN } from "./settings";
+import { readRuntimeState, writeRuntimeState } from "./runtimeState";
 
 export type EngagementKind = "conflict" | "interject";
 
@@ -64,9 +65,35 @@ const INTERJECT_RE =
 let handler: EngagementHandler | null = null;
 const lastFiredAt: Partial<Record<EngagementKind, number>> = {};
 const running = new Set<string>();
+const COOLDOWN_STATE_KEY = "engagement:cooldown:v1";
+let cooldownLoaded = false;
 
 export function setEngagementHandler(next: EngagementHandler | null): void {
   handler = next;
+}
+
+async function ensureCooldownLoaded(): Promise<void> {
+  if (cooldownLoaded) return;
+  cooldownLoaded = true;
+  try {
+    const raw = await readRuntimeState(COOLDOWN_STATE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Partial<Record<EngagementKind, number>>;
+    if (typeof parsed.conflict === "number") lastFiredAt.conflict = parsed.conflict;
+    if (typeof parsed.interject === "number") lastFiredAt.interject = parsed.interject;
+  } catch {
+    // 损坏状态忽略，按内存默认
+  }
+}
+
+async function persistCooldowns(): Promise<void> {
+  await writeRuntimeState(
+    COOLDOWN_STATE_KEY,
+    JSON.stringify({
+      conflict: lastFiredAt.conflict ?? 0,
+      interject: lastFiredAt.interject ?? 0,
+    }),
+  );
 }
 
 function slimDigestText(digest: EngagementDigestInput): string {
@@ -174,6 +201,7 @@ async function evaluateCoupleEngagement(input: {
   }
   running.add(channel);
   try {
+    await ensureCooldownLoaded();
     const recent = await recentConversationMessages(channel, RECENT_RAW_LINES);
     const recentLines = recent
       .map((message) => compactLine(message, 100))
@@ -258,6 +286,7 @@ async function evaluateCoupleEngagement(input: {
     };
 
     lastFiredAt[kind] = now;
+    await persistCooldowns().catch(() => undefined);
     console.log(
       `[engagement] decision=emit kind=${kind} conf=${confidence.toFixed(2)} topic=${topicHint || "—"} reason=${reason || "—"}`,
     );

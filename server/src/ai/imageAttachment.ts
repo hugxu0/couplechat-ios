@@ -17,7 +17,7 @@ const RECENT_SCAN = 50;
 
 /**
  * 问题是否在明确指代/需要看图（用于开跑前预附着最近图组）。
- * 偏精确：避免普通闲聊（如「好看吗」「你看」）误带上历史图做多模态。
+ * 偏精确：避免普通闲聊误带上历史图做多模态。
  */
 export function questionLikelyNeedsImages(question: string): boolean {
   const q = question.replace(/\s+/g, " ").trim();
@@ -36,6 +36,23 @@ export function questionLikelyNeedsImages(question: string): boolean {
   if (/(帮我看图|看看这张|看看那张|识别一下图|读一下图|图里|照片里|截图里)/.test(q)) return true;
   if (/(对比|比较).{0,8}(图|张|照片)/.test(q)) return true;
 
+  return false;
+}
+
+/**
+ * 发图后的短评价/追问（「好看吗」「真可爱」）。
+ * 仅当最近窗口内确有图片时才作为预附着条件，避免误挂旧图。
+ */
+export function questionLooksLikeImageReaction(question: string): boolean {
+  const q = question.replace(/\s+/g, " ").trim();
+  if (q.length < 2 || q.length > 40) return false;
+  if (questionLikelyNeedsImages(q)) return true;
+  // 短评价、感叹、要看法
+  if (/(好看|漂亮|可爱|帅气?|美|丑|糊|清楚|清晰|离谱|好笑|搞笑|绝了|哇塞?|厉害|不错|糟糕|恶心)/.test(q)) {
+    return true;
+  }
+  if (/^(怎么样|什么啊|啥啊|这是|那是|？|\?)+$/.test(q)) return true;
+  if (/(怎么样|好不好|行不行|喜不喜欢|觉得|以为|像不像)/.test(q) && q.length <= 24) return true;
   return false;
 }
 
@@ -83,8 +100,9 @@ export async function resolveImageAttachment(input: {
     };
   }
 
-  const needs = input.forceRecent || questionLikelyNeedsImages(input.question);
-  if (!needs) {
+  const explicit = input.forceRecent || questionLikelyNeedsImages(input.question);
+  const reaction = !explicit && questionLooksLikeImageReaction(input.question);
+  if (!explicit && !reaction) {
     return { mode: "none", urls: [], messageIds: [], reason: "not_needed" };
   }
 
@@ -95,6 +113,16 @@ export async function resolveImageAttachment(input: {
   });
   if (!group.urls.length) {
     return { mode: "none", urls: [], messageIds: [], reason: "no_recent_images" };
+  }
+  // 评价类短句：只在「最近一组图」本身就很近时附着（组内最新消息在 RECENT_SCAN 扫描结果中）。
+  if (reaction && !explicit) {
+    // resolveRecentImageGroup 已取最近连续图组；有图即可附着，理由标 reaction。
+    return {
+      mode: "recent_group",
+      urls: group.urls,
+      messageIds: group.messageIds,
+      reason: "image_reaction",
+    };
   }
   return {
     mode: "recent_group",
