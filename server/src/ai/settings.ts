@@ -54,7 +54,7 @@ export const GEN = {
   },
   dailyRecommendation: { maxTokens: 400, temperature: 0.75, timeoutMs: 30_000 },
   /** 大橘日记：约 500 字的诗性手记 */
-  diary: { maxTokens: 850, temperature: 0.8, timeoutMs: 60_000 },
+  diary: { maxTokens: 850, temperature: 0.8, timeoutMs: 90_000 },
 } satisfies Record<string, GenProfile>;
 
 /**

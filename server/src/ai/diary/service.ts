@@ -192,8 +192,8 @@ export async function listDiaries(limit = 30): Promise<DailyDiary[]> {
 
 /** 为指定作息日生成或返回已有日记。正式生成只使用完整 couple 公聊。 */
 export async function ensureDiaryForDay(dayKey: string, options?: { force?: boolean }): Promise<DailyDiary | null> {
+  const existing = await getDiary(dayKey);
   if (!options?.force) {
-    const existing = await getDiary(dayKey);
     if (existing) return existing;
   }
 
@@ -206,6 +206,7 @@ export async function ensureDiaryForDay(dayKey: string, options?: { force?: bool
   const fallback = fallbackFromConversation(lines);
   let title = fallback.title;
   let body = fallback.body;
+  let acceptedModelBody = false;
   try {
     const raw = await chat({
       profile: "task",
@@ -225,10 +226,16 @@ export async function ensureDiaryForDay(dayKey: string, options?: { force?: bool
     const candidateTitle = normalizeDiaryTitle(parsed?.title ?? "");
     const candidateBody = normalizeDiaryBody(parsed?.body ?? "");
     if (candidateTitle.length >= 4) title = candidateTitle;
-    if (isUsableDiaryBody(candidateBody)) body = candidateBody;
+    if (isUsableDiaryBody(candidateBody)) {
+      body = candidateBody;
+      acceptedModelBody = true;
+    }
   } catch (error) {
     console.warn("[diary] 生成失败，使用完整聊天兜底:", error instanceof Error ? error.message : error);
   }
+
+  // 显式重写失败时保留旧稿，不能用几十字的本地兜底覆盖已经可读的日记。
+  if (!acceptedModelBody && existing) return existing;
 
   const now = Date.now();
   const id = `diary_${nanoid(12)}`;
