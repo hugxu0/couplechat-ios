@@ -225,8 +225,8 @@ enum ChatTimelineMetrics {
             return ceil(min(maxBubbleWidth, 196))
         }
         if message.meta?.confirm != nil { return ceil(min(maxBubbleWidth, 300)) }
-        let bodyWidth = ChatMarkdownRenderer.compactWidth(
-            for: text,
+        let bodyWidth = measureTextWidth(
+            text,
             font: .preferredFont(forTextStyle: .body),
             maxWidth: available)
         let replyWidth = measureTextWidth(message.replyPreview ?? "", font: .preferredFont(forTextStyle: .footnote), maxWidth: available)
@@ -337,7 +337,8 @@ enum ChatTimelineMetrics {
 
     private static func measureTextWidth(_ text: String, font: UIFont, maxWidth: CGFloat) -> CGFloat {
         guard !text.isEmpty else { return 0 }
-        // 引用预览使用普通 UILabel，不解析 Markdown；按最长逻辑行计算即可。
+        // 按最长逻辑行计算宽度。超过上限的文本使用标准气泡宽度自动换行，
+        // 避免为了压缩短尾行而让整个多行气泡显得过短。
         let widestLine = text
             .components(separatedBy: .newlines)
             .filter { !$0.isEmpty }
