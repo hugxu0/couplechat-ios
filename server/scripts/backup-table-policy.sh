@@ -5,7 +5,7 @@
 # 新 migration 若新增、删除或重命名表，必须同时更新本文件和最大版本。
 
 readonly BACKUP_TABLE_POLICY_VERSION=1
-readonly BACKUP_TABLE_POLICY_MAX_SCHEMA=32
+readonly BACKUP_TABLE_POLICY_MAX_SCHEMA=33
 readonly -a BACKUP_CHECKSUM_FILES=(
   couplechat.dump
   database.contents
@@ -72,6 +72,10 @@ readonly -a BACKUP_TABLE_RULES=(
   'recommendations|29|0'
   'recommendation_user_state|29|0'
   'ai_daily_diaries|32|0'
+  'card_game_daily_draws|33|0'
+  'card_game_draws|33|0'
+  'card_game_inventory|33|0'
+  'card_game_effects|33|0'
 )
 
 backup_policy_validate_schema() {
