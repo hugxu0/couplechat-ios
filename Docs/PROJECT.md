@@ -6,10 +6,10 @@
 
 | 层级 | 最后核验 | 结论 |
 |---|---|---|
-| 客户端源码与 CI | `e9fe4917f94da776bee49965d556319d6becf932` / run `29665828667` | Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
-| 最近 iOS 产物 | `e9fe4917f94da776bee49965d556319d6becf932` / run `29665982759` | Xcode 26.3 unsigned IPA 归档、内容校验和下载校验通过，版本 `0.2.0 (13)`；SHA256 `B9E6E94A4B4373D0E52DA55A88F504E87A2CB0E7DD960565CDA7531B09F5A1FF` |
+| 客户端源码与 CI | `0df13b0769a159bf09e284620ef42e6aaf6f6659` / run `29728033575` | Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
+| 最近 iOS 产物 | `0df13b0769a159bf09e284620ef42e6aaf6f6659` / run `29728035504` | Xcode 26.3 unsigned IPA 归档、内容校验和下载校验通过，版本 `0.2.0 (13)`；SHA256 `783D897DB86687F1438A71C06B5B3D1AD37B7DF98CE2EEE1C2C7DB02CCE94193` |
 | 服务端本地验证 | 2026-07-20 | `npm run check` 通过；覆盖独立 migrator 建表后的 Web 属主修复、情侣卡牌抽取、一次性扣卡、倒计时、加时、延期、复制、乾坤大挪移与请求幂等，以及 schema v34 全部持久化表的备份策略；既有大橘、消息、媒体、AI 与 Memory 冒烟路径同时通过 |
-| 生产环境 | 2026-07-20 | 固定 RELEASE `0548e488b9c5f7e24da6ddb56020444b849d3107` 已发布，前一 release `5216a8f7d257fa996a1e4ecae4c8498af01c43ee` 保留回滚镜像；唯一 writer 停止后生成 schema v32 的 PostgreSQL/uploads 一致备份，随机临时库全表恢复、关键序列、媒体抽样、SHA-256 与离机 checksum 均通过，再由独立 migrator 升级到 schema v33。生产现有 56 张表，其中 4 张为卡牌表；Web 保持 `RUN_MIGRATIONS=false`，美国本机、私有 origin、公开入口、固定账号、Socket.IO 与卡牌路由复核通过 |
+| 生产环境 | 2026-07-20 | 固定 RELEASE `0df13b0769a159bf09e284620ef42e6aaf6f6659` 已发布，前一 release `0548e488b9c5f7e24da6ddb56020444b849d3107` 保留回滚镜像；唯一 writer 停止后生成 schema v33 的 PostgreSQL/uploads 一致备份，随机临时库 56 张表、关键序列、20/603 媒体抽样、SHA-256 与 B2 离机 checksum 均通过，再由固定 release 的独立 migrator 升级到 schema v34 并修复四张卡牌表的 Web 属主。Web 保持 `RUN_MIGRATIONS=false`；美国本机、私有 origin、公开入口、固定账号、Socket.IO 与双方真实设备会话的卡牌 HTTP 200 均通过，容器重启和新 release 的 `internal_error` 均为 0 |
 
 本机旧 IPA、tar、展开 release 或备份目录不属于生产证据。服务器细节见 [SERVER.md](SERVER.md)，签名与侧载见 [IOS.md](IOS.md)。
 
