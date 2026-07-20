@@ -1329,6 +1329,109 @@ export const schemaMigrations: readonly SchemaMigration[] = [
       ON ai_daily_diaries(couple_id, day_key DESC);
     `,
   },
+  {
+    version: 33,
+    name: "couple_card_game",
+    sql: `
+    CREATE TABLE IF NOT EXISTS card_game_daily_draws (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      draw_day TEXT NOT NULL,
+      used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count BETWEEN 0 AND 3),
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY(account_id, draw_day)
+    );
+
+    CREATE TABLE IF NOT EXISTS card_game_draws (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      draw_day TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      success BOOLEAN NOT NULL,
+      card_key TEXT,
+      rarity TEXT CHECK (rarity IN ('common', 'rare', 'epic', 'legendary')),
+      created_at BIGINT NOT NULL,
+      UNIQUE(account_id, idempotency_key),
+      CHECK ((success AND card_key IS NOT NULL AND rarity IS NOT NULL)
+        OR (NOT success AND card_key IS NULL AND rarity IS NULL))
+    );
+    CREATE INDEX IF NOT EXISTS card_game_draws_account_day_idx
+      ON card_game_draws(account_id, draw_day, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS card_game_inventory (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      card_key TEXT NOT NULL,
+      rarity TEXT NOT NULL CHECK (rarity IN ('common', 'rare', 'epic', 'legendary')),
+      quantity INTEGER NOT NULL CHECK (quantity > 0),
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE(account_id, card_key, rarity)
+    );
+    CREATE INDEX IF NOT EXISTS card_game_inventory_account_updated_idx
+      ON card_game_inventory(account_id, updated_at DESC, id DESC);
+
+    CREATE TABLE IF NOT EXISTS card_game_effects (
+      id TEXT PRIMARY KEY,
+      couple_id TEXT NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+      sender_account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      target_account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      card_key TEXT NOT NULL,
+      rarity TEXT NOT NULL CHECK (rarity IN ('common', 'rare', 'epic', 'legendary')),
+      effect_kind TEXT NOT NULL CHECK (effect_kind IN ('timed', 'instant', 'modifier', 'response')),
+      starts_at BIGINT NOT NULL,
+      expires_at BIGINT,
+      status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'expired')),
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      idempotency_key TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE(sender_account_id, idempotency_key)
+    );
+    CREATE INDEX IF NOT EXISTS card_game_effects_couple_created_idx
+      ON card_game_effects(couple_id, created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS card_game_effects_target_status_idx
+      ON card_game_effects(target_account_id, status, expires_at);
+    `,
+  },
+  {
+    version: 34,
+    name: "repair_card_game_table_ownership",
+    sql: `
+    DO $migration$
+    DECLARE
+      application_owner NAME;
+      card_table TEXT;
+    BEGIN
+      SELECT pg_get_userbyid(table_info.relowner)::NAME
+        INTO application_owner
+        FROM pg_class table_info
+        JOIN pg_namespace schema_info ON schema_info.oid = table_info.relnamespace
+       WHERE schema_info.nspname = 'public'
+         AND table_info.relname = 'accounts'
+         AND table_info.relkind = 'r';
+
+      IF application_owner IS NULL THEN
+        RAISE EXCEPTION 'accounts table owner is unavailable';
+      END IF;
+
+      FOREACH card_table IN ARRAY ARRAY[
+        'card_game_daily_draws',
+        'card_game_draws',
+        'card_game_inventory',
+        'card_game_effects'
+      ]
+      LOOP
+        EXECUTE format(
+          'ALTER TABLE public.%I OWNER TO %I',
+          card_table,
+          application_owner
+        );
+      END LOOP;
+    END
+    $migration$;
+    `,
+  },
 ];
 
 export async function migrate(

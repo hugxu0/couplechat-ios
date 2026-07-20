@@ -11,10 +11,10 @@
 
 ## 私有 VPS 资料地图
 
-本仓库只记录公开安全的拓扑、路径和操作边界。受信 Windows 工作站上的私有事实源是桌面 `vps` 目录；不要硬编码用户名，按下面方式定位：
+本仓库只记录公开安全的拓扑、路径和操作边界。受信 Windows 工作站上的私有事实源固定在 `D:\Desktop\01_开发项目\VPS运维`；该路径不含凭据，主机、密钥和服务值仍只从目录内对应私有文档读取：
 
 ```powershell
-$VpsRoot = Join-Path ([Environment]::GetFolderPath('Desktop')) 'vps'
+$VpsRoot = 'D:\Desktop\01_开发项目\VPS运维'
 if (-not (Test-Path -LiteralPath $VpsRoot -PathType Container)) {
   throw "私有 VPS 资料不存在，请向用户确认当前位置"
 }
@@ -139,7 +139,7 @@ iPhone / iPad
 
 1. 执行根 `AGENTS.md` 的开工检查。
 2. 阅读 [PROJECT.md](PROJECT.md)、[ARCHITECTURE.md](ARCHITECTURE.md) 和本文。
-3. 从桌面 `vps` 目录读取目标主机 `00-*`、`01-*`；涉及 Nginx、故障或恢复时继续读取对应模块。
+3. 从 `D:\Desktop\01_开发项目\VPS运维` 读取目标主机 `00-*`、`01-*`；涉及 Nginx、故障或恢复时继续读取对应模块。
 4. 只有获得明确生产连接授权后才读取 `08-凭据与密钥清单.md`，确认目标 IP、登录方式和 key 位置。
 5. 先以 `BatchMode=yes` 做无交互只读连接；确认身份后执行 preflight。日本默认只读，美国也不能因“已连接”而自动获得写权限。
 
@@ -148,7 +148,7 @@ iPhone / iPad
 当前私有 runbook 使用 `root` 和本机 Ed25519 key。目标 IP 必须在当前进程中从对应 `01-*` 或 `08-*` 读取，不写入脚本、仓库或回答：
 
 ```powershell
-$VpsRoot = Join-Path ([Environment]::GetFolderPath('Desktop')) 'vps'
+$VpsRoot = 'D:\Desktop\01_开发项目\VPS运维'
 $Provider = 'racknerd' # 日本使用 RFCHost
 
 Get-Content -LiteralPath (Join-Path $VpsRoot "$Provider\00-阅读入口.md")
@@ -308,6 +308,6 @@ curl -kfsS https://127.0.0.1:8444/live \
 - 是否修改数据库、Nginx、证书、密钥、uploads 或设备状态；
 - 尚未完成的真机、离机备份和安全核验。
 
-如果主机角色、服务、端口、Nginx、证书、备份或恢复状态发生变化，还要更新桌面 `vps/<provider>/` 中对应的 `01-*`、`03-*`、`05-*` 或 `09-*` 当前状态；仓库的公开生产结论只更新 [PROJECT.md](PROJECT.md)。凭据变化只更新私有 `08-*`，不得进入 Git。
+如果主机角色、服务、端口、Nginx、证书、备份或恢复状态发生变化，还要更新 `D:\Desktop\01_开发项目\VPS运维/<provider>/` 中对应的 `01-*`、`03-*`、`05-*` 或 `09-*` 当前状态；仓库的公开生产结论只更新 [PROJECT.md](PROJECT.md)。凭据变化只更新私有 `08-*`，不得进入 Git。
 
 无法证明的项目写“未验证”，不能写“应该正常”。

@@ -33,7 +33,7 @@ AGENTS.md               全仓库安全、验证和交付规则
 | `project.yml` | iOS 版本、Bundle ID、依赖、资源和 target 权威定义 |
 | `Sources/App/CoupleChatApp.swift` | App 入口与依赖装配 |
 | `Sources/App/RootTabView.swift` | 根导航与五个主入口 |
-| `Sources/Domain/Models/` | 消息、相册、日历、宠物、Memory 等领域模型 |
+| `Sources/Domain/Models/` | 消息、相册、日历、宠物、情侣卡牌、Memory 等领域模型 |
 | `Sources/Platform/Networking/HTTPClient.swift` | 可注入 REST 边界 |
 | `Sources/Platform/Networking/SocketContract.swift` | iOS Socket 事件和请求结构 |
 | `Sources/Platform/Networking/RealtimeConnectionCoordinator.swift` | Socket 生命周期、重连和健康检查 |
@@ -52,7 +52,7 @@ AGENTS.md               全仓库安全、验证和交付规则
 | `Sources/Features/Moments/` | 相册、动态、推荐和聊天统计 |
 | `Sources/Features/Plans/` | 日历、提醒和备忘 |
 | `Sources/Features/Account/` | 设置、Memory、存储、设备和收藏 |
-| `Sources/Features/Daju/` | 大橘 3D、互动和 AI 私聊入口 |
+| `Sources/Features/Daju/` | 大橘 3D、互动、情侣卡牌和 AI 私聊入口 |
 | `Sources/DesignSystem/DS.swift` | 颜色、间距、圆角、字体、动画和 UIKit token |
 | `Sources/DesignSystem/AppSemanticComponents.swift` | 跨页面语义组件 |
 
@@ -68,7 +68,8 @@ AGENTS.md               全仓库安全、验证和交付规则
 | `server/src/contracts/realtime.ts` | 服务端 Socket 协议权威定义 |
 | `server/src/db/client.ts` | PostgreSQL pool 与连接生命周期 |
 | `server/src/db/transaction.ts` | 事务边界 |
-| `server/src/db/migrate.ts` | v1–v32 migration；只能追加 |
+| `server/src/db/migrate.ts` | v1–v34 migration；只能追加 |
+| `server/src/cardGame/` | 情侣卡牌目录、抽卡/使用服务和 REST 路由 |
 | `server/src/sync/events.ts` | Sync 事件统一写入和提交顺序保护 |
 | `server/src/sync/v2Routes.ts` | Sync V2 拉取与 ack |
 | `server/src/chat/messageService.ts` | 消息读写、分页、搜索和撤回 |
@@ -155,7 +156,7 @@ xcodebuild build -project CoupleChat.xcodeproj -scheme CoupleChat \
 
 ### 数据库与同步
 
-- migration 只追加，不能修改 v1–v32。
+- migration 只追加，不能修改 v1–v34。
 - 所有 Sync 事件经过统一写入边界，并在分配序号前取得 advisory lock。
 - SQLite 只通过 `ChatPersistenceProtocol` 异步访问；MainActor 和页面不得直接执行 SQL。
 - cursor/ack 只有在整批协议校验和本地事务成功后推进。

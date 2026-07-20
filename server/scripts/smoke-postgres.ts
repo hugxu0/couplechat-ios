@@ -36,7 +36,7 @@ async function main() {
     const db = await import("../src/db");
     closeDatabase = db.closeDatabase;
     console.log("[2/5] 建表…");
-    await db.initDatabase();
+    await db.initDatabase(33);
 
     console.log("[3/5] 写入测试夹具…");
     const now = Date.now();
@@ -75,6 +75,30 @@ async function main() {
       if (!cond) failureCount += 1;
     };
 
+    await db.run("CREATE ROLE card_game_web_owner NOLOGIN");
+    await db.run("ALTER TABLE accounts OWNER TO card_game_web_owner");
+    await db.migrate(db.databasePool());
+    const cardTableOwners = await db.all<{ table_name: string; owner_name: string }>(
+      `SELECT table_info.relname AS table_name,
+              pg_get_userbyid(table_info.relowner) AS owner_name
+         FROM pg_class table_info
+         JOIN pg_namespace schema_info ON schema_info.oid = table_info.relnamespace
+        WHERE schema_info.nspname = 'public'
+          AND table_info.relname = ANY(?::text[])
+        ORDER BY table_info.relname`,
+      [[
+        "card_game_daily_draws",
+        "card_game_draws",
+        "card_game_inventory",
+        "card_game_effects",
+      ]],
+    );
+    assertOk(
+      "独立 migrator 创建卡牌表后会恢复 Web 表属主",
+      cardTableOwners.length === 4 &&
+        cardTableOwners.every((table) => table.owner_name === "card_game_web_owner"),
+    );
+
     const migrations = await db.all<{ version: number; name: string }>(
       "SELECT version, name FROM schema_migrations ORDER BY version ASC",
     );
@@ -111,6 +135,8 @@ async function main() {
       [30, "daju_memory_perspective"],
       [31, "recommendation_open_category"],
       [32, "ai_daily_diaries"],
+      [33, "couple_card_game"],
+      [34, "repair_card_game_table_ownership"],
     ] as const;
     assertOk(
       "数据库结构版本完整",
@@ -758,10 +784,219 @@ async function main() {
       locale: "zh_CN",
       timezone: "Asia/Shanghai",
     });
-    assertOk("当前登录生成设备绑定 session", Boolean(currentUser?.sessionId && currentUser.deviceId));
+    const partnerAccount = accounts.find((account) => account.username !== user.username)!;
+    const partnerUser = await createDeviceSession({
+      username: partnerAccount.username,
+      name: partnerAccount.name,
+      accountId: `acc_legacy_${partnerAccount.username}`,
+      coupleId: "cpl_legacy_xusi",
+      memberId: `mem_legacy_${partnerAccount.username}`,
+    }, {
+      installationId: "smoke-installation-partner-123",
+      platform: "ios",
+      deviceName: "smoke-partner",
+      appVersion: "0.2.0",
+      buildNumber: "11",
+      locale: "zh_CN",
+      timezone: "Asia/Shanghai",
+    });
+    assertOk(
+      "双方登录均生成设备绑定 session",
+      Boolean(currentUser?.sessionId && currentUser.deviceId && partnerUser?.sessionId && partnerUser.deviceId),
+    );
     const { buildApp } = await import("../src/app");
     const app = await buildApp();
     const authorization = `Bearer ${createToken(currentUser!)}`;
+    const partnerAuthorization = `Bearer ${createToken(partnerUser!)}`;
+    const cardAccountId = currentUser!.accountId!;
+    const cardFixtures = [
+      ["smoke-card-massage", cardAccountId, "intimacy_massage", "rare"],
+      ["smoke-card-add-time", cardAccountId, "support_add_time", "common"],
+      ["smoke-card-postpone", cardAccountId, "support_postpone", "common"],
+      ["smoke-card-copy", cardAccountId, "support_copy", "common"],
+      ["smoke-card-copy-source", partnerUser!.accountId!, "money_red_packet", "rare"],
+      ["smoke-card-qiankun", partnerUser!.accountId!, "support_qiankun", "common"],
+    ] as const;
+    for (const [id, accountId, cardKey, rarity] of cardFixtures) {
+      await db.run(
+        `INSERT INTO card_game_inventory
+         (id, account_id, card_key, rarity, quantity, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, ?, ?)`,
+        [id, accountId, cardKey, rarity, now, now],
+      );
+    }
+    const cardSnapshotResponse = await app.inject({
+      method: "GET", url: "/api/v2/card-game", headers: { authorization },
+    });
+    const cardSnapshotBody = cardSnapshotResponse.json() as {
+      ok?: boolean;
+      game?: { drawsRemaining?: number; inventory?: Array<{ cardKey: string }> };
+    };
+    assertOk(
+      "情侣卡牌快照返回每日次数与个人卡库",
+      cardSnapshotResponse.statusCode === 200 &&
+        cardSnapshotBody.ok === true &&
+        cardSnapshotBody.game?.drawsRemaining === 3 &&
+        cardSnapshotBody.game.inventory?.some((item) => item.cardKey === "intimacy_massage") === true,
+    );
+    const cardUseResponse = await app.inject({
+      method: "POST",
+      url: "/api/v2/card-game/use",
+      headers: { authorization },
+      payload: {
+        cardKey: "intimacy_massage",
+        rarity: "rare",
+        idempotencyKey: "smoke-card-use-1",
+      },
+    });
+    const cardUseBody = cardUseResponse.json() as {
+      ok?: boolean;
+      effect?: { id?: string; expiresAt?: number | null };
+      game?: { inventory?: Array<{ cardKey: string }> };
+    };
+    const cardUseEffectID = cardUseBody.effect?.id;
+    assertOk(
+      "情侣卡牌使用一次即扣库存并开始倒计时",
+      cardUseResponse.statusCode === 200 &&
+        cardUseBody.ok === true &&
+        typeof cardUseEffectID === "string" &&
+        (cardUseBody.effect?.expiresAt ?? 0) > now &&
+        !cardUseBody.game?.inventory?.some((item) => item.cardKey === "intimacy_massage"),
+    );
+    const initialExpiry = cardUseBody.effect?.expiresAt ?? 0;
+    const addTimeResponse = await app.inject({
+      method: "POST",
+      url: "/api/v2/card-game/use",
+      headers: { authorization },
+      payload: {
+        cardKey: "support_add_time",
+        rarity: "common",
+        idempotencyKey: "smoke-card-add-time-1",
+        effectId: cardUseEffectID,
+      },
+    });
+    const addTimeBody = addTimeResponse.json() as {
+      game?: {
+        activeEffects?: Array<{ id: string; startsAt: number; expiresAt: number | null }>;
+        inventory?: Array<{ cardKey: string }>;
+      };
+    };
+    const extendedEffect = addTimeBody.game?.activeEffects?.find((effect) => effect.id === cardUseEffectID);
+    assertOk(
+      "加时卡增加指定倒计时并消耗一次",
+      addTimeResponse.statusCode === 200 &&
+        extendedEffect?.expiresAt === initialExpiry + 5 * 60_000 &&
+        !addTimeBody.game?.inventory?.some((item) => item.cardKey === "support_add_time"),
+    );
+    const postponeResponse = await app.inject({
+      method: "POST",
+      url: "/api/v2/card-game/use",
+      headers: { authorization },
+      payload: {
+        cardKey: "support_postpone",
+        rarity: "common",
+        idempotencyKey: "smoke-card-postpone-1",
+        effectId: cardUseEffectID,
+      },
+    });
+    const postponeBody = postponeResponse.json() as {
+      game?: {
+        activeEffects?: Array<{ id: string; startsAt: number; expiresAt: number | null; status: string }>;
+        inventory?: Array<{ cardKey: string }>;
+      };
+    };
+    const postponedEffect = postponeBody.game?.activeEffects?.find((effect) => effect.id === cardUseEffectID);
+    assertOk(
+      "延期卡延后开始与结束时间并消耗一次",
+      postponeResponse.statusCode === 200 &&
+        postponedEffect?.startsAt === (extendedEffect?.startsAt ?? 0) + 24 * 60 * 60_000 &&
+        postponedEffect?.expiresAt === (extendedEffect?.expiresAt ?? 0) + 24 * 60 * 60_000 &&
+        postponedEffect?.status === "pending" &&
+        !postponeBody.game?.inventory?.some((item) => item.cardKey === "support_postpone"),
+    );
+    const copyResponse = await app.inject({
+      method: "POST",
+      url: "/api/v2/card-game/use",
+      headers: { authorization },
+      payload: {
+        cardKey: "support_copy",
+        rarity: "common",
+        idempotencyKey: "smoke-card-copy-1",
+        sourceCardKey: "money_red_packet",
+        sourceRarity: "rare",
+      },
+    });
+    const copyBody = copyResponse.json() as {
+      game?: {
+        inventory?: Array<{ cardKey: string; rarity: string }>;
+        partnerInventory?: Array<{ cardKey: string; rarity: string }>;
+      };
+    };
+    assertOk(
+      "复制卡复制对方卡片且不扣对方库存",
+      copyResponse.statusCode === 200 &&
+        copyBody.game?.inventory?.some((item) =>
+          item.cardKey === "money_red_packet" && item.rarity === "rare") === true &&
+        copyBody.game?.partnerInventory?.some((item) =>
+          item.cardKey === "money_red_packet" && item.rarity === "rare") === true &&
+        !copyBody.game?.inventory?.some((item) => item.cardKey === "support_copy"),
+    );
+    const qiankunResponse = await app.inject({
+      method: "POST",
+      url: "/api/v2/card-game/use",
+      headers: { authorization: partnerAuthorization },
+      payload: {
+        cardKey: "support_qiankun",
+        rarity: "common",
+        idempotencyKey: "smoke-card-qiankun-1",
+        effectId: cardUseEffectID,
+      },
+    });
+    const qiankunBody = qiankunResponse.json() as {
+      game?: {
+        activeEffects?: Array<{ id: string; targetUsername: string }>;
+        inventory?: Array<{ cardKey: string }>;
+      };
+    };
+    assertOk(
+      "乾坤大挪移把对己效果转回对方并消耗一次",
+      qiankunResponse.statusCode === 200 &&
+        qiankunBody.game?.activeEffects?.find((effect) => effect.id === cardUseEffectID)
+          ?.targetUsername === currentUser!.username &&
+        !qiankunBody.game?.inventory?.some((item) => item.cardKey === "support_qiankun"),
+    );
+    const cardUseReplay = await app.inject({
+      method: "POST",
+      url: "/api/v2/card-game/use",
+      headers: { authorization },
+      payload: {
+        cardKey: "intimacy_massage",
+        rarity: "rare",
+        idempotencyKey: "smoke-card-use-1",
+      },
+    });
+    assertOk(
+      "情侣卡牌使用幂等不会重复创建效果",
+      cardUseReplay.statusCode === 200 && cardUseReplay.json().effect?.id === cardUseEffectID,
+    );
+    const drawResponses = await Promise.all(
+      [1, 2, 3].map((index) => app.inject({
+        method: "POST",
+        url: "/api/v2/card-game/draw",
+        headers: { authorization },
+        payload: { idempotencyKey: "smoke-card-draw-" + index },
+      })),
+    );
+    const fourthDraw = await app.inject({
+      method: "POST",
+      url: "/api/v2/card-game/draw",
+      headers: { authorization },
+      payload: { idempotencyKey: "smoke-card-draw-4" },
+    });
+    assertOk(
+      "情侣卡牌每天最多三次抽卡",
+      drawResponses.every((response) => response.statusCode === 200) && fourthDraw.statusCode === 429,
+    );
     const oldAuthorization = await app.inject({
       method: "GET", url: "/api/me", headers: { authorization: `Bearer ${createToken(user)}` },
     });

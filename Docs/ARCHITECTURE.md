@@ -60,7 +60,7 @@ ChatHomeView
 | `ChatPersistence` | 生产 SQLite 的唯一入口 |
 | `OutboxProcessor` | 待发消息串行重放与完成清理 |
 | `SyncV2Repository` | 持久化变更 cursor、ack 和 tombstone |
-| 各领域 Repository | 相册、推荐、日历、提醒、宠物、转写、Memory 和设备会话 |
+| 各领域 Repository | 相册、推荐、日历、提醒、宠物、情侣卡牌、转写、Memory 和设备会话 |
 
 `MessageStore` 与 `ChatStore` 是页面兼容 facade；新增实现优先进入已有 Repository、Coordinator 或专用 Store。页面、MainActor 和控制器不得直接执行 SQL。
 
@@ -78,12 +78,15 @@ ChatHomeView
 | `personalItems` / `calendar` | 提醒、备忘、日历、冲突和调度 |
 | `albums` | 相册、媒体资产和动态分组 |
 | `pet` / `daily` | 共同宠物和今日推荐 |
+| `cardGame` | 情侣抽卡、个人卡库和情侣效果 |
 | `transcription` | 语音转写 provider、任务 lease 和 worker |
 | `push` | Bark 收件人与投递策略 |
 | `ai` | Agent、Memory、MCP、上下文和后台任务 |
 | `contracts` | 服务端实时协议权威定义 |
 
-PostgreSQL 访问集中在 `server/src/db`。当前 schema 为 v32；v1–v32 migration 不得改写，后续只能追加。业务写入通过显式事务完成；`db/index.ts` 只做稳定 re-export。
+PostgreSQL 访问集中在 `server/src/db`。当前 schema 为 v34；v1–v34 migration 不得改写，后续只能追加。业务写入通过显式事务完成；`db/index.ts` 只做稳定 re-export。
+
+情侣卡牌是独立的 cardGame 域：每日抽卡次数、抽卡幂等记录、个人卡库和情侣效果分别持久化在 v33 新增的四张表中，v34 让独立 migrator 创建的卡牌表恢复为与 `accounts` 一致的 Web 表属主。服务端以当前账号的 active couple identity 做权限边界；效果的 sender/target、开始时间、过期时间和 payload 都在同一事务内写入。客户端卡牌页只用 REST 快照和前台轮询，不新增 Socket、Sync 或系统通知通道。
 
 公聊事件发送到 `couple:<id>`，账号私有事件发送到 `account:<id>`。关闭顺序由 `lifecycle/shutdown.ts` 统一管理，先停止生产者，再关闭 Socket 和数据库。
 

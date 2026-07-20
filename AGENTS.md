@@ -6,7 +6,7 @@
 
 1. 执行 `git rev-parse --show-toplevel`、`git status --short --branch` 和 `git rev-parse HEAD`，确认仓库、分支、提交与用户已有改动。
 2. 依次阅读 `Docs/README.md`、`Docs/PROJECT.md`，再按任务读取架构、契约或运维文档。
-   涉及生产连接、两台 VPS、部署或交接时，还必须阅读 `Docs/SERVER.md`；若受信工作站存在桌面 `vps` 私有目录，再按其中 `00-阅读入口.md` 最小读取对应资料，凭据值不得进入仓库、日志或回答。
+   涉及生产连接、两台 VPS、部署或交接时，还必须阅读 `Docs/SERVER.md`；受信工作站的私有资料目录为 `D:\Desktop\01_开发项目\VPS运维`，再按其中 `00-阅读入口.md` 最小读取对应资料，凭据值不得进入仓库、日志或回答。
 3. 先确认事实属于哪一层：源码、自动测试、GitHub Actions、IPA artifact，还是生产环境。不得由上一层推断下一层。
 4. 保留用户已有改动。未经明确要求，不重置、不覆盖、不删除、不部署。
 
