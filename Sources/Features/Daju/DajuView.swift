@@ -6,6 +6,7 @@ struct DajuView: View {
     @StateObject private var viewModel = DajuViewModel()
     @State private var showAIChat = false
     @State private var showDiary = false
+    @State private var showCardGame = false
     @State private var isVisible = false
 
     var body: some View {
@@ -28,6 +29,9 @@ struct DajuView: View {
             }
             .navigationDestination(isPresented: $showDiary) {
                 DajuDiaryView().appSubpageChrome()
+            }
+            .navigationDestination(isPresented: $showCardGame) {
+                CardGameView().appSubpageChrome()
             }
             .task(id: store.session?.username) {
                 guard let session = store.session else { return }
@@ -67,6 +71,9 @@ struct DajuView: View {
                     })
                 DajuDiaryEntryCard(token: session.token) {
                     showDiary = true
+                }
+                CardGameEntryCard {
+                    showCardGame = true
                 }
 
                 if viewModel.usingCachedSnapshot {
