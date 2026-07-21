@@ -1,6 +1,10 @@
 import UIKit
 
 enum ChatMarkdownRenderer {
+    /// 中文分词会把引号内的短语整体挪到下一行，造成行尾明显留白。
+    /// 气泡正文按字符换行，并与 UILabel 实际展示保持同一规则。
+    static let messageLineBreakMode: NSLineBreakMode = .byCharWrapping
+
     private final class MarkdownBlocksBox: NSObject {
         let blocks: [MarkdownBlock]
 
@@ -226,7 +230,7 @@ enum ChatMarkdownRenderer {
         // 粗体、列表和表格被 boundingRect 低估高度后在 cell 底部截断。
         let label = UILabel()
         label.numberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
+        label.lineBreakMode = messageLineBreakMode
         label.font = font
         label.attributedText = attributedString(from: markdown, baseFont: font)
         let fitted = label.sizeThatFits(

@@ -48,6 +48,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     private var voiceProgress: CGFloat = 0
     private var voiceTranscript: VoiceTranscript?
     private var voiceTranscriptExpanded = false
+    private var currentUsername: String?
     private var usesDarkIncomingBubble = false
     private var incomingBubblePalette: ChatIncomingBubblePalette {
         ChatIncomingBubblePalette(darkSurface: usesDarkIncomingBubble)
@@ -89,7 +90,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         bodyLabel.font = .preferredFont(forTextStyle: .body)
         bodyLabel.adjustsFontForContentSizeCategory = true
         bodyLabel.numberOfLines = 0
-        bodyLabel.lineBreakMode = .byWordWrapping
+        bodyLabel.lineBreakMode = ChatMarkdownRenderer.messageLineBreakMode
         bodyLabel.isUserInteractionEnabled = true
         bodyLabel.addGestureRecognizer(
             UITapGestureRecognizer(target: self, action: #selector(handleBodyLabelTap(_:))))
@@ -232,6 +233,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         representedImageURL = nil
         voiceTranscript = nil
         voiceTranscriptExpanded = false
+        currentUsername = nil
         mediaImageView.stopAnimating()
         mediaImageView.image = nil
         mediaIconView.image = nil
@@ -260,6 +262,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         peerAvatarURL: URL?,
         myAvatarURL: URL?,
         counterpartName: String,
+        currentUsername: String?,
         accentColor: UIColor,
         usesDarkIncomingBubble: Bool = false,
         voicePlaying: Bool = false,
@@ -276,6 +279,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         self.voiceProgress = voiceProgress
         self.voiceTranscript = transcript
         self.voiceTranscriptExpanded = transcriptExpanded
+        self.currentUsername = currentUsername
         bodyLabel.accessibilityCustomActions = nil
 
         let isAIActivity = message.id.hasPrefix("__ai_activity__")
@@ -420,7 +424,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         bodyLabel.font = .preferredFont(forTextStyle: .body)
         bodyLabel.adjustsFontForContentSizeCategory = true
         bodyLabel.numberOfLines = 0
-        bodyLabel.lineBreakMode = .byWordWrapping
+        bodyLabel.lineBreakMode = ChatMarkdownRenderer.messageLineBreakMode
         bodyLabel.textAlignment = .natural
         if let reply = message.replyPreview, !reply.isEmpty {
             replyLabel.text = reply
@@ -521,14 +525,27 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             baseFont: confirmItemsLabel.font,
             textColor: confirmItemsLabel.textColor,
             accentColor: mine ? UIColor.white.withAlphaComponent(0.92) : accentColor)
-        let pending = confirm.status == "pending"
-        confirmTitleLabel.text = pending ? "需要你的确认" : "操作结果"
-        confirmStatusLabel.text = confirm.status == "confirmed"
-            ? ((confirm.failed ?? 0) > 0 ? "部分操作未完成" : "已确认并执行")
-            : (confirm.status == "cancelled" ? "已取消" : nil)
-        confirmCancelButton.isHidden = !pending
-        confirmButton.isHidden = !pending
-        setConfirmationButtonsEnabled(pending)
+        let canDecide = ChatTimelineMetrics.canDecideConfirmation(
+            confirm,
+            currentUsername: currentUsername)
+        confirmTitleLabel.text = canDecide ? "需要你的确认" : "操作状态"
+        switch confirm.status {
+        case "pending":
+            let requester = confirm.requesterName.isEmpty ? "发起人" : confirm.requesterName
+            confirmStatusLabel.text = "等待\(requester)确认"
+        case "processing":
+            confirmStatusLabel.text = "正在处理…"
+        case "confirmed":
+            confirmStatusLabel.text = (confirm.failed ?? 0) > 0 ? "部分操作未完成" : "已确认并执行"
+        case "cancelled":
+            confirmStatusLabel.text = "已取消"
+        default:
+            confirmStatusLabel.text = "状态待同步"
+        }
+        confirmCancelButton.isHidden = !canDecide
+        confirmButton.isHidden = !canDecide
+        confirmStatusLabel.isHidden = canDecide
+        setConfirmationButtonsEnabled(canDecide)
         [confirmDivider, confirmTitleLabel, confirmItemsLabel, confirmStatusLabel, confirmCancelButton, confirmButton]
             .forEach { bubbleView.addSubview($0) }
     }
@@ -902,7 +919,12 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 height: 18)
         default:
             let confirmHeight = message.meta?.confirm.map {
-                ChatTimelineMetrics.confirmationHeight($0, width: contentWidth) + 12
+                ChatTimelineMetrics.confirmationHeight(
+                    $0,
+                    width: contentWidth,
+                    canDecide: ChatTimelineMetrics.canDecideConfirmation(
+                        $0,
+                        currentUsername: currentUsername)) + 12
             } ?? 0
             bodyLabel.frame = CGRect(
                 x: paddingX,
@@ -911,12 +933,26 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
                 height: max(0, bubbleView.bounds.height - y - paddingY - confirmHeight))
         }
         if let confirm = message.meta?.confirm {
-            layoutConfirmation(confirm, contentWidth: contentWidth, paddingX: paddingX)
+            layoutConfirmation(
+                confirm,
+                contentWidth: contentWidth,
+                paddingX: paddingX,
+                canDecide: ChatTimelineMetrics.canDecideConfirmation(
+                    confirm,
+                    currentUsername: currentUsername))
         }
     }
 
-    private func layoutConfirmation(_ confirm: ActionConfirm, contentWidth: CGFloat, paddingX: CGFloat) {
-        let height = ChatTimelineMetrics.confirmationHeight(confirm, width: contentWidth)
+    private func layoutConfirmation(
+        _ confirm: ActionConfirm,
+        contentWidth: CGFloat,
+        paddingX: CGFloat,
+        canDecide: Bool
+    ) {
+        let height = ChatTimelineMetrics.confirmationHeight(
+            confirm,
+            width: contentWidth,
+            canDecide: canDecide)
         let originY = bubbleView.bounds.height - ChatTimelineMetrics.bubbleVerticalPadding - height
         confirmDivider.frame = CGRect(x: paddingX, y: originY - 12, width: contentWidth, height: 1)
         let titleHeight = ceil(confirmTitleLabel.font.lineHeight)
@@ -934,8 +970,8 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             y: originY + titleHeight + 7,
             width: contentWidth,
             height: itemsHeight)
-        let actionY = confirmItemsLabel.frame.maxY + (confirm.status == "pending" ? 10 : 8)
-        if confirm.status == "pending" {
+        let actionY = confirmItemsLabel.frame.maxY + (canDecide ? 10 : 8)
+        if canDecide {
             let gap: CGFloat = 8
             let buttonWidth = (contentWidth - gap) / 2
             confirmCancelButton.frame = CGRect(

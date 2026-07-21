@@ -325,8 +325,21 @@ extension ChatViewController: ChatTimelineControllerDelegate {
     }
 
     func timelineDidDecideConfirm(message: ChatMessage, decision: String) {
-        guard message.meta?.confirm?.status == "pending" else { return }
-        store.confirmAction(messageId: message.id, decision: decision)
+        guard let confirm = message.meta?.confirm,
+              confirm.status == "pending",
+              confirm.requesterUsername == store.session?.username else { return }
+        store.confirmAction(messageId: message.id, decision: decision) { [weak self] succeeded in
+            guard let self, !succeeded else { return }
+            self.reloadTimeline(animated: false, preservingWindowState: true)
+            guard self.presentedViewController == nil else { return }
+            let verb = decision == "cancel" ? "取消" : "确认"
+            let alert = UIAlertController(
+                title: "操作未完成",
+                message: "未能\(verb)这张卡片，请检查网络后重试。",
+                preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            self.present(alert, animated: true)
+        }
     }
 
     func timelineDidBeginDragging() {

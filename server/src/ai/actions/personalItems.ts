@@ -51,6 +51,10 @@ export interface ConfirmMeta {
   };
 }
 
+export type ConfirmActionResult =
+  | { ok: false }
+  | { ok: true; messageId: string; meta: ConfirmMeta };
+
 // 模型应输出北京时间；此处只负责确定性格式转换。
 function parseReminderTime(time: string | undefined): number | null {
   if (!time) return null;
@@ -347,7 +351,7 @@ export async function confirmAction(
   user: AuthUser,
   messageId: string,
   decision: "confirm" | "cancel",
-): Promise<{ ok: boolean }> {
+): Promise<ConfirmActionResult> {
   const stored = await getMessageMeta(user, messageId);
   if (!stored || !stored.meta.confirm || stored.meta.confirm.status !== "pending") {
     return { ok: false };
@@ -364,7 +368,7 @@ export async function confirmAction(
     meta.confirm.status = "cancelled";
     await updateMessageMeta(messageId, meta);
     io.to(messageRoom).emit(socketEvents.messageUpdate, { id: messageId, meta });
-    return { ok: true };
+    return { ok: true, messageId, meta };
   }
 
   let failed = 0;
@@ -418,5 +422,5 @@ export async function confirmAction(
   meta.confirm.failed = failed;
   await updateMessageMeta(messageId, meta);
   io.to(messageRoom).emit(socketEvents.messageUpdate, { id: messageId, meta });
-  return { ok: true };
+  return { ok: true, messageId, meta };
 }

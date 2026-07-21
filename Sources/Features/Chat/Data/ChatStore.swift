@@ -633,7 +633,16 @@ final class ChatStore: ObservableObject {
 
     func recallMessage(_ message: ChatMessage, channel: ChatChannel) { messageStore.recallMessage(message, channel: channel) }
 
-    func confirmAction(messageId: String, decision: String) { messageStore.confirmAction(messageId: messageId, decision: decision) }
+    func confirmAction(
+        messageId: String,
+        decision: String,
+        completion: @escaping (Bool) -> Void
+    ) {
+        messageStore.confirmAction(
+            messageId: messageId,
+            decision: decision,
+            completion: completion)
+    }
 
     func searchMessages(
         _ query: String,

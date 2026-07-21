@@ -81,6 +81,7 @@ struct ChatMessageLayout: Hashable {
     let replyPreview: String?
     let confirmStatus: String?
     let confirmLabels: String?
+    let confirmActionable: Bool
     let pending: Bool
     let failed: Bool
     let transcriptStatus: String?
@@ -93,6 +94,7 @@ struct ChatMessageLayout: Hashable {
         mine: Bool,
         groupedWithPrevious: Bool,
         highlighted: Bool,
+        currentUsername: String?,
         transcript: VoiceTranscript? = nil,
         transcriptExpanded: Bool = false
     ) -> ChatMessageLayout {
@@ -107,6 +109,9 @@ struct ChatMessageLayout: Hashable {
             replyPreview: message.replyPreview,
             confirmStatus: message.meta?.confirm?.status,
             confirmLabels: message.meta?.confirm.map(ChatTimelineMetrics.confirmationMarkdown),
+            confirmActionable: message.meta?.confirm.map {
+                ChatTimelineMetrics.canDecideConfirmation($0, currentUsername: currentUsername)
+            } ?? false,
             pending: message.pending,
             failed: message.failed,
             transcriptStatus: transcript?.status.rawValue,
@@ -156,6 +161,7 @@ enum ChatTimelineMetrics {
         for message: ChatMessage,
         containerWidth: CGFloat,
         groupedWithPrevious: Bool,
+        currentUsername: String?,
         transcript: VoiceTranscript? = nil,
         transcriptExpanded: Bool = false
     ) -> CGFloat {
@@ -195,7 +201,10 @@ enum ChatTimelineMetrics {
         } }
 
         if let confirm = message.meta?.confirm {
-            contentHeight += confirmationHeight(confirm, width: contentWidth) + 12
+            contentHeight += confirmationHeight(
+                confirm,
+                width: contentWidth,
+                canDecide: canDecideConfirmation(confirm, currentUsername: currentUsername)) + 12
         }
 
         if let reply = message.replyPreview, !reply.isEmpty {
@@ -286,7 +295,20 @@ enum ChatTimelineMetrics {
         return text
     }
 
-    static func confirmationHeight(_ confirm: ActionConfirm, width: CGFloat) -> CGFloat {
+    static func canDecideConfirmation(
+        _ confirm: ActionConfirm,
+        currentUsername: String?
+    ) -> Bool {
+        confirm.status == "pending"
+            && !confirm.requesterUsername.isEmpty
+            && confirm.requesterUsername == currentUsername
+    }
+
+    static func confirmationHeight(
+        _ confirm: ActionConfirm,
+        width: CGFloat,
+        canDecide: Bool
+    ) -> CGFloat {
         let itemsHeight = ChatMarkdownRenderer.boundingSize(
             for: confirmationMarkdown(confirm),
             font: .preferredFont(forTextStyle: .subheadline),
@@ -294,7 +316,7 @@ enum ChatTimelineMetrics {
         let titleHeight = ceil(UIFont.preferredFont(forTextStyle: .subheadline).lineHeight)
         let statusHeight = ceil(UIFont.preferredFont(forTextStyle: .footnote).lineHeight)
         return titleHeight + 7 + itemsHeight
-            + (confirm.status == "pending" ? 10 + confirmButtonHeight : 8 + statusHeight)
+            + (canDecide ? 10 + confirmButtonHeight : 8 + statusHeight)
     }
 
     static func confirmationMarkdown(_ confirm: ActionConfirm) -> String {

@@ -217,9 +217,11 @@ io("https://hoo66.top", { auth: { token } })
 | `messages:search` | `{ channel, query, limit?, cursor? }` | `{ ok, list, nextCursor, hasMore }` |
 | `read` | `{ channel, ts }` | 广播已读状态 |
 | `shared:set` | `{ key, value }` | 写共享 JSON 对象 |
-| `action:confirm` | `{ messageId, decision }` | 确认或取消 AI 操作 |
+| `action:confirm` | `{ messageId, decision }` | 确认或取消 AI 操作；成功 ACK 为 `{ ok, messageId, meta }`，`meta` 是最终确认卡状态 |
 
 `message:send` 成功确认固定返回完整的当前消息；iOS 直接用 `message` 替换本地 pending，不支持只返回 `id` 的旧确认格式。引用消息只使用扁平字段 `replyTo/replyPreview`，不接受或返回旧的嵌套 `reply`。
+
+`action:confirm.decision` 只能是 `confirm` 或 `cancel`，且只有确认卡 `requesterUsername` 对应的当前账号可以操作；共同聊天里的另一位只观察最终状态。成功 ACK 直接返回数据库已持久化的最终 `meta`，客户端不能只依赖随后广播的 `message:update`。
 
 `messages:search` 按 `(ts DESC, id DESC)` 稳定排序；`limit` 范围为 `1...100`、默认 `50`。`cursor` 为上一页返回的 `{ ts, id }`，客户端仅在 `hasMore=true` 且 `nextCursor` 非空时继续加载。第一页和游标页都不能混入不连续的本地近期片段；离线时客户端可单独展示本机已有结果，但不声称仍有云端下一页。
 

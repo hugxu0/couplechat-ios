@@ -49,6 +49,7 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
                 peerAvatarURL: presentation.avatarURL(message.sender),
                 myAvatarURL: presentation.myAvatarURL,
                 counterpartName: presentation.counterpartName,
+                currentUsername: presentation.currentUsername,
                 accentColor: presentation.accentColor,
                 usesDarkIncomingBubble: presentation.usesDarkIncomingBubble,
                 voicePlaying: presentation.playingVoiceMessageID == message.id,
@@ -88,6 +89,7 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
                 mine: message.sender == presentation.currentUsername,
                 groupedWithPrevious: grouped,
                 highlighted: highlightedMessageId == message.id,
+                currentUsername: presentation.currentUsername,
                 transcript: voiceTranscripts[message.id],
                 transcriptExpanded: expandedTranscriptIDs.contains(message.id))
             if let cached = layoutHeightCache[key] { return CGSize(width: width, height: cached) }
@@ -95,6 +97,7 @@ extension ChatTimelineController: UICollectionViewDataSource, UICollectionViewDe
                 for: message,
                 containerWidth: width,
                 groupedWithPrevious: grouped,
+                currentUsername: presentation.currentUsername,
                 transcript: voiceTranscripts[message.id],
                 transcriptExpanded: expandedTranscriptIDs.contains(message.id))
             layoutHeightCache[key] = height
@@ -293,6 +296,7 @@ extension ChatTimelineController: ChatTimelineCellDelegate {
             mine: message.sender == presentation.currentUsername,
             groupedWithPrevious: grouped,
             highlighted: highlightedMessageId == message.id,
+            currentUsername: presentation.currentUsername,
             transcript: voiceTranscripts[message.id],
             transcriptExpanded: expandedTranscriptIDs.contains(message.id))
         guard let oldHeight = layoutHeightCache[key] else { return }
@@ -300,6 +304,7 @@ extension ChatTimelineController: ChatTimelineCellDelegate {
             for: message,
             containerWidth: collectionView.bounds.width,
             groupedWithPrevious: grouped,
+            currentUsername: presentation.currentUsername,
             transcript: voiceTranscripts[message.id],
             transcriptExpanded: expandedTranscriptIDs.contains(message.id))
         guard abs(newHeight - oldHeight) > 0.5 else { return }

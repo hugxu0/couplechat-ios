@@ -945,6 +945,8 @@ final class MessageStore: ObservableObject {
 
     // MARK: - Meta 更新（确认卡）
 
+    private var confirmationRequestsInFlight = Set<String>()
+
     @discardableResult
     func applyMessageUpdate(id: String, meta: [String: Any]?) async -> Bool {
         for c in ChatChannel.allCases {
@@ -963,10 +965,102 @@ final class MessageStore: ObservableObject {
         return true
     }
 
-    func confirmAction(messageId: String, decision: String) {
-        socketProvider?.socket?.emit(
+    func confirmAction(
+        messageId: String,
+        decision: String,
+        completion: @escaping (Bool) -> Void
+    ) {
+        guard ["confirm", "cancel"].contains(decision),
+              !confirmationRequestsInFlight.contains(messageId),
+              let socket = socketProvider?.socket,
+              socketProvider?.isConnected == true,
+              setConfirmationStatusInMemory(messageId: messageId, status: "processing") else {
+            completion(false)
+            return
+        }
+
+        confirmationRequestsInFlight.insert(messageId)
+        socket.emitWithAck(
             SocketEvent.actionConfirm.rawValue,
-            SocketPayloadEncoder.encode(ActionConfirmRequest(messageId: messageId, decision: decision)))
+            SocketPayloadEncoder.encode(ActionConfirmRequest(
+                messageId: messageId,
+                decision: decision)))
+            .timingOut(after: 9) { [weak self] response in
+                let acknowledgement = response.first as? [String: Any]
+                let ok = acknowledgement?["ok"] as? Bool == true
+                let finalMeta = acknowledgement?["meta"] as? [String: Any]
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.confirmationRequestsInFlight.remove(messageId)
+
+                    if ok, let finalMeta {
+                        completion(await self.applyMessageUpdate(id: messageId, meta: finalMeta))
+                        return
+                    }
+                    if ok {
+                        // 兼容尚未返回最终 meta 的旧服务版本；成功 ACK 仍是服务端事实。
+                        let status = decision == "cancel" ? "cancelled" : "confirmed"
+                        completion(await self.persistConfirmationStatus(messageId: messageId, status: status))
+                        return
+                    }
+
+                    self.restoreProcessingConfirmation(messageId: messageId)
+                    completion(false)
+                }
+            }
+    }
+
+    private func setConfirmationStatusInMemory(messageId: String, status: String) -> Bool {
+        for channel in ChatChannel.allCases {
+            guard var updated = messages(for: channel).first(where: { $0.id == messageId }),
+                  var meta = updated.meta,
+                  var confirm = meta.confirm,
+                  confirm.status == "pending" else { continue }
+            confirm.status = status
+            meta.confirm = confirm
+            updated.meta = meta
+            updateMessages(channel) { list in
+                guard let index = list.firstIndex(where: { $0.id == messageId }) else { return }
+                list[index] = updated
+            }
+            return true
+        }
+        return false
+    }
+
+    private func restoreProcessingConfirmation(messageId: String) {
+        for channel in ChatChannel.allCases {
+            guard var updated = messages(for: channel).first(where: { $0.id == messageId }),
+                  var meta = updated.meta,
+                  var confirm = meta.confirm,
+                  confirm.status == "processing" else { continue }
+            confirm.status = "pending"
+            meta.confirm = confirm
+            updated.meta = meta
+            updateMessages(channel) { list in
+                guard let index = list.firstIndex(where: { $0.id == messageId }) else { return }
+                list[index] = updated
+            }
+            return
+        }
+    }
+
+    private func persistConfirmationStatus(messageId: String, status: String) async -> Bool {
+        for channel in ChatChannel.allCases {
+            guard var updated = messages(for: channel).first(where: { $0.id == messageId }),
+                  var meta = updated.meta,
+                  var confirm = meta.confirm else { continue }
+            confirm.status = status
+            meta.confirm = confirm
+            updated.meta = meta
+            guard await persistence.insertMessage(updated) else { return false }
+            updateMessages(channel) { list in
+                guard let index = list.firstIndex(where: { $0.id == messageId }) else { return }
+                list[index] = updated
+            }
+            return true
+        }
+        return false
     }
 
     // MARK: - 搜索
