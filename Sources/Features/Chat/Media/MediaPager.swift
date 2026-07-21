@@ -4,6 +4,7 @@ import AVFoundation
 import UIKit
 import Photos
 import Combine
+import OSLog
 
 /// 沉浸式媒体浏览：不显示页码或工具栏，操作只在手势和长按菜单中出现。
 struct MediaPagerView: View {
@@ -347,12 +348,19 @@ private struct ZoomableRemoteImage: View {
 }
 
 struct StreamingVideoPlayer: View {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "CoupleChat",
+        category: "StreamingVideoPlayer")
+
     let url: URL
     @State private var item: AVPlayerItem
     @State private var player: AVPlayer
     @State private var resumeAfterCancellation = false
     @State private var showsLoading = true
     @State private var failed = false
+    @State private var isDownloadingFallback = false
+    @State private var fallbackTask: Task<Void, Never>?
+    @State private var localPlaybackURL: URL?
 
     init(url: URL) {
         self.url = url
@@ -360,10 +368,10 @@ struct StreamingVideoPlayer: View {
             url: url,
             options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
         let item = AVPlayerItem(asset: asset, automaticallyLoadedAssetKeys: ["playable"])
-        // 服务端支持 Range；只预取短缓冲即可开始，不等待整段视频下载。
-        item.preferredForwardBufferDuration = 2
+        // 4K HDR 短视频可能超过 100 Mbps；两秒预取会在首帧前拉取几十 MiB。
+        item.preferredForwardBufferDuration = 0.2
         let player = AVPlayer(playerItem: item)
-        player.automaticallyWaitsToMinimizeStalling = true
+        player.automaticallyWaitsToMinimizeStalling = false
         _item = State(initialValue: item)
         _player = State(initialValue: player)
     }
@@ -374,8 +382,12 @@ struct StreamingVideoPlayer: View {
             VideoPlayer(player: player)
             if failed {
                 VStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle")
-                    Text("视频加载失败")
+                    if isDownloadingFallback {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
+                    Text(isDownloadingFallback ? "正在下载后播放…" : "视频加载失败")
                 }
                 .font(DS.Typo.secondary.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.8))
@@ -391,8 +403,7 @@ struct StreamingVideoPlayer: View {
                 case .readyToPlay:
                     showsLoading = false
                 case .failed:
-                    showsLoading = false
-                    failed = true
+                    handlePlaybackFailure(item.error)
                 default:
                     break
                 }
@@ -402,7 +413,15 @@ struct StreamingVideoPlayer: View {
                     showsLoading = false
                 } else if status == .waitingToPlayAtSpecifiedRate, !failed {
                     showsLoading = true
+                    scheduleFallbackIfStillWaiting()
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: .AVPlayerItemFailedToPlayToEndTime,
+                object: item
+            )) { notification in
+                handlePlaybackFailure(
+                    notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)
             }
             .onReceive(NotificationCenter.default.publisher(for: .mediaViewerPauseVideo)) { _ in
                 resumeAfterCancellation = player.timeControlStatus == .playing
@@ -412,7 +431,81 @@ struct StreamingVideoPlayer: View {
                 if resumeAfterCancellation { player.play() }
                 resumeAfterCancellation = false
             }
-            .onDisappear { player.pause() }
+            .onDisappear {
+                player.pause()
+                fallbackTask?.cancel()
+                fallbackTask = nil
+                if let localPlaybackURL {
+                    player.replaceCurrentItem(with: nil)
+                    try? FileManager.default.removeItem(at: localPlaybackURL)
+                    self.localPlaybackURL = nil
+                }
+            }
+    }
+
+    private func scheduleFallbackIfStillWaiting() {
+        guard fallbackTask == nil, localPlaybackURL == nil else { return }
+        fallbackTask = Task {
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled,
+                  player.timeControlStatus == .waitingToPlayAtSpecifiedRate else {
+                fallbackTask = nil
+                return
+            }
+            await downloadAndPlayLocally()
+        }
+    }
+
+    private func handlePlaybackFailure(_ error: Error?) {
+        showsLoading = false
+        failed = true
+        if let error {
+            let nsError = error as NSError
+            Self.logger.error(
+                "Remote video failed domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public)")
+        } else {
+            Self.logger.error("Remote video failed without an AVFoundation error")
+        }
+        guard fallbackTask == nil, localPlaybackURL == nil else { return }
+        fallbackTask = Task { await downloadAndPlayLocally() }
+    }
+
+    @MainActor
+    private func downloadAndPlayLocally() async {
+        isDownloadingFallback = true
+        failed = true
+        defer {
+            isDownloadingFallback = false
+            fallbackTask = nil
+        }
+        do {
+            let (downloadedURL, response) = try await URLSession.shared.download(from: url)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cc-video-playback-\(UUID().uuidString)")
+                .appendingPathExtension(ext)
+            try FileManager.default.moveItem(at: downloadedURL, to: destination)
+            localPlaybackURL = destination
+            let localItem = AVPlayerItem(url: destination)
+            localItem.preferredForwardBufferDuration = 0
+            item = localItem
+            player.replaceCurrentItem(with: localItem)
+            failed = false
+            showsLoading = false
+            player.play()
+        } catch is CancellationError {
+            return
+        } catch {
+            let nsError = error as NSError
+            Self.logger.error(
+                "Local video fallback failed domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public)")
+            failed = true
+            showsLoading = false
+        }
     }
 }
 

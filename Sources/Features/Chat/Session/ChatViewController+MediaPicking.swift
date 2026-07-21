@@ -160,17 +160,55 @@ extension ChatViewController: PHPickerViewControllerDelegate {
     private func loadVideo(from provider: NSItemProvider) async -> ChatPendingMedia? {
         guard let url = await provider.loadFile(typeIdentifier: UTType.movie.identifier) else { return nil }
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-        guard size > 0, size <= 50 * 1024 * 1024 else { return nil }
-        // 视频预览只生成缩略图；真正发送走 fileURL 复制，避免整段视频进内存。
-        let thumb = await videoThumbnail(url: url) ?? UIImage(systemName: "play.rectangle.fill") ?? UIImage()
-        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "video/mp4"
+        guard size > 0 else { return nil }
+
+        // 相机原始 4K HDR MOV 即使只有数秒也可能超过 100 Mbps。直接上传会让 AVPlayer
+        // 为几秒内容预取几十 MiB，并且 QuickTime 的 moov 常在文件尾。统一导出为网络优化的
+        // 1080p MP4：控制启动带宽、把索引放到前部，同时继续使用 file 管线避免整包 Data。
+        let preparedURL = (try? await optimizedVideoForStreaming(at: url)) ?? url
+        let preparedMIMEType: String
+        if preparedURL != url {
+            try? FileManager.default.removeItem(at: url)
+            preparedMIMEType = "video/mp4"
+        } else {
+            let detected = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+            preparedMIMEType = detected == "video/x-m4v" ? "video/mp4" : (detected ?? "video/mp4")
+        }
+        let preparedSize = (try? preparedURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard preparedSize > 0, preparedSize <= 50 * 1024 * 1024 else {
+            try? FileManager.default.removeItem(at: preparedURL)
+            return nil
+        }
+        let thumb = await videoThumbnail(url: preparedURL)
+            ?? UIImage(systemName: "play.rectangle.fill")
+            ?? UIImage()
         return ChatPendingMedia(
             id: UUID().uuidString,
             image: thumb,
             data: Data(),
-            mimeType: mime,
+            mimeType: preparedMIMEType,
             messageType: "video",
-            localPreviewURL: url)
+            localPreviewURL: preparedURL)
+    }
+
+    private func optimizedVideoForStreaming(at sourceURL: URL) async throws -> URL {
+        let asset = AVURLAsset(url: sourceURL)
+        guard let exporter = AVAssetExportSession(
+            asset: asset,
+            presetName: AVAssetExportPreset1920x1080) else {
+            throw CocoaError(.featureUnsupported)
+        }
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        exporter.shouldOptimizeForNetworkUse = true
+        do {
+            try await exporter.export(to: destination, as: .mp4)
+            return destination
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
     }
 
     private func detectedImageMIMEType(_ data: Data) -> String? {
