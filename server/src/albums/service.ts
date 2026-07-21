@@ -4,6 +4,7 @@ import { activeIdentity, activeIdentityIn } from "../auth/identity";
 import type { AuthUser } from "../types";
 import { appendSyncEvent } from "../sync/events";
 import { decodeCursor, encodeCursor, isNumberStringCursor } from "../utils/cursor";
+import { refreshSignedMediaUrl } from "../upload/mediaAccess";
 
 interface AlbumRow {
   id: string;
@@ -46,7 +47,7 @@ function mapAlbum(row: AlbumRow) {
     title: row.title,
     summary: row.summary,
     coverAssetId: row.cover_asset_id ?? undefined,
-    coverURL: row.cover_url ?? undefined,
+    coverURL: refreshSignedMediaUrl(row.cover_url),
     itemCount: Number(row.item_count ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -76,7 +77,7 @@ function mapAsset(row: AssetRow, addedBy?: string) {
     sourceMessageId: row.source_message_id ?? undefined,
     kind: row.kind,
     mimeType: row.mime_type,
-    url: row.url,
+    url: refreshSignedMediaUrl(row.url) ?? row.url,
     size: row.size,
     takenAt: row.taken_at,
     createdAt: row.created_at,
