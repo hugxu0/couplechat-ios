@@ -5,6 +5,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import EmbeddedPostgres from "embedded-postgres";
+import type { Server } from "socket.io";
 
 const PORT = 5544;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "couplechat-pg-"));
@@ -808,6 +809,58 @@ async function main() {
     const app = await buildApp();
     const authorization = `Bearer ${createToken(currentUser!)}`;
     const partnerAuthorization = `Bearer ${createToken(partnerUser!)}`;
+
+    const expiredAlbumUploadId = "up_album_expired_123";
+    const expiredAlbumPath = path.join(dataDir, `${expiredAlbumUploadId}.mov`);
+    const expiredAlbumAt = Date.now() - 60_000;
+    const expiredAlbumSignature = signMediaId(expiredAlbumUploadId, expiredAlbumAt);
+    const expiredAlbumURL = new URL(`/media/${expiredAlbumUploadId}`, signedURL.origin);
+    expiredAlbumURL.searchParams.set("sig", expiredAlbumSignature.sig);
+    expiredAlbumURL.searchParams.set("exp", String(expiredAlbumSignature.exp));
+    fs.writeFileSync(expiredAlbumPath, "album-video");
+    await db.run(
+      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        expiredAlbumUploadId, currentUser!.username, expiredAlbumPath, expiredAlbumURL.toString(),
+        "video/quicktime", 11, Date.now(), "album",
+      ],
+    );
+    const albumCreateResponse = await app.inject({
+      method: "POST",
+      url: "/api/v2/albums",
+      headers: { authorization },
+      payload: { title: "签名刷新相册", summary: "" },
+    });
+    const albumCreateBody = albumCreateResponse.json() as { album?: { id?: string } };
+    const signedAlbumId = albumCreateBody.album?.id ?? "";
+    const albumAddResponse = await app.inject({
+      method: "POST",
+      url: `/api/v2/albums/${signedAlbumId}/items/from-upload`,
+      headers: { authorization },
+      payload: { uploadId: expiredAlbumUploadId, takenAt: Date.now() },
+    });
+    const albumItemsResponse = await app.inject({
+      method: "GET",
+      url: `/api/v2/albums/${signedAlbumId}/items?limit=10`,
+      headers: { authorization },
+    });
+    const albumItemsBody = albumItemsResponse.json() as {
+      album?: { coverURL?: string };
+      items?: Array<{ asset?: { url?: string } }>;
+    };
+    const refreshedAssetURL = new URL(albumItemsBody.items?.[0]?.asset?.url ?? "https://invalid.local");
+    const refreshedCoverURL = new URL(albumItemsBody.album?.coverURL ?? "https://invalid.local");
+    assertOk(
+      "共同相册读取会刷新过期的封面与视频签名",
+      albumCreateResponse.statusCode === 201 &&
+        albumAddResponse.statusCode === 201 &&
+        albumItemsResponse.statusCode === 200 &&
+        refreshedAssetURL.pathname === `/media/${expiredAlbumUploadId}` &&
+        refreshedCoverURL.pathname === `/media/${expiredAlbumUploadId}` &&
+        Number(refreshedAssetURL.searchParams.get("exp") ?? "0") > Date.now() &&
+        Number(refreshedCoverURL.searchParams.get("exp") ?? "0") > Date.now(),
+    );
+
     const cardAccountId = currentUser!.accountId!;
     const cardFixtures = [
       ["smoke-card-massage", cardAccountId, "intimacy_massage", "rare"],
@@ -1183,6 +1236,53 @@ async function main() {
     const patched = await items.updatePersonalItem(user, item!.id, { isDone: true });
     assertOk("updatePersonalItem isDone", patched?.isDone === true);
     assertOk("deletePersonalItem", await items.deletePersonalItem(user, item!.id));
+
+    // AI 确认卡取消必须通过 ACK 返回最终 meta，不能只依赖可能丢失的广播。
+    const confirmationMeta = {
+      confirm: {
+        status: "pending" as const,
+        items: [{
+          label: "备忘：冒烟备忘",
+          action: { type: "add_memo" as const, title: "冒烟备忘", text: "不会真正写入" },
+        }],
+        requesterName: user.name,
+        requesterUsername: user.username,
+      },
+    };
+    await db.run(
+      `INSERT INTO messages
+       (id, channel, sender, sender_name, kind, type, text, ts, meta_json, conversation_id)
+       VALUES (?, 'couple', 'ai', '大橘', 'ai', 'text', ?, ?, ?, 'conv_legacy_couple')`,
+      ["smoke-confirm-cancel", "确认卡", now + 1, JSON.stringify(confirmationMeta)],
+    );
+    const confirmationBroadcasts: Array<{ room: string; event: string; payload: unknown }> = [];
+    const fakeIO = {
+      to: (room: string) => ({
+        emit: (event: string, payload: unknown) => {
+          confirmationBroadcasts.push({ room, event, payload });
+        },
+      }),
+    } as unknown as Server;
+    const { confirmAction } = await import("../src/ai/actions/personalItems");
+    const cancelledConfirmation = await confirmAction(
+      fakeIO,
+      user,
+      "smoke-confirm-cancel",
+      "cancel",
+    );
+    const storedConfirmation = await db.get<{ status: string }>(
+      `SELECT meta_json::jsonb #>> '{confirm,status}' AS status FROM messages WHERE id = ?`,
+      ["smoke-confirm-cancel"],
+    );
+    assertOk(
+      "AI 备忘确认卡取消 ACK 返回最终状态并广播",
+      cancelledConfirmation.ok &&
+        cancelledConfirmation.messageId === "smoke-confirm-cancel" &&
+        cancelledConfirmation.meta.confirm.status === "cancelled" &&
+        storedConfirmation?.status === "cancelled" &&
+        confirmationBroadcasts.some((event) =>
+          event.room === "couple:cpl_legacy_xusi" && event.event === "message:update"),
+    );
 
     const runtimeState = await import("../src/ai/runtimeState");
     await runtimeState.writeRuntimeState("smoke", "ok");
