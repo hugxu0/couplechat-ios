@@ -45,13 +45,13 @@ struct CouplePetRepository {
         method: String = "GET",
         token: String
     ) throws -> URLRequest {
-        guard let relative = URL(string: path, relativeTo: ServerConfig.baseURL) else {
+        guard let request = APIRequestFactory.authorized(
+            path: path,
+            method: method,
+            token: token,
+            timeout: 20) else {
             throw CouplePetRepositoryError.invalidRequest
         }
-        var request = URLRequest(url: relative.absoluteURL)
-        request.httpMethod = method
-        request.timeoutInterval = 20
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }
 

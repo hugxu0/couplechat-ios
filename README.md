@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-- iOS/iPadOS 26，Swift 5.9，SwiftUI + UIKit，客户端版本 `0.2.0 (11)`。
+- iOS/iPadOS 26，Swift 5.9，SwiftUI + UIKit；客户端版本和工程配置以 [`project.yml`](project.yml) 为准，已验证发布状态见 [`Docs/PROJECT.md`](Docs/PROJECT.md)。
 - Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16。
 - 客户端公开基地址：`https://hoo66.top`。
 - 日本 RFCHost 只做公开入口和跨国反向代理；美国 RackNerd 是唯一可写应用与数据库主机。
@@ -51,7 +51,7 @@ iOS 工程由 XcodeGen 生成；Windows 开发机通过 GitHub Actions 验证，
 
 - PostgreSQL 与 `uploads/` 是线上事实源；iOS SQLite 是设备缓存。
 - 美国 RackNerd 是唯一可写主机；日本只做入口和中转，不运行 CoupleChat 后端或数据库。
-- 当前源码要求 schema v31。已有迁移不可删除或改写，新变化只能追加。
+- 数据库迁移只允许追加；当前 schema、生产状态和验证证据见 [`Docs/PROJECT.md`](Docs/PROJECT.md)，迁移实现见 [`server/src/db/migrate.ts`](server/src/db/migrate.ts)。
 - REST/Socket/Sync 变化必须同时更新服务端、客户端、契约说明、验证入口和文档。
 - `.env`、生产数据、媒体副本、数据库备份、Apple 凭据、证书、provisioning profile、设备 UDID 和构建产物不得提交。
 - 源码完成验证、CI 成功、IPA 已生成和线上已发布是四件不同的事，必须分别提供证据。

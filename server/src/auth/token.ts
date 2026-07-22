@@ -7,6 +7,10 @@ interface TokenPayload extends AuthUser {
   exp: number;
 }
 
+export function parseBearerToken(authorization?: string): string {
+  return authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
+}
+
 function encode(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }

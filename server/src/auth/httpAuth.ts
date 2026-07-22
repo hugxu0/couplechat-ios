@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { verifyActiveToken } from "./token";
+import { parseBearerToken, verifyActiveToken } from "./token";
 import type { AuthUser } from "../types";
 
 declare module "fastify" {
@@ -9,8 +9,7 @@ declare module "fastify" {
 }
 
 export async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
-  const header = request.headers.authorization;
-  const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+  const token = parseBearerToken(request.headers.authorization);
   const user = token ? await verifyActiveToken(token) : null;
   if (!user) {
     await reply.code(401).send({ error: "unauthorized" });

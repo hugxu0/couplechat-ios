@@ -267,10 +267,10 @@ struct MediaGallerySheet: View {
         fileError = nil
         filePreviewTask = Task {
             do {
-                let localURL = try await FilePreviewCache.localURL(
+                let localURL = try await MediaFileCache.shared.localURL(
                     for: remoteURL,
-                    messageID: message.id,
-                    displayName: fileTitle(message))
+                    kind: .file,
+                    suggestedFilename: fileTitle(message))
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     preparingFileID = nil

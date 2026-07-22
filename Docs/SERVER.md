@@ -61,7 +61,7 @@ iPhone / iPad
 | uploads | 不保留 | `/opt/couplechat-ios/server/uploads` |
 | 日常发布 | 禁止 | 固定 SHA 的 `server/` 包 |
 
-日本只转发流量，没有 CoupleChat 项目、数据库、媒体、容器、Docker/PostgreSQL 软件包或冷恢复包，不能作为备用源站。生产数据只存在于美国事实源和经验证的离机备份。美国 `127.0.0.1:8080` 是 `sub2api`，日本 `127.0.0.1:18080` 是到它的 SSH 隧道入口；两者都不属于 CoupleChat Node 生产端口。
+日本只转发流量，没有 CoupleChat 项目、数据库、媒体、容器、Docker/PostgreSQL 软件包或冷恢复包，不能作为备用源站。生产数据只存在于美国事实源和经验证的离机备份。美国 `127.0.0.1:8080` 是 `sub2api`，日本 `127.0.0.1:18080` 是到它的 SSH 隧道入口；两者都不属于 CoupleChat Node 生产端口。本地开发若使用 8080，仅代表开发机上的 CoupleChat 进程，不能据此在生产主机恢复或覆盖服务。
 
 ## VPS 上现有内容
 

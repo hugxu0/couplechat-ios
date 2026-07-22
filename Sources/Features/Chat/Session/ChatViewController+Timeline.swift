@@ -276,10 +276,10 @@ extension ChatViewController {
             guard let self else { return }
             defer { self.filePreviewTask = nil }
             do {
-                let localURL = try await FilePreviewCache.localURL(
+                let localURL = try await MediaFileCache.shared.localURL(
                     for: remoteURL,
-                    messageID: message.id,
-                    displayName: fileTitle(for: message))
+                    kind: .file,
+                    suggestedFilename: fileTitle(for: message))
                 guard !Task.isCancelled else { return }
                 let source = ChatFilePreviewSource(url: localURL)
                 let preview = QLPreviewController()
@@ -458,7 +458,9 @@ extension ChatViewController {
         loadingVoiceMessageID = message.id
         voicePlaybackLoadTask = Task { [weak self] in
             guard let self else { return }
-            guard let localURL = try? await VoiceMediaCache.shared.localURL(for: url),
+            guard let localURL = try? await MediaFileCache.shared.localURL(
+                for: url,
+                kind: .voice),
                   !Task.isCancelled,
                   loadingVoiceMessageID == message.id else {
                 if loadingVoiceMessageID == message.id { loadingVoiceMessageID = nil }

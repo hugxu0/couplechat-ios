@@ -1,11 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticate, listPublicAccounts } from "./accounts";
-import { createToken } from "./token";
+import { createToken, parseBearerToken, verifyActiveToken } from "./token";
 import { requireAuth } from "./httpAuth";
 import { errorCodes } from "../errors/errorCodes";
 import { createDeviceSession } from "./devices";
-import { verifyActiveToken } from "./token";
 import { MAX_PASSWORD_LENGTH } from "./password";
 import { consumeRateLimit } from "./rateLimit";
 
@@ -35,8 +34,7 @@ function clientIp(request: { ip: string; headers: Record<string, unknown> }): st
 
 export async function registerAuthRoutes(app: FastifyInstance) {
   app.get("/api/accounts", async (request) => {
-    const header = request.headers.authorization;
-    const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+    const token = parseBearerToken(request.headers.authorization);
     const user = token ? await verifyActiveToken(token) : undefined;
     return listPublicAccounts(user ?? undefined);
   });

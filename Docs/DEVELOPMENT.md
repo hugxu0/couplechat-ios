@@ -17,7 +17,7 @@ git rev-parse HEAD
 ```text
 Sources/               iOS/iPadOS 客户端源码
 server/                Fastify/Socket.IO/PostgreSQL 服务端
-Docs/                  当前 8 份权威文档
+Docs/                  当前 9 份权威文档
 .github/workflows/     快速验证和 unsigned IPA workflow
 .github/scripts/       公开仓库扫描与 IPA 下载校验工具
 project.yml            XcodeGen 工程定义

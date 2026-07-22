@@ -199,13 +199,13 @@ struct CardGameRepository {
         method: String = "GET",
         token: String
     ) throws -> URLRequest {
-        guard let url = URL(string: path, relativeTo: ServerConfig.baseURL)?.absoluteURL else {
+        guard let request = APIRequestFactory.authorized(
+            path: path,
+            method: method,
+            token: token,
+            timeout: 20) else {
             throw CardGameRepositoryError.invalidRequest
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.timeoutInterval = 20
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }
 

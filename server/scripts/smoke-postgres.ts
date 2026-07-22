@@ -809,6 +809,30 @@ async function main() {
     const app = await buildApp();
     const authorization = `Bearer ${createToken(currentUser!)}`;
     const partnerAuthorization = `Bearer ${createToken(partnerUser!)}`;
+    const anonymousAccountsResponse = await app.inject({ method: "GET", url: "/api/accounts" });
+    const invalidTokenAccountsResponse = await app.inject({
+      method: "GET",
+      url: "/api/accounts",
+      headers: { authorization: "Bearer invalid-token" },
+    });
+    const authenticatedAccountsResponse = await app.inject({
+      method: "GET",
+      url: "/api/accounts",
+      headers: { authorization },
+    });
+    const anonymousAccounts = anonymousAccountsResponse.json() as Array<{ username?: string }>;
+    const invalidTokenAccounts = invalidTokenAccountsResponse.json() as Array<{ username?: string }>;
+    const authenticatedAccounts = authenticatedAccountsResponse.json() as Array<{ username?: string }>;
+    assertOk(
+      "账号列表保持匿名、无效 token 可用且有效 token 可识别",
+      anonymousAccountsResponse.statusCode === 200 &&
+        invalidTokenAccountsResponse.statusCode === 200 &&
+        authenticatedAccountsResponse.statusCode === 200 &&
+        anonymousAccounts.length === 2 &&
+        invalidTokenAccounts.length === 2 &&
+        authenticatedAccounts.length === 2 &&
+        JSON.stringify(invalidTokenAccounts) === JSON.stringify(anonymousAccounts),
+    );
 
     const expiredAlbumUploadId = "up_album_expired_123";
     const expiredAlbumPath = path.join(dataDir, `${expiredAlbumUploadId}.mov`);

@@ -3,7 +3,7 @@
 先遵守根 `AGENTS.md`，再遵守本文件。
 
 - 目标运行时 Node.js 22；使用 `npm ci`，不要无理由重写 lockfile。
-- PostgreSQL 是事实源。migration 只追加，不修改 v1-v32；新 migration 必须可重复检查，并在隔离恢复库核验。
+- PostgreSQL 是事实源。migration 只追加，不修改 v1-v34；新 migration 必须可重复检查，并在隔离恢复库核验。
 - 生产应用监听 `127.0.0.1:3000`。`8080` 只可作为明确的本地开发端口，不能进入生产默认值。
 - `server.ts` 只装配进程，HTTP 在 `app.ts` 注册，业务进入对应领域 service/repository；Socket handler 只做契约解析、授权、调用和 ack/emit。
 - REST/Socket/Sync 变化同时修改 iOS 契约、验证入口与根文档。

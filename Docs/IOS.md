@@ -14,7 +14,7 @@
 - 工程定义：根目录 `project.yml`。
 - App target：`CoupleChat`。
 - Bundle ID：`com.hugxu0.couplechat.native`。
-- 版本：`0.2.0 (12)`。
+- 版本、build 和 target 配置：以根目录 [`project.yml`](../project.yml) 为准；已验证产品/发布状态见 [`PROJECT.md`](PROJECT.md)。
 - 依赖：Socket.IO Client Swift `16.1.0`、GLTFKit2 `0.5.15`。
 - 必需资源：`Sources/Resources/cute_cat.glb` 和 `ThirdPartyNotices.txt`。
 - 仓库不保留 XCTest target。
