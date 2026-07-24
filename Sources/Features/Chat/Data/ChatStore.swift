@@ -93,18 +93,12 @@ final class ChatStore: ObservableObject {
         onSocketCreated: { [weak self] socket in self?.eventRouter.bind(socket) },
         onConnected: { [weak self] in
             guard let self, let session = self.auth.session else { return }
-            let generation = self.auth.sessionGeneration
             self.messageStore.flushPendingReadReceipts()
             self.messageStore.flushOutbox(session: session)
             self.shared.flushPendingWrites()
             self.startPersistentSyncLoop()
-            Task {
-                // 前台重连时补 bootstrap + Sync，避免仅 tombstone 的 SyncV2 漏掉新消息。
-                guard self.auth.sessionGeneration == generation else { return }
-                _ = await self.refreshBootstrap()
-                guard self.auth.sessionGeneration == generation else { return }
-                await self.recoverSyncV2()
-            }
+            // 与回前台恢复合并，避免同一次重连并发请求两份 bootstrap + Sync。
+            self.scheduleConnectionRecovery(verifyRealtime: false)
         },
         onConnectionUnavailable: { [weak self] in
             self?.messageStore.markPendingWaitingToSend()
@@ -131,6 +125,9 @@ final class ChatStore: ObservableObject {
     private var wasBackgrounded = false
     private var syncingV2 = false
     private var persistentSyncTask: Task<Void, Never>?
+    private var connectionRecoveryTask: Task<Void, Never>?
+    private var connectionRecoveryToken = UUID()
+    private var connectionRecoveryNeedsHealthCheck = false
     private var deferredIncomingInteractions: [String: InteractionPresentation] = [:]
     private var knownInteractionPresentationIDs = Set<String>()
     private var lastInteractionSentAt = Date.distantPast
@@ -313,6 +310,10 @@ final class ChatStore: ObservableObject {
         let sessionToRevoke = auth.session
         let generation = auth.sessionGeneration
         stopPersistentSyncLoop()
+        connectionRecoveryTask?.cancel()
+        connectionRecoveryTask = nil
+        connectionRecoveryToken = UUID()
+        connectionRecoveryNeedsHealthCheck = false
         historySync.cancelForLogout()
         realtime.disconnect()
         partnerOnline = false
@@ -713,12 +714,33 @@ final class ChatStore: ObservableObject {
         // iOS 暂停网络后，客户端仍可能暂时显示 connected，但底层连接已经失效。
         // 真正进过后台就立即重建；仅从系统弹窗的 inactive 返回则保留健康连接。
         if needsFreshSocket || !connected { realtime.forceReconnect() }
-        Task {
-            _ = await refreshBootstrap()
-            await recoverSyncV2()
-            _ = await verifyRealtimeHealth()
-            if connected, let session = auth.session {
-                messageStore.flushOutbox(session: session)
+        scheduleConnectionRecovery(verifyRealtime: true)
+    }
+
+    private func scheduleConnectionRecovery(verifyRealtime: Bool) {
+        connectionRecoveryNeedsHealthCheck = connectionRecoveryNeedsHealthCheck || verifyRealtime
+        guard connectionRecoveryTask == nil else { return }
+        let generation = auth.sessionGeneration
+        let token = UUID()
+        connectionRecoveryToken = token
+        connectionRecoveryTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.connectionRecoveryToken == token {
+                    self.connectionRecoveryTask = nil
+                    self.connectionRecoveryNeedsHealthCheck = false
+                }
+            }
+            guard !Task.isCancelled, self.auth.sessionGeneration == generation else { return }
+            _ = await self.refreshBootstrap()
+            guard !Task.isCancelled, self.auth.sessionGeneration == generation else { return }
+            await self.recoverSyncV2()
+            guard !Task.isCancelled, self.auth.sessionGeneration == generation else { return }
+            if self.connectionRecoveryNeedsHealthCheck {
+                _ = await self.verifyRealtimeHealth()
+            }
+            if self.connected, let session = self.auth.session {
+                self.messageStore.flushOutbox(session: session)
             }
         }
     }
