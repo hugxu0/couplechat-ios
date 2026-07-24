@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import Network
+import OSLog
 import SocketIO
 
 private struct RealtimeNetworkPath: Equatable, Sendable {
@@ -8,12 +9,22 @@ private struct RealtimeNetworkPath: Equatable, Sendable {
     let usesWiFi: Bool
     let usesCellular: Bool
     let usesWiredEthernet: Bool
+    let isExpensive: Bool
+    let isConstrained: Bool
+    let supportsDNS: Bool
+    let supportsIPv4: Bool
+    let supportsIPv6: Bool
 
     init(_ path: NWPath) {
         isSatisfied = path.status == .satisfied
         usesWiFi = path.usesInterfaceType(.wifi)
         usesCellular = path.usesInterfaceType(.cellular)
         usesWiredEthernet = path.usesInterfaceType(.wiredEthernet)
+        isExpensive = path.isExpensive
+        isConstrained = path.isConstrained
+        supportsDNS = path.supportsDNS
+        supportsIPv4 = path.supportsIPv4
+        supportsIPv6 = path.supportsIPv6
     }
 }
 
@@ -56,6 +67,15 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
     private let pathMonitor = NWPathMonitor()
     private let pathQueue = DispatchQueue(label: "top.hoo66.realtime-network-path")
     private var lastNetworkPath: RealtimeNetworkPath?
+    private let logger = Logger(subsystem: "com.hugxu0.couplechat.native", category: "Realtime")
+
+    // 一次 Socket.IO 建连包含 TLS、Engine.IO polling、命名空间鉴权和可选的
+    // WebSocket 升级。跨国弱网下不能用单次 HTTP 请求级别的超时衡量整条链路。
+    private static let transportConnectionTimeout: TimeInterval = 12
+    private static let namespaceConnectionGrace: TimeInterval = 8
+    private static let foregroundConnectionWait: TimeInterval = 12
+    private static let healthAckTimeout: TimeInterval = 5
+    private static let visibleFailureAttempt = 3
 
     var isConnected: Bool { state == .connected }
     var sessionUsername: String? { sessionProvider()?.username }
@@ -108,11 +128,17 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
 
         guard !isConnected, !attemptInFlight, let socket else { return }
         attemptInFlight = true
-        state = createdSocket && state != .reconnecting ? .connecting : .reconnecting
+        if reconnectAttempt < Self.visibleFailureAttempt {
+            state = createdSocket && state != .reconnecting ? .connecting : .reconnecting
+        }
         let token = UUID()
         attemptToken = token
+        logger.info("Starting realtime connection attempt")
         socket.connect(withPayload: ["token": session.token])
-        scheduleTimeout(for: token)
+        scheduleTimeout(
+            for: token,
+            after: Self.transportConnectionTimeout,
+            allowsNamespaceGrace: true)
     }
 
     func disconnect() {
@@ -122,6 +148,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         tearDownSocket()
         state = .disconnected
         lastError = nil
+        logger.info("Realtime connection stopped")
     }
 
     func forceReconnect() {
@@ -130,7 +157,9 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         reconnectAttempt = 0
         tearDownSocket()
         state = .reconnecting
+        lastError = nil
         onConnectionUnavailable()
+        logger.info("Forcing realtime connection rebuild")
         connect()
     }
 
@@ -148,19 +177,22 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
 
     func verifyHealth() async -> Bool {
         if !isConnected {
-            // 退避等待不应阻止用户主动回前台；connect() 会令旧 retry token 失效。
+            // 正在进行的握手可能已通过 TLS/polling，不能因前台检查再次拆掉。
             if !attemptInFlight { connect() }
         }
-        let deadline = Date().addingTimeInterval(2.4)
+        let deadline = Date().addingTimeInterval(Self.foregroundConnectionWait)
         while !isConnected, Date() < deadline {
+            guard !Task.isCancelled else { return false }
             try? await Task.sleep(nanoseconds: 80_000_000)
         }
         guard isConnected, let socket else {
-            forceReconnect()
+            // 超时任务和退避状态机负责回收当前尝试；这里只触发缺失的尝试，
+            // 避免健康检查与建连超时同时 forceReconnect 形成活锁。
+            if !attemptInFlight { connect() }
             return false
         }
         let result: [Any] = await withCheckedContinuation { continuation in
-            socket.emitWithAck(SocketEvent.health.rawValue).timingOut(after: 1.5) {
+            socket.emitWithAck(SocketEvent.health.rawValue).timingOut(after: Self.healthAckTimeout) {
                 continuation.resume(returning: $0)
             }
         }
@@ -178,6 +210,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
                 self.reconnectAttempt = 0
                 self.attemptToken = UUID()
                 self.lastError = nil
+                self.logger.info("Realtime connection established")
                 self.reportAway(false)
                 self.onConnected()
             }
@@ -196,6 +229,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
                 self.manager = nil
                 self.state = .reconnecting
                 self.onConnectionUnavailable()
+                self.logger.info("Realtime connection closed; scheduling retry")
                 self.scheduleRetry()
             }
         }
@@ -213,18 +247,35 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         }
     }
 
-    private func scheduleTimeout(for token: UUID) {
+    private func scheduleTimeout(
+        for token: UUID,
+        after delay: TimeInterval,
+        allowsNamespaceGrace: Bool
+    ) {
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard let self,
                   self.attemptToken == token,
                   !self.isConnected,
                   self.sessionProvider() != nil else { return }
+
+            // Engine.IO 已打开说明 TLS/polling 已成功，剩下的是命名空间鉴权回包。
+            // 给这一阶段独立宽限，不能把一个有进展的弱网连接当成死连接。
+            if allowsNamespaceGrace, self.manager?.status == .connected {
+                self.logger.info("Realtime transport opened; extending namespace handshake")
+                self.scheduleTimeout(
+                    for: token,
+                    after: Self.namespaceConnectionGrace,
+                    allowsNamespaceGrace: false)
+                return
+            }
+
             self.attemptInFlight = false
             self.attemptToken = UUID()
             self.tearDownSocket()
             self.state = .reconnecting
             self.onConnectionUnavailable()
+            self.logger.info("Realtime connection attempt timed out; scheduling retry")
             self.scheduleRetry()
         }
     }
@@ -235,6 +286,10 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
             return
         }
         reconnectAttempt += 1
+        if reconnectAttempt >= Self.visibleFailureAttempt {
+            state = .failed
+            lastError = "连接暂时不可用，正在自动重试"
+        }
         let delay = Self.retryDelay(for: reconnectAttempt)
         let token = UUID()
         attemptToken = token
@@ -262,20 +317,31 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
     private func handleNetworkPathChange(_ current: RealtimeNetworkPath) {
         let previous = lastNetworkPath
         lastNetworkPath = current
-        guard let previous, sessionProvider() != nil, previous != current else { return }
+        guard let previous, sessionProvider() != nil else { return }
 
         if !current.isSatisfied {
             attemptToken = UUID()
             attemptInFlight = false
             tearDownSocket()
-            state = .reconnecting
+            state = .failed
+            lastError = "网络不可用，等待网络恢复"
             onConnectionUnavailable()
+            logger.info("Network path unavailable; waiting for a usable path")
             return
         }
 
         // Wi-Fi / 蜂窝网络发生切换时，旧 socket 可能仍显示 connected，却已无法
         // 收到 ACK。主动换一条连接，建立成功后会自动重放本地 outbox。
-        forceReconnect()
+        if previous != current || !isConnected {
+            logger.info("Network path changed; rebuilding realtime connection")
+            forceReconnect()
+        } else {
+            // NWPathMonitor 可能在 Wi-Fi 到 Wi-Fi 的路由变化中给出相同摘要。
+            // 先探测现有连接，只有 ACK 丢失时才重建。
+            Task { [weak self] in
+                _ = await self?.verifyHealth()
+            }
+        }
     }
 
     private func tearDownSocket() {
@@ -311,6 +377,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
             state = .reconnecting
             lastError = nil
             onConnectionUnavailable()
+            logger.info("Realtime connection error; scheduling retry")
             scheduleRetry()
         }
     }

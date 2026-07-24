@@ -21,7 +21,7 @@
 
 ## 技术基线
 
-- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit、版本 `0.2.0 (13)`。
+- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码目标版本 `0.2.0 (14)`，最近已归档产物仍为状态证据表中的 `0.2.0 (13)`。
 - Bundle ID：`com.hugxu0.couplechat.native`；工程由根目录 `project.yml` 生成。
 - iOS 依赖：Socket.IO Client Swift `16.1.0`、GLTFKit2 `0.5.15`，均固定精确版本。
 - 3D 资源：`Sources/Resources/cute_cat.glb` 受 Git 管理并随 IPA 发布。
