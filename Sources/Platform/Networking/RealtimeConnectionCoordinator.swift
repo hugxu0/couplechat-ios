@@ -64,6 +64,8 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
     private var attemptInFlight = false
     private var attemptToken = UUID()
     private var reconnectAttempt = 0
+    private var healthCheckTask: Task<Bool, Never>?
+    private var healthCheckToken = UUID()
     private let pathMonitor = NWPathMonitor()
     private let pathQueue = DispatchQueue(label: "top.hoo66.realtime-network-path")
     private var lastNetworkPath: RealtimeNetworkPath?
@@ -111,6 +113,10 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
 
     func connect() {
         guard let session = sessionProvider() else { return }
+        guard lastNetworkPath?.isSatisfied != false else {
+            waitForNetworkRecovery()
+            return
+        }
         let createdSocket = socket == nil
         if createdSocket {
             let manager = SocketManager(socketURL: baseURL, config: [
@@ -145,6 +151,7 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         attemptToken = UUID()
         attemptInFlight = false
         reconnectAttempt = 0
+        invalidateHealthCheck()
         tearDownSocket()
         state = .disconnected
         lastError = nil
@@ -152,9 +159,14 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
     }
 
     func forceReconnect() {
+        guard lastNetworkPath?.isSatisfied != false else {
+            waitForNetworkRecovery()
+            return
+        }
         attemptToken = UUID()
         attemptInFlight = false
         reconnectAttempt = 0
+        invalidateHealthCheck()
         tearDownSocket()
         state = .reconnecting
         lastError = nil
@@ -176,27 +188,50 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
     }
 
     func verifyHealth() async -> Bool {
+        if let healthCheckTask {
+            return await healthCheckTask.value
+        }
+        let token = UUID()
+        healthCheckToken = token
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            return await self.performHealthCheck()
+        }
+        healthCheckTask = task
+        let result = await task.value
+        if healthCheckToken == token {
+            healthCheckTask = nil
+        }
+        return result
+    }
+
+    private func performHealthCheck() async -> Bool {
         if !isConnected {
             // 正在进行的握手可能已通过 TLS/polling，不能因前台检查再次拆掉。
             if !attemptInFlight { connect() }
         }
         let deadline = Date().addingTimeInterval(Self.foregroundConnectionWait)
         while !isConnected, Date() < deadline {
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  sessionProvider() != nil,
+                  lastNetworkPath?.isSatisfied != false else { return false }
             try? await Task.sleep(nanoseconds: 80_000_000)
         }
-        guard isConnected, let socket else {
+        guard !Task.isCancelled, isConnected, let probeSocket = socket else {
             // 超时任务和退避状态机负责回收当前尝试；这里只触发缺失的尝试，
             // 避免健康检查与建连超时同时 forceReconnect 形成活锁。
             if !attemptInFlight { connect() }
             return false
         }
         let result: [Any] = await withCheckedContinuation { continuation in
-            socket.emitWithAck(SocketEvent.health.rawValue).timingOut(after: Self.healthAckTimeout) {
+            probeSocket.emitWithAck(SocketEvent.health.rawValue).timingOut(after: Self.healthAckTimeout) {
                 continuation.resume(returning: $0)
             }
         }
         let healthy = (result.first as? [String: Any])?["ok"] as? Bool == true
+        guard !Task.isCancelled, socket === probeSocket, isConnected else {
+            return false
+        }
         if !healthy { forceReconnect() }
         return healthy
     }
@@ -285,6 +320,10 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
             state = .disconnected
             return
         }
+        guard lastNetworkPath?.isSatisfied != false else {
+            waitForNetworkRecovery()
+            return
+        }
         reconnectAttempt += 1
         if reconnectAttempt >= Self.visibleFailureAttempt {
             state = .failed
@@ -317,16 +356,15 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
     private func handleNetworkPathChange(_ current: RealtimeNetworkPath) {
         let previous = lastNetworkPath
         lastNetworkPath = current
-        guard let previous, sessionProvider() != nil else { return }
+        guard sessionProvider() != nil else { return }
 
         if !current.isSatisfied {
-            attemptToken = UUID()
-            attemptInFlight = false
-            tearDownSocket()
-            state = .failed
-            lastError = "网络不可用，等待网络恢复"
-            onConnectionUnavailable()
-            logger.info("Network path unavailable; waiting for a usable path")
+            waitForNetworkRecovery()
+            return
+        }
+
+        guard let previous else {
+            if !isConnected, !attemptInFlight { connect() }
             return
         }
 
@@ -355,6 +393,24 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         withExtendedLifetime(previousManager) {}
     }
 
+    private func invalidateHealthCheck() {
+        healthCheckToken = UUID()
+        healthCheckTask?.cancel()
+        healthCheckTask = nil
+    }
+
+    private func waitForNetworkRecovery() {
+        attemptToken = UUID()
+        attemptInFlight = false
+        reconnectAttempt = 0
+        invalidateHealthCheck()
+        tearDownSocket()
+        state = .failed
+        lastError = "网络不可用，等待网络恢复"
+        onConnectionUnavailable()
+        logger.info("Network path unavailable; waiting for a usable path")
+    }
+
     private func handleError(_ data: [Any]) {
         let message = data.compactMap { item -> String? in
             if let text = item as? String { return text }
@@ -366,7 +422,10 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
         }.joined(separator: " ")
 
         if message.lowercased().contains("unauthorized") {
+            attemptToken = UUID()
             attemptInFlight = false
+            invalidateHealthCheck()
+            tearDownSocket()
             state = .failed
             lastError = "登录已过期，请重新登录"
             onUnauthorized()

@@ -127,7 +127,6 @@ final class ChatStore: ObservableObject {
     private var persistentSyncTask: Task<Void, Never>?
     private var connectionRecoveryTask: Task<Void, Never>?
     private var connectionRecoveryToken = UUID()
-    private var connectionRecoveryNeedsHealthCheck = false
     private var deferredIncomingInteractions: [String: InteractionPresentation] = [:]
     private var knownInteractionPresentationIDs = Set<String>()
     private var lastInteractionSentAt = Date.distantPast
@@ -313,7 +312,6 @@ final class ChatStore: ObservableObject {
         connectionRecoveryTask?.cancel()
         connectionRecoveryTask = nil
         connectionRecoveryToken = UUID()
-        connectionRecoveryNeedsHealthCheck = false
         historySync.cancelForLogout()
         realtime.disconnect()
         partnerOnline = false
@@ -718,7 +716,13 @@ final class ChatStore: ObservableObject {
     }
 
     private func scheduleConnectionRecovery(verifyRealtime: Bool) {
-        connectionRecoveryNeedsHealthCheck = connectionRecoveryNeedsHealthCheck || verifyRealtime
+        // Socket 探测不能排在最长 15 秒的 bootstrap 后面；Bark 深链或回前台时
+        // 立即并行确认实时链路，HTTP/Sync 同时负责补齐已经错过的消息。
+        if verifyRealtime {
+            Task { [weak self] in
+                _ = await self?.verifyRealtimeHealth()
+            }
+        }
         guard connectionRecoveryTask == nil else { return }
         let generation = auth.sessionGeneration
         let token = UUID()
@@ -728,7 +732,6 @@ final class ChatStore: ObservableObject {
             defer {
                 if self.connectionRecoveryToken == token {
                     self.connectionRecoveryTask = nil
-                    self.connectionRecoveryNeedsHealthCheck = false
                 }
             }
             guard !Task.isCancelled, self.auth.sessionGeneration == generation else { return }
@@ -736,9 +739,6 @@ final class ChatStore: ObservableObject {
             guard !Task.isCancelled, self.auth.sessionGeneration == generation else { return }
             await self.recoverSyncV2()
             guard !Task.isCancelled, self.auth.sessionGeneration == generation else { return }
-            if self.connectionRecoveryNeedsHealthCheck {
-                _ = await self.verifyRealtimeHealth()
-            }
             if self.connected, let session = self.auth.session {
                 self.messageStore.flushOutbox(session: session)
             }

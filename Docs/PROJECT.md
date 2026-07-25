@@ -1,6 +1,6 @@
 # 项目现状
 
-> 更新时间：2026-07-21。本文只记录当前产品、验证和生产事实，不记录开发过程。
+> 更新时间：2026-07-26。本文只记录当前产品、验证和生产事实，不记录开发过程。
 
 ## 状态证据
 
@@ -8,7 +8,8 @@
 |---|---|---|
 | 客户端源码与 CI | `0df13b0769a159bf09e284620ef42e6aaf6f6659` / run `29728033575` | Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
 | 最近 iOS 产物 | `0df13b0769a159bf09e284620ef42e6aaf6f6659` / run `29728035504` | Xcode 26.3 unsigned IPA 归档、内容校验和下载校验通过，版本 `0.2.0 (13)`；SHA256 `783D897DB86687F1438A71C06B5B3D1AD37B7DF98CE2EEE1C2C7DB02CCE94193` |
-| 服务端本地验证 | 2026-07-21 | `npm run check` 通过；覆盖独立 migrator 建表后的 Web 属主修复、情侣卡牌抽取、一次性扣卡、倒计时、加时、延期、复制、乾坤大挪移与请求幂等，以及 schema v34 全部持久化表的备份策略；既有大橘、消息、媒体、AI、Memory 与相册媒体 URL 按读刷新冒烟路径同时通过 |
+| 服务端本地验证 | 2026-07-26 | 生产依赖审计为 0；`npm run typecheck` 与 `npm run check` 通过，MCP、消息、同步、媒体、AI、Memory、情侣卡牌及 schema v34 的隔离 PostgreSQL 冒烟路径均通过 |
+| 日本公开入口 | 2026-07-26 | Nginx 配置检查与重载通过；`live`、`health`、`ready`、固定账号接口和 Socket.IO `101` 均正常，HSTS、内容类型保护、禁止嵌入、Referrer Policy、CSP 与 Permissions Policy 已穿过 Cloudflare 返回 |
 | 生产环境 | 2026-07-21 | 固定 RELEASE `c3c7cf316ed6f249a6223c15dd4567109c22f47b` 已发布，前一 release `0df13b0769a159bf09e284620ef42e6aaf6f6659` 保留回滚镜像；本次为普通服务端代码发布，未执行 migration、备份、恢复或数据库写入，schema 保持 v34，Web 保持 `RUN_MIGRATIONS=false`；美国本机、私有 origin、公开入口、固定账号列表与 Socket.IO 均通过 HTTP 200 检查，容器重启次数为 0 |
 
 本机旧 IPA、tar、展开 release 或备份目录不属于生产证据。服务器细节见 [SERVER.md](SERVER.md)，签名与侧载见 [IOS.md](IOS.md)。
@@ -21,7 +22,7 @@
 
 ## 技术基线
 
-- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码目标版本 `0.2.0 (14)`，最近已归档产物仍为状态证据表中的 `0.2.0 (13)`。
+- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码目标版本 `0.2.0 (15)`，最近已归档产物仍为状态证据表中的 `0.2.0 (13)`。
 - Bundle ID：`com.hugxu0.couplechat.native`；工程由根目录 `project.yml` 生成。
 - iOS 依赖：Socket.IO Client Swift `16.1.0`、GLTFKit2 `0.5.15`，均固定精确版本。
 - 3D 资源：`Sources/Resources/cute_cat.glb` 受 Git 管理并随 IPA 发布。
@@ -37,7 +38,7 @@
 - 固定双账号登录、设备会话查看和撤销，多设备 presence 与严格已读。
 - 共同聊天和按账号隔离的大橘私聊。
 - 文字、原图、视频、语音、文件、静态/动态贴纸、引用、搜索和完整撤回。
-- SQLite 账号缓存、可靠 outbox、`clientId` 幂等、历史分页、Sync V2 和 Socket 重连补拉。
+- SQLite 账号缓存、可靠 outbox、`clientId` 幂等、历史分页、Sync V2 和 Socket 重连补拉；离线时停止空转，换网后重建连接，前台与 Bark 深链会并行执行 Socket 健康检查和 HTTP/Sync 补漏。
 - outbox 区分等待发送、实际发送和终止失败；媒体上传后重新取得当前 Socket，ACK/上传均有硬超时，云端已确认消息会自动收敛遗留 pending。
 - 离线可进入有界本地历史；回前台后补 bootstrap、Sync V2 和 Socket 健康检查。
 - 图片/视频预览、收藏、主题、壁纸、Markdown 表格和 Mermaid；静态图片气泡与网格优先读取 720 px 缩略图，全屏当前页随后升级为原文件的高分辨率显示副本，短期签名刷新不再穿透本地缓存。

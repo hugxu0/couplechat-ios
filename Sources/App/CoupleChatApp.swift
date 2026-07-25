@@ -54,7 +54,12 @@ struct CoupleChatApp: App {
             }
         }
 #endif
-        .onOpenURL { deepLinks.handle($0) }
+        .onOpenURL {
+            deepLinks.handle($0)
+            // Bark 通过 deep link 拉起 App 时不依赖 scenePhase 是否再次变化，
+            // 立即补拉消息并核实 Socket。
+            store.recoverOnForeground()
+        }
         .task(id: store.session?.username) {
             theme.activateAccount(store.session?.username)
         }

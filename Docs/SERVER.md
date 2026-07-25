@@ -131,6 +131,8 @@ iPhone / iPad
 - 正确的 TLS SNI、公开 Host 和 `X-Forwarded-*`；
 - origin 私有代理 key 校验。
 
+日本 HTTPS edge 还必须在应用响应上保留 HSTS、`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、CSP 与 `Permissions-Policy`。无密钥模板见 `server/deploy/nginx-security-headers.conf`；生产站点通过 `/etc/nginx/snippets/couplechat-security-headers.conf` 引入，修改后需要从公网确认这些头能穿过 Cloudflare 返回。
+
 仓库 `server/deploy/` 中的 Nginx 文件只是不含秘密的模板，不能直接覆盖生产配置。修改前先备份，运行 `nginx -t`，再 reload 并执行三层健康检查。
 
 ## 接手与连接
