@@ -6,8 +6,8 @@
 
 | 层级 | 最后核验 | 结论 |
 |---|---|---|
-| 客户端源码与 CI | `4951f506a4372f83ebd3f591a5c889c3c87a2855` / run `30166939662` | Xcode 26.3 编译、服务端检查和仓库检查通过 |
-| 最近 iOS 产物 | `3a8234e1265e0a4d93bbb6e1c35f28a7fd15705c` / run `30166811648` | unsigned IPA `0.2.0 (15)` 已生成并校验；SHA256 `FC8DCDF514B9EB77A856DC5EC50A022D5D1FA2256CD1ADEAA4A8FA1D63D01296` |
+| 客户端源码与 CI | `64942a3c03c3550222ff70cb7a3f7b9ba72a44a1` / run `30169638121` | Socket.IO Client Swift 16.1.1；Xcode 26.3 编译、服务端检查和仓库检查通过 |
+| 最近 iOS 产物 | `64942a3c03c3550222ff70cb7a3f7b9ba72a44a1` / run `30169637802` | unsigned IPA `0.2.0 (16)` 已生成并校验；SHA256 `1E4081F68FA91BB0F01704836DE92F4C916EEF9A6DA373CD94AD2F66B82273A7` |
 | 服务端源码 | 2026-07-26 | 依赖审计为 0，`npm run typecheck` 和 `npm run check` 通过 |
 | 日本公开入口 | 2026-07-26 | Nginx、安全响应头、健康接口和 Socket.IO 均正常 |
 | 美国生产环境 | 2026-07-26 | 已运行 release `7ce4e0879a93be64a7a8f4215d6d7e92542dd386`，schema v34，容器运行正常且重启次数为 0；依赖审计、三项健康检查和 Socket.IO 外网连接均通过 |
@@ -22,7 +22,7 @@
 
 ## 技术基线
 
-- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码为 `0.2.0 (16)`，最近归档状态以上方证据表为准。
+- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码和最近归档均为 `0.2.0 (16)`。
 - Bundle ID：`com.hugxu0.couplechat.native`；工程由根目录 `project.yml` 生成。
 - iOS 依赖：Socket.IO Client Swift `16.1.1`、GLTFKit2 `0.5.15`。
 - 3D 资源：`Sources/Resources/cute_cat.glb` 受 Git 管理并随 IPA 发布。
