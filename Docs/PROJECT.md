@@ -22,9 +22,9 @@
 
 ## 技术基线
 
-- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码和最近归档均为 `0.2.0 (15)`。
+- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码为 `0.2.0 (16)`，最近归档状态以上方证据表为准。
 - Bundle ID：`com.hugxu0.couplechat.native`；工程由根目录 `project.yml` 生成。
-- iOS 依赖：Socket.IO Client Swift `16.1.0`、GLTFKit2 `0.5.15`。
+- iOS 依赖：Socket.IO Client Swift `16.1.1`、GLTFKit2 `0.5.15`。
 - 3D 资源：`Sources/Resources/cute_cat.glb` 受 Git 管理并随 IPA 发布。
 - 服务端：Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16，源码当前 schema v34；生产状态以上方证据表为准。
 - 公开基地址：`https://hoo66.top`；Debug 与 Release 当前都连接该地址。

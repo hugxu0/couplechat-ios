@@ -38,7 +38,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-Socket.IO-Client-Swift 16.1.0
+Socket.IO-Client-Swift 16.1.1
 -----------------------------
 Source: https://github.com/socketio/socket.io-client-swift
 

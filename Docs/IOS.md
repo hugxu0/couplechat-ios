@@ -7,7 +7,7 @@
 - 工程配置：根目录 `project.yml`
 - Target：`CoupleChat`
 - Bundle ID：`com.hugxu0.couplechat.native`
-- 依赖：Socket.IO Client Swift `16.1.0`、GLTFKit2 `0.5.15`
+- 依赖：Socket.IO Client Swift `16.1.1`、GLTFKit2 `0.5.15`
 - 必需资源：`Sources/Resources/cute_cat.glb`、`ThirdPartyNotices.txt`
 
 Mac 无签名编译：

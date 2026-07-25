@@ -94,7 +94,7 @@ npm run typecheck
 
 ## Nginx 变更
 
-日本入口配置位于 `/etc/nginx/sites-available/hoo66.top`。仓库 `server/deploy/` 里的文件是无密钥参考模板，不应整份覆盖线上配置。
+日本入口配置位于 `/etc/nginx/sites-available/hoo66.top`。仓库 `server/deploy/nginx-japan-edge-hoo66.top.conf` 是无密钥参考模板，部署前需要把回源占位符替换为美国主机的 Tailscale 地址，不应整份覆盖线上配置。美国主机不再使用独立的公网源站域名或 Nginx TLS 回源。
 
 修改时保留一份配置副本，然后执行：
 
