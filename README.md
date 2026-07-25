@@ -2,6 +2,16 @@
 
 只服务 `xu` 与 `si` 两位固定用户的私有情侣应用。仓库同时包含 iOS/iPadOS 客户端与服务端；两端协议、数据库迁移、验证和发布说明在同一提交中维护。
 
+## 在 AI 工作区中的位置
+
+CoupleChat 是 `D:\Desktop\AI\project` 下的独立应用项目。本仓库负责产品代码，VPS 项目负责运行它所需的服务器和入口。
+
+- 工作区总览：[`../../README.md`](../../README.md)
+- 基础设施与生产入口：[`../VPS/README.md`](../VPS/README.md)
+- 文档索引：[`Docs/README.md`](Docs/README.md)
+
+涉及线上服务时看 [`Docs/SERVER.md`](Docs/SERVER.md)；需要主机细节时再看 VPS 项目，不必为普通客户端改动读取整套运维资料。
+
 ## 当前基线
 
 - iOS/iPadOS 26，Swift 5.9，SwiftUI + UIKit；客户端版本和工程配置以 [`project.yml`](project.yml) 为准，已验证发布状态见 [`Docs/PROJECT.md`](Docs/PROJECT.md)。
@@ -21,10 +31,10 @@
 - [前后端与数据同步架构](Docs/ARCHITECTURE.md)
 - [REST、Socket.IO 与 Sync 契约](Docs/API.md)
 - [大橘 AI、Memory 与 MCP](Docs/AI.md)
-- [开发指南与关键文件地图](Docs/DEVELOPMENT.md)
-- [服务器、部署、备份与恢复](Docs/SERVER.md)
-- [iOS 构建、签名与侧载](Docs/IOS.md)
-- [给 AI/开发者的工作规则](AGENTS.md)
+- [开发指南](Docs/DEVELOPMENT.md)
+- [服务器与部署](Docs/SERVER.md)
+- [iOS 构建、签名与安装](Docs/IOS.md)
+- 客户端和服务端目录中的简短开发约定
 
 ## 单仓库结构
 
@@ -36,7 +46,7 @@ server/                Fastify/Socket.IO/PostgreSQL 服务端
 project.yml            XcodeGen 工程定义
 ```
 
-发布规范要求服务端包只包含 `server/` 子目录，并绑定精确 commit 与 SHA-256；普通代码发布由仓库内 PowerShell 入口完成一次验证、打包、上传、切换和健康检查，不会把整个项目复制到服务器。
+服务端使用仓库内 PowerShell 脚本发布；脚本负责测试、打包、切换和健康检查。
 
 ## 最短验证
 
@@ -47,11 +57,11 @@ npm run check
 
 iOS 工程由 XcodeGen 生成；Windows 开发机通过 GitHub Actions 验证，Mac 可本地生成和编译工程。真机安装步骤见 [IOS.md](Docs/IOS.md)。
 
-## 不可破坏的边界
+## 几个约定
 
 - PostgreSQL 与 `uploads/` 是线上事实源；iOS SQLite 是设备缓存。
 - 美国 RackNerd 是唯一可写主机；日本只做入口和中转，不运行 CoupleChat 后端或数据库。
-- 数据库迁移只允许追加；当前 schema、生产状态和验证证据见 [`Docs/PROJECT.md`](Docs/PROJECT.md)，迁移实现见 [`server/src/db/migrate.ts`](server/src/db/migrate.ts)。
-- REST/Socket/Sync 变化必须同时更新服务端、客户端、契约说明、验证入口和文档。
-- `.env`、生产数据、媒体副本、数据库备份、Apple 凭据、证书、provisioning profile、设备 UDID 和构建产物不得提交。
-- 源码完成验证、CI 成功、IPA 已生成和线上已发布是四件不同的事，必须分别提供证据。
+- 数据库 migration 按版本追加；实现见 [`server/src/db/migrate.ts`](server/src/db/migrate.ts)。
+- REST、Socket 或 Sync 字段变化时，记得同步客户端、服务端和 [`Docs/API.md`](Docs/API.md)。
+- `.env`、生产数据、Apple 凭据和证书不要提交到 Git。
+- 改完运行与改动相关的检查；只有真正部署后才更新线上版本记录。
