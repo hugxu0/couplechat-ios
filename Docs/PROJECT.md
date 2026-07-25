@@ -1,18 +1,18 @@
 # 项目现状
 
-> 更新时间：2026-07-26。本文只记录当前产品、验证和生产事实，不记录开发过程。
+> 更新时间：2026-07-26。这里记录当前版本、主要功能和还需要留意的事情。
 
-## 状态证据
+## 最近状态
 
 | 层级 | 最后核验 | 结论 |
 |---|---|---|
-| 客户端源码与 CI | `4951f506a4372f83ebd3f591a5c889c3c87a2855` / run `30166939662` | Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机弱网与换网体验验收 |
-| 最近 iOS 产物 | `3a8234e1265e0a4d93bbb6e1c35f28a7fd15705c` / run `30166811648` | Xcode 26.3 unsigned IPA 归档、内容校验和下载校验通过，版本 `0.2.0 (15)`；SHA256 `FC8DCDF514B9EB77A856DC5EC50A022D5D1FA2256CD1ADEAA4A8FA1D63D01296` |
-| 服务端本地验证 | 2026-07-26 | 生产依赖审计为 0；`npm run typecheck` 与 `npm run check` 通过，MCP、消息、同步、媒体、AI、Memory、情侣卡牌及 schema v34 的隔离 PostgreSQL 冒烟路径均通过 |
-| 日本公开入口 | 2026-07-26 | Nginx 配置检查与重载通过；`live`、`health`、`ready`、固定账号接口和 Socket.IO `101` 均正常，HSTS、内容类型保护、禁止嵌入、Referrer Policy、CSP 与 Permissions Policy 已穿过 Cloudflare 返回 |
-| 生产环境 | 2026-07-21 | 固定 RELEASE `c3c7cf316ed6f249a6223c15dd4567109c22f47b` 已发布，前一 release `0df13b0769a159bf09e284620ef42e6aaf6f6659` 保留回滚镜像；本次为普通服务端代码发布，未执行 migration、备份、恢复或数据库写入，schema 保持 v34，Web 保持 `RUN_MIGRATIONS=false`；美国本机、私有 origin、公开入口、固定账号列表与 Socket.IO 均通过 HTTP 200 检查，容器重启次数为 0 |
+| 客户端源码与 CI | `4951f506a4372f83ebd3f591a5c889c3c87a2855` / run `30166939662` | Xcode 26.3 编译、服务端检查和仓库检查通过 |
+| 最近 iOS 产物 | `3a8234e1265e0a4d93bbb6e1c35f28a7fd15705c` / run `30166811648` | unsigned IPA `0.2.0 (15)` 已生成并校验；SHA256 `FC8DCDF514B9EB77A856DC5EC50A022D5D1FA2256CD1ADEAA4A8FA1D63D01296` |
+| 服务端源码 | 2026-07-26 | 依赖审计为 0，`npm run typecheck` 和 `npm run check` 通过 |
+| 日本公开入口 | 2026-07-26 | Nginx、安全响应头、健康接口和 Socket.IO 均正常 |
+| 美国生产环境 | 2026-07-26 | 仍运行 release `c3c7cf316ed6f249a6223c15dd4567109c22f47b`，schema v34，容器运行正常且重启次数为 0；最新依赖修复尚未部署 |
 
-本机旧 IPA、tar、展开 release 或备份目录不属于生产证据。服务器细节见 [SERVER.md](SERVER.md)，签名与侧载见 [IOS.md](IOS.md)。
+服务器操作见 [SERVER.md](SERVER.md)，签名与安装见 [IOS.md](IOS.md)。
 
 ## 产品边界
 
@@ -22,13 +22,13 @@
 
 ## 技术基线
 
-- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码目标和最近已验证归档均为 `0.2.0 (15)`。
+- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码和最近归档均为 `0.2.0 (15)`。
 - Bundle ID：`com.hugxu0.couplechat.native`；工程由根目录 `project.yml` 生成。
-- iOS 依赖：Socket.IO Client Swift `16.1.0`、GLTFKit2 `0.5.15`，均固定精确版本。
+- iOS 依赖：Socket.IO Client Swift `16.1.0`、GLTFKit2 `0.5.15`。
 - 3D 资源：`Sources/Resources/cute_cat.glb` 受 Git 管理并随 IPA 发布。
 - 服务端：Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16，源码当前 schema v34；生产状态以上方证据表为准。
 - 公开基地址：`https://hoo66.top`；Debug 与 Release 当前都连接该地址。
-- 发布方式：公开单仓库；服务端只发布固定 SHA 的 `server/` 子树；GitHub 只生成 unsigned IPA。
+- 发布方式：服务端使用仓库脚本发布，GitHub 生成 unsigned IPA。
 - 签名方式：免费 Apple Personal Team，不支持 TestFlight/App Store，约 7 天需要刷新。
 
 ## 当前功能
@@ -76,41 +76,31 @@
 - 清空 App 数据后，已丢失本地文件的失败媒体无法继续重传。
 - 仓库不再保留客户端或服务端单元测试；iOS 依赖 CI 编译和真机验证，服务端依赖生产编译与 PostgreSQL smoke。
 - unsigned IPA 仍需在用户受信设备上重新签名，三台设备需要定期覆盖安装。
-- 备份只接受当前格式 v3；普通代码发布复用现行恢复基线，数据变更才走停写、完整备份和恢复验证。
+- 普通代码发布不修改数据库；涉及 migration 或数据修复时再单独准备备份。
 
-## 已知问题
+## 还要留意
 
-### 当前使用风险
+- Debug 和 Release 当前都连接生产环境，调试时避免批量删除或制造无用数据。
+- 仅使用时间戳的旧分页调用仍有同毫秒边角情况，新调用已经支持 ID 游标。
+- 图片选择和壁纸缓存仍有整包读取大文件的路径，可以继续优化。
+- 账号切换和 Socket 事件的 session generation 保护还能继续收紧。
+- 服务端依赖漏洞已在源码中修复，但美国生产 release 还没有更新；现有发布脚本因为恢复标记缺失而停止。
+- 当前没有持续自动备份。普通小版本可以继续开发，做 migration、批量数据修改或主机迁移前再先补一份可读备份。
 
-- **SYNC-002 同毫秒分页**：已支持可选 `beforeId`/`afterId`/`sinceId` 与客户端上拉下拉对齐；仅传 `ts` 的旧调用仍有同毫秒边角风险。
-- **IOS-003 开发构建连接生产**：没有独立开发服务前，开发构建不能执行破坏性操作或批量写入。
-- **IOS-004 大文件主线程读取**：视频/文件发送已优先 file 复制管线；图片选图与壁纸缓存仍可能整包 `Data`。
-- **IOS-007 账号切换竞态**：已增加 `sessionGeneration` 与 logout await close；Socket 全路径 generation 门闩仍可继续收紧。
-- **UPLOAD-001 临时文件**：已增加超时 `.uploading` 扫描与 cleanup 路径沙箱；备份策略仍依赖私有 runbook。
-
-### 生产安全风险
-
-- **SEC-001 认证滥用防护**：可信代理、边缘与应用限流、退避和压力边界仍需在私有环境核验。
-- **SEC-002 密钥轮换**：会话、内部调用和媒体用途尚未完全拆分，轮换前必须确认设备会话和历史媒体兼容性。
-- **SEC-003 媒体与日志**：短期媒体授权、两层 Nginx/应用日志脱敏和保留期仍需继续核对。
-- **SEC-004 生产依赖发布滞后**：仓库生产依赖审计已归零，但美国源站仍运行旧 release；普通发布因缺少现行恢复验证基线而按设计停止，不能绕过发布保护手工替换容器。
-- **OPS-002 周期恢复验证**：本次数据发布的新迁移前基线已完成本地真实恢复与离机 checksum；服务器既有每周验证入口仍指向已退役的旧备份目录，不能作为后续自动恢复证据。单独修复前，新的数据变更与冷切换仍必须按私有 runbook 手工执行完整恢复验证。
-- **OPS-003 数据库回滚**：migration 只前进，应用镜像回滚不等于数据库回滚；schema 变化后必须使用兼容镜像或同批次数据库、uploads 和必要密钥恢复。
-
-## 长期固定选择
+## 目前的选择
 
 - 客户端与服务端保持单仓库，协议变化在同一提交完成。
 - 日本是公开入口和中转，不运行 CoupleChat；美国是唯一可写应用与数据主机，离机备份不放在日本。
-- 仓库保持公开，但生产凭据、私聊、数据库、备份、签名资料和 UDID 永不进入 Git。
+- 仓库保持公开，生产凭据、私聊、数据库和签名资料不进入 Git。
 - iOS 最低版本保持 26，当前继续使用免费 Personal Team；需要更多设备或稳定分发时再评估 Apple Developer Program。
 
-## 验证基线
+## 常用检查
 
-服务端改动至少运行：
+服务端改动运行：
 
 ```powershell
 cd server
 npm run check
 ```
 
-iOS 改动至少通过 GitHub Actions generic iOS 编译。交互、媒体、音频、签名、通知和多设备行为仍需在三台真机验证。具体开发流程见 [DEVELOPMENT.md](DEVELOPMENT.md)。
+iOS 改动提交后看一次 GitHub Actions 编译；涉及交互、媒体、通知或弱网时，再在一台相关设备上实际试用。具体流程见 [DEVELOPMENT.md](DEVELOPMENT.md)。

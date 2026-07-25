@@ -1,13 +1,9 @@
-# iOS agent rules
+# iOS 开发提示
 
-先遵守根 `AGENTS.md`，再遵守本文件。
-
-- 最低 iOS/iPadOS 26，目标设备为 iPhone 与 iPad；工程定义以根 `project.yml` 为准。
-- SwiftUI 负责页面外壳和低频状态，聊天时间线、输入、键盘和高频媒体交互继续由现有 UIKit 路径负责；不要为统一风格进行大爆炸重写。
-- SQLite 只通过 `ChatPersistenceProtocol`/actor 访问；UI、MainActor 和控制器不直接执行 SQL，也不同步读取大文件。
-- 消息可靠发送保持 `clientId + pending + outbox + 服务端幂等`；任何 cursor 只能在本地事务成功后推进。
-- 未知 channel 或 Sync protocolVersion 必须拒绝/隔离，绝不默认映射到 `couple`。
-- REST/Socket/Sync 字段变化必须同步修改服务端契约和验证入口。
-- Debug/Release 当前都指向生产是已知风险；未经明确授权，不用开发构建制造或删除生产数据。
-- 仓库和 CI 不保存 Apple Account、证书、provisioning profile 或 UDID；workflow 只生成 unsigned IPA。
-- 视觉/手势/音视频/通知改动除了 CI 编译检查，还要列出需要在三台真机验证的场景。
+- 最低 iOS/iPadOS 26，工程配置以根 `project.yml` 为准。
+- 普通页面沿用 SwiftUI，聊天时间线和高频输入沿用现有 UIKit，不需要为了统一风格整体重写。
+- SQLite 通过现有 persistence actor 访问，消息发送沿用 `clientId + pending + outbox + 服务端幂等`。
+- REST、Socket 或 Sync 字段变化时同步更新服务端和 `Docs/API.md`。
+- Debug 和 Release 当前都连接生产，调试时避免批量写入或删除数据。
+- CI 只生成 unsigned IPA；签名信息留在自己的设备上。
+- 视觉、音视频、通知或弱网改动在 CI 通过后，用一台相关设备实际试一下。

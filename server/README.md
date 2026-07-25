@@ -9,14 +9,14 @@ npm ci
 npm run check
 ```
 
-开发必须使用隔离数据库和非生产 `.env`。普通生产代码发布不运行 migrator；涉及 migration、数据修复或媒体结构变化时，生产 Web 进程保持 `RUN_MIGRATIONS=false`，再由发布流程中的独立 migrator 执行。
+本地开发使用自己的数据库和 `.env`。普通代码发布不运行 migrator；涉及 migration、数据修复或媒体结构变化时再单独处理数据步骤。
 
 ## 文档
 
 - [项目现状与已知问题](../Docs/PROJECT.md)
 - [系统架构与数据同步](../Docs/ARCHITECTURE.md)
 - [API 契约](../Docs/API.md)
-- [服务器、部署与恢复](../Docs/SERVER.md)
-- [开发指南与文件地图](../Docs/DEVELOPMENT.md)
+- [服务器与部署](../Docs/SERVER.md)
+- [开发指南](../Docs/DEVELOPMENT.md)
 
-生产 Node 端口是 `3000`；`.env.production.example`、Compose、Dockerfile 与健康检查的生产默认值已经统一。`8080` 只保留为显式的本地开发端口。普通代码发布使用 `deploy/publish-server.ps1`；首次安装仍需按私有运维资料人工准备。
+生产 Node 端口是 `3000`，`8080` 可用于本地开发。普通代码发布使用 `deploy/publish-server.ps1`，服务器初始化和主机配置放在 VPS 项目中。

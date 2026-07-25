@@ -1,6 +1,6 @@
 # 系统架构
 
-本文说明客户端、服务端和数据同步的当前结构与不可破坏边界。具体字段见 [API.md](API.md)，AI 内部见 [AI.md](AI.md)，关键文件位置见 [DEVELOPMENT.md](DEVELOPMENT.md)。
+本文说明客户端、服务端和数据同步的当前结构与关键约定。具体字段见 [API.md](API.md)，AI 内部见 [AI.md](AI.md)，关键文件位置见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
 ## 总体结构
 
@@ -203,8 +203,8 @@ PostgreSQL sequence 的分配顺序不等于事务提交顺序。所有创建同
 - 任何 AI 工具都不能读取另一账号的 AI 私聊。
 - `TOKEN_SECRET` 必须稳定，否则所有现有登录会话失效。
 
-## 当前验证边界
+## 什么时候需要额外验证
 
 仓库已移除客户端和服务端单元测试。服务端 `npm run check` 当前覆盖生产编译和 embedded PostgreSQL smoke，iOS CI 覆盖 SwiftLint、结构护栏和 generic iOS 编译。
 
-涉及以下场景时必须在隔离环境或真机补充实际验证：反序提交、rollback 空洞、并发轮询、Socket 断线补回、Socket/Sync 重复事件、SQLite 中途失败、同毫秒分页、未知协议/频道、`clientId` 超时重试以及多设备账号切换。
+改到对应链路时，按相关性选择隔离环境或真机验证，例如反序提交、并发轮询、Socket 断线补回、重复事件、SQLite 中途失败、同毫秒分页、`clientId` 超时重试或账号切换；普通界面改动不需要把这份列表全部跑一遍。
