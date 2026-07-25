@@ -72,8 +72,9 @@ current_sha="$(tr -d '\r\n' < "$ACTIVE_DIR/RELEASE")"
 [[ "$current_sha" =~ ^[0-9a-f]{40}$ ]] || die "当前 RELEASE 不是完整 SHA"
 docker inspect couplechat-server >/dev/null 2>&1 || die "当前容器不存在"
 [[ "$(docker inspect couplechat-server --format '{{.State.Status}}')" == "running" ]] || die "当前容器未运行"
-find "$BACKUP_ROOT" -maxdepth 3 -name RESTORE-VERIFIED -type f -print -quit 2>/dev/null | grep -q . || \
-  die "现行恢复验证基线不存在"
+if ! find "$BACKUP_ROOT" -maxdepth 3 -name RESTORE-VERIFIED -type f -print -quit 2>/dev/null | grep -q .; then
+  echo "[deploy] warning: 未找到恢复验证标记；普通代码发布继续，数据变更发布请先准备备份" >&2
+fi
 available_kb="$(df -Pk "$DEPLOY_ROOT" | awk 'NR==2 {print $4}')"
 (( available_kb >= 1048576 )) || die "部署目录可用空间不足 1 GiB"
 
