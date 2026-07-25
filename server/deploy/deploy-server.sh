@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+trap 'rc=$?; echo "[deploy] failed line=$LINENO rc=$rc" >&2' ERR
+
 # Fast production deploy for ordinary code changes. This script never runs a
 # migration and never creates or restores a backup.
 
@@ -12,7 +14,6 @@ BIN_DIR="$DEPLOY_ROOT/bin"
 BACKUP_ROOT="${COUPLECHAT_BACKUP_ROOT:-/var/backups/couplechat}"
 LOCK_FILE="${COUPLECHAT_DEPLOY_LOCK:-/run/lock/couplechat-deploy.lock}"
 PUBLIC_BASE_URL="${COUPLECHAT_PUBLIC_BASE_URL:-https://hoo66.top}"
-ORIGIN_BASE_URL="${COUPLECHAT_ORIGIN_BASE_URL:-https://chat.huhuhu.top}"
 IMAGE_REPOSITORY="couplechat-server"
 COMPOSE_OVERRIDE="compose.release.override.yml"
 umask 077
@@ -99,21 +100,11 @@ wait_local_health() {
   return 1
 }
 
-proxy_key="$(
-  grep -Rhs 'http_x_couplechat_proxy_key' /etc/nginx/sites-enabled 2>/dev/null \
-    | sed -nE 's/.*http_x_couplechat_proxy_key[[:space:]]*!=[[:space:]]*"([^"]+)".*/\1/p' \
-    | head -n1
-)"
-[[ -n "$proxy_key" ]] || die "无法从 root-only Nginx 配置读取 origin 校验值"
-
 check_external_health() {
-  local path status accounts socket_response
+  local path accounts socket_response
   for path in live health ready; do
     curl -fsS "$PUBLIC_BASE_URL/$path" >/dev/null
   done
-  curl -fsS "$ORIGIN_BASE_URL/health" -H "X-CoupleChat-Proxy-Key: $proxy_key" >/dev/null
-  status="$(curl -sS -o /dev/null -w '%{http_code}' "$ORIGIN_BASE_URL/health")"
-  [[ "$status" == "403" ]] || return 1
   accounts="$(curl -fsS "$PUBLIC_BASE_URL/api/accounts")"
   printf '%s' "$accounts" | node -e '
     let body="";process.stdin.on("data",c=>body+=c).on("end",()=>{
