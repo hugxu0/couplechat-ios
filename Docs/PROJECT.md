@@ -6,8 +6,8 @@
 
 | 层级 | 最后核验 | 结论 |
 |---|---|---|
-| 客户端源码与 CI | `0df13b0769a159bf09e284620ef42e6aaf6f6659` / run `29728033575` | Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机体验验收 |
-| 最近 iOS 产物 | `0df13b0769a159bf09e284620ef42e6aaf6f6659` / run `29728035504` | Xcode 26.3 unsigned IPA 归档、内容校验和下载校验通过，版本 `0.2.0 (13)`；SHA256 `783D897DB86687F1438A71C06B5B3D1AD37B7DF98CE2EEE1C2C7DB02CCE94193` |
+| 客户端源码与 CI | `4951f506a4372f83ebd3f591a5c889c3c87a2855` / run `30166939662` | Xcode 26.3 编译、SwiftLint、服务端检查与仓库安全检查通过；不代替真机弱网与换网体验验收 |
+| 最近 iOS 产物 | `3a8234e1265e0a4d93bbb6e1c35f28a7fd15705c` / run `30166811648` | Xcode 26.3 unsigned IPA 归档、内容校验和下载校验通过，版本 `0.2.0 (15)`；SHA256 `FC8DCDF514B9EB77A856DC5EC50A022D5D1FA2256CD1ADEAA4A8FA1D63D01296` |
 | 服务端本地验证 | 2026-07-26 | 生产依赖审计为 0；`npm run typecheck` 与 `npm run check` 通过，MCP、消息、同步、媒体、AI、Memory、情侣卡牌及 schema v34 的隔离 PostgreSQL 冒烟路径均通过 |
 | 日本公开入口 | 2026-07-26 | Nginx 配置检查与重载通过；`live`、`health`、`ready`、固定账号接口和 Socket.IO `101` 均正常，HSTS、内容类型保护、禁止嵌入、Referrer Policy、CSP 与 Permissions Policy 已穿过 Cloudflare 返回 |
 | 生产环境 | 2026-07-21 | 固定 RELEASE `c3c7cf316ed6f249a6223c15dd4567109c22f47b` 已发布，前一 release `0df13b0769a159bf09e284620ef42e6aaf6f6659` 保留回滚镜像；本次为普通服务端代码发布，未执行 migration、备份、恢复或数据库写入，schema 保持 v34，Web 保持 `RUN_MIGRATIONS=false`；美国本机、私有 origin、公开入口、固定账号列表与 Socket.IO 均通过 HTTP 200 检查，容器重启次数为 0 |
@@ -22,7 +22,7 @@
 
 ## 技术基线
 
-- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码目标版本 `0.2.0 (15)`，最近已归档产物仍为状态证据表中的 `0.2.0 (13)`。
+- 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；源码目标和最近已验证归档均为 `0.2.0 (15)`。
 - Bundle ID：`com.hugxu0.couplechat.native`；工程由根目录 `project.yml` 生成。
 - iOS 依赖：Socket.IO Client Swift `16.1.0`、GLTFKit2 `0.5.15`，均固定精确版本。
 - 3D 资源：`Sources/Resources/cute_cat.glb` 受 Git 管理并随 IPA 发布。
@@ -93,6 +93,7 @@
 - **SEC-001 认证滥用防护**：可信代理、边缘与应用限流、退避和压力边界仍需在私有环境核验。
 - **SEC-002 密钥轮换**：会话、内部调用和媒体用途尚未完全拆分，轮换前必须确认设备会话和历史媒体兼容性。
 - **SEC-003 媒体与日志**：短期媒体授权、两层 Nginx/应用日志脱敏和保留期仍需继续核对。
+- **SEC-004 生产依赖发布滞后**：仓库生产依赖审计已归零，但美国源站仍运行旧 release；普通发布因缺少现行恢复验证基线而按设计停止，不能绕过发布保护手工替换容器。
 - **OPS-002 周期恢复验证**：本次数据发布的新迁移前基线已完成本地真实恢复与离机 checksum；服务器既有每周验证入口仍指向已退役的旧备份目录，不能作为后续自动恢复证据。单独修复前，新的数据变更与冷切换仍必须按私有 runbook 手工执行完整恢复验证。
 - **OPS-003 数据库回滚**：migration 只前进，应用镜像回滚不等于数据库回滚；schema 变化后必须使用兼容镜像或同批次数据库、uploads 和必要密钥恢复。
 
