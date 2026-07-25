@@ -7,7 +7,7 @@ options:
 packages:
   SocketIO:
     url: https://github.com/socketio/socket.io-client-swift
-    exactVersion: 16.1.0
+    exactVersion: 16.1.1
   GLTFKit2:
     url: https://github.com/warrenm/GLTFKit2
     exactVersion: 0.5.15
@@ -28,7 +28,7 @@ targets:
       properties:
         CFBundleDisplayName: 悄悄话
         CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "15"
+        CFBundleVersion: "16"
         UILaunchScreen:
           UIColorName: LaunchBackground
         UIApplicationSceneManifest:
