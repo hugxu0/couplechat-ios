@@ -41,6 +41,8 @@ struct ChatDetailSettingsView: View {
             settingsSection
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(AppPageBackground())
         .navigationTitle("聊天详情")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showSearch) {

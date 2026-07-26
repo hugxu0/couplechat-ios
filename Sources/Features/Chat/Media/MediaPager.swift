@@ -306,7 +306,7 @@ private struct ZoomableRemoteImage: View {
         .onChange(of: scale) { onScaleChange(scale) }
         .onDisappear { onScaleChange(1) }
         .onTapGesture(count: 2) {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+            withAnimation(DS.Anim.springFast) {
                 settledScale = settledScale > 1 ? 1 : 2
                 settledOffset = .zero
             }

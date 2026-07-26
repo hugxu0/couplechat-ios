@@ -24,6 +24,8 @@ struct AIMemoryControlCenterView: View {
             memoriesSection
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(AppPageBackground())
         .navigationTitle("大橘与记忆")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "搜索大橘记住的内容")
