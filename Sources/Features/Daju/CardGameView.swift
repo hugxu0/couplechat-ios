@@ -185,7 +185,8 @@ struct CardGameView: View {
                         .foregroundStyle(DS.Palette.textSecondary)
                 }
                 Spacer()
-                Text("\(snapshot.drawsRemaining) / 3")
+                // 与下方进度条同一语义（已用几次），否则"0/3"配三条满格看着自相矛盾。
+                Text("\(snapshot.drawsUsed) / 3")
                     .font(DS.Typo.displayNumber.monospacedDigit())
                     .foregroundStyle(snapshot.drawsRemaining > 0 ? DS.Palette.purple : DS.Palette.textTertiary)
             }
@@ -206,14 +207,16 @@ struct CardGameView: View {
                     if viewModel.isMutating {
                         ProgressView().tint(.white)
                     } else {
-                        Image(systemName: "shuffle")
+                        Image(systemName: snapshot.drawsRemaining == 0 ? "moon.zzz.fill" : "shuffle")
                     }
-                    Text(viewModel.isMutating ? "正在洗牌…" : "抽一张")
+                    Text(buttonTitle(snapshot: snapshot))
                         .font(DS.Typo.button)
                     Spacer()
-                    Text("约 1/3 命中 · 末抽保底")
-                        .font(DS.Typo.micro)
-                        .foregroundStyle(.white.opacity(0.75))
+                    if snapshot.drawsRemaining > 0 {
+                        Text("约 1/3 命中 · 末抽保底")
+                            .font(DS.Typo.micro)
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16)
@@ -319,6 +322,12 @@ struct CardGameView: View {
                 .font(DS.Typo.caption)
                 .foregroundStyle(DS.Palette.textSecondary)
         }
+    }
+
+    private func buttonTitle(snapshot: CardGameSnapshot) -> String {
+        if viewModel.isMutating { return "正在洗牌…" }
+        if snapshot.drawsRemaining == 0 { return "今天抽完了，明天 00:00 再来" }
+        return "抽一张"
     }
 
     private func collectedCount(_ snapshot: CardGameSnapshot) -> Int {
