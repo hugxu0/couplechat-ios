@@ -112,38 +112,17 @@ export async function ownerTextMessagesAfter(
   limit: number,
   conversationId?: string,
 ): Promise<LogMessage[]> {
+  // 图片/视频的说明文字（"这是我的过敏原"）和纯文本一样是记忆素材；
+  // 只按 type='text' 过滤会让配图说明永远进不了长期记忆。
   const rows = await all<MessageRow>(
     `SELECT * FROM messages
      WHERE ${conversationId ? "conversation_id" : "channel"} = ?
        AND (ts > ? OR (ts = ? AND id > ?))
-       AND kind = 'user' AND sender <> 'ai' AND type = 'text' AND BTRIM(text) <> ''
+       AND kind = 'user' AND sender <> 'ai'
+       AND (type = 'text' OR type IN ('image', 'video'))
+       AND BTRIM(COALESCE(text, '')) <> ''
      ORDER BY ts ASC, id ASC LIMIT ?`,
     [conversationId ?? storedChannel, cursor.ts, cursor.ts, cursor.id, limit],
-  );
-  return rows.map(mapRow);
-}
-
-/**
- * 读取某个时间点附近的少量共同聊天原文，供日记从总览回到真实语气与顺序。
- * 调用方必须同时给出作息日起止边界；这里只返回主人消息，不含系统事件或大橘发言。
- */
-export async function ownerConversationMessagesAround(
-  storedChannel: string,
-  anchorTs: number,
-  rangeStart: number,
-  rangeEnd: number,
-  limit: number,
-): Promise<LogMessage[]> {
-  const rows = await all<MessageRow>(
-    `SELECT * FROM (
-       SELECT * FROM messages
-       WHERE channel = ? AND ts >= ? AND ts < ?
-         AND kind = 'user' AND sender <> 'ai'
-       ORDER BY ABS(ts - ?) ASC, ts ASC, id ASC
-       LIMIT ?
-     ) AS nearby_messages
-     ORDER BY ts ASC, id ASC`,
-    [storedChannel, rangeStart, rangeEnd, anchorTs, Math.max(1, Math.min(20, limit))],
   );
   return rows.map(mapRow);
 }

@@ -41,7 +41,10 @@ export function searchTerms(query: string): string[] {
   const terms: string[] = [];
   const add = (value: string) => {
     const term = normalize(value);
-    if (term.length < 2 || terms.includes(term)) return;
+    // 单个汉字是完整词（"猫"、"药"），丢掉会让单字查询恒为零结果；
+    // 单个拉丁字母或数字仍然太泛，继续过滤。
+    if (term.length < 2 && !/\p{Script=Han}/u.test(term)) return;
+    if (!term || terms.includes(term)) return;
     terms.push(term);
   };
 

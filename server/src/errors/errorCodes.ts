@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 export const errorCodes = {
   invalidRequest: "invalid_request",
   unauthorized: "unauthorized",
+  coupleRequired: "couple_required",
   invalidCredentials: "invalid_credentials",
   rateLimited: "rate_limited",
   notFound: "not_found",

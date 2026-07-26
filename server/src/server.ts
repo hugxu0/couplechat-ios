@@ -8,7 +8,7 @@ import { initAi, recoverAiReplyJobs, setAiSocketIO, shutdownAi } from "./ai";
 import { createReminderScheduler } from "./personalItems/reminderScheduler";
 import { startUploadCleanup } from "./upload/cleanup";
 import { socketEvents } from "./contracts/realtime";
-import { shutdownServer } from "./lifecycle/shutdown";
+
 import { createTranscriptScheduler } from "./transcription/scheduler";
 import { createRecommendationScheduler } from "./daily/scheduler";
 import { createDiaryScheduler } from "./ai/diary/scheduler";
@@ -51,19 +51,16 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     try {
-      await shutdownServer({
-        stopSchedulers: async () => {
-          reminderScheduler.stop();
-          transcriptScheduler.stop();
-          recommendationScheduler.stop();
-          diaryScheduler.stop();
-          await shutdownAi();
-        },
-        stopUploadCleanup,
-        closeSocket: () => new Promise((resolve) => io?.close(() => resolve()) ?? resolve()),
-        closeHttp: () => app.close(),
-        closeDatabase,
-      });
+      // 关停顺序：先停生产者（调度器与 AI），再关 Socket、HTTP，最后关数据库。
+      reminderScheduler.stop();
+      transcriptScheduler.stop();
+      recommendationScheduler.stop();
+      diaryScheduler.stop();
+      await shutdownAi();
+      stopUploadCleanup();
+      await new Promise<void>((resolve) => io?.close(() => resolve()) ?? resolve());
+      await app.close();
+      await closeDatabase();
       process.exit(0);
     } catch (error) {
       console.error("[shutdown] 关闭失败:", error);

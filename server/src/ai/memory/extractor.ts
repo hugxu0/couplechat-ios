@@ -47,9 +47,11 @@ const SYSTEM_MEMORY_SYNC = { actorAccountId: null } as const;
 
 export const MEMORY_SOURCE_BATCH_SIZE = 80;
 export const MEMORY_BUSY_BATCH_THRESHOLD = 20;
-export const MEMORY_BUSY_IDLE_MS = 15 * 60 * 1000;
-export const MEMORY_QUIET_IDLE_MS = 60 * 60 * 1000;
-export const MEMORY_MAX_BATCH_AGE_MS = 2 * 60 * 60 * 1000;
+// 两个用户的整理调用很便宜，及时性优先：刚说的事应该在半小时内可被大橘引用，
+// 旧值（15 分钟 / 60 分钟 / 2 小时）会让「我刚跟你说过」经常落空。
+export const MEMORY_BUSY_IDLE_MS = 5 * 60 * 1000;
+export const MEMORY_QUIET_IDLE_MS = 15 * 60 * 1000;
+export const MEMORY_MAX_BATCH_AGE_MS = 30 * 60 * 1000;
 export const MEMORY_EMPTY_RETRY_THRESHOLD = 12;
 /**
  * 连续这么多轮仍然整理不出可保存内容时，强制推进游标跳过这批消息。
