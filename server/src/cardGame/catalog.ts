@@ -270,10 +270,24 @@ const supportCards: CardDefinition[] = [
   })),
 ];
 
+/** 单稀有度卡：不分等级，固定蓝卡。只加入 rare 池，抽卡与图鉴自然生效。 */
+const truthCard: CardDefinition = {
+  key: "emotion_truth",
+  title: "真心话卡",
+  category: "emotion",
+  rarity: "rare",
+  summary: "对方要认真回答你的一个问题，说出藏在心里的真心话",
+  icon: "quote.bubble.fill",
+  effectKind: "instant",
+  durationMs: null,
+  modifier: null,
+};
+
 export const cardCatalog: readonly CardDefinition[] = [
   ...intimacyCards,
   ...moneyCards,
   ...emotionCards,
+  truthCard,
   ...choiceCards,
   ...supportCards,
 ];

@@ -50,7 +50,10 @@ struct MediaUploadService {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = authorizedRequest(purpose: purpose, session: session, boundary: boundary)
         request.httpBody = await Task.detached(priority: .utility) {
-            Self.multipartBody(data: data, mimeType: mimeType, boundary: boundary)
+            let optimized = purpose == .message
+                ? Self.optimizedImageBody(data: data, mimeType: mimeType)
+                : (data, mimeType)
+            return Self.multipartBody(data: optimized.0, mimeType: optimized.1, boundary: boundary)
         }.value
         let (responseData, response) = try await httpClient.data(for: request)
         return try decode(responseData, response: response)
@@ -63,6 +66,14 @@ struct MediaUploadService {
         session: Session,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> MediaUploadResult {
+        // 超过阈值的静态图走重压缩的 data 通道；视频/GIF/小图维持流式文件上传。
+        if purpose == .message, mimeType.lowercased().hasPrefix("image/"), mimeType.lowercased() != "image/gif",
+           let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+           size > Self.recompressThresholdBytes,
+           let originalData = try? Data(contentsOf: fileURL) {
+            return try await upload(
+                data: originalData, mimeType: mimeType, purpose: purpose, session: session)
+        }
         let boundary = "Boundary-\(UUID().uuidString)"
         let multipartURL = try await Task.detached(priority: .utility) {
             try Self.makeMultipartFile(
@@ -215,14 +226,31 @@ struct MediaUploadService {
            CGImageSourceGetCount(source) > 1 {
             return nil
         }
+        // 单次 0.78 质量超限就直接放弃会让服务端兼容路径用 sharp 重算原图
+        // （小机器上动辄十几秒）；改为降质量/降边长逐级重试，尽量把缩略图带上。
+        for maxEdge in [720, 512] {
+            guard let image = downsampled(source: source, maxEdge: maxEdge) else { continue }
+            for quality in [0.78, 0.6, 0.45] {
+                if let data = encodeJPEG(image: image, quality: quality),
+                   data.count <= maxThumbnailBytes {
+                    return data
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func downsampled(source: CGImageSource, maxEdge: Int) -> CGImage? {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 720,
+            kCGImageSourceThumbnailMaxPixelSize: maxEdge,
             kCGImageSourceShouldCacheImmediately: true,
         ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(
-            source, 0, options as CFDictionary) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    private static func encodeJPEG(image: CGImage, quality: Double) -> Data? {
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             output,
@@ -232,11 +260,28 @@ struct MediaUploadService {
         CGImageDestinationAddImage(
             destination,
             image,
-            [kCGImageDestinationLossyCompressionQuality: 0.78] as CFDictionary)
+            [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return nil }
-        let data = output as Data
-        guard data.count <= maxThumbnailBytes else { return nil }
-        return data
+        return output as Data
+    }
+
+    private static let recompressThresholdBytes = 1_500_000
+    private static let recompressMaxEdge = 2_560
+
+    /// 大图上传前重压缩：非 GIF、单帧、超过阈值的图片降到最长边
+    /// 2560 的 JPEG。截图 PNG 动辄 6MB+，重压后网络与服务端处理都快一个量级；
+    /// 本地展示仍用原图，只影响上传体。
+    static func optimizedImageBody(data: Data, mimeType: String) -> (data: Data, mimeType: String) {
+        let mime = mimeType.lowercased()
+        guard mime.hasPrefix("image/"), mime != "image/gif",
+              data.count > recompressThresholdBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) == 1,
+              let image = downsampled(source: source, maxEdge: recompressMaxEdge),
+              let jpeg = encodeJPEG(image: image, quality: 0.82),
+              jpeg.count < data.count
+        else { return (data, mimeType) }
+        return (jpeg, "image/jpeg")
     }
 }
 

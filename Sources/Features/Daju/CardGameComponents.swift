@@ -139,28 +139,61 @@ struct CardGameHistoryRow: View {
     let currentUsername: String
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(alignment: .top, spacing: 11) {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(effect.rarity.tint)
                 .font(.body)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(effect.title)
-                    .font(DS.Typo.secondary.weight(.semibold))
-                    .foregroundStyle(DS.Palette.textPrimary)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(effect.title)
+                        .font(DS.Typo.secondary.weight(.semibold))
+                        .foregroundStyle(DS.Palette.textPrimary)
+                    Text(effect.rarity.title)
+                        .font(DS.Typo.micro.weight(.bold))
+                        .foregroundStyle(effect.rarity.tint)
+                    Spacer()
+                    Text(timeText)
+                        .font(DS.Typo.micro)
+                        .foregroundStyle(DS.Palette.textTertiary)
+                }
+                directionLine
                 Text(effect.summary)
                     .font(DS.Typo.caption)
-                    .foregroundStyle(DS.Palette.textPrimary.opacity(0.85))
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("\(relationText) · \(timeText)")
-                    .font(DS.Typo.caption)
                     .foregroundStyle(DS.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            Text(effect.rarity.title)
-                .font(DS.Typo.micro.weight(.bold))
-                .foregroundStyle(effect.rarity.tint)
         }
         .padding(.vertical, 11)
+    }
+
+    /// 出牌方 ➜ 生效方，名字加粗，自己标注“我”并用主题紫色。
+    private var directionLine: some View {
+        let selfTarget = effect.senderUsername == effect.targetUsername
+        return HStack(spacing: 5) {
+            nameTag(effect.senderName, isMe: effect.senderUsername == currentUsername)
+            Image(systemName: "arrow.right")
+                .font(.system(size: 9, weight: .black))
+                .foregroundStyle(effect.rarity.tint)
+            if selfTarget {
+                Text("自己")
+                    .font(DS.Typo.caption.weight(.bold))
+                    .foregroundStyle(DS.Palette.textPrimary)
+            } else {
+                nameTag(effect.targetName, isMe: effect.targetUsername == currentUsername)
+            }
+        }
+    }
+
+    private func nameTag(_ name: String, isMe: Bool) -> some View {
+        Text(isMe ? "\(name)（我）" : name)
+            .font(DS.Typo.caption.weight(.bold))
+            .foregroundStyle(isMe ? DS.Palette.purple : DS.Palette.textPrimary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(
+                (isMe ? DS.Palette.purple : DS.Palette.textTertiary).opacity(0.10),
+                in: Capsule())
     }
 
     private var timeText: String {
@@ -168,17 +201,6 @@ struct CardGameHistoryRow: View {
             for: Date(timeIntervalSince1970: Double(effect.createdAt) / 1000),
             calendar: .current,
             now: Date())
-    }
-
-    private var relationText: String {
-        let sentByMe = effect.senderUsername == currentUsername
-        let targetsMe = effect.targetUsername == currentUsername
-        switch (sentByMe, targetsMe) {
-        case (true, true): return "你对自己生效"
-        case (true, false): return "你对对方生效"
-        case (false, true): return "对你生效 · \(effect.senderName)"
-        case (false, false): return "对方对自己生效"
-        }
     }
 }
 
