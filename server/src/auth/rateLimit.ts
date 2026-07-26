@@ -50,8 +50,3 @@ export function consumeRateLimit(input: {
     remaining: Math.max(0, input.limit - hits.length),
   };
 }
-
-/** 测试或运维可清空。 */
-export function resetRateLimits(): void {
-  buckets.clear();
-}

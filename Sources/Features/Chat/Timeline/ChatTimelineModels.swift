@@ -371,13 +371,6 @@ enum ChatTimelineMetrics {
 }
 
 extension AccentChoice {
-    var uiColor: UIColor {
-        switch self {
-        case .tangerine: return UIColor(red: 1.00, green: 0.45, blue: 0.20, alpha: 1)
-        case .sakura: return UIColor(red: 0.96, green: 0.36, blue: 0.55, alpha: 1)
-        case .ocean: return UIColor(red: 0.25, green: 0.52, blue: 0.95, alpha: 1)
-        case .mint: return UIColor(red: 0.10, green: 0.65, blue: 0.50, alpha: 1)
-        case .grape: return UIColor(red: 0.55, green: 0.38, blue: 0.92, alpha: 1)
-        }
-    }
+    /// 直接桥接 Theme 里的 SwiftUI 定义，避免同一组主题色维护在两个文件里。
+    var uiColor: UIColor { UIColor(color) }
 }

@@ -45,13 +45,6 @@ export interface ReadReceiptRow {
   updated_at: number;
 }
 
-export interface SharedItemRow {
-  key: string;
-  value_json: string;
-  updated_by: string;
-  updated_at: number;
-}
-
 export interface PersonalItemRow {
   id: string;
   owner: string;
@@ -110,9 +103,3 @@ export interface AiMemoryRow {
   version?: number;
 }
 
-export interface AiMemoryDependencyRow {
-  memory_id: string;
-  source_memory_id: string;
-  role: string;
-  created_at: number;
-}

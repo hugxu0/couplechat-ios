@@ -3,11 +3,9 @@ export { migrate, schemaMigrations } from "./migrate";
 export { transaction, type DatabaseTransaction } from "./transaction";
 export type {
   AccountRow,
-  AiMemoryDependencyRow,
   AiMemoryRow,
   MessageRow,
   PersonalItemRow,
   ReadReceiptRow,
-  SharedItemRow,
   UploadRow,
 } from "./rows";
