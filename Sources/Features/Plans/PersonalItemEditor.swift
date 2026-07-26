@@ -23,12 +23,12 @@ struct PersonalItemEditor: View {
         // 编辑既有条目时按它自己有没有到期时间决定；只有新建提醒才默认打开。
         // 否则编辑一条没有到期时间的提醒会凭空补上一个时间并触发推送。
         _hasDueDate = State(initialValue: item.map { $0.dueAt != nil } ?? (mode.kind == .reminder))
+        _dueDate = State(initialValue: item?.dueDate ?? Date().addingTimeInterval(30 * 60))
     }
 
     private var barkConfigured: Bool {
         guard let username = store.auth.session?.username else { return true }
         return BarkSettingsSheet.isConfigured(for: username)
-        _dueDate = State(initialValue: item?.dueDate ?? Date().addingTimeInterval(30 * 60))
     }
 
     var body: some View {
