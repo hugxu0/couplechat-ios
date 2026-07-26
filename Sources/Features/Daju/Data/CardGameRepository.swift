@@ -123,6 +123,8 @@ struct CardGameSnapshot: Codable {
     let now: Int64
     let drawsUsed: Int
     let drawsRemaining: Int
+    /// 今日已翻结果（按翻开顺序），翻牌阵据此还原；旧服务端没有该字段。
+    let todayDraws: [CardGameDraw]?
     let inventory: [CardGameInventoryItem]
     let partnerInventory: [CardGameInventoryItem]
     let activeEffects: [CardGameEffect]

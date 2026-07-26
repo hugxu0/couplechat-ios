@@ -12,8 +12,8 @@ import {
   type CardRarity,
 } from "./catalog";
 
-const DAILY_DRAW_LIMIT = 3;
-const DRAW_HIT_DENOMINATOR = 3;
+const DAILY_DRAW_LIMIT = 5;
+const DRAW_HIT_DENOMINATOR = 5;
 const POSTPONE_MS = 24 * 60 * 60_000;
 
 interface AccountRef {
@@ -90,6 +90,8 @@ export interface CardGameSnapshot {
   now: number;
   drawsUsed: number;
   drawsRemaining: number;
+  /** 今天已翻的结果（按翻开顺序），客户端据此还原翻牌阵。 */
+  todayDraws: Array<{ success: boolean; card: CardDefinition | null }>;
   inventory: CardGameInventoryItem[];
   partnerInventory: CardGameInventoryItem[];
   activeEffects: CardGameEffect[];
@@ -260,6 +262,19 @@ async function snapshotIn(
     "SELECT used_count FROM card_game_daily_draws WHERE account_id = ? AND draw_day = ?",
     [accountId, today],
   );
+  // 今天已翻的结果按顺序返回，客户端据此还原翻牌阵（跨设备、重启一致）。
+  const todayDrawRows = await db.all<{ success: boolean; card_key: string | null; rarity: string | null }>(
+    `SELECT success, card_key, rarity FROM card_game_draws
+      WHERE account_id = ? AND draw_day = ?
+      ORDER BY created_at ASC, id ASC`,
+    [accountId, today],
+  );
+  const todayDraws = todayDrawRows.map((row) => ({
+    success: row.success,
+    card: row.success && row.card_key && row.rarity
+      ? cardDefinition(row.card_key, row.rarity as CardRarity) ?? null
+      : null,
+  }));
   const inventory = await inventoryFor(db, accountId);
   const partnerInventory = partner ? await inventoryFor(db, partner.id) : [];
   const rows = await db.all<EffectRow>(
@@ -279,6 +294,7 @@ async function snapshotIn(
     now,
     drawsUsed: draws?.used_count ?? 0,
     drawsRemaining: Math.max(0, DAILY_DRAW_LIMIT - (draws?.used_count ?? 0)),
+    todayDraws,
     inventory,
     partnerInventory,
     activeEffects,
@@ -352,16 +368,7 @@ export async function drawCard(
         WHERE account_id = ? AND draw_day = ?`,
       [now, context.identity.accountId, today],
     );
-    // 保底：当天最后一次机会且前面全部未中时必中。没有保底时
-    // P(整天空手) = (2/3)^3 ≈ 30%，三成的日子零收获是反游戏设计。
-    const priorHits = await db.get<{ hits: number }>(
-      `SELECT COUNT(*)::int AS hits FROM card_game_draws
-        WHERE account_id = ? AND draw_day = ? AND success = TRUE`,
-      [context.identity.accountId, today],
-    );
-    const isLastChance = (daily?.used_count ?? 0) === DAILY_DRAW_LIMIT - 1;
-    const pity = isLastChance && (priorHits?.hits ?? 0) === 0;
-    const success = pity || randomInt(0, DRAW_HIT_DENOMINATOR) === 0;
+    const success = randomInt(0, DRAW_HIT_DENOMINATOR) === 0;
     const card = success
       ? randomCardFor(randomRarity(randomInt(0, 1_000_000) / 1_000_000),
         randomInt(0, 1_000_000) / 1_000_000)

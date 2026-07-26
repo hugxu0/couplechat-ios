@@ -1474,6 +1474,20 @@ export const schemaMigrations: readonly SchemaMigration[] = [
       WHERE sender = 'ai' AND meta_json LIKE '%"status":"processing"%';
     `,
   },
+  {
+    version: 37,
+    name: "card_game_five_flips",
+    sql: `
+    -- 抽卡改为每天 5 张翻牌，放宽 v33 写死的 used_count 上限。
+    -- 约束名是内联 CHECK 的自动命名；上限继续由应用层 DAILY_DRAW_LIMIT 控制，
+    -- 这里只保留非负与一个宽松的防御上限。
+    ALTER TABLE card_game_daily_draws
+      DROP CONSTRAINT IF EXISTS card_game_daily_draws_used_count_check;
+    ALTER TABLE card_game_daily_draws
+      ADD CONSTRAINT card_game_daily_draws_used_count_check
+      CHECK (used_count >= 0 AND used_count <= 20);
+    `,
+  },
 ];
 
 export async function migrate(

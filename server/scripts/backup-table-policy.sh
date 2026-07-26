@@ -5,7 +5,7 @@
 # 新 migration 若新增、删除或重命名表，必须同时更新本文件和最大版本。
 
 readonly BACKUP_TABLE_POLICY_VERSION=1
-readonly BACKUP_TABLE_POLICY_MAX_SCHEMA=36
+readonly BACKUP_TABLE_POLICY_MAX_SCHEMA=37
 readonly -a BACKUP_CHECKSUM_FILES=(
   couplechat.dump
   database.contents
