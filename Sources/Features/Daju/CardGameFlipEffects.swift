@@ -76,9 +76,11 @@ enum CardFlipTier: Int, Comparable {
 /// 牌阵面板裁剪。
 struct CardFlipRevealOverlay: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let draw: CardGameDraw
-    let onFinish: () -> Void
+    let perform: () async -> CardGameDraw?
+    let onFinish: (CardGameDraw?) -> Void
 
+    @State private var draw: CardGameDraw?
+    @State private var charging = true
     @State private var entered = false
     @State private var spinAngle: Double = 0
     @State private var bloomed = false
@@ -86,7 +88,7 @@ struct CardFlipRevealOverlay: View {
     @State private var finished = false
 
     private var tier: CardFlipTier {
-        CardFlipTier(rarity: draw.card?.rarity ?? (draw.success ? .common : nil))
+        CardFlipTier(rarity: draw?.card?.rarity ?? (draw?.success == true ? .common : nil))
     }
     private var revealed: Bool { spinAngle >= 810 }
 
@@ -115,7 +117,13 @@ struct CardFlipRevealOverlay: View {
                 ZStack {
                     if spinAngle < 810 {
                         CardBackView()
-                    } else if let card = draw.card {
+                            .scaleEffect(charging ? 1.04 : 1)
+                            .animation(
+                                charging
+                                    ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true)
+                                    : .easeOut(duration: 0.2),
+                                value: charging)
+                    } else if let card = draw?.card {
                         CardFaceView(definition: card)
                             .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
                     } else {
@@ -134,7 +142,7 @@ struct CardFlipRevealOverlay: View {
                         .font(.title3.weight(.black))
                         .foregroundStyle(.white)
                         .shadow(color: tier.color, radius: 10)
-                    if let summary = draw.card?.summary {
+                    if let summary = draw?.card?.summary {
                         Text(summary)
                             .font(DS.Typo.caption)
                             .foregroundStyle(.white.opacity(0.85))
@@ -151,41 +159,60 @@ struct CardFlipRevealOverlay: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { if revealed { finish() } }
+        .onTapGesture { if revealed { finish(draw) } }
         .onAppear { run() }
     }
 
     private var resultTitle: String {
-        guard let card = draw.card else { return "差一点，再翻一张" }
+        guard let card = draw?.card else { return "差一点，再翻一张" }
         return "\(card.rarity.title)卡 · \(card.title)"
     }
 
     private func run() {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.75)) { entered = true }
+        let appearedAt = Date()
+        Task { @MainActor in
+            let result = await perform()
+            // 至少让充能停留 0.45s，快网络下也有蓄力感。
+            let elapsed = Date().timeIntervalSince(appearedAt)
+            if elapsed < 0.45 {
+                try? await Task.sleep(nanoseconds: UInt64((0.45 - elapsed) * 1_000_000_000))
+            }
+            guard let result else {
+                withAnimation(.easeIn(duration: 0.24)) { entered = false }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { finish(nil) }
+                return
+            }
+            draw = result
+            charging = false
+            startSpin(result)
+        }
+    }
+
+    private func startSpin(_ result: CardGameDraw) {
         if reduceMotion {
-            entered = true
             spinAngle = 900
             bloomed = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { finish() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { finish(result) }
             return
         }
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.75)) { entered = true }
-        withAnimation(.easeInOut(duration: 1.05).delay(0.35)) { spinAngle = 900 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+        withAnimation(.easeInOut(duration: 1.05)) { spinAngle = 900 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
             withAnimation(.easeOut(duration: 0.28)) { bloomed = true }
             if tier >= .epic { Haptics.medium() }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.42) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.07) {
             Haptics.medium()
             withAnimation(.easeOut(duration: tier == .legendary ? 1.15 : 0.8)) { burstFired = true }
             if !tier.showsShowcase {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) { finish() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) { finish(result) }
             }
         }
     }
 
-    private func finish() {
+    private func finish(_ result: CardGameDraw?) {
         guard !finished else { return }
         finished = true
-        onFinish()
+        onFinish(result)
     }
 }

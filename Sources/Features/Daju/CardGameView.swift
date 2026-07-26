@@ -13,8 +13,8 @@ struct CardGameView: View {
 
     private struct PendingReveal: Identifiable {
         let id = UUID()
-        let draw: CardGameDraw
-        let completion: () -> Void
+        let perform: () async -> CardGameDraw?
+        let completion: (CardGameDraw?) -> Void
     }
 
     var body: some View {
@@ -52,8 +52,9 @@ struct CardGameView: View {
             .refreshable { await refresh(force: true) }
 
             if let pendingReveal {
-                CardFlipRevealOverlay(draw: pendingReveal.draw) {
-                    pendingReveal.completion()
+                CardFlipRevealOverlay(perform: pendingReveal.perform) { result in
+                    viewModel.commitPendingSnapshot()
+                    pendingReveal.completion(result)
                     withAnimation(DS.Anim.ease) { self.pendingReveal = nil }
                 }
                 .transition(.opacity)
@@ -180,9 +181,9 @@ struct CardGameView: View {
                 guard let session = store.session, let viewModel else { return nil }
                 return await viewModel.draw(token: session.token, username: session.username)
             },
-            onReveal: { draw, completion in
-                withAnimation(DS.Anim.motion(DS.Anim.spring)) {
-                    pendingReveal = PendingReveal(draw: draw, completion: completion)
+            onReveal: { perform, completion in
+                withAnimation(.easeOut(duration: 0.18)) {
+                    pendingReveal = PendingReveal(perform: perform, completion: completion)
                 }
             })
     }

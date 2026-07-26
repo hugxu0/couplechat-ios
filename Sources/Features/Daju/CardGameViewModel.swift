@@ -15,13 +15,24 @@ final class CardGameViewModel: ObservableObject {
     // 每次调用都换新键会让超时重试变成第二次扣次数/扣卡。
     private var drawIntentKey: String?
     private var useIntent: (signature: String, key: String)?
+    /// 翻牌演出期间新快照先压着，收尾时才提交——否则卡库/计数在动画中途
+    /// 重排，底部页面会抖动。
+    private var pendingSnapshot: CardGameSnapshot?
 
     init(repository: CardGameRepository = CardGameRepository()) {
         self.repository = repository
     }
 
+    func commitPendingSnapshot() {
+        if let pendingSnapshot {
+            snapshot = pendingSnapshot
+            self.pendingSnapshot = nil
+        }
+    }
+
     func load(token: String, username: String, force: Bool = false) async {
         prepareAccount(username)
+        guard pendingSnapshot == nil else { return }
         guard force || snapshot == nil else { return }
         guard activeLoadID == nil, !isMutating else { return }
         let loadID = UUID()
@@ -55,7 +66,7 @@ final class CardGameViewModel: ObservableObject {
             let result = try await repository.draw(token: token, idempotencyKey: key)
             guard account == username else { return nil }
             drawIntentKey = nil
-            snapshot = result.snapshot
+            pendingSnapshot = result.snapshot
             errorMessage = nil
             return result.draw
         } catch {
@@ -109,5 +120,6 @@ final class CardGameViewModel: ObservableObject {
         isMutating = false
         drawIntentKey = nil
         useIntent = nil
+        pendingSnapshot = nil
     }
 }

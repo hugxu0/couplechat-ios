@@ -8,8 +8,8 @@ struct CardGameBoardView: View {
     let snapshot: CardGameSnapshot
     let isBusy: Bool
     let onFlip: () async -> CardGameDraw?
-    /// 结果就绪后交给父级在屏幕中央播放揭示浮层；完成回调里落位。
-    let onReveal: (CardGameDraw, @escaping () -> Void) -> Void
+    /// 点击立刻弹居中浮层（网络请求在充能期并行）；完成回调带结果落位，nil 表示失败还原槽位。
+    let onReveal: (@escaping () async -> CardGameDraw?, @escaping (CardGameDraw?) -> Void) -> Void
 
     @State private var slotResults: [Int: CardGameDraw] = [:]
     @State private var flippingSlot: Int?
@@ -111,7 +111,7 @@ struct CardGameBoardView: View {
             let time = context.date.timeIntervalSinceReferenceDate
             let bob = reduceMotion ? 0 : sin(time * 1.4 + Double(slot) * 1.3) * 3.5
             Button {
-                Task { await flip(slot: slot) }
+                flip(slot: slot)
             } label: {
                 CardBackView()
                     .rotationEffect(.degrees(slotTilt(slot)))
@@ -153,16 +153,12 @@ struct CardGameBoardView: View {
     }
 
     @MainActor
-    private func flip(slot: Int) async {
+    private func flip(slot: Int) {
         guard canFlip else { return }
         Haptics.light()
         flippingSlot = slot
-        guard let result = await onFlip() else {
-            flippingSlot = nil
-            return
-        }
-        onReveal(result) {
-            slotResults[slot] = result
+        onReveal(onFlip) { result in
+            if let result { slotResults[slot] = result }
             flippingSlot = nil
         }
     }
