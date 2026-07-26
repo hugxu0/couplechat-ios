@@ -250,9 +250,11 @@ export async function createMessageWithStatus(
           [input.url, legacySuffix, legacySuffix, ...scopeParams],
         );
       if (!stickerUpload) throw new Error(errorCodes.uploadNotFound);
+      // 旧系统导入的表情是当年的消息上传（purpose='message'，/uploads/ 文件名 URL），
+      // legacy 路径必须接受它们，否则整库旧表情都发不出去。up_ 新路径仍只认 sticker。
       const validPurpose = stickerUploadId
         ? stickerUpload.purpose === "sticker"
-        : stickerUpload.purpose === "sticker" || stickerUpload.purpose === "legacy";
+        : ["sticker", "legacy", "message"].includes(stickerUpload.purpose);
       if (!validPurpose || !stickerUpload.mime_type.startsWith("image/")) {
         throw new Error(errorCodes.uploadPurposeMismatch);
       }
