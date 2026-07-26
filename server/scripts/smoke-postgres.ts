@@ -2136,7 +2136,28 @@ async function main() {
     const item = await items.createPersonalItem(user, { kind: "reminder", title: "冒烟提醒", dueAt: Date.now() + 60000 });
     assertOk("createPersonalItem", Boolean(item?.id));
     const patched = await items.updatePersonalItem(user, item!.id, { isDone: true });
-    assertOk("updatePersonalItem isDone", patched?.isDone === true);
+    assertOk(
+      "updatePersonalItem isDone",
+      Boolean(patched) && !("conflict" in patched!) && patched!.isDone === true,
+    );
+
+    // 乐观并发：baseVersion 过期必须返回冲突而不是静默覆盖；提醒备忘此前是唯一
+    // 没有冲突保护的数据，两台设备同时编辑会直接覆盖对方。
+    const fresh = await items.getPersonalItem(user, item!.id);
+    const staleUpdate = await items.updatePersonalItem(user, item!.id, {
+      title: "并发覆盖尝试",
+      baseVersion: (fresh!.version ?? 0) - 1,
+    });
+    const freshUpdate = await items.updatePersonalItem(user, item!.id, {
+      title: "按当前版本更新",
+      baseVersion: fresh!.version ?? 0,
+    });
+    assertOk(
+      "提醒备忘按 baseVersion 拒绝过期写入，按当前版本正常更新",
+      Boolean(staleUpdate) && "conflict" in staleUpdate!
+        && Boolean(freshUpdate) && !("conflict" in freshUpdate!)
+        && freshUpdate!.title === "按当前版本更新",
+    );
     assertOk("deletePersonalItem", await items.deletePersonalItem(user, item!.id));
 
     // AI 确认卡取消必须通过 ACK 返回最终 meta，不能只依赖可能丢失的广播。

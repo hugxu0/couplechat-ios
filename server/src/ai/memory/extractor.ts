@@ -51,6 +51,12 @@ export const MEMORY_BUSY_IDLE_MS = 15 * 60 * 1000;
 export const MEMORY_QUIET_IDLE_MS = 60 * 60 * 1000;
 export const MEMORY_MAX_BATCH_AGE_MS = 2 * 60 * 60 * 1000;
 export const MEMORY_EMPTY_RETRY_THRESHOLD = 12;
+/**
+ * 连续这么多轮仍然整理不出可保存内容时，强制推进游标跳过这批消息。
+ * 否则模型只要在某批消息上稳定犯同一个错，游标就永远不动，该频道的记忆
+ * 会被这批消息永久堵死——宁可漏掉一批，也不能停止更新。
+ */
+export const MEMORY_MAX_STUCK_ROUNDS = 3;
 export const MEMORY_EVENT_RECOVERY_MIN_MESSAGES = 12;
 export const MEMORY_EVENT_EVIDENCE_THRESHOLD = 2;
 
@@ -131,6 +137,11 @@ export function shouldAdvanceMemoryCursorForBatch(
   savedCount: number,
 ): boolean {
   return candidateCount === 0 || savedCount > 0;
+}
+
+/** 该频道是否已经连续卡住足够多轮，应当放弃这批消息而不是继续保留游标。 */
+function stuckTooLong(channel: string): boolean {
+  return (retryAttempts.get(channel) ?? 0) >= MEMORY_MAX_STUCK_ROUNDS;
 }
 
 function systemPrompt(): string {
@@ -324,8 +335,13 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       }
     }
     if (shouldRetryEmptyMemoryBatch(modelMessages.length, candidateChanges.length)) {
-      throw new Error(
-        `基础记忆模型对 ${modelMessages.length} 条有效消息返回零候选，保留游标等待重试`,
+      if (!stuckTooLong(channel)) {
+        throw new Error(
+          `基础记忆模型对 ${modelMessages.length} 条有效消息返回零候选，保留游标等待重试`,
+        );
+      }
+      console.warn(
+        `[memory] ${channel} 连续 ${MEMORY_MAX_STUCK_ROUNDS} 轮零候选，放弃这批 ${modelMessages.length} 条消息并推进游标`,
       );
     }
 
@@ -568,8 +584,13 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     const saved = baseSaved + dajuSaved;
     const candidateCount = candidateChanges.length + candidateDajuChanges.length;
     if (!shouldAdvanceMemoryCursorForBatch(candidateCount, saved)) {
-      throw new Error(
-        `Memory ${channel} 的 ${candidateCount} 个候选全部被拒绝，保留游标等待重试`,
+      if (!stuckTooLong(channel)) {
+        throw new Error(
+          `Memory ${channel} 的 ${candidateCount} 个候选全部被拒绝，保留游标等待重试`,
+        );
+      }
+      console.warn(
+        `[memory] ${channel} 连续 ${MEMORY_MAX_STUCK_ROUNDS} 轮候选全被拒绝，放弃这批并推进游标`,
       );
     }
     if (memoryWorkController.signal.aborted) throw new Error("memory_extraction_cancelled");

@@ -1168,7 +1168,11 @@ final class MessageStore: ObservableObject {
         guard let s = socketProvider?.socket,
               socketProvider?.isConnected == true,
               let fence = activeSessionFence,
-              fence.persistenceScope != nil else { return }
+              fence.persistenceScope != nil else {
+            // 离线时不能静默返回：长按菜单选了"撤回"却什么都不发生，用户无从判断。
+            NotificationCenter.default.post(name: Self.recallFailedNotification, object: nil)
+            return
+        }
         guard optimisticRecalls[message.id] == nil else { return }
         let editable = message.type == "text"
             ? message.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1183,26 +1187,42 @@ final class MessageStore: ObservableObject {
         s.emitWithAck(
             SocketEvent.messageRecall.rawValue,
             SocketPayloadEncoder.encode(MessageRecallRequest(id: message.id))).timingOut(after: 9) { [weak self] response in
-                let ok = (response.first as? [String: Any])?["ok"] as? Bool == true
+                // 区分"服务端明确拒绝"和"根本没等到 ACK"：超时时服务端事务很可能已经
+                // 成功，按失败处理会让消息复活并弹一次假的"撤回失败"，几秒后又被广播删掉。
+                let acknowledgement = response.first as? [String: Any]
+                let confirmed = acknowledgement?["ok"] as? Bool == true
+                let rejected = acknowledgement != nil && !confirmed
                 Task { @MainActor in
-                    guard let self,
-                          self.isCurrent(fence),
-                          self.socketProvider?.socket === s else { return }
-                    if ok {
+                    guard let self else { return }
+                    guard self.isCurrent(fence), self.socketProvider?.socket === s else {
+                        // 会话或连接已经换掉，结果无从判断。撤销乐观隐藏让界面回到已知状态，
+                        // 同时解除重试封锁；若撤回其实已生效，广播或下次补拉会再删掉它。
+                        self.restoreOptimisticRecall(id: message.id)
+                        return
+                    }
+                    if confirmed {
                         if !(await self.applyRecall(id: message.id, channel: channel)) {
                             print("[MessageStore] ⚠️ 撤回已获服务器确认，等待本地持久化重试 id=\(message.id)")
                         }
                         return
                     }
-                    self.recallDrafts.removeValue(forKey: message.id)
-                    if let snapshot = self.optimisticRecalls.removeValue(forKey: message.id) {
-                        self.updateMessages(snapshot.channel) { list in
-                            ChatMessageCollection.upsert(snapshot.message, into: &list)
-                        }
+                    guard rejected else {
+                        print("[MessageStore] ⚠️ 撤回 ACK 超时，交给服务端广播或补拉收敛 id=\(message.id)")
+                        return
                     }
+                    self.recallDrafts.removeValue(forKey: message.id)
+                    self.restoreOptimisticRecall(id: message.id)
                     NotificationCenter.default.post(name: Self.recallFailedNotification, object: nil)
                 }
             }
+    }
+
+    /// 撤销乐观隐藏并解除重试封锁。
+    private func restoreOptimisticRecall(id: String) {
+        guard let snapshot = optimisticRecalls.removeValue(forKey: id) else { return }
+        updateMessages(snapshot.channel) { list in
+            ChatMessageCollection.upsert(snapshot.message, into: &list)
+        }
     }
 
     @discardableResult
@@ -1338,9 +1358,13 @@ final class MessageStore: ObservableObject {
                 let ok = acknowledgement?["ok"] as? Bool == true
                 let finalMeta = acknowledgement?["meta"] as? [String: Any]
                 Task { @MainActor in
-                    guard let self,
-                          self.isCurrent(fence),
-                          self.socketProvider?.socket === socket else {
+                    guard let self else { return }
+                    // 每次进前台都会 forceReconnect 换掉 socket 实例，所以这个守卫是常见路径。
+                    // 必须先解除 in-flight 封锁并恢复卡片状态，否则卡片永远停在 processing、
+                    // 重入又被封锁挡住，用户只能反复看到"操作未完成"。
+                    guard self.isCurrent(fence), self.socketProvider?.socket === socket else {
+                        self.confirmationRequestsInFlight.remove(messageId)
+                        self.restoreProcessingConfirmation(messageId: messageId)
                         completion(false)
                         return
                     }

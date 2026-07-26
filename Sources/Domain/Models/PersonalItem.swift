@@ -16,6 +16,9 @@ struct PersonalItem: Identifiable, Codable, Equatable {
     var isDone: Bool
     let createdAt: Int
     var updatedAt: Int
+    /// 乐观并发版本号。服务端一直在回传，此前客户端没有解码，导致提醒备忘是
+    /// 唯一没有冲突保护的数据——两台设备同时编辑会静默覆盖。
+    var version: Int?
 
     var dueDate: Date? {
         guard let dueAt else { return nil }

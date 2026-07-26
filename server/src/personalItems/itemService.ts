@@ -36,6 +36,8 @@ export interface PersonalItemPatch {
   bodyMarkdown?: string;
   dueAt?: number | null;
   isDone?: boolean;
+  /** 客户端读到的版本号；不传则跳过冲突检查（兼容老客户端）。 */
+  baseVersion?: number;
 }
 
 function toItem(row: PersonalItemRow): PersonalItem {
@@ -136,6 +138,11 @@ export async function updatePersonalItem(user: AuthUser, id: string, patch: Pers
       [id],
     );
     if (!row || !canAccess(row, identity.accountId, identity.coupleId)) return null;
+    // 与相册、日程一致的乐观并发：baseVersion 不匹配就返回当前实体让客户端重载。
+    // 不传 baseVersion 的老客户端沿用旧的 last-write-wins 行为。
+    if (patch.baseVersion !== undefined && row.version !== patch.baseVersion) {
+      return { conflict: true as const, item: toItem(row) };
+    }
     const now = Date.now();
     await db.run(
       `UPDATE personal_items SET title = ?, body_markdown = ?, due_at = ?, is_done = ?, updated_at = ?
