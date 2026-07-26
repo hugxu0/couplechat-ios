@@ -82,7 +82,8 @@ struct CardFaceView: View {
         .padding(.horizontal, compact ? 6 : 9)
         .padding(.top, compact ? 10 : 12)
         .padding(.bottom, compact ? 7 : 9)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // 顶对齐：卡高随网格拉伸时标题贴着艺术区，不悬浮在信息区中央。
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     @ViewBuilder
