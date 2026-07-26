@@ -43,6 +43,8 @@ struct StorageView: View {
             cleanupSection
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(AppPageBackground())
         .navigationTitle("存储空间")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { refresh() }

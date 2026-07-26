@@ -297,12 +297,7 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
         let isInteraction = message.interactionPayload != nil
         let interactionColor: UIColor = {
             guard let kind = message.interactionPayload?.kind else { return .systemPink }
-            switch kind {
-            case .miss, .flower: return UIColor(red: 0.94, green: 0.34, blue: 0.55, alpha: 1)
-            case .pat: return UIColor(red: 0.95, green: 0.58, blue: 0.24, alpha: 1)
-            case .poop: return UIColor(red: 0.68, green: 0.45, blue: 0.29, alpha: 1)
-            case .note: return UIColor(red: 0.46, green: 0.45, blue: 0.88, alpha: 1)
-            }
+            return UIColor(kind.tint)
         }()
         bubbleView.backgroundColor = mediaOnly ? .clear : (isAIActivity
             ? accentColor.withAlphaComponent(usesDarkIncomingBubble ? 0.24 : 0.11)

@@ -6,6 +6,17 @@ enum InteractionEffectKind: String {
     case flower
     case poop
     case note
+
+    /// 互动色的唯一定义：气泡（UIKit）与全屏特效（SwiftUI）共用。
+    /// 此前两处各写一套且数值不同——note 在气泡里是靛蓝、在浮层里是亮黄。
+    var tint: Color {
+        switch self {
+        case .miss, .flower: return Color(red: 0.94, green: 0.34, blue: 0.55)
+        case .pat: return Color(red: 0.95, green: 0.58, blue: 0.24)
+        case .poop: return Color(red: 0.68, green: 0.45, blue: 0.29)
+        case .note: return Color(red: 0.95, green: 0.66, blue: 0.16)
+        }
+    }
 }
 
 struct InteractionPayload: Identifiable, Equatable {
@@ -95,7 +106,7 @@ struct IncomingInteractionOverlay: View {
         }
         .ignoresSafeArea()
         .onAppear {
-            withAnimation(reduceMotion ? .easeOut(duration: 0.16) : .spring(response: 0.42, dampingFraction: 0.78)) {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.16) : DS.Anim.message) {
                 appeared = true
             }
             if payload.kind != .note {
@@ -283,15 +294,7 @@ struct IncomingInteractionOverlay: View {
         }
     }
 
-    private var effectColor: Color {
-        switch payload.kind {
-        case .miss: return DS.Palette.pink
-        case .pat: return Color(red: 1.0, green: 0.66, blue: 0.24)
-        case .flower: return Color(red: 1.0, green: 0.46, blue: 0.70)
-        case .poop: return Color(red: 0.70, green: 0.45, blue: 0.22)
-        case .note: return Color(red: 1.0, green: 0.78, blue: 0.26)
-        }
-    }
+    private var effectColor: Color { payload.kind.tint }
 
     private var noteRotation: Double {
         Double((stableSeed % 15) - 7)
@@ -311,7 +314,7 @@ struct IncomingInteractionOverlay: View {
 
     private func tearAway() {
         Haptics.medium()
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+        withAnimation(DS.Anim.message) {
             torn = true
         }
         Task {
