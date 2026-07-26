@@ -165,7 +165,9 @@ actor LocalDataRepository {
         var completed = 0
         var failed = 0
         for url in urls {
-            if Task.isCancelled || !(await persistence.isActive(scope: scope)) { break }
+            if Task.isCancelled { break }
+            // 两个条件必须分开写：|| 的右操作数是不支持并发的 autoclosure，await 不能进去。
+            guard await persistence.isActive(scope: scope) else { break }
             if !ImageCache.shared.isCached(url), await ImageCache.shared.image(for: url) == nil {
                 failed += 1
             }
