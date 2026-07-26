@@ -1432,6 +1432,48 @@ export const schemaMigrations: readonly SchemaMigration[] = [
     $migration$;
     `,
   },
+  {
+    version: 35,
+    name: "scope_message_idempotency_to_device",
+    sql: `
+    DROP INDEX IF EXISTS messages_sender_client_id_idx;
+    CREATE UNIQUE INDEX IF NOT EXISTS messages_legacy_idempotency_idx
+      ON messages(sender, client_id)
+      WHERE client_id IS NOT NULL AND origin_device_id IS NULL;
+    `,
+  },
+  {
+    version: 36,
+    name: "durable_ai_reply_jobs",
+    sql: `
+    CREATE TABLE IF NOT EXISTS ai_reply_jobs (
+      id TEXT PRIMARY KEY,
+      trigger_message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      requester_account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      stored_channel TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('pending', 'queued', 'processing', 'completed', 'ignored', 'cancelled', 'failed', 'exhausted')
+      ),
+      attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+      available_at BIGINT NOT NULL,
+      lease_until BIGINT,
+      reply_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      last_error TEXT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      completed_at BIGINT
+    );
+    CREATE INDEX IF NOT EXISTS ai_reply_jobs_recovery_idx
+      ON ai_reply_jobs(status, available_at, updated_at)
+      WHERE status IN ('pending', 'queued', 'processing', 'failed');
+    CREATE INDEX IF NOT EXISTS ai_reply_jobs_conversation_idx
+      ON ai_reply_jobs(conversation_id, created_at);
+    CREATE INDEX IF NOT EXISTS messages_ai_confirmation_processing_idx
+      ON messages(id)
+      WHERE sender = 'ai' AND meta_json LIKE '%"status":"processing"%';
+    `,
+  },
 ];
 
 export async function migrate(

@@ -6,12 +6,19 @@ import Foundation
 /// 历史分页和发送 ACK 各自维护一套略有差异的实现。
 enum ChatMessageCollection {
     static func upsert(_ message: ChatMessage, into messages: inout [ChatMessage]) {
-        if let index = messages.firstIndex(where: { sameIdentity($0, message) }) {
+        if !isConfirmed(message),
+           let confirmed = messages.first(where: {
+               sameIdentity($0, message) && isConfirmed($0)
+           }) {
             // 云端/SQLite 的正式消息是权威状态。启动恢复时，即使 outbox 清理曾被
             // 系统中断，也不能让随后投影的 pending 反向覆盖已经确认的消息。
-            if isConfirmed(messages[index]), !isConfirmed(message) { return }
-            messages[index] = message
-            removeDuplicates(of: message, keeping: index, from: &messages)
+            messages.removeAll { sameIdentity($0, message) }
+            insertChronologically(confirmed, into: &messages)
+            return
+        }
+        if messages.contains(where: { sameIdentity($0, message) }) {
+            messages.removeAll { sameIdentity($0, message) }
+            insertChronologically(message, into: &messages)
             return
         }
         insertChronologically(message, into: &messages)
@@ -26,17 +33,12 @@ enum ChatMessageCollection {
 
     static func prependUnique<S: Sequence>(_ incoming: S, to messages: inout [ChatMessage])
     where S.Element == ChatMessage {
-        let unique = incoming.filter { candidate in
-            !messages.contains(where: { sameIdentity($0, candidate) })
-        }
-        messages.insert(contentsOf: unique, at: 0)
+        upsert(incoming, into: &messages)
     }
 
     static func appendUnique<S: Sequence>(_ incoming: S, to messages: inout [ChatMessage])
     where S.Element == ChatMessage {
-        for message in incoming where !messages.contains(where: { sameIdentity($0, message) }) {
-            messages.append(message)
-        }
+        upsert(incoming, into: &messages)
     }
 
     static func replacePending(
@@ -44,16 +46,13 @@ enum ChatMessageCollection {
         with acknowledged: ChatMessage,
         in messages: inout [ChatMessage]
     ) {
-        let pendingIndex = index(matchingClientId: clientId, in: messages)
         messages.removeAll { message in
-            message.id == acknowledged.id ||
+            message.id == clientId ||
+                message.clientId == clientId ||
+                message.id == acknowledged.id ||
                 (message.clientId != nil && message.clientId == acknowledged.clientId)
         }
-        if let pendingIndex {
-            messages.insert(acknowledged, at: min(pendingIndex, messages.endIndex))
-        } else {
-            insertChronologically(acknowledged, into: &messages)
-        }
+        insertChronologically(acknowledged, into: &messages)
     }
 
     static func removePending(clientId: String, from messages: inout [ChatMessage]) {
@@ -80,22 +79,16 @@ enum ChatMessageCollection {
         !message.pending && !message.failed
     }
 
+    static func isOrderedBefore(_ lhs: ChatMessage, _ rhs: ChatMessage) -> Bool {
+        lhs.ts < rhs.ts || (lhs.ts == rhs.ts && lhs.id < rhs.id)
+    }
+
     private static func insertChronologically(
         _ message: ChatMessage,
         into messages: inout [ChatMessage]
     ) {
-        let index = messages.firstIndex(where: { $0.ts > message.ts }) ?? messages.endIndex
+        let index = messages.firstIndex(where: { isOrderedBefore(message, $0) })
+            ?? messages.endIndex
         messages.insert(message, at: index)
-    }
-
-    private static func removeDuplicates(
-        of message: ChatMessage,
-        keeping keptIndex: Int,
-        from messages: inout [ChatMessage]
-    ) {
-        for index in messages.indices.reversed()
-        where index != keptIndex && sameIdentity(messages[index], message) {
-            messages.remove(at: index)
-        }
     }
 }

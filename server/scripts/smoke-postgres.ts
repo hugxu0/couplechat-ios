@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import EmbeddedPostgres from "embedded-postgres";
 import type { Server } from "socket.io";
+import type { ConfirmMeta } from "../src/ai/actions/personalItems";
 
 const PORT = 5544;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "couplechat-pg-"));
@@ -27,9 +28,26 @@ async function main() {
 
   process.env.DATABASE_URL = `postgres://couplechat:couplechat@localhost:${PORT}/couplechat`;
   process.env.TOKEN_SECRET = "smoke-test-token-secret-not-for-production";
-  process.env.PUBLIC_BASE_URL = "http://127.0.0.1:8080";
-  process.env.DATA_DIR = dataDir;
-  process.env.UPLOAD_DIR = dataDir;
+    process.env.PUBLIC_BASE_URL = "http://127.0.0.1:8080";
+    process.env.DATA_DIR = dataDir;
+    process.env.UPLOAD_DIR = dataDir;
+    process.env.DATABASE_CONNECTION_TIMEOUT_MS = "5000";
+    process.env.DATABASE_STATEMENT_TIMEOUT_MS = "30000";
+    process.env.DATABASE_QUERY_TIMEOUT_MS = "35000";
+    process.env.DATABASE_LOCK_TIMEOUT_MS = "5000";
+    process.env.DATABASE_IDLE_TRANSACTION_TIMEOUT_MS = "30000";
+    process.env.EMBEDDING_DIM = "1024";
+    // 冒烟必须完全离线；即使开发机 .env 配了真实模型或向量服务，也不能出站。
+    for (const key of [
+      "AI_API_KEY",
+      "AI_CHAT_API_KEY",
+      "AI_TASK_API_KEY",
+      "EMBEDDING_API_KEY",
+      "EMBEDDING_VOYAGE_API_KEYS",
+      "EMBEDDING_MONGODB_API_KEYS",
+    ]) {
+      process.env[key] = "";
+    }
 
   let closeDatabase: (() => Promise<void>) | undefined;
   try {
@@ -79,6 +97,23 @@ async function main() {
     await db.run("CREATE ROLE card_game_web_owner NOLOGIN");
     await db.run("ALTER TABLE accounts OWNER TO card_game_web_owner");
     await db.migrate(db.databasePool());
+    const databaseTimeouts = await db.get<{
+      statement_timeout: string;
+      lock_timeout: string;
+      idle_transaction_timeout: string;
+    }>(
+      `SELECT current_setting('statement_timeout') AS statement_timeout,
+              current_setting('lock_timeout') AS lock_timeout,
+              current_setting('idle_in_transaction_session_timeout') AS idle_transaction_timeout`,
+    );
+    assertOk(
+      "应用连接池限制连接、查询、锁等待和空闲事务时长",
+      db.databasePool().options.connectionTimeoutMillis === 5_000 &&
+        db.databasePool().options.query_timeout === 35_000 &&
+        databaseTimeouts?.statement_timeout === "30s" &&
+        databaseTimeouts.lock_timeout === "5s" &&
+        databaseTimeouts.idle_transaction_timeout === "30s",
+    );
     const cardTableOwners = await db.all<{ table_name: string; owner_name: string }>(
       `SELECT table_info.relname AS table_name,
               pg_get_userbyid(table_info.relowner) AS owner_name
@@ -138,6 +173,8 @@ async function main() {
       [32, "ai_daily_diaries"],
       [33, "couple_card_game"],
       [34, "repair_card_game_table_ownership"],
+      [35, "scope_message_idempotency_to_device"],
+      [36, "durable_ai_reply_jobs"],
     ] as const;
     assertOk(
       "数据库结构版本完整",
@@ -239,6 +276,56 @@ async function main() {
     assertOk(
       "媒体消息要求 uploadId",
       !sendMessageSchema.safeParse({ channel: "couple", type: "image", text: "[图片]" }).success,
+    );
+    const duplicateLivePhotoRole = sendMessageSchema.safeParse({
+      channel: "couple",
+      type: "image",
+      text: "[实况照片]",
+      attachments: [
+        { assetId: "asset_smoke_live", role: "photo", uploadId: "up_smoke_live_photo_a", order: 0 },
+        { assetId: "asset_smoke_live", role: "photo", uploadId: "up_smoke_live_photo_b", order: 0 },
+      ],
+    });
+    const duplicatePairedVideoRole = sendMessageSchema.safeParse({
+      channel: "couple",
+      type: "image",
+      text: "[实况照片]",
+      attachments: [
+        { assetId: "asset_smoke_live", role: "photo", uploadId: "up_smoke_live_photo_c", order: 0 },
+        { assetId: "asset_smoke_live", role: "pairedVideo", uploadId: "up_smoke_live_video_a", order: 0 },
+        { assetId: "asset_smoke_live", role: "pairedVideo", uploadId: "up_smoke_live_video_b", order: 0 },
+      ],
+    });
+    assertOk(
+      "Live Photo 每个 asset 恰好一张 photo 且最多一个 pairedVideo",
+      !duplicateLivePhotoRole.success && !duplicatePairedVideoRole.success,
+    );
+    assertOk(
+      "贴纸消息必须提供既有贴纸 URL",
+      !sendMessageSchema.safeParse({ channel: "couple", type: "sticker", text: "[表情]" }).success,
+    );
+    const { loginRateLimitIp } = await import("../src/auth/routes");
+    const spoofedForwardedRequest = {
+      ip: "::ffff:127.0.0.1",
+      headers: { "x-forwarded-for": "203.0.113.9" },
+    };
+    assertOk(
+      "登录限流不手工解析转发头，只读取 Fastify 已归一化的 request.ip",
+      loginRateLimitIp(spoofedForwardedRequest) === "127.0.0.1",
+    );
+    const edgeNginxConfig = fs.readFileSync(
+      path.join(process.cwd(), "deploy", "nginx-japan-edge-hoo66.top.conf"),
+      "utf8",
+    );
+    assertOk(
+      "日本入口从受控 Cloudflare 头恢复真实地址并覆盖客户端转发链",
+      (edgeNginxConfig.match(/proxy_set_header X-Forwarded-For \$remote_addr;/g) ?? []).length === 2 &&
+        !edgeNginxConfig.includes("$proxy_add_x_forwarded_for") &&
+        edgeNginxConfig.includes("set_real_ip_from 127.0.0.1;") &&
+        edgeNginxConfig.includes("set_real_ip_from ::1;") &&
+        edgeNginxConfig.includes("real_ip_header CF-Connecting-IP;") &&
+        edgeNginxConfig.includes("real_ip_recursive off;") &&
+        edgeNginxConfig.includes("hoo66.top:other"),
     );
     const voiceDurationPayload = sendMessageSchema.safeParse({
       channel: "couple",
@@ -457,6 +544,60 @@ async function main() {
         !toolOperationLine?.includes("never-log-tool-result"),
     );
 
+    const { formatProviderHttpFailure } = await import("../src/ai/provider");
+    const providerFailureBody = "never-log-upstream-response-body";
+    const providerFailureLog = formatProviderHttpFailure(
+      "smoke.provider",
+      new Response(providerFailureBody, {
+        status: 429,
+        headers: {
+          "x-request-id": "req-smoke-provider",
+          "retry-after": "7",
+        },
+      }),
+    );
+    assertOk(
+      "AI 上游失败日志只保留状态与安全响应元数据",
+      providerFailureLog.includes("HTTP 429")
+        && providerFailureLog.includes("request-id=req-smoke-provider")
+        && providerFailureLog.includes("retry-after=7")
+        && !providerFailureLog.includes(providerFailureBody)
+        && !providerFailureLog.includes("body="),
+    );
+
+    const embeddings = await import("../src/ai/embeddings");
+    const {
+      config: runtimeConfig,
+      parsePositiveIntegerSetting,
+    } = await import("../src/config");
+    const expectedVector = new Float32Array(runtimeConfig.embeddingDim);
+    expectedVector[0] = 1;
+    const mismatchedVector = new Float32Array(
+      runtimeConfig.embeddingDim === 1 ? 2 : runtimeConfig.embeddingDim - 1,
+    );
+    let mismatchedPackRejected = false;
+    try {
+      embeddings.packVector(mismatchedVector);
+    } catch {
+      mismatchedPackRejected = true;
+    }
+    let invalidConfiguredDimensionRejected = false;
+    try {
+      parsePositiveIntegerSetting("EMBEDDING_DIM", "0", 1024, 65_536);
+    } catch {
+      invalidConfiguredDimensionRejected = true;
+    }
+    const packedVector = embeddings.packVector(expectedVector);
+    assertOk(
+      "Embedding 配置、读写和相似度统一拒绝维度不一致",
+      embeddings.similarity(expectedVector, mismatchedVector) === 0
+        && mismatchedPackRejected
+        && invalidConfiguredDimensionRejected
+        && parsePositiveIntegerSetting("EMBEDDING_DIM", "2048", 1024, 65_536) === 2048
+        && embeddings.unpackVector(packedVector)?.length === runtimeConfig.embeddingDim
+        && embeddings.unpackVector(new Uint8Array(mismatchedVector.byteLength)) === null,
+    );
+
     const startedQuestions: string[] = [];
     let releaseFirst: (() => void) | undefined;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -476,6 +617,84 @@ async function main() {
       "AI 队列过载合并并最终回答最新请求",
       overload1 === "coalesced" && overload2 === "coalesced" && startedQuestions.join(",") === "q1,q2,q4",
     );
+    let hangingFallbackAttempts = 0;
+    const hangingFallbackStartedAt = Date.now();
+    await runReplyTaskWithTimeout(
+      { ...aiTrigger, messageId: "smoke-timeout-hanging-fallback" },
+      {
+        ...timeoutSink,
+        emit: async () => {
+          hangingFallbackAttempts += 1;
+          await new Promise<void>(() => undefined);
+        },
+      },
+      async () => new Promise<void>(() => undefined),
+      5,
+      undefined,
+      10,
+    );
+    assertOk(
+      "AI 超时兜底落库卡住时仍会在写入期限后释放队列",
+      hangingFallbackAttempts === 1 && Date.now() - hangingFallbackStartedAt < 250,
+    );
+
+    let recalledRunnerAborted = false;
+    let recalledUnderlyingEmits = 0;
+    const recalledQueue = new ReplyQueue(async (_trigger, guardedSink, signal) => {
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          recalledRunnerAborted = true;
+          void guardedSink.emit("ai:smoke", "不应落库", true)
+            .catch(() => undefined)
+            .finally(resolve);
+        };
+        if (signal?.aborted) finish();
+        else signal?.addEventListener("abort", finish, { once: true });
+      });
+    });
+    const recalledSink = {
+      emit: async () => { recalledUnderlyingEmits += 1; },
+      typing: () => undefined,
+      replying: () => undefined,
+      activity: () => undefined,
+    };
+    recalledQueue.enqueue(
+      { ...aiTrigger, messageId: "smoke-recalled-ai-trigger" },
+      recalledSink,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const recalledCancelled = recalledQueue.cancelByMessageId("smoke-recalled-ai-trigger");
+    const recalledIdle = await recalledQueue.waitForIdle(250);
+    assertOk(
+      "撤回触发消息会中止运行中的 Agent 且阻止后续回复落库",
+      recalledCancelled === 1 && recalledRunnerAborted && recalledIdle && recalledUnderlyingEmits === 0,
+    );
+
+    let shutdownRunnerAborted = false;
+    const shutdownQueue = new ReplyQueue(async (_trigger, _sink, signal) => {
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          shutdownRunnerAborted = true;
+          resolve();
+        };
+        if (signal?.aborted) finish();
+        else signal?.addEventListener("abort", finish, { once: true });
+      });
+    });
+    shutdownQueue.enqueue(
+      { ...aiTrigger, messageId: "smoke-shutdown-ai-trigger" },
+      queueSink,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await shutdownQueue.stop(250);
+    const afterShutdownQueueResult = shutdownQueue.enqueue(
+      { ...aiTrigger, messageId: "smoke-after-shutdown" },
+      queueSink,
+    );
+    assertOk(
+      "AI shutdown 会中止运行任务并拒绝新任务",
+      shutdownRunnerAborted && afterShutdownQueueResult === "rejected",
+    );
 
     // 账号
     const { listPublicAccounts } = await import("../src/auth/accounts");
@@ -485,7 +704,18 @@ async function main() {
     // 消息：分页 / since / after+before / around / 搜索 / LIKE
     const { subscribeMemoryDomainEvents } = await import("../src/ai/memory/events");
     const stopMemoryEvents = subscribeMemoryDomainEvents();
-    const { fetchMessageById, fetchMessages, searchMessages, createMessage, recallMessage, upsertReadReceipt, getReadReceipts } = await import("../src/chat/messageService");
+    const {
+      fetchMessageById,
+      fetchMessages,
+      searchMessages,
+      createMessage,
+      createMessageWithStatus,
+      createAiMessage,
+      createAiMessages,
+      recallMessage,
+      upsertReadReceipt,
+      getReadReceipts,
+    } = await import("../src/chat/messageService");
     const user = { username: accounts[0].username, name: accounts[0].name };
     const latest = await fetchMessages(user, { channel: "couple", limit: 50 });
     assertOk(`fetchMessages latest → ${latest.length} 条`, latest.length === 50);
@@ -522,6 +752,66 @@ async function main() {
     const created = await createMessage(user, { channel: "couple", type: "text", text: "PG 冒烟测试", clientId: "smoke-1" });
     const dup = await createMessage(user, { channel: "couple", type: "text", text: "PG 冒烟测试重复", clientId: "smoke-1" });
     assertOk("clientId 幂等（重发返回同一条）", created.id === dup.id);
+    const durableJobBefore = await db.get<{ status: string; attempt_count: number }>(
+      "SELECT status, attempt_count FROM ai_reply_jobs WHERE trigger_message_id = ?",
+      [created.id],
+    );
+    const { claimAiReplyJob } = await import("../src/ai/agent/replyJobs");
+    const durableClaimed = await claimAiReplyJob(created.id);
+    let wrongRequesterRejected = false;
+    try {
+      await createAiMessages(
+        "couple",
+        [{ text: "不应由其他成员代写的回复" }],
+        { username: accounts[1].username, name: accounts[1].name },
+        created.id,
+      );
+    } catch (error) {
+      wrongRequesterRejected = error instanceof Error
+        && error.message === "ai_reply_cancelled";
+    }
+    const durableReplies = await createAiMessages(
+      "couple",
+      [
+        { text: "持久化回复第一段" },
+        { text: "持久化回复第二段", meta: { smoke: "last-part" } },
+      ],
+      user,
+      created.id,
+    );
+    const durableJobAfter = await db.get<{
+      status: string;
+      reply_message_id: string | null;
+    }>(
+      "SELECT status, reply_message_id FROM ai_reply_jobs WHERE trigger_message_id = ?",
+      [created.id],
+    );
+    assertOk(
+      "AI 回复任务校验请求人，并将多段正文和末段 meta 原子落库后完成",
+      durableJobBefore?.status === "pending"
+        && durableJobBefore.attempt_count === 0
+        && durableClaimed
+        && wrongRequesterRejected
+        && durableJobAfter?.status === "completed"
+        && durableJobAfter.reply_message_id === durableReplies[0].id
+        && durableReplies.length === 2
+        && durableReplies.every((message) => message.sender === "ai")
+        && durableReplies[0].ts < durableReplies[1].ts
+        && (durableReplies[1].meta as { smoke?: string } | undefined)?.smoke === "last-part",
+    );
+    let inactiveIdentityRejected = false;
+    try {
+      await createAiMessage(
+        "couple",
+        "失效身份不应落入 legacy 会话",
+        undefined,
+        { username: "inactive-smoke-account", name: "inactive" },
+      );
+    } catch (error) {
+      inactiveIdentityRejected = error instanceof Error
+        && error.message === "unauthorized";
+    }
+    assertOk("显式失效身份不会回退到 legacy 会话", inactiveIdentityRejected);
     const replied = await createMessage(user, {
       channel: "couple", type: "text", text: "PG 引用测试",
       replyTo: created.id, replyPreview: "PG 冒烟测试",
@@ -558,6 +848,84 @@ async function main() {
       duplicateAttachmentRejected = true;
     }
     assertOk("同一 upload 不能绑定两条消息", duplicateAttachmentRejected);
+    const mismatchedUploadId = "up_smoke_mime_mismatch";
+    const mismatchedUploadPath = path.join(dataDir, "smoke-mime-mismatch.pdf");
+    fs.writeFileSync(mismatchedUploadPath, "%PDF-smoke");
+    await db.run(
+      `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'message')`,
+      [
+        mismatchedUploadId,
+        user.username,
+        mismatchedUploadPath,
+        "https://example.com/smoke-mime-mismatch.pdf",
+        "application/pdf",
+        10,
+        Date.now(),
+      ],
+    );
+    let mimeMismatchError = "";
+    try {
+      await createMessage(user, {
+        channel: "couple",
+        type: "image",
+        text: "[图片]",
+        uploadId: mismatchedUploadId,
+        clientId: "smoke-mime-mismatch",
+      });
+    } catch (error) {
+      mimeMismatchError = error instanceof Error ? error.message : String(error);
+    }
+    const mismatchedUpload = await db.get<{ message_id: string | null }>(
+      "SELECT message_id FROM uploads WHERE id = ?",
+      [mismatchedUploadId],
+    );
+    const mismatchedMessage = await db.get<{ id: string }>(
+      "SELECT id FROM messages WHERE sender = ? AND client_id = ?",
+      [user.username, "smoke-mime-mismatch"],
+    );
+    assertOk(
+      "旧单附件路径拒绝 MIME 与消息类型错配且事务不绑定文件",
+      mimeMismatchError === "upload_message_type_mismatch" &&
+        mismatchedUpload?.message_id === null &&
+        !mismatchedMessage,
+    );
+    const wrongPurposeUploadId = "up_smoke_wrong_purpose";
+    const wrongPurposeUploadPath = path.join(dataDir, "smoke-wrong-purpose.jpg");
+    fs.writeFileSync(wrongPurposeUploadPath, "image");
+    await db.run(
+      `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose)
+       VALUES (?, ?, ?, ?, 'image/jpeg', 5, ?, 'avatar')`,
+      [
+        wrongPurposeUploadId,
+        user.username,
+        wrongPurposeUploadPath,
+        "https://example.com/smoke-wrong-purpose.jpg",
+        Date.now(),
+      ],
+    );
+    let wrongMessagePurposeError = "";
+    try {
+      await createMessage(user, {
+        channel: "couple",
+        type: "image",
+        text: "[图片]",
+        uploadId: wrongPurposeUploadId,
+        clientId: "smoke-wrong-purpose",
+      });
+    } catch (error) {
+      wrongMessagePurposeError = error instanceof Error ? error.message : String(error);
+    }
+    const wrongPurposeUpload = await db.get<{ message_id: string | null; purpose: string }>(
+      "SELECT message_id, purpose FROM uploads WHERE id = ?",
+      [wrongPurposeUploadId],
+    );
+    assertOk(
+      "消息附件拒绝跨 purpose 复用且事务不改变上传记录",
+      wrongMessagePurposeError === "upload_purpose_mismatch" &&
+        wrongPurposeUpload?.message_id === null &&
+        wrongPurposeUpload.purpose === "avatar",
+    );
     const recalledMedia = await recallMessage(user, media.id);
     let recalledUpload = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", [uploadId]);
     for (
@@ -668,9 +1036,11 @@ async function main() {
     const abandonedPath = path.join(dataDir, "abandoned-message.jpg");
     const abandonedThumbnailPath = thumbnailPathFor(abandonedPath);
     const avatarPath = path.join(dataDir, "keep-avatar.jpg");
+    const duplicatePhysicalPath = path.join(dataDir, "shared-physical-file.jpg");
     fs.writeFileSync(abandonedPath, "abandoned");
     fs.writeFileSync(abandonedThumbnailPath, "thumbnail");
     fs.writeFileSync(avatarPath, "avatar");
+    fs.writeFileSync(duplicatePhysicalPath, "shared-file");
     const oldCreatedAt = Date.now() - 2 * 24 * 60 * 60 * 1000;
     await db.run(
       "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -680,16 +1050,373 @@ async function main() {
       "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       ["up_avatar_keep_123", user.username, avatarPath, "https://example.com/avatar.jpg", "image/jpeg", 6, oldCreatedAt, "avatar"],
     );
-    const { cleanupAbandonedMessageUploads } = await import("../src/upload/cleanup");
+    await db.run(
+      `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose)
+       VALUES (?, ?, ?, ?, 'image/jpeg', 11, ?, 'message'),
+              (?, ?, ?, ?, 'image/jpeg', 11, ?, 'avatar')`,
+      [
+        "up_duplicate_abandoned_123",
+        user.username,
+        duplicatePhysicalPath,
+        "https://example.com/duplicate-abandoned.jpg",
+        oldCreatedAt,
+        "up_duplicate_retained_123",
+        user.username,
+        duplicatePhysicalPath,
+        "https://example.com/duplicate-retained.jpg",
+        Date.now(),
+      ],
+    );
+    const {
+      cleanupAbandonedMessageUploads,
+      cleanupUnreferencedSharedUploads,
+      drainFileCleanupQueue,
+    } = await import("../src/upload/cleanup");
     const cleaned = await cleanupAbandonedMessageUploads();
+    const queuedAbandoned = await db.get<{ completed_at: number | null }>(
+      "SELECT completed_at FROM file_cleanup_queue WHERE path = ? ORDER BY created_at DESC LIMIT 1",
+      [abandonedPath],
+    );
+    const removedAbandonedUpload = await db.get<{ id: string }>(
+      "SELECT id FROM uploads WHERE id = ?",
+      ["up_abandoned_123"],
+    );
     const keptAvatar = await db.get<{ id: string }>("SELECT id FROM uploads WHERE id = ?", ["up_avatar_keep_123"]);
+    const duplicateCleanup = await db.get<{ id: string }>(
+      "SELECT id FROM file_cleanup_queue WHERE path = ?",
+      [duplicatePhysicalPath],
+    );
     assertOk(
-      "过期消息附件清理且不误删头像",
-      cleaned === 1 &&
-        !fs.existsSync(abandonedPath) &&
-        !fs.existsSync(abandonedThumbnailPath) &&
+      "过期消息附件先原子移除元数据，且共享物理路径仍有引用时不排队删除",
+      cleaned === 2 &&
+        !removedAbandonedUpload &&
+        queuedAbandoned?.completed_at === null &&
+        !duplicateCleanup &&
+        fs.existsSync(abandonedPath) &&
+        fs.existsSync(abandonedThumbnailPath) &&
+        fs.existsSync(duplicatePhysicalPath) &&
         fs.existsSync(avatarPath) &&
         keptAvatar?.id === "up_avatar_keep_123",
+    );
+    const drainedAbandoned = await drainFileCleanupQueue();
+    assertOk(
+      "可靠清理队列删除过期附件原文件与缩略图且不误删头像",
+      drainedAbandoned >= 1 &&
+        !fs.existsSync(abandonedPath) &&
+        !fs.existsSync(abandonedThumbnailPath) &&
+        fs.existsSync(duplicatePhysicalPath) &&
+        fs.existsSync(avatarPath),
+    );
+
+    const unusedAvatarPath = path.join(dataDir, "unused-avatar.jpg");
+    const activeStickerPath = path.join(dataDir, "active-sticker.png");
+    const tombstoneStickerPath = path.join(dataDir, "tombstone-sticker.png");
+    const historyStickerPath = path.join(dataDir, "history-sticker.png");
+    const partnerStickerPath = path.join(dataDir, "partner-sticker.png");
+    const foreignStickerPath = path.join(dataDir, "foreign-sticker.png");
+    const legacyAvatarFilename = "1783639852452-aaaaaaaaaaaa.jpg";
+    const legacyAvatarPath = path.join(dataDir, legacyAvatarFilename);
+    for (const fixturePath of [
+      unusedAvatarPath,
+      activeStickerPath,
+      tombstoneStickerPath,
+      historyStickerPath,
+      partnerStickerPath,
+      foreignStickerPath,
+      legacyAvatarPath,
+    ]) {
+      fs.writeFileSync(fixturePath, "shared-media");
+    }
+    const sharedUploadFixtures = [
+      ["up_avatar_unused_123", unusedAvatarPath, "avatar"],
+      ["up_sticker_active_123", activeStickerPath, "sticker"],
+      ["up_sticker_tombstone_123", tombstoneStickerPath, "sticker"],
+      ["up_sticker_history_123", historyStickerPath, "sticker"],
+      ["up_sticker_partner_123", partnerStickerPath, "sticker"],
+    ] as const;
+    for (const [id, fixturePath, purpose] of sharedUploadFixtures) {
+      await db.run(
+        `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose)
+         VALUES (?, ?, ?, ?, 'image/png', ?, ?, ?)`,
+        [
+          id,
+          user.username,
+          fixturePath,
+          `http://127.0.0.1:8080/media/${id}?sig=expired&exp=1`,
+          12,
+          oldCreatedAt,
+          purpose,
+        ],
+      );
+    }
+    await db.run(
+      `UPDATE uploads SET owner = ? WHERE id = ?`,
+      [accounts[1].username, "up_sticker_partner_123"],
+    );
+    await db.run(
+      `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose)
+       VALUES (?, 'outside-couple', ?, ?, 'image/png', 12, ?, 'sticker')`,
+      [
+        "up_sticker_foreign_123",
+        foreignStickerPath,
+        "http://127.0.0.1:8080/media/up_sticker_foreign_123?sig=expired&exp=1",
+        Date.now(),
+      ],
+    );
+    await db.run(
+      `INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose)
+       VALUES (?, ?, ?, ?, 'image/jpeg', 12, ?, 'avatar')`,
+      [
+        "legacy_avatar_shared_123",
+        user.username,
+        legacyAvatarPath,
+        `https://old.example/uploads/${legacyAvatarFilename}`,
+        oldCreatedAt,
+      ],
+    );
+    const { setSharedItem: setSharedMediaItem, getSharedState: getSharedMediaState } = await import(
+      "../src/shared/sharedService"
+    );
+    await setSharedMediaItem(user, `avatar_${user.username}`, {
+      url: "http://127.0.0.1:8080/media/up_avatar_keep_123?sig=expired&exp=1",
+    });
+    await setSharedMediaItem(user, "avatar_legacy_smoke", {
+      url: `/uploads/${legacyAvatarFilename}`,
+    });
+    await setSharedMediaItem(user, "stickers_user_smoke", {
+      version: 3,
+      items: [{
+        id: "sticker-active",
+        url: "http://127.0.0.1:8080/media/up_sticker_active_123?sig=expired&exp=1",
+        groupId: "default",
+        addedAt: 1,
+        updatedAt: 1,
+      }],
+      groups: [],
+      itemTombstones: [{
+        url: "http://127.0.0.1:8080/media/up_sticker_tombstone_123?sig=expired&exp=1",
+        deletedAt: 2,
+      }],
+      groupTombstones: [],
+    });
+    const historySticker = await createMessage(user, {
+      channel: "couple",
+      type: "sticker",
+      text: "[表情]",
+      url: "http://127.0.0.1:8080/media/up_sticker_history_123?sig=expired&exp=1",
+      clientId: "smoke-sticker-history",
+    });
+    const partnerSticker = await createMessage(user, {
+      channel: "couple",
+      type: "sticker",
+      text: "[表情]",
+      url: "http://127.0.0.1:8080/media/up_sticker_partner_123?sig=expired&exp=1",
+      clientId: "smoke-sticker-partner",
+    });
+    const reversedSharedStickerItems = [
+      {
+        id: "sticker-active-lock",
+        url: "http://127.0.0.1:8080/media/up_sticker_active_123?sig=expired&exp=1",
+        groupId: "default",
+        addedAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: "sticker-partner-lock",
+        url: "http://127.0.0.1:8080/media/up_sticker_partner_123?sig=expired&exp=1",
+        groupId: "default",
+        addedAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    await Promise.all([
+      setSharedMediaItem(user, "stickers_user_lock_order_a", {
+        version: 3,
+        items: reversedSharedStickerItems,
+      }),
+      setSharedMediaItem(user, "stickers_user_lock_order_b", {
+        version: 3,
+        items: [...reversedSharedStickerItems].reverse(),
+      }),
+    ]);
+    let wrongPurposeStickerError = "";
+    try {
+      await createMessage(user, {
+        channel: "couple",
+        type: "sticker",
+        text: "[表情]",
+        url: "http://127.0.0.1:8080/media/up_avatar_keep_123?sig=expired&exp=1",
+        clientId: "smoke-sticker-wrong-purpose",
+      });
+    } catch (error) {
+      wrongPurposeStickerError = error instanceof Error ? error.message : String(error);
+    }
+    let foreignStickerMessageError = "";
+    try {
+      await createMessage(user, {
+        channel: "couple",
+        type: "sticker",
+        text: "[表情]",
+        url: "http://127.0.0.1:8080/media/up_sticker_foreign_123?sig=expired&exp=1",
+        clientId: "smoke-sticker-foreign",
+      });
+    } catch (error) {
+      foreignStickerMessageError = error instanceof Error ? error.message : String(error);
+    }
+    let externalStickerMessageError = "";
+    try {
+      await createMessage(user, {
+        channel: "couple",
+        type: "sticker",
+        text: "[表情]",
+        url: "https://external.example/media/up_sticker_active_123?sig=external&exp=9999999999999",
+        clientId: "smoke-sticker-external",
+      });
+    } catch (error) {
+      externalStickerMessageError = error instanceof Error ? error.message : String(error);
+    }
+    let foreignSharedStickerError = "";
+    try {
+      await setSharedMediaItem(user, "stickers_user_foreign_smoke", {
+        version: 3,
+        items: [{
+          id: "sticker-foreign",
+          url: "http://127.0.0.1:8080/media/up_sticker_foreign_123?sig=expired&exp=1",
+        }],
+      });
+    } catch (error) {
+      foreignSharedStickerError = error instanceof Error ? error.message : String(error);
+    }
+    let externalSharedMediaError = "";
+    try {
+      await setSharedMediaItem(user, "avatar_external_smoke", {
+        url: "https://external.example/media/up_sticker_active_123?sig=external&exp=9999999999999",
+      });
+    } catch (error) {
+      externalSharedMediaError = error instanceof Error ? error.message : String(error);
+    }
+    const refreshedSharedMedia = await getSharedMediaState(user);
+    const refreshedAvatarURL = (refreshedSharedMedia[`avatar_${user.username}`]?.value as {
+      url?: string;
+    } | undefined)?.url;
+    const refreshedStickerURL = (refreshedSharedMedia.stickers_user_smoke?.value as {
+      items?: Array<{ url?: string }>;
+    } | undefined)?.items?.[0]?.url;
+    assertOk(
+      "共享媒体刷新签名、统一锁序，并按用途、同源与情侣租户校验引用",
+      Number(new URL(refreshedAvatarURL ?? "http://invalid").searchParams.get("exp")) > Date.now() &&
+        Number(new URL(refreshedStickerURL ?? "http://invalid").searchParams.get("exp")) > Date.now() &&
+        historySticker.url?.includes("/media/up_sticker_history_123?") === true &&
+        partnerSticker.url?.includes("/media/up_sticker_partner_123?") === true &&
+        wrongPurposeStickerError === "upload_purpose_mismatch" &&
+        foreignStickerMessageError === "upload_not_found" &&
+        externalStickerMessageError === "upload_not_found" &&
+        foreignSharedStickerError === "upload_not_found" &&
+        externalSharedMediaError === "upload_not_found",
+    );
+
+    const queuedSharedMedia = await cleanupUnreferencedSharedUploads();
+    const retainedSharedUploads = await db.all<{ id: string }>(
+      `SELECT id FROM uploads
+        WHERE id IN (?, ?, ?, ?) ORDER BY id`,
+      [
+        "up_avatar_keep_123",
+        "up_sticker_active_123",
+        "up_sticker_history_123",
+        "legacy_avatar_shared_123",
+      ],
+    );
+    const removedSharedUploads = await db.all<{ id: string }>(
+      `SELECT id FROM uploads
+        WHERE id IN (?, ?)`,
+      ["up_avatar_unused_123", "up_sticker_tombstone_123"],
+    );
+    assertOk(
+      "共享媒体 GC 保留活跃头像、贴纸库和历史消息引用，仅回收无引用与墓碑文件",
+      queuedSharedMedia === 2 &&
+        retainedSharedUploads.length === 4 &&
+        removedSharedUploads.length === 0 &&
+        fs.existsSync(unusedAvatarPath) &&
+        fs.existsSync(tombstoneStickerPath),
+    );
+    const drainedSharedMedia = await drainFileCleanupQueue();
+    assertOk(
+      "共享媒体可靠队列提交后才删除原文件",
+      drainedSharedMedia >= 2 &&
+        !fs.existsSync(unusedAvatarPath) &&
+        !fs.existsSync(tombstoneStickerPath) &&
+        fs.existsSync(avatarPath) &&
+        fs.existsSync(activeStickerPath) &&
+        fs.existsSync(historyStickerPath) &&
+        fs.existsSync(legacyAvatarPath),
+    );
+    await db.run(
+      `INSERT INTO file_cleanup_queue (id, path, reason, created_at)
+       VALUES (?, ?, 'boundary_smoke', ?)`,
+      ["cleanup_upload_root_boundary", dataDir, Date.now()],
+    );
+    await drainFileCleanupQueue();
+    const rejectedRootCleanup = await db.get<{ completed_at: number | null; last_error: string | null }>(
+      "SELECT completed_at, last_error FROM file_cleanup_queue WHERE id = ?",
+      ["cleanup_upload_root_boundary"],
+    );
+    assertOk(
+      "可靠清理队列拒绝把上传目录本身作为文件目标",
+      rejectedRootCleanup?.completed_at === null &&
+        rejectedRootCleanup.last_error === "path_outside_upload_dir" &&
+        fs.existsSync(dataDir),
+    );
+
+    const bindingRacePath = path.join(dataDir, "binding-race.jpg");
+    fs.writeFileSync(bindingRacePath, "binding-race");
+    await db.run(
+      "INSERT INTO uploads (id, owner, path, url, mime_type, size, created_at, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        "up_binding_race_123",
+        user.username,
+        bindingRacePath,
+        "https://example.com/binding-race.jpg",
+        "image/jpeg",
+        12,
+        oldCreatedAt,
+        "message",
+      ],
+    );
+    let markBindingLocked: (() => void) | undefined;
+    let releaseBinding: (() => void) | undefined;
+    const bindingLocked = new Promise<void>((resolve) => { markBindingLocked = resolve; });
+    const bindingGate = new Promise<void>((resolve) => { releaseBinding = resolve; });
+    const binding = db.transaction(async (transaction) => {
+      const upload = await transaction.get<{ id: string }>(
+        "SELECT id FROM uploads WHERE id = ? FOR UPDATE",
+        ["up_binding_race_123"],
+      );
+      if (!upload) throw new Error("binding race fixture missing");
+      markBindingLocked?.();
+      await bindingGate;
+      await transaction.run(
+        "UPDATE uploads SET message_id = ? WHERE id = ?",
+        [created.id, "up_binding_race_123"],
+      );
+    });
+    await bindingLocked;
+    const skippedBinding = await cleanupAbandonedMessageUploads();
+    releaseBinding?.();
+    await binding;
+    const boundDuringCleanup = await db.get<{ message_id: string | null }>(
+      "SELECT message_id FROM uploads WHERE id = ?",
+      ["up_binding_race_123"],
+    );
+    const queuedBindingCleanup = await db.get<{ count: number }>(
+      "SELECT COUNT(*)::int AS count FROM file_cleanup_queue WHERE path = ?",
+      [bindingRacePath],
+    );
+    assertOk(
+      "清理用 SKIP LOCKED 避让正在绑定的附件",
+      skippedBinding === 0 &&
+        boundDuringCleanup?.message_id === created.id &&
+        queuedBindingCleanup?.count === 0 &&
+        fs.existsSync(bindingRacePath),
     );
 
     const thumbnailSourcePath = path.join(dataDir, "thumbnail-source.png");
@@ -725,6 +1452,8 @@ async function main() {
       signMediaId,
       verifyMediaSignature,
       parseRequestedByteRange,
+      mediaUploadIdFromUrl,
+      refreshSignedMediaUrl,
     } = await import("../src/upload/mediaAccess");
     const signedURL = new URL(signedMediaURL("up_signature_123"));
     const signedThumbnailURL = new URL(signedMediaThumbnailURL("up_signature_123"));
@@ -741,12 +1470,29 @@ async function main() {
         signature === signed.sig &&
         verifyMediaSignature("up_signature_123", signature, exp) &&
         !verifyMediaSignature("up_signature_456", signature, exp) &&
-        !verifyMediaSignature("up_signature_123", signature, Date.now() - 1_000),
+        !verifyMediaSignature("up_signature_123", signature, Date.now() - 1_000) &&
+        new URL(refreshSignedMediaUrl(signedThumbnailURL.toString()) ?? "").pathname
+          === "/media/up_signature_123/thumbnail" &&
+        refreshSignedMediaUrl(
+          "https://external.example/media/up_signature_123?sig=external&exp=9999999999999",
+        ) === "https://external.example/media/up_signature_123?sig=external&exp=9999999999999" &&
+        mediaUploadIdFromUrl("/media/up_signature_123?sig=relative") === "up_signature_123" &&
+        mediaUploadIdFromUrl(
+          " \thttps://external.example/media/up_signature_123?sig=whitespace",
+        ) === undefined &&
+        mediaUploadIdFromUrl("\\\\external.example\\media\\up_signature_123") === undefined,
     );
     const suffixRange = parseRequestedByteRange("bytes=-500", 10_000);
     assertOk(
       "媒体 suffix Range 指向文件尾部（支持视频分段读取）",
       suffixRange?.start === 9_500 && suffixRange.end === 9_999,
+    );
+    assertOk(
+      "媒体 Range 解析拒绝多段、越界、空 suffix 和非正文件长度",
+      parseRequestedByteRange("bytes=0-1,4-5", 10_000) === null &&
+        parseRequestedByteRange("bytes=10000-", 10_000) === null &&
+        parseRequestedByteRange("bytes=-0", 10_000) === null &&
+        parseRequestedByteRange("bytes=0-1", 0) === null,
     );
     const routeMediaId = "up_signed_route_123";
     const routeMediaPath = path.join(dataDir, `${routeMediaId}.txt`);
@@ -805,10 +1551,105 @@ async function main() {
       "双方登录均生成设备绑定 session",
       Boolean(currentUser?.sessionId && currentUser.deviceId && partnerUser?.sessionId && partnerUser.deviceId),
     );
-    const { buildApp } = await import("../src/app");
+    const secondCurrentUser = await createDeviceSession({
+      ...user,
+      accountId: `acc_legacy_${user.username}`,
+      coupleId: "cpl_legacy_xusi",
+      memberId: `mem_legacy_${user.username}`,
+    }, {
+      installationId: "smoke-installation-second-123",
+      platform: "ios",
+      deviceName: "smoke-second",
+      appVersion: "0.2.0",
+      buildNumber: "11",
+      locale: "zh_CN",
+      timezone: "Asia/Shanghai",
+    });
+    const { createRealtimeMessageUseCases } = await import("../src/chat/realtimeUseCases");
+    let retryPushCount = 0;
+    let retryAiCount = 0;
+    const retryUseCases = createRealtimeMessageUseCases({} as Server, {
+      createMessage: createMessageWithStatus,
+      pushCoupleMessage: async () => {
+        retryPushCount += 1;
+        throw new Error("expected smoke push failure");
+      },
+      handleUserMessage: () => {
+        retryAiCount += 1;
+        throw new Error("expected smoke AI dispatch failure");
+      },
+    });
+    const concurrentPayload = {
+      channel: "couple" as const,
+      type: "text" as const,
+      text: "并发幂等消息",
+      clientId: "smoke-concurrent-client-id",
+    };
+    const [concurrentFirst, concurrentSecond] = await Promise.all([
+      retryUseCases.send(currentUser!, concurrentPayload, "smoke-concurrent-1"),
+      retryUseCases.send(currentUser!, concurrentPayload, "smoke-concurrent-2"),
+    ]);
+    const concurrentRetry = await retryUseCases.send(
+      currentUser!,
+      concurrentPayload,
+      "smoke-concurrent-3",
+    );
+    const concurrentRows = await db.get<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM messages
+        WHERE conversation_id = 'conv_legacy_couple'
+          AND sender_account_id = ? AND origin_device_id = ? AND client_id = ?`,
+      [currentUser!.accountId, currentUser!.deviceId, concurrentPayload.clientId],
+    );
+    assertOk(
+      "同设备并发 clientId 只创建一次、隔离后台失败且重试不重复 AI/推送",
+      concurrentFirst.message.id === concurrentSecond.message.id &&
+        concurrentRetry.message.id === concurrentFirst.message.id &&
+        Number(concurrentFirst.created) + Number(concurrentSecond.created) === 1 &&
+        !concurrentRetry.created &&
+        concurrentRows?.count === 1 &&
+        retryPushCount === 1 &&
+        retryAiCount === 1,
+    );
+    const sharedClientId = "smoke-shared-client-id";
+    const firstDeviceMessage = await createMessageWithStatus(currentUser!, {
+      channel: "couple",
+      type: "text",
+      text: "设备一",
+      clientId: sharedClientId,
+    });
+    const secondDeviceMessage = await createMessageWithStatus(secondCurrentUser!, {
+      channel: "couple",
+      type: "text",
+      text: "设备二",
+      clientId: sharedClientId,
+    });
+    assertOk(
+      "不同设备可独立使用相同 clientId",
+      firstDeviceMessage.created &&
+        secondDeviceMessage.created &&
+        firstDeviceMessage.message.id !== secondDeviceMessage.message.id,
+    );
+
+    const { buildApp, sanitizeRequestUrl } = await import("../src/app");
+    const edgeNginx = fs.readFileSync(
+      path.resolve("deploy", "nginx-japan-edge-hoo66.top.conf"),
+      "utf8",
+    );
+    assertOk(
+      "应用与边缘代理不记录签名媒体 query",
+      sanitizeRequestUrl("/media/up_secret?sig=never-log&exp=999") === "/media/up_secret" &&
+        /location \^~ \/media\/\s*\{[\s\S]*?access_log off;/.test(edgeNginx),
+    );
     const app = await buildApp();
+    app.get("/__smoke/client-ip", async (request) => ({ ip: request.ip }));
     const authorization = `Bearer ${createToken(currentUser!)}`;
     const partnerAuthorization = `Bearer ${createToken(partnerUser!)}`;
+    const trustedProxyIpResponse = await app.inject({
+      method: "GET",
+      url: "/__smoke/client-ip",
+      headers: { "x-forwarded-for": "198.51.100.27" },
+      remoteAddress: "127.0.0.1",
+    });
     const anonymousAccountsResponse = await app.inject({ method: "GET", url: "/api/accounts" });
     const invalidTokenAccountsResponse = await app.inject({
       method: "GET",
@@ -832,6 +1673,11 @@ async function main() {
         invalidTokenAccounts.length === 2 &&
         authenticatedAccounts.length === 2 &&
         JSON.stringify(invalidTokenAccounts) === JSON.stringify(anonymousAccounts),
+    );
+    assertOk(
+      "Fastify 仅经受控回环/Tailnet 代理还原客户端 IP",
+      trustedProxyIpResponse.statusCode === 200 &&
+        trustedProxyIpResponse.json<{ ip: string }>().ip === "198.51.100.27",
     );
 
     const expiredAlbumUploadId = "up_album_expired_123";
@@ -1118,6 +1964,16 @@ async function main() {
       url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search,
       headers: { range: "bytes=2-7" },
     });
+    const invalidRangeResponse = await app.inject({
+      method: "GET",
+      url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search,
+      headers: { range: "bytes=99-120" },
+    });
+    const multipleRangeResponse = await app.inject({
+      method: "GET",
+      url: new URL(routeMediaURL).pathname + new URL(routeMediaURL).search,
+      headers: { range: "bytes=0-1,4-5" },
+    });
     const compatibleRouteResponse = await app.inject({ method: "GET", url: `/uploads/${compatibleRouteFilename}` });
     const invalidSignatureResponse = await app.inject({ method: "GET", url: `/media/${routeMediaId}?sig=invalid-signature-value-000000000000` });
     const bypassResponse = await app.inject({ method: "GET", url: `/uploads/${path.basename(routeMediaPath)}` });
@@ -1187,6 +2043,23 @@ async function main() {
       },
       payload: invalidThumbnailPayload,
     });
+    const invalidAvatarBoundary = "SmokeBoundaryInvalidAvatar";
+    const invalidAvatarPayload = Buffer.from(
+      `--${invalidAvatarBoundary}\r\n` +
+      "Content-Disposition: form-data; name=\"file\"; filename=\"avatar.pdf\"\r\n" +
+      "Content-Type: application/pdf\r\n\r\n" +
+      "%PDF-smoke\r\n" +
+      `--${invalidAvatarBoundary}--\r\n`,
+    );
+    const invalidAvatarResponse = await app.inject({
+      method: "POST",
+      url: "/api/upload?purpose=avatar",
+      headers: {
+        authorization,
+        "content-type": `multipart/form-data; boundary=${invalidAvatarBoundary}`,
+      },
+      payload: invalidAvatarPayload,
+    });
     await app.close();
     assertOk(
       "REST bootstrap 与消息分页返回有界快照",
@@ -1208,6 +2081,7 @@ async function main() {
       "上传接口校验并保留客户端生成的 JPEG 缩略图",
       uploadResponse.statusCode === 200 &&
         invalidThumbnailResponse.statusCode === 415 &&
+        invalidAvatarResponse.statusCode === 415 &&
         uploadedThumbnailPath !== undefined &&
         fs.existsSync(uploadedThumbnailPath) &&
         fs.readFileSync(uploadedThumbnailPath).equals(clientThumbnail),
@@ -1225,6 +2099,10 @@ async function main() {
         rangeResponse.statusCode === 206 && rangeResponse.body === "gned-m" &&
         rangeResponse.headers["accept-ranges"] === "bytes" &&
         rangeResponse.headers["content-range"] === "bytes 2-7/12" &&
+        invalidRangeResponse.statusCode === 416 && invalidRangeResponse.body === "" &&
+        invalidRangeResponse.headers["content-range"] === "bytes */12" &&
+        multipleRangeResponse.statusCode === 416 && multipleRangeResponse.body === "" &&
+        multipleRangeResponse.headers["content-range"] === "bytes */12" &&
         compatibleRouteResponse.statusCode === 200 && compatibleRouteResponse.body === "compatible-media" &&
         invalidSignatureResponse.statusCode === 404 && bypassResponse.statusCode === 404,
     );
@@ -1276,7 +2154,7 @@ async function main() {
     await db.run(
       `INSERT INTO messages
        (id, channel, sender, sender_name, kind, type, text, ts, meta_json, conversation_id)
-       VALUES (?, 'couple', 'ai', '大橘', 'ai', 'text', ?, ?, ?, 'conv_legacy_couple')`,
+       VALUES (?, 'couple', 'ai', '大橘', 'user', 'text', ?, ?, ?, 'conv_legacy_couple')`,
       ["smoke-confirm-cancel", "确认卡", now + 1, JSON.stringify(confirmationMeta)],
     );
     const confirmationBroadcasts: Array<{ room: string; event: string; payload: unknown }> = [];
@@ -1287,7 +2165,10 @@ async function main() {
         },
       }),
     } as unknown as Server;
-    const { confirmAction } = await import("../src/ai/actions/personalItems");
+    const {
+      confirmAction,
+      recoverInterruptedConfirmations,
+    } = await import("../src/ai/actions/personalItems");
     const cancelledConfirmation = await confirmAction(
       fakeIO,
       user,
@@ -1308,6 +2189,69 @@ async function main() {
           event.room === "couple:cpl_legacy_xusi" && event.event === "message:update"),
     );
 
+    const interruptedConfirmationMeta: ConfirmMeta = {
+      confirm: {
+        status: "processing" as const,
+        items: [
+          {
+            label: "已记录成功的动作",
+            action: { type: "add_memo" as const, title: "已执行动作" },
+            result: "succeeded" as const,
+          },
+          {
+            label: "不能在重启后重放",
+            action: {
+              type: "add_memo" as const,
+              title: "绝不能被恢复任务创建",
+              text: "恢复只能失败收敛",
+            },
+          },
+        ],
+        requesterName: user.name,
+        requesterUsername: user.username,
+      },
+    };
+    await db.run(
+      `INSERT INTO messages
+       (id, channel, sender, sender_name, kind, type, text, ts, meta_json, conversation_id)
+       VALUES (?, 'couple', 'ai', '大橘', 'user', 'text', ?, ?, ?, 'conv_legacy_couple')`,
+      [
+        "smoke-confirm-interrupted",
+        "中断确认卡",
+        now + 2,
+        JSON.stringify(interruptedConfirmationMeta),
+      ],
+    );
+    const itemsBeforeRecovery = await db.get<{ count: number }>(
+      "SELECT COUNT(*)::int AS count FROM personal_items WHERE title = ?",
+      ["绝不能被恢复任务创建"],
+    );
+    const recoveredConfirmationCount = await recoverInterruptedConfirmations();
+    const recoveredAgainCount = await recoverInterruptedConfirmations();
+    const recoveredConfirmationRow = await db.get<{ meta_json: string }>(
+      "SELECT meta_json FROM messages WHERE id = ?",
+      ["smoke-confirm-interrupted"],
+    );
+    const recoveredConfirmation = JSON.parse(
+      recoveredConfirmationRow?.meta_json ?? "{}",
+    ) as ConfirmMeta;
+    const itemsAfterRecovery = await db.get<{ count: number }>(
+      "SELECT COUNT(*)::int AS count FROM personal_items WHERE title = ?",
+      ["绝不能被恢复任务创建"],
+    );
+    assertOk(
+      "启动恢复把 processing confirmation 安全收敛且不重放动作",
+      recoveredConfirmationCount === 1
+        && recoveredAgainCount === 0
+        && recoveredConfirmation.confirm.status === "confirmed"
+        && recoveredConfirmation.confirm.failed === 1
+        && recoveredConfirmation.confirm.items[0]?.result === "succeeded"
+        && recoveredConfirmation.confirm.items[1]?.result === "failed"
+        && recoveredConfirmation.confirm.items[1]?.error === "execution_failed"
+        && itemsBeforeRecovery?.count === 0
+        && itemsAfterRecovery?.count === 0,
+    );
+
     const runtimeState = await import("../src/ai/runtimeState");
     await runtimeState.writeRuntimeState("smoke", "ok");
     assertOk("AI 运行状态读写", (await runtimeState.readRuntimeState("smoke")) === "ok");
@@ -1315,6 +2259,7 @@ async function main() {
     const {
       CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS,
       applyDigestPatch,
+      ensureContextCaughtUp,
       isContextDigestCircuitOpen,
       nextContextDigestCircuitState,
     } = await import("../src/ai/conversation/context");
@@ -1380,6 +2325,59 @@ async function main() {
         patchedDigest.digest.decisions.includes("决定坐高铁") &&
         patchedDigest.digest.openLoops.length === 0 &&
         patchedDigest.digest.moodLine === "安排已经落定",
+    );
+
+    const { addDays, cycleBounds, cycleDate } = await import("../src/ai/time");
+    const crossDayChannel = "ai:smoke-cross-day";
+    const currentContextDay = cycleDate();
+    const previousContextDay = addDays(currentContextDay, -1);
+    const oldestContextDay = addDays(currentContextDay, -2);
+    const oldestContextStart = cycleBounds(oldestContextDay).start;
+    const previousContextStart = cycleBounds(previousContextDay).start;
+    const currentContextStart = cycleBounds(currentContextDay).start;
+    await runtimeState.writeRuntimeState(`context:v2:${crossDayChannel}`, JSON.stringify({
+      strategy: "day-digest-v2",
+      rawCursor: { ts: oldestContextStart, id: "" },
+      dayKey: oldestContextDay,
+      dayDigest: {
+        dayKey: oldestContextDay,
+        topics: [],
+        decisions: [],
+        openLoops: [],
+        moodLine: "",
+        updatedAt: oldestContextStart,
+      },
+      recentSegments: [],
+      pendingSegments: [],
+    }));
+    await db.run(
+      `INSERT INTO messages
+       (id, channel, sender, sender_name, kind, type, text, ts, sender_account_id)
+       VALUES
+       (?, ?, 'xu', '小旭', 'user', 'text', '跨日第一天未整理消息', ?, 'acc_legacy_xu'),
+       (?, ?, 'si', '小偲', 'user', 'text', '跨日第二天未整理消息', ?, 'acc_legacy_si'),
+       (?, ?, 'xu', '小旭', 'user', 'text', '跨日今天未整理消息', ?, 'acc_legacy_xu')`,
+      [
+        "smoke-context-day-1", crossDayChannel, oldestContextStart + 60_000,
+        "smoke-context-day-2", crossDayChannel, previousContextStart + 60_000,
+        "smoke-context-day-3", crossDayChannel, currentContextStart + 60_000,
+      ],
+    );
+    const crossDayCatchUp = await ensureContextCaughtUp(
+      crossDayChannel,
+      { force: true, budgetMs: 30_000 },
+    );
+    const crossDayStateRaw = await runtimeState.readRuntimeState(`context:v2:${crossDayChannel}`);
+    const crossDayState = JSON.parse(crossDayStateRaw) as {
+      dayKey?: string;
+      rawCursor?: { ts?: number; id?: string };
+    };
+    assertOk(
+      "Context 跨多日追赶先消费旧消息，不会把 rawCursor 直接跳到今天",
+      !crossDayCatchUp.incomplete &&
+        crossDayCatchUp.lagMessageCount === 0 &&
+        crossDayState.dayKey === currentContextDay &&
+        crossDayState.rawCursor?.id === "smoke-context-day-3",
     );
 
     const {
@@ -1484,6 +2482,7 @@ async function main() {
       memoryExtractionDelay,
       memoryEventEvidenceScore,
       shouldExtractMemoryBatch,
+      shouldAdvanceMemoryCursorForBatch,
       shouldRecoverMemoryEvent,
       shouldRetryEmptyMemoryBatch,
     } = await import("../src/ai/memory/extractor");
@@ -1510,8 +2509,73 @@ async function main() {
         !tiedMessages.some((message) => message.id === "cursor-smoke-a") &&
         ownerTiedMessages.some((message) => message.id === "cursor-smoke-b"),
     );
+    assertOk(
+      "Memory 无候选可推进、全拒绝必须保留游标、至少保存一项才推进",
+      shouldAdvanceMemoryCursorForBatch(0, 0) &&
+        !shouldAdvanceMemoryCursorForBatch(3, 0) &&
+        shouldAdvanceMemoryCursorForBatch(3, 1),
+    );
 
     const memory = await import("../src/ai/memory/store");
+    const dajuInstructionXu = await memory.addMemory({
+      layer: "fact",
+      perspective: "daju",
+      kind: "instruction",
+      scope: "couple",
+      memoryKey: "instruction.smoke.xu",
+      subjects: [user.username],
+      speakers: [user.username],
+      content: "只对当前测试主人使用简短回答",
+      category: "大橘行为要求",
+      confidence: 1,
+      importance: 5,
+    });
+    const dajuInstructionPartner = await memory.addMemory({
+      layer: "fact",
+      perspective: "daju",
+      kind: "instruction",
+      scope: "couple",
+      memoryKey: "instruction.smoke.partner",
+      subjects: [partnerAccount.username],
+      speakers: [partnerAccount.username],
+      content: "只对另一位主人使用详细回答",
+      category: "大橘行为要求",
+      confidence: 1,
+      importance: 5,
+    });
+    const dajuInstructionBoth = await memory.addMemory({
+      layer: "fact",
+      perspective: "daju",
+      kind: "instruction",
+      scope: "couple",
+      memoryKey: "instruction.smoke.both",
+      subjects: ["both"],
+      speakers: [user.username],
+      content: "对两位主人都保持事实准确",
+      category: "大橘行为要求",
+      confidence: 1,
+      importance: 5,
+    });
+    const {
+      listDajuInstructionsForRequester,
+    } = await import("../src/ai/memory/dajuInstructions");
+    const xuDajuInstructions = await listDajuInstructionsForRequester(
+      "couple",
+      user.username,
+    );
+    const partnerDajuInstructions = await listDajuInstructionsForRequester(
+      "couple",
+      partnerAccount.username,
+    );
+    assertOk(
+      "大橘预注入与 MCP 指令读取按 requester 隔离并共享 both",
+      xuDajuInstructions.some((item) => item.id === dajuInstructionXu?.id)
+        && xuDajuInstructions.some((item) => item.id === dajuInstructionBoth?.id)
+        && !xuDajuInstructions.some((item) => item.id === dajuInstructionPartner?.id)
+        && partnerDajuInstructions.some((item) => item.id === dajuInstructionPartner?.id)
+        && partnerDajuInstructions.some((item) => item.id === dajuInstructionBoth?.id)
+        && !partnerDajuInstructions.some((item) => item.id === dajuInstructionXu?.id),
+    );
     const firstMemory = await memory.addMemory({
       layer: "fact", scope: "couple", memoryKey: "preference.smoke.color",
       subjects: [user.username], speakers: [user.username], content: "喜欢蓝色",
@@ -1609,6 +2673,213 @@ async function main() {
     });
     const completedPlan = await db.get<{ status: string }>("SELECT status FROM ai_memory WHERE id = ?", [plan!.id]);
     assertOk("Memory 计划支持完成/取消生命周期", completed && completedPlan?.status === "completed");
+
+    const editorAccount = await db.get<{ id: string }>(
+      "SELECT id FROM accounts WHERE username = ?",
+      [user.username],
+    );
+    const rollingStateInput = {
+      layer: "state" as const,
+      scope: "couple",
+      memoryKey: "state.smoke.rolling",
+      subjects: [user.username],
+      speakers: [user.username],
+      content: "最近正在专注准备冒烟测试",
+      category: "state",
+      confidence: 0.9,
+      importance: 3,
+    };
+    const rollingState = await memory.addMemory(rollingStateInput);
+    const rollingDeleted = await memory.deleteMemoryForControl({
+      memoryId: rollingState!.id,
+      scopes: ["couple"],
+      coupleId: "cpl_legacy_xusi",
+      editorAccountId: editorAccount!.id,
+    });
+    const exactRollingRecreated = await memory.addMemory(rollingStateInput);
+    await db.run(
+      `INSERT INTO ai_memory_exclusions
+       (id, couple_id, account_id, memory_key, source_message_id, created_by_account_id, created_at)
+       VALUES (?, 'cpl_legacy_xusi', NULL, ?, NULL, ?, ?)
+       ON CONFLICT DO NOTHING`,
+      [
+        "mex_smoke_legacy_rolling",
+        rollingState!.memoryKey,
+        editorAccount!.id,
+        Date.now(),
+      ],
+    );
+    const changedRollingState = await memory.addMemory({
+      ...rollingStateInput,
+      content: "最近已经完成冒烟测试并开始复核结果",
+    });
+    const expectedRollingExclusionKey = memory.memoryExclusionKey(
+      rollingStateInput.layer,
+      rollingState!.memoryKey,
+      rollingStateInput.content,
+    );
+    const rollingExclusion = await db.get<{ memory_key: string }>(
+      `SELECT memory_key FROM ai_memory_exclusions
+        WHERE couple_id = 'cpl_legacy_xusi' AND memory_key = ?
+        LIMIT 1`,
+      [expectedRollingExclusionKey],
+    );
+    assertOk(
+      "删除 rolling Memory 只屏蔽被删内容，不会永久禁用固定滚动 key",
+      rollingDeleted &&
+        exactRollingRecreated === null &&
+        Boolean(changedRollingState?.id) &&
+        rollingExclusion?.memory_key === expectedRollingExclusionKey,
+    );
+
+    // 固定层（fact/event/plan）曾经按裸 memory_key 排除，导致"忘掉一条"= 该主题
+    // 永久写不进来。排除项现在一律带内容指纹，这条守住的就是那个回归。
+    const stableFactInput = {
+      layer: "fact" as const,
+      scope: "couple",
+      memoryKey: "fact.smoke.exclusion_scope",
+      subjects: [user.username],
+      speakers: [user.username],
+      content: "冒烟测试用的可替换事实：偏好 A",
+      category: "test",
+      confidence: 0.9,
+      importance: 3,
+    };
+    const stableFact = await memory.addMemory(stableFactInput);
+    const stableFactDeleted = await memory.deleteMemoryForControl({
+      memoryId: stableFact!.id,
+      scopes: ["couple"],
+      coupleId: "cpl_legacy_xusi",
+      editorAccountId: editorAccount!.id,
+    });
+    const sameStableFact = await memory.addMemory(stableFactInput);
+    const newerStableFact = await memory.addMemory({
+      ...stableFactInput,
+      content: "冒烟测试用的可替换事实：偏好 B",
+    });
+    assertOk(
+      "忘掉固定层 Memory 只屏蔽被删内容，同一个 key 仍可写入新信息",
+      stableFactDeleted &&
+        sameStableFact === null &&
+        Boolean(newerStableFact?.id),
+    );
+
+    const dependencyBaseA = await memory.addMemory({
+      layer: "fact",
+      scope: "couple",
+      memoryKey: "fact.smoke.dependency_a",
+      subjects: [user.username],
+      speakers: [user.username],
+      content: "派生删除测试的第一条基础事实",
+      category: "test",
+      confidence: 0.95,
+      importance: 3,
+    });
+    const dependencyBaseB = await memory.addMemory({
+      layer: "event",
+      scope: "couple",
+      memoryKey: "event.smoke.dependency_b",
+      subjects: ["both"],
+      speakers: [user.username],
+      content: "两个人共同完成了派生删除冒烟测试",
+      category: "test",
+      confidence: 0.95,
+      importance: 3,
+      occurredAt: Date.now(),
+    });
+    const dependentRelationship = await memory.addMemory({
+      layer: "relationship",
+      scope: "couple",
+      memoryKey: "relationship.smoke.dependencies",
+      subjects: ["both"],
+      speakers: [],
+      content: "两个人会一起完成测试并认真复核结果",
+      category: "test",
+      confidence: 0.85,
+      importance: 3,
+      sourceMemoryIds: [dependencyBaseA!.id, dependencyBaseB!.id],
+    }, { actorAccountId: null });
+    const dependencyDeleted = await memory.deleteMemoryForControl({
+      memoryId: dependencyBaseA!.id,
+      scopes: ["couple"],
+      coupleId: "cpl_legacy_xusi",
+      editorAccountId: editorAccount!.id,
+    });
+    const remainingDependent = await db.get<{ id: string }>(
+      "SELECT id FROM ai_memory WHERE id = ?",
+      [dependentRelationship!.id],
+    );
+    const dependentDeleteSync = await db.get<{ operation: string }>(
+      `SELECT operation FROM sync_events
+        WHERE entity_type = 'memory' AND entity_id = ?
+        ORDER BY seq DESC LIMIT 1`,
+      [dependentRelationship!.id],
+    );
+    assertOk(
+      "删除基础 Memory 会级联删除含该内容的派生卡并发送 Sync delete",
+      dependencyDeleted &&
+        !remainingDependent &&
+        dependentDeleteSync?.operation === "delete",
+    );
+
+    const inactiveSourceDerived = await memory.addMemory({
+      layer: "insight",
+      scope: "couple",
+      memoryKey: "insight.smoke.inactive_source",
+      subjects: ["both"],
+      speakers: [],
+      content: "不应从已经完成的计划继续形成洞察",
+      category: "test",
+      confidence: 0.8,
+      importance: 2,
+      sourceMemoryIds: [plan!.id],
+    });
+    const lifecyclePlan = await memory.addMemory({
+      layer: "plan",
+      scope: "couple",
+      memoryKey: "plan.smoke.derived_lifecycle",
+      subjects: ["both"],
+      speakers: [user.username],
+      content: "准备验证派生卡的来源状态传播",
+      category: "test",
+      confidence: 0.9,
+      importance: 3,
+    });
+    const lifecycleInsight = await memory.addMemory({
+      layer: "insight",
+      scope: "couple",
+      memoryKey: "insight.smoke.lifecycle",
+      subjects: ["both"],
+      speakers: [],
+      content: "当前正在共同验证来源状态传播",
+      category: "test",
+      confidence: 0.8,
+      importance: 2,
+      sourceMemoryIds: [lifecyclePlan!.id],
+    });
+    await memory.transitionMemory({
+      memoryId: lifecyclePlan!.id,
+      scope: "couple",
+      status: "completed",
+      reason: "冒烟验证完成",
+    });
+    await memory.reconcileMemoryLifecycle();
+    const reconciledInsight = await db.get<{ status: string }>(
+      "SELECT status FROM ai_memory WHERE id = ?",
+      [lifecycleInsight!.id],
+    );
+    const reconciledInsightSync = await db.get<{ operation: string }>(
+      `SELECT operation FROM sync_events
+        WHERE entity_type = 'memory' AND entity_id = ?
+        ORDER BY seq DESC LIMIT 1`,
+      [lifecycleInsight!.id],
+    );
+    assertOk(
+      "派生 Memory 只接受 active 来源，来源完成后现有派生卡失效并同步删除",
+      inactiveSourceDerived === null &&
+        reconciledInsight?.status === "retracted" &&
+        reconciledInsightSync?.operation === "delete",
+    );
 
     const recallEvidence = await createMessage(user, {
       channel: "couple", type: "text", text: "这是一条即将撤回的记忆证据", clientId: "smoke-memory-recall",

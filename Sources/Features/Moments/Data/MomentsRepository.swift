@@ -71,14 +71,15 @@ struct MomentsRepository {
         takenAt: Int,
         postId: String,
         token: String
-    ) async throws -> [MomentAsset] {
+    ) async throws -> (assets: [MomentAsset], version: Int?) {
         let body = AddUploadMutation(uploadId: uploadId, takenAt: takenAt, postId: postId)
         let data = try await request(
             path: "api/v2/albums/\(albumId)/items/from-upload",
             method: "POST",
             body: body,
             token: token)
-        return try JSONDecoder().decode(AddedEnvelope.self, from: data).added.map(\.displayAsset)
+        let envelope = try JSONDecoder().decode(AddedEnvelope.self, from: data)
+        return (envelope.added.map(\.displayAsset), envelope.version)
     }
 
     func updateCaption(
@@ -182,7 +183,8 @@ private extension MomentsRepository {
         let items: [MomentAsset]?
         let nextCursor: String?
     }
-    struct AddedEnvelope: Decodable { let added: [AddedItem] }
+    /// version 由服务端回传当前权威版本；老服务端没有该字段时保持 nil。
+    struct AddedEnvelope: Decodable { let added: [AddedItem]; let version: Int? }
     struct AddedItem: Decodable {
         let itemId: String
         let postId: String?

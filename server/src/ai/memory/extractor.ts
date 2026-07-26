@@ -41,6 +41,8 @@ const scanTimers = new Map<string, NodeJS.Timeout>();
 const planningTimers = new Map<string, NodeJS.Timeout>();
 const running = new Set<string>();
 const retryAttempts = new Map<string, number>();
+let acceptingMemoryWork = true;
+let memoryWorkController = new AbortController();
 const SYSTEM_MEMORY_SYNC = { actorAccountId: null } as const;
 
 export const MEMORY_SOURCE_BATCH_SIZE = 80;
@@ -122,6 +124,13 @@ export function shouldRetryEmptyMemoryBatch(
   candidateCount: number,
 ): boolean {
   return modelMessageCount >= MEMORY_EMPTY_RETRY_THRESHOLD && candidateCount === 0;
+}
+
+export function shouldAdvanceMemoryCursorForBatch(
+  candidateCount: number,
+  savedCount: number,
+): boolean {
+  return candidateCount === 0 || savedCount > 0;
 }
 
 function systemPrompt(): string {
@@ -215,6 +224,7 @@ function hasUsableEventCandidate(items: ExtractedMemory[]): boolean {
 async function recoverEventCandidate(
   channel: string,
   messages: LogMessage[],
+  signal?: AbortSignal,
 ): Promise<ExtractedMemory | null> {
   const output = await chat({
     profile: "task",
@@ -229,6 +239,7 @@ async function recoverEventCandidate(
     ].join("\n"),
     user: `【待复核消息，频道=${channel}】\n${messages.map(messageLine).join("\n")}`,
     gen: GEN.eventRecovery,
+    signal,
   });
   const parsed = extractJson<{ event?: ExtractedMemory | null }>(output);
   if (!parsed?.event) return null;
@@ -241,6 +252,7 @@ async function recoverEventCandidate(
 }
 
 async function scanChannel(channel: string, force = false): Promise<void> {
+  if (!acceptingMemoryWork) return;
   if (running.has(channel)) return;
   running.add(channel);
   try {
@@ -280,6 +292,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       system: systemPrompt(),
       user: `【本批新消息，频道=${channel}】\n${modelMessages.map(messageLine).join("\n")}`,
       gen: GEN.extractFacts,
+      signal: memoryWorkController.signal,
     });
     if (!output) throw new Error("基础记忆模型无输出");
     const parsed = extractJson<{
@@ -298,7 +311,11 @@ async function scanChannel(channel: string, force = false): Promise<void> {
       hasUsableEventCandidate(candidateChanges),
     )) {
       try {
-        const recovered = await recoverEventCandidate(channel, modelMessages);
+        const recovered = await recoverEventCandidate(
+          channel,
+          modelMessages,
+          memoryWorkController.signal,
+        );
         eventRecoveryStatus = recovered ? "added" : "none";
         if (recovered) candidateChanges.push(recovered);
       } catch {
@@ -318,6 +335,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     const stateSubjects = new Set<string>();
     const savedBaseByKey = new Map<string, MemoryItem>();
     for (const item of candidateChanges) {
+      if (memoryWorkController.signal.aborted) throw new Error("memory_extraction_cancelled");
       const operation = item.operation ?? "upsert";
       const layerLabel = candidateLayerLabel(item);
       if (!MEMORY_OPERATIONS.has(operation)) {
@@ -408,6 +426,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
             subjects,
             subjectMode: "exact",
             limit: 1,
+            signal: memoryWorkController.signal,
           }))[0];
           if (candidate && (candidate.lexicalHits >= 2 || candidate.score >= 0.82)) {
             targetForUpdate = candidate;
@@ -432,7 +451,10 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         metadata: { ...item.metadata, updateReason: item.reason ?? "", extractorVersion: 5 },
         targetMemoryId: targetForUpdate?.id,
       };
-      const stored = await addMemory(candidate, SYSTEM_MEMORY_SYNC);
+      const stored = await addMemory(candidate, {
+        ...SYSTEM_MEMORY_SYNC,
+        signal: memoryWorkController.signal,
+      });
       if (stored) {
         baseSaved += 1;
         acceptCandidate(audit, layerLabel);
@@ -445,6 +467,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     }
 
     for (const item of candidateDajuChanges) {
+      if (memoryWorkController.signal.aborted) throw new Error("memory_extraction_cancelled");
       const operation = item.operation ?? "upsert";
       if (!MEMORY_OPERATIONS.has(operation)) {
         rejectCandidate(audit, "invalid_operation");
@@ -529,7 +552,10 @@ async function scanChannel(channel: string, force = false): Promise<void> {
         },
         sourceMemoryIds,
         targetMemoryId: target?.id,
-      }, SYSTEM_MEMORY_SYNC);
+      }, {
+        ...SYSTEM_MEMORY_SYNC,
+        signal: memoryWorkController.signal,
+      });
       if (stored) {
         dajuSaved += 1;
         acceptCandidate(audit, "daju");
@@ -540,12 +566,19 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     }
 
     const saved = baseSaved + dajuSaved;
+    const candidateCount = candidateChanges.length + candidateDajuChanges.length;
+    if (!shouldAdvanceMemoryCursorForBatch(candidateCount, saved)) {
+      throw new Error(
+        `Memory ${channel} 的 ${candidateCount} 个候选全部被拒绝，保留游标等待重试`,
+      );
+    }
+    if (memoryWorkController.signal.aborted) throw new Error("memory_extraction_cancelled");
     await advanceMemoryCursor(channel, nextCursor);
     await reconcileMemoryLifecycle();
     // 同一频道仍串行派生，避免共享 task provider 并发堆积；手动 HTTP
     // 最多等待 20 秒，超时后由该任务继续完成并通过 Sync V2 通知客户端。
     if (saved > 0) {
-      await refreshDerivedMemory(channel).catch((error) => {
+      await refreshDerivedMemory(channel, { signal: memoryWorkController.signal }).catch((error) => {
         console.warn(
           `[memory] ${channel} 派生整理失败:`,
           error instanceof Error ? error.message : error,
@@ -579,6 +612,7 @@ async function scanChannel(channel: string, force = false): Promise<void> {
 }
 
 async function planMemoryScan(channel: string): Promise<void> {
+  if (!acceptingMemoryWork) return;
   if (running.has(channel)) return;
   const cursor = await memoryCursor(channel);
   if (!cursor.ts) return;
@@ -596,6 +630,7 @@ async function planMemoryScan(channel: string): Promise<void> {
 }
 
 function schedulePlanning(channel: string): void {
+  if (!acceptingMemoryWork) return;
   const existing = planningTimers.get(channel);
   if (existing) clearTimeout(existing);
   planningTimers.set(channel, setTimeout(() => {
@@ -607,6 +642,7 @@ function schedulePlanning(channel: string): void {
 }
 
 function scheduleMemoryScan(channel: string, delayMs: number): void {
+  if (!acceptingMemoryWork) return;
   const existing = scanTimers.get(channel);
   if (existing) clearTimeout(existing);
   scanTimers.set(channel, setTimeout(() => {
@@ -630,6 +666,10 @@ function scheduleMemoryScan(channel: string, delayMs: number): void {
 }
 
 export async function initializeMemory(): Promise<void> {
+  acceptingMemoryWork = true;
+  if (memoryWorkController.signal.aborted) {
+    memoryWorkController = new AbortController();
+  }
   const channels = ["couple", ...accounts().map((account) => `ai:${account.username}`)];
   await Promise.all(channels.map((channel) => initializeMemoryCursor(channel)));
   channels.forEach(schedulePlanning);
@@ -641,6 +681,7 @@ export function onMemoryMessage(channel: string): void {
 }
 
 export async function flushMemory(channel: string): Promise<void> {
+  if (!acceptingMemoryWork) return;
   const planning = planningTimers.get(channel);
   if (planning) clearTimeout(planning);
   planningTimers.delete(channel);
@@ -653,4 +694,21 @@ export async function flushMemory(channel: string): Promise<void> {
     // 手动整理失败也必须恢复自动规划，不能因清掉旧 timer 后留下永久空窗。
     schedulePlanning(channel);
   }
+}
+
+export async function shutdownMemoryExtraction(timeoutMs = 5_000): Promise<boolean> {
+  acceptingMemoryWork = false;
+  memoryWorkController.abort(new Error("memory_extraction_shutdown"));
+  for (const timer of planningTimers.values()) clearTimeout(timer);
+  planningTimers.clear();
+  for (const timer of scanTimers.values()) clearTimeout(timer);
+  scanTimers.clear();
+  retryAttempts.clear();
+
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (running.size > 0) {
+    if (Date.now() >= deadline) return false;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  return true;
 }

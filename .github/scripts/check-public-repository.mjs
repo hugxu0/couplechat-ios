@@ -66,12 +66,24 @@ export function classifyTrackedPath(relativePath) {
   return findings;
 }
 
+// Reserved ranges that cannot identify a host: RFC 5737 documentation blocks and
+// the RFC 6598 shared space Tailscale draws from. Routable literals stay rejected,
+// so real edge and origin addresses must remain deploy-time placeholders.
+function isReservedNonRoutableAddress(octets) {
+  const [first, second, third] = octets;
+  if (first === 100 && second >= 64 && second <= 127) return true;
+  if (first === 192 && second === 0 && third === 2) return true;
+  if (first === 198 && second === 51 && third === 100) return true;
+  return first === 203 && second === 0 && third === 113;
+}
+
 function isAllowedNonSecretAddress(address) {
   const octets = address.split(".").map(Number);
   if (octets.length !== 4 || octets.some((octet) => octet < 0 || octet > 255)) {
     return true;
   }
   if (octets[0] === 127) return true;
+  if (isReservedNonRoutableAddress(octets)) return true;
   return address === "0.0.0.0";
 }
 

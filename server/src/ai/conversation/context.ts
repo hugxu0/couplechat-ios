@@ -80,6 +80,8 @@ export interface ConversationContext {
 
 const updateChains = new Map<string, Promise<void>>();
 const scheduleTimers = new Map<string, NodeJS.Timeout>();
+let acceptingContextWork = true;
+let contextWorkController = new AbortController();
 export const CONTEXT_DIGEST_CIRCUIT_FAILURE_THRESHOLD = 2;
 export const CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS = 10 * 60 * 1000;
 
@@ -339,6 +341,7 @@ async function generateSegment(
       messages.map((message) => compactLine(message, 120)).filter(Boolean).join("\n"),
     ].join("\n"),
     gen: GEN.contextSummary,
+    signal: contextWorkController.signal,
   });
   const parsed = extractJson<{ bullets?: unknown }>(output);
   const bullets = Array.isArray(parsed?.bullets)
@@ -583,6 +586,7 @@ async function mergeSegmentsIntoDigest(
     ].join("\n"),
     user: `索引:${JSON.stringify(digestIndex)}\n新段:${JSON.stringify(slimSegments)}`,
     gen: GEN.contextDigest,
+    signal: contextWorkController.signal,
   });
   const parsed = extractJson<DigestPatch>(output);
   const latestSegmentAt = segments.reduce((max, segment) => Math.max(max, segment.to.ts), 0);
@@ -622,6 +626,9 @@ export async function ensureContextCaughtUp(
   channel: string,
   options: { force?: boolean; budgetMs?: number } = {},
 ): Promise<{ incomplete: boolean; lagMessageCount: number }> {
+  if (!acceptingContextWork) {
+    return { incomplete: true, lagMessageCount: 0 };
+  }
   const force = Boolean(options.force);
   const budgetMs = options.budgetMs ?? CONTEXT.catchUpBudgetMs;
   const started = Date.now();
@@ -634,8 +641,13 @@ export async function ensureContextCaughtUp(
     .then(async () => {
       result = await runCatchUp(channel, force, budgetMs, started);
     });
-  updateChains.set(channel, next.then(() => undefined));
-  await next;
+  const tracked = next.then(() => undefined, () => undefined);
+  updateChains.set(channel, tracked);
+  try {
+    await next;
+  } finally {
+    if (updateChains.get(channel) === tracked) updateChains.delete(channel);
+  }
   return result;
 }
 
@@ -646,7 +658,6 @@ async function runCatchUp(
   started: number,
 ): Promise<{ incomplete: boolean; lagMessageCount: number }> {
   let state = await loadState(channel);
-  state = await rollDayIfNeeded(channel, state);
 
   const buffer: LogMessage[] = [];
   /** 扫描游标：可超前于已提交 rawCursor，避免同一轮重复拉页。 */
@@ -733,6 +744,12 @@ async function runCatchUp(
   // 未提交缓冲不推进 rawCursor；下次从已提交点重读。
   if (buffer.length) incomplete = true;
 
+  // 只有确认游标后已无消息时，才能把空闲旧作息日滚到今天。入口处直接滚日
+  // 会把 rawCursor 抬到今天 06:00，永久跳过宕机期间尚未处理的跨日消息。
+  if (!incomplete && !buffer.length && timeLeft() > 1_500) {
+    state = await rollDayIfNeeded(channel, state);
+  }
+
   const lagMessageCount = await countLag(channel, state.rawCursor);
   state.lagMessageCount = lagMessageCount;
   if (lagMessageCount > 0) incomplete = true;
@@ -747,6 +764,7 @@ const BACKGROUND_CATCHUP_GAP_MS = 5 * 60_000;
 const backgroundTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function scheduleBackgroundCatchUp(channel: string): void {
+  if (!acceptingContextWork) return;
   if (backgroundTimers.has(channel)) return;
   backgroundTimers.set(
     channel,
@@ -777,6 +795,7 @@ function scheduleBackgroundCatchUp(channel: string): void {
 
 /** 新消息后防抖追赶（不阻塞发送路径）。落后时自动转入后台长预算追赶。 */
 export function scheduleContextCatchUp(channel: string): void {
+  if (!acceptingContextWork) return;
   const existing = scheduleTimers.get(channel);
   if (existing) clearTimeout(existing);
   scheduleTimers.set(channel, setTimeout(() => {
@@ -802,6 +821,34 @@ export function scheduleContextCatchUp(channel: string): void {
 export function updateConversationContext(channel: string, _triggerMessageId?: string): Promise<void> {
   scheduleContextCatchUp(channel);
   return Promise.resolve();
+}
+
+export function startConversationContext(): void {
+  acceptingContextWork = true;
+  if (contextWorkController.signal.aborted) {
+    contextWorkController = new AbortController();
+  }
+}
+
+export async function shutdownConversationContext(timeoutMs = 5_000): Promise<boolean> {
+  acceptingContextWork = false;
+  contextWorkController.abort(new Error("ai_context_shutdown"));
+  for (const timer of scheduleTimers.values()) clearTimeout(timer);
+  scheduleTimers.clear();
+  for (const timer of backgroundTimers.values()) clearTimeout(timer);
+  backgroundTimers.clear();
+
+  const active = [...updateChains.values()];
+  if (!active.length) return true;
+  let timer: NodeJS.Timeout | null = null;
+  const completed = await Promise.race([
+    Promise.allSettled(active).then(() => true),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  return completed;
 }
 
 export function splitConversationMessages(messages: LogMessage[]) {

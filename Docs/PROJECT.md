@@ -8,7 +8,7 @@
 |---|---|---|
 | 客户端源码与 CI | `64942a3c03c3550222ff70cb7a3f7b9ba72a44a1` / run `30169638121` | Socket.IO Client Swift 16.1.1；Xcode 26.3 编译、服务端检查和仓库检查通过 |
 | 最近 iOS 产物 | `64942a3c03c3550222ff70cb7a3f7b9ba72a44a1` / run `30169637802` | unsigned IPA `0.2.0 (16)` 已生成并校验；SHA256 `1E4081F68FA91BB0F01704836DE92F4C916EEF9A6DA373CD94AD2F66B82273A7` |
-| 服务端源码 | 2026-07-26 | 依赖审计为 0，`npm run typecheck` 和 `npm run check` 通过 |
+| 本轮待发布源码 | `03e094054b63d870a5b701b5af40fa9dd4b87fe9` / run `30200272045` | Xcode 26.3 编译、SwiftLint、服务端检查（schema v36 PostgreSQL smoke）和仓库检查全部通过；真机弱网验证尚未执行 |
 | 日本公开入口 | 2026-07-26 | Nginx、安全响应头、健康接口和 Socket.IO 均正常 |
 | 美国生产环境 | 2026-07-26 | 已运行 release `7ce4e0879a93be64a7a8f4215d6d7e92542dd386`，schema v34，容器运行正常且重启次数为 0；依赖审计、三项健康检查和 Socket.IO 外网连接均通过 |
 
@@ -26,7 +26,7 @@
 - Bundle ID：`com.hugxu0.couplechat.native`；工程由根目录 `project.yml` 生成。
 - iOS 依赖：Socket.IO Client Swift `16.1.1`、GLTFKit2 `0.5.15`。
 - 3D 资源：`Sources/Resources/cute_cat.glb` 受 Git 管理并随 IPA 发布。
-- 服务端：Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16，源码当前 schema v34；生产状态以上方证据表为准。
+- 服务端：Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16，源码当前 schema v36；生产状态以上方证据表为准。
 - 公开基地址：`https://hoo66.top`；Debug 与 Release 当前都连接该地址。
 - 发布方式：服务端使用仓库脚本发布，GitHub 生成 unsigned IPA。
 - 签名方式：免费 Apple Personal Team，不支持 TestFlight/App Store，约 7 天需要刷新。
@@ -39,7 +39,8 @@
 - 共同聊天和按账号隔离的大橘私聊。
 - 文字、原图、视频、语音、文件、静态/动态贴纸、引用、搜索和完整撤回。
 - SQLite 账号缓存、可靠 outbox、`clientId` 幂等、历史分页、Sync V2 和 Socket 重连补拉；离线时停止空转，换网后重建连接，前台与 Bark 深链会并行执行 Socket 健康检查和 HTTP/Sync 补漏。
-- outbox 区分等待发送、实际发送和终止失败；媒体上传后重新取得当前 Socket，ACK/上传均有硬超时，云端已确认消息会自动收敛遗留 pending。
+- SQLite 连接和异步任务带账号、用户名与会话代次边界；退出或切换账号后，旧任务不能关闭、写入或发布到新账号。共享状态按 `updatedAt` 单调合并，未确认本地改动在 bootstrap 后继续覆盖旧快照。
+- outbox 区分等待发送、实际发送和终止失败；媒体上传后重新取得当前 Socket，ACK/上传与前台 Socket 健康探测均有硬超时，云端已确认消息会自动收敛遗留 pending。
 - 离线可进入有界本地历史；回前台后补 bootstrap、Sync V2 和 Socket 健康检查。
 - 图片/视频预览、收藏、主题、壁纸、Markdown 表格和 Mermaid；静态图片气泡与网格优先读取 720 px 缩略图，全屏当前页随后升级为原文件的高分辨率显示副本，短期签名刷新不再穿透本地缓存。
 - 图片、视频封面、语音和文件预览采用稳定媒体身份、请求合并、并发上限与 LRU 配额；撤回、清理历史和退出账号覆盖全部可重建媒体缓存。
@@ -61,7 +62,8 @@
 
 - 深浅模式、主题、头像、设备、Bark、收藏、账号隔离的表情库和存储管理。
 - `@大橘`、图片理解、联网查询、来源卡、事项确认卡和上下文摘要。
-- 结构化 Memory、人物归属、纠正、忘记、来源查看和定时维护。
+- 主人消息与 AI 回复任务同事务登记；服务重启后按租约恢复未完成任务，多段回复与末段来源/确认卡在同一数据库事务落库。
+- 结构化 Memory、人物归属、纠正、忘记、来源查看和定时维护；指令读取按当前 requester 与 `both` 隔离。
 
 ## 当前限制
 
@@ -75,16 +77,18 @@
 - 推荐变化只通过 REST、Sync V2 和 App 内角标同步，不发送 Bark。
 - 清空 App 数据后，已丢失本地文件的失败媒体无法继续重传。
 - 仓库不再保留客户端或服务端单元测试；iOS 依赖 CI 编译和真机验证，服务端依赖生产编译与 PostgreSQL smoke。
+- 普通聊天与 AI 消息已经持久化后，Bark 仍是提交后的外部副作用；极窄的进程崩溃窗口可能漏发通知。提醒投递已有独立持久状态，但普通消息推送尚无通用 push outbox。
 - unsigned IPA 仍需在用户受信设备上重新签名，三台设备需要定期覆盖安装。
-- 普通代码发布不修改数据库；涉及 migration 或数据修复时再单独准备备份。
+- 当前待发布源码包含 v35/v36 migration，不能使用普通代码发布直接切换；维护步骤和回滚边界见 [SERVER.md](SERVER.md)。
 
 ## 还要留意
 
 - Debug 和 Release 当前都连接生产环境，调试时避免批量删除或制造无用数据。
 - 仅使用时间戳的旧分页调用仍有同毫秒边角情况，新调用已经支持 ID 游标。
 - 图片选择和壁纸缓存仍有整包读取大文件的路径，可以继续优化。
-- 账号切换和 Socket 事件的 session generation 保护还能继续收紧。
-- 当前没有持续自动备份。普通小版本可以继续开发，做 migration、批量数据修改或主机迁移前再先补一份可读备份。
+- 本轮 iOS 并发与离线修复已通过 Xcode 编译与 CI，但尚未经过真机弱网验证，也尚未生成签名产物。
+- 仓库中的日本入口真实 IP 信任链和非 Cloudflare 直连拒绝规则尚未部署；线上健康检查正常不等于这项加固已经生效，应用发布与 Nginx 变更应分别验收。
+- 当前没有持续自动备份；2026-07-26 已完成一次 PostgreSQL、序列和媒体抽样的隔离恢复验证。后续 migration、批量数据修改或主机迁移前仍需重新制作同批次手工恢复点。
 
 ## 目前的选择
 

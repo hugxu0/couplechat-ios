@@ -5,9 +5,27 @@ import { traceBegin, traceError, traceFlush, traceReply, traceTiming } from "../
 import { startOperation } from "../../observability/operationLog";
 import { errorCodeFor } from "../../errors/errorCodes";
 import { updateConversationContext } from "../conversation/context";
+import { domainEvents } from "../../events/domainEvents";
+import {
+  claimAiReplyJob,
+  markAiReplyJobCancelled,
+  markAiReplyJobFailed,
+  markAiReplyJobIgnored,
+} from "./replyJobs";
 
 export interface ReplySink {
-  emit(storedChannel: string, text: string, isFirst: boolean, meta?: unknown): Promise<void>;
+  emit(
+    storedChannel: string,
+    text: string,
+    isFirst: boolean,
+    meta?: unknown,
+    triggerMessageId?: string,
+  ): Promise<void>;
+  emitBatch?(
+    storedChannel: string,
+    parts: Array<{ text: string; meta?: unknown }>,
+    triggerMessageId?: string,
+  ): Promise<void>;
   typing(storedChannel: string, value: boolean): void;
   replying?(storedChannel: string, value: boolean): void;
   activity?(trigger: Trigger, phase: "accepted" | "generating" | "finished" | "failed"): void;
@@ -82,9 +100,43 @@ function createRunState(): ResponseRunState {
   };
 }
 
+function isBackgroundTrigger(trigger: Trigger): boolean {
+  return trigger.origin === "conflict" || trigger.origin === "interject";
+}
+
+function cancellationError(): Error {
+  return new Error("ai_reply_cancelled");
+}
+
+async function emitWithDeadline(
+  sink: ReplySink,
+  trigger: Trigger,
+  state: ResponseRunState,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    await Promise.race([
+      sink.emit(trigger.storedChannel, TIMEOUT_REPLY, true, undefined, trigger.messageId),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("ai_timeout_reply_emit_timeout")), timeoutMs);
+      }),
+    ]);
+    state.emitted = true;
+  } catch (error) {
+    state.markFailure(error);
+    console.warn(
+      "[ai] 超时兜底发送失败:",
+      error instanceof Error ? error.message : error,
+    );
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunState): Promise<void> {
   let failed = false;
-  const background = trigger.origin === "conflict" || trigger.origin === "interject";
+  const background = isBackgroundTrigger(trigger);
   if (!background) sink.activity?.(trigger, "generating");
   sink.typing(trigger.storedChannel, true);
   sink.replying?.(trigger.storedChannel, true);
@@ -138,19 +190,36 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
     });
 
     const emitStartedAt = Date.now();
-    for (let index = 0; index < result.replies.length; index += 1) {
-      if (state.cancelled) break;
-      if (index === 0 && !state.claimEmit()) break;
-      if (index > 0) await sleep(PACE.replyGapMinMs + Math.floor(Math.random() * PACE.replyGapJitterMs));
-      if (state.cancelled) break;
-      const isLast = index === result.replies.length - 1;
-      await sink.emit(
-        trigger.storedChannel,
-        result.replies[index],
-        index === 0,
-        isLast && Object.keys(lastMeta).length ? lastMeta : null,
-      );
-      state.emitted = true;
+    const replyParts = result.replies.map((text, index) => ({
+      text,
+      meta: index === result.replies.length - 1 && Object.keys(lastMeta).length
+        ? lastMeta
+        : undefined,
+    }));
+    if (sink.emitBatch) {
+      if (!state.cancelled && state.claimEmit()) {
+        await sink.emitBatch(
+          trigger.storedChannel,
+          replyParts,
+          trigger.messageId,
+        );
+        state.emitted = true;
+      }
+    } else {
+      for (let index = 0; index < replyParts.length; index += 1) {
+        if (state.cancelled) break;
+        if (index === 0 && !state.claimEmit()) break;
+        if (index > 0) await sleep(PACE.replyGapMinMs + Math.floor(Math.random() * PACE.replyGapJitterMs));
+        if (state.cancelled) break;
+        await sink.emit(
+          trigger.storedChannel,
+          replyParts[index].text,
+          index === 0,
+          replyParts[index].meta,
+          index === 0 ? trigger.messageId : undefined,
+        );
+        state.emitted = true;
+      }
     }
     traceTiming(trace, "emit", emitStartedAt);
     if (!state.cancelled) {
@@ -164,7 +233,7 @@ async function respond(trigger: Trigger, sink: ReplySink, state: ResponseRunStat
     traceError(trace, message);
     console.warn("[ai] Agent 应答失败:", message);
     if (!background && !state.cancelled && !state.emitted && state.claimEmit()) {
-      await sink.emit(trigger.storedChannel, FAILURE_REPLY, true);
+      await sink.emit(trigger.storedChannel, FAILURE_REPLY, true, undefined, trigger.messageId);
       state.emitted = true;
       traceReply(trace, {
         stage: "异常兜底",
@@ -189,6 +258,8 @@ export async function runReplyTaskWithTimeout(
   sink: ReplySink,
   task: ReplyTask,
   timeoutMs: number = PACE.respondTimeoutMs,
+  externalSignal?: AbortSignal,
+  fallbackEmitTimeoutMs = 3_000,
 ): Promise<void> {
   const state = createRunState();
   const operation = startOperation("ai.reply", {
@@ -199,7 +270,27 @@ export async function runReplyTaskWithTimeout(
   const background = trigger.origin === "conflict" || trigger.origin === "interject";
   let timer: NodeJS.Timeout | null = null;
   let timedOut = false;
+  let externallyCancelled = false;
   let failure: unknown;
+  let resolveCancellation: (() => void) | null = null;
+  const cancellation = new Promise<void>((resolve) => {
+    resolveCancellation = resolve;
+  });
+  const cancelFromExternalSignal = () => {
+    externallyCancelled = true;
+    state.cancel();
+    sink.typing(trigger.storedChannel, false);
+    sink.replying?.(trigger.storedChannel, false);
+    if (!background) sink.activity?.(trigger, "failed");
+    resolveCancellation?.();
+  };
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      cancelFromExternalSignal();
+    } else {
+      externalSignal.addEventListener("abort", cancelFromExternalSignal, { once: true });
+    }
+  }
   const timeout = new Promise<void>((resolve) => {
     timer = setTimeout(() => {
       void (async () => {
@@ -207,8 +298,12 @@ export async function runReplyTaskWithTimeout(
         timedOut = true;
         console.warn(`[ai] 应答超时，已释放频道队列: ${trigger.storedChannel}`);
         if (!background && !state.emitted && state.claimEmit()) {
-          await sink.emit(trigger.storedChannel, TIMEOUT_REPLY, true).catch(() => undefined);
-          state.emitted = true;
+          await emitWithDeadline(
+            sink,
+            trigger,
+            state,
+            Math.max(1, fallbackEmitTimeoutMs),
+          );
         }
         sink.typing(trigger.storedChannel, false);
         sink.replying?.(trigger.storedChannel, false);
@@ -217,16 +312,33 @@ export async function runReplyTaskWithTimeout(
       })();
     }, timeoutMs);
   });
+  const taskPromise = externalSignal?.aborted
+    ? Promise.resolve()
+    : Promise.resolve()
+      .then(() => task(state))
+      .catch((error) => {
+        if (timedOut || externallyCancelled) return;
+        throw error;
+      });
   try {
-    await Promise.race([task(state), timeout]);
+    await Promise.race([taskPromise, timeout, cancellation]);
+    // 定时器先触发时，底层任务通常会因 abort 更快结束。仍需等待有界的
+    // timeout 分支完成，确保兜底写入已经成功或明确超时后再释放频道。
+    if (timedOut) await timeout;
   } catch (error) {
     failure = error;
     throw error;
   } finally {
     if (timer) clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", cancelFromExternalSignal);
     const terminalFailure = failure ?? state.failure;
     if (timedOut) operation.timeout({ emitted: state.emitted });
-    else if (terminalFailure) {
+    else if (externallyCancelled) {
+      operation.failure(errorCodeFor(cancellationError()), {
+        emitted: state.emitted,
+        cancelled: true,
+      });
+    } else if (terminalFailure) {
       operation.failure(errorCodeFor(terminalFailure), {
         emitted: state.emitted,
         degraded: state.emitted,
@@ -244,64 +356,272 @@ export async function runReplyTaskWithTimeout(
 interface QueueItem {
   trigger: Trigger;
   sink: ReplySink;
+  controller: AbortController;
+  cancellationNotified: boolean;
 }
 
 interface Queue {
-  chain: Promise<void>;
-  pending: number;
+  running: QueueItem | null;
+  pending: QueueItem[];
   deferred: QueueItem | null;
 }
 
-export type QueueResult = "queued" | "coalesced";
-export type ReplyRunner = (trigger: Trigger, sink: ReplySink) => Promise<void>;
+export type QueueResult = "queued" | "coalesced" | "rejected";
+export type ReplyRunner = (
+  trigger: Trigger,
+  sink: ReplySink,
+  signal?: AbortSignal,
+) => Promise<void>;
+
+const defaultReplyRunner: ReplyRunner = async (trigger, sink, signal) => {
+  // User-triggered replies are durable jobs. Background engagement has no
+  // source message and therefore remains an in-memory task.
+  if (!trigger.messageId) {
+    return runReplyTaskWithTimeout(
+      trigger,
+      sink,
+      (state) => respond(trigger, sink, state),
+      PACE.respondTimeoutMs,
+      signal,
+    );
+  }
+  if (signal?.aborted) return;
+  const claimed = await claimAiReplyJob(trigger.messageId);
+  if (!claimed) return;
+  try {
+    await runReplyTaskWithTimeout(
+      trigger,
+      sink,
+      (state) => respond(trigger, sink, state),
+      PACE.respondTimeoutMs,
+      signal,
+    );
+    // A successful run normally completes the job atomically with the first
+    // reply insert. If no reply was persisted (for example a failed timeout
+    // fallback), move it into the bounded retry state instead of leaving a
+    // live lease forever.
+    if (!signal?.aborted) {
+      await markAiReplyJobFailed(trigger.messageId, "reply_completed_without_message")
+        .catch(() => undefined);
+    }
+  } catch (error) {
+    if (!signal?.aborted) {
+      await markAiReplyJobFailed(
+        trigger.messageId,
+        error instanceof Error ? error.message : String(error),
+      ).catch(() => undefined);
+    }
+    throw error;
+  }
+};
 
 export class ReplyQueue {
   private readonly queues = new Map<string, Queue>();
+  private readonly activeRuns = new Set<Promise<void>>();
+  private readonly runnerPromises = new Set<Promise<void>>();
+  private accepting = true;
+  private readonly runner: ReplyRunner;
 
   constructor(
-    private readonly runner: ReplyRunner = (trigger, sink) =>
-      runReplyTaskWithTimeout(trigger, sink, (state) => respond(trigger, sink, state)),
+    runner?: ReplyRunner,
     private readonly maxPending: number = PACE.queuePendingMax,
-  ) {}
+  ) {
+    this.runner = runner ?? defaultReplyRunner;
+  }
+
+  hasMessageId(messageId: string): boolean {
+    if (!messageId) return false;
+    for (const queue of this.queues.values()) {
+      if (queue.running?.trigger.messageId === messageId) return true;
+      if (queue.pending.some((item) => item.trigger.messageId === messageId)) return true;
+      if (queue.deferred?.trigger.messageId === messageId) return true;
+    }
+    return false;
+  }
 
   enqueue(trigger: Trigger, sink: ReplySink): QueueResult {
+    if (trigger.messageId && this.hasMessageId(trigger.messageId)) return "queued";
+    const item: QueueItem = {
+      trigger,
+      sink,
+      controller: new AbortController(),
+      cancellationNotified: false,
+    };
+    if (!this.accepting) {
+      this.cancelItem(item);
+      return "rejected";
+    }
     const queue = this.queues.get(trigger.storedChannel) ?? {
-      chain: Promise.resolve(),
-      pending: 0,
+      running: null,
+      pending: [],
       deferred: null,
     };
     this.queues.set(trigger.storedChannel, queue);
-    const item = { trigger, sink };
-    if (queue.deferred || queue.pending >= this.maxPending) {
+    const queuedCount = (queue.running ? 1 : 0) + queue.pending.length;
+    if (queue.deferred || queuedCount >= Math.max(1, this.maxPending)) {
       const dropped = queue.deferred;
       queue.deferred = item;
-      if (dropped) {
-        // 被合并掉的请求需要关闭 activity，避免客户端一直 generating。
-        const background = dropped.trigger.origin === "conflict" || dropped.trigger.origin === "interject";
-        if (!background) dropped.sink.activity?.(dropped.trigger, "failed");
-      }
+      if (dropped) this.cancelItem(dropped, "ignored");
       console.warn(`[ai] 频道队列繁忙，已合并为最新请求: ${trigger.storedChannel}`);
       return "coalesced";
     }
-    this.schedule(queue, item);
+    queue.pending.push(item);
+    this.pump(trigger.storedChannel, queue);
     return "queued";
   }
 
-  private schedule(queue: Queue, item: QueueItem): void {
-    queue.pending += 1;
-    queue.chain = queue.chain
-      .then(() => this.runner(item.trigger, item.sink))
-      .catch((error) => console.warn("[ai] 应答失败:", error instanceof Error ? error.message : error))
-      .finally(() => {
-        queue.pending -= 1;
-        if (queue.pending === 0 && queue.deferred) {
-          const latest = queue.deferred;
-          queue.deferred = null;
-          this.schedule(queue, latest);
-        } else if (queue.pending === 0) {
-          this.queues.delete(item.trigger.storedChannel);
+  start(): void {
+    this.accepting = true;
+  }
+
+  cancelByMessageId(messageId: string): number {
+    if (!messageId) return 0;
+    let cancelled = 0;
+    for (const [channel, queue] of this.queues) {
+      if (queue.running?.trigger.messageId === messageId) {
+        this.cancelItem(queue.running, "cancelled");
+        cancelled += 1;
+      }
+      const retained: QueueItem[] = [];
+      for (const item of queue.pending) {
+        if (item.trigger.messageId === messageId) {
+          this.cancelItem(item, "cancelled");
+          cancelled += 1;
+        } else {
+          retained.push(item);
         }
+      }
+      queue.pending = retained;
+      if (queue.deferred?.trigger.messageId === messageId) {
+        this.cancelItem(queue.deferred, "cancelled");
+        queue.deferred = null;
+        cancelled += 1;
+      }
+      if (!queue.running) this.pump(channel, queue);
+    }
+    return cancelled;
+  }
+
+  async stop(timeoutMs = 5_000): Promise<boolean> {
+    this.accepting = false;
+    for (const queue of this.queues.values()) {
+      // Shutdown cancellation is deliberately non-terminal for durable jobs:
+      // the next process can claim pending/processing rows after a crash or
+      // an intentionally short graceful-drain window.
+      if (queue.running) this.cancelItem(queue.running, "preserve");
+      for (const item of queue.pending) this.cancelItem(item, "preserve");
+      queue.pending = [];
+      if (queue.deferred) this.cancelItem(queue.deferred, "preserve");
+      queue.deferred = null;
+    }
+    return this.waitForIdle(timeoutMs);
+  }
+
+  async waitForIdle(timeoutMs = 5_000): Promise<boolean> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (
+      this.queues.size > 0
+      || this.activeRuns.size > 0
+      || this.runnerPromises.size > 0
+    ) {
+      if (Date.now() >= deadline) return false;
+      const active = [...this.activeRuns, ...this.runnerPromises];
+      await Promise.race([
+        active.length ? Promise.allSettled(active).then(() => undefined) : Promise.resolve(),
+        new Promise<void>((resolve) => setTimeout(resolve, 5)),
+      ]);
+    }
+    return true;
+  }
+
+  private cancelItem(
+    item: QueueItem,
+    disposition: "cancelled" | "ignored" | "preserve" = "preserve",
+  ): void {
+    if (!item.controller.signal.aborted) item.controller.abort(cancellationError());
+    if (item.cancellationNotified) return;
+    item.cancellationNotified = true;
+    item.sink.typing(item.trigger.storedChannel, false);
+    item.sink.replying?.(item.trigger.storedChannel, false);
+    if (!isBackgroundTrigger(item.trigger)) {
+      item.sink.activity?.(item.trigger, "failed");
+    }
+    if (item.trigger.messageId && disposition !== "preserve") {
+      const update = disposition === "cancelled"
+        ? markAiReplyJobCancelled(item.trigger.messageId)
+        : markAiReplyJobIgnored(item.trigger.messageId, "queue_coalesced");
+      void update.catch(() => undefined);
+    }
+  }
+
+  private guardedSink(item: QueueItem): ReplySink {
+    const { signal } = item.controller;
+    return {
+      emit: async (...args) => {
+        if (signal.aborted) throw cancellationError();
+        await item.sink.emit(...args);
+      },
+      emitBatch: item.sink.emitBatch
+        ? async (...args) => {
+            if (signal.aborted) throw cancellationError();
+            await item.sink.emitBatch!(...args);
+          }
+        : undefined,
+      typing: (channel, value) => {
+        if (!signal.aborted || !value) item.sink.typing(channel, value);
+      },
+      replying: (channel, value) => {
+        if (!signal.aborted || !value) item.sink.replying?.(channel, value);
+      },
+      activity: (trigger, phase) => {
+        if (!signal.aborted) item.sink.activity?.(trigger, phase);
+      },
+    };
+  }
+
+  private pump(channel: string, queue: Queue): void {
+    if (queue.running) return;
+    const item = queue.pending.shift() ?? queue.deferred;
+    if (!item) {
+      if (this.queues.get(channel) === queue) this.queues.delete(channel);
+      return;
+    }
+    if (item === queue.deferred) queue.deferred = null;
+    queue.running = item;
+
+    const runnerPromise = Promise.resolve().then(() =>
+      this.runner(item.trigger, this.guardedSink(item), item.controller.signal));
+    this.runnerPromises.add(runnerPromise);
+    void runnerPromise.then(
+      () => this.runnerPromises.delete(runnerPromise),
+      () => this.runnerPromises.delete(runnerPromise),
+    );
+    // Promise.race 已处理当前执行；额外 catch 防止取消后 runner 晚到的 rejection
+    // 成为 unhandled rejection。
+    void runnerPromise.catch(() => undefined);
+    const cancellation = new Promise<void>((resolve) => {
+      if (item.controller.signal.aborted) {
+        resolve();
+        return;
+      }
+      item.controller.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    const active = Promise.race([runnerPromise, cancellation])
+      .catch((error) => {
+        if (!item.controller.signal.aborted) {
+          console.warn("[ai] 应答失败:", error instanceof Error ? error.message : error);
+        }
+      })
+      .finally(() => {
+        this.activeRuns.delete(active);
+        if (queue.running === item) queue.running = null;
+        if (!queue.pending.length && queue.deferred) {
+          queue.pending.push(queue.deferred);
+          queue.deferred = null;
+        }
+        this.pump(channel, queue);
       });
+    this.activeRuns.add(active);
   }
 }
 
@@ -309,4 +629,26 @@ const replyQueue = new ReplyQueue();
 
 export function queueRespond(trigger: Trigger, sink: ReplySink): QueueResult {
   return replyQueue.enqueue(trigger, sink);
+}
+
+export function cancelReplyForMessage(messageId: string): number {
+  return replyQueue.cancelByMessageId(messageId);
+}
+
+export function hasQueuedReplyForMessage(messageId: string): boolean {
+  return replyQueue.hasMessageId(messageId);
+}
+
+export function startReplyQueue(): void {
+  replyQueue.start();
+}
+
+export function shutdownReplyQueue(timeoutMs = 5_000): Promise<boolean> {
+  return replyQueue.stop(timeoutMs);
+}
+
+export function subscribeReplyDomainEvents(): () => void {
+  return domainEvents.subscribe("message.recalled", ({ messageId }) => {
+    replyQueue.cancelByMessageId(messageId);
+  });
 }

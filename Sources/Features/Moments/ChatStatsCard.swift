@@ -11,6 +11,9 @@ struct ChatStatsCard: View {
     @State private var mode: Mode = .days
     @State private var selectedIndex: Int?
     @State private var buckets = AppLocalStatsBuckets(days: [], months: [])
+    @State private var localBuckets = AppLocalStatsBuckets(days: [], months: [])
+    @State private var remoteBuckets: ChatStatsRows?
+    @State private var localRefreshRevision = 0
     private let repository = MomentsRepository()
 
     private var globalSelectedDayIndex: Int {
@@ -31,34 +34,62 @@ struct ChatStatsCard: View {
         .padding(DS.Spacing.card)
         .dsCard(radius: DS.Radius.card)
         .onChange(of: mode) { selectedIndex = nil }
-        .task { await refreshBuckets() }
+        .task { await refreshRemoteBuckets() }
+        .task(id: localRefreshRevision) {
+            if localRefreshRevision > 0 {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+            }
+            await refreshLocalBuckets()
+        }
         .onReceive(store.messageStore.timelineStore.$messagesByChannel) { _ in
-            Task { await refreshBuckets() }
+            localRefreshRevision &+= 1
         }
     }
 
-    private func refreshBuckets() async {
-        let local = await store.localData.stats(for: .couple)
+    private func refreshLocalBuckets() async {
+        let refreshed = await store.localData.stats(for: .couple)
+        guard !Task.isCancelled else { return }
+        localBuckets = refreshed
+        mergeBuckets()
+    }
+
+    private func refreshRemoteBuckets() async {
         guard let token = store.session?.token,
-              let remote = try? await repository.chatStats(token: token) else {
-            buckets = local
+              let remote = try? await repository.chatStats(token: token),
+              !Task.isCancelled else { return }
+        remoteBuckets = remote
+        mergeBuckets()
+    }
+
+    private func mergeBuckets() {
+        guard let remoteBuckets else {
+            buckets = localBuckets
             return
         }
-        let dayCounts = Dictionary(grouping: remote.days, by: \.bucket)
-        let monthCounts = Dictionary(grouping: remote.months, by: \.bucket)
-        let localMonths = Dictionary(uniqueKeysWithValues: local.months.map { ($0.month, $0) })
+        let dayCounts = Dictionary(grouping: remoteBuckets.days, by: \.bucket)
+        let monthCounts = Dictionary(grouping: remoteBuckets.months, by: \.bucket)
+        let localMonths = Dictionary(uniqueKeysWithValues: localBuckets.months.map { ($0.month, $0) })
         let monthKeys = Set(localMonths.keys).union(monthCounts.keys).sorted()
         buckets = AppLocalStatsBuckets(
-            days: local.days.map { day in
+            days: localBuckets.days.map { day in
                 guard let rows = dayCounts[day.date] else { return day }
                 return DayStat(date: day.date, weekday: day.weekday,
-                               counts: Dictionary(uniqueKeysWithValues: rows.map { ($0.sender, $0.count) }))
+                               counts: mergedCounts(remote: rows, local: day.counts))
             },
             months: monthKeys.map { key in
                 guard let rows = monthCounts[key] else { return localMonths[key]! }
                 return MonthStat(month: key,
-                                 counts: Dictionary(uniqueKeysWithValues: rows.map { ($0.sender, $0.count) }))
+                                  counts: mergedCounts(remote: rows, local: localMonths[key]?.counts ?? [:]))
             })
+    }
+
+    private func mergedCounts(remote: [ChatStatsRow], local: [String: Int]) -> [String: Int] {
+        var result = local
+        for row in remote {
+            result[row.sender] = max(result[row.sender] ?? 0, row.count)
+        }
+        return result
     }
 
     private var header: some View {

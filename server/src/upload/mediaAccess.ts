@@ -75,7 +75,42 @@ export function signedMediaURLForAi(id: string): string {
   return signedMediaURL(id, { ttlSeconds: config.mediaAiUrlTtlSeconds });
 }
 
-const MEDIA_ID_IN_URL = /\/media\/(up_[A-Za-z0-9_-]{8,})(?:\?|$)/;
+const MEDIA_PATH_PATTERN = /^\/media\/(up_[A-Za-z0-9_-]{8,})(?:\/(thumbnail))?\/?$/;
+const LEGACY_UPLOAD_PATH_PATTERN = /^\/uploads\/((?:up_[A-Za-z0-9_-]{8,}|[0-9]{13}-[a-f0-9]{12})\.[a-z0-9]{1,8})$/i;
+
+function configuredMediaUrl(value: string): URL | undefined {
+  try {
+    const configuredOrigin = new URL(config.publicBaseURL);
+    const parsed = new URL(value, configuredOrigin);
+    // Compare the parsed origin for every input. URL parsing trims ASCII
+    // whitespace and treats some backslash forms like protocol-relative URLs,
+    // so classifying the raw string as "relative" first is bypassable.
+    if (parsed.origin !== configuredOrigin.origin) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function mediaReferenceFromUrl(
+  url: string | null | undefined,
+): { uploadId: string; thumbnail: boolean } | undefined {
+  if (!url) return undefined;
+  const parsed = configuredMediaUrl(url);
+  const match = parsed ? MEDIA_PATH_PATTERN.exec(parsed.pathname) : undefined;
+  return match?.[1] ? { uploadId: match[1], thumbnail: match[2] === "thumbnail" } : undefined;
+}
+
+/** Extracts the stable upload identity from an absolute or relative signed media URL. */
+export function mediaUploadIdFromUrl(url: string | null | undefined): string | undefined {
+  return mediaReferenceFromUrl(url)?.uploadId;
+}
+
+export function legacyUploadFilenameFromUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  const parsed = configuredMediaUrl(url);
+  return parsed ? LEGACY_UPLOAD_PATH_PATTERN.exec(parsed.pathname)?.[1] : undefined;
+}
 
 /** 从历史 URL 提取 upload id，按需重签（读路径刷新 TTL，避免库内过期签名）。 */
 export function refreshSignedMediaUrl(
@@ -83,9 +118,12 @@ export function refreshSignedMediaUrl(
   options?: { forAi?: boolean },
 ): string | undefined {
   if (!url) return undefined;
-  const match = MEDIA_ID_IN_URL.exec(url);
-  if (!match?.[1]) return url;
-  return options?.forAi ? signedMediaURLForAi(match[1]) : signedMediaURL(match[1]);
+  const reference = mediaReferenceFromUrl(url);
+  if (!reference) return url;
+  if (options?.forAi) return signedMediaURLForAi(reference.uploadId);
+  return reference.thumbnail
+    ? signedMediaThumbnailURL(reference.uploadId)
+    : signedMediaURL(reference.uploadId);
 }
 
 export function refreshSignedMediaUrls(
@@ -97,6 +135,7 @@ export function refreshSignedMediaUrls(
 
 export function parseRequestedByteRange(value: string | undefined, size: number): { start: number; end: number } | null {
   if (!value) return null;
+  if (!Number.isSafeInteger(size) || size <= 0) return null;
   const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
   if (!match) return null;
   if (!match[1]) {
@@ -112,23 +151,27 @@ export function parseRequestedByteRange(value: string | undefined, size: number)
   return { start, end: Math.min(end, size - 1) };
 }
 
-function requestedByteRange(request: FastifyRequest, size: number): { start: number; end: number } | null {
-  return parseRequestedByteRange(request.headers.range, size);
-}
-
 function sendMediaFile(
   request: FastifyRequest,
   reply: FastifyReply,
   file: { path: string; mimeType: string; size: number },
 ) {
   const filename = path.basename(file.path).replace(/["\r\n]/g, "_");
-  const range = requestedByteRange(request, file.size);
+  const requestedRange = request.headers.range;
+  const range = parseRequestedByteRange(requestedRange, file.size);
   reply
     .type(file.mimeType)
     .header("Accept-Ranges", "bytes")
     .header("Content-Disposition", `inline; filename="${filename}"`)
     .header("X-Content-Type-Options", "nosniff")
     .header("Cache-Control", "private, max-age=3600");
+  if (requestedRange !== undefined && !range) {
+    return reply
+      .code(416)
+      .header("Content-Range", `bytes */${file.size}`)
+      .header("Content-Length", "0")
+      .send();
+  }
   if (range) {
     reply
       .code(206)

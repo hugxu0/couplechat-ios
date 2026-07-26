@@ -2,7 +2,7 @@
 
 import type { Server } from "socket.io";
 import { socketEvents } from "../../contracts/realtime";
-import { all, get, run, type AccountRow, type MessageRow } from "../../db";
+import { all, get, run, transaction, type AccountRow, type MessageRow } from "../../db";
 import {
   createPersonalItem,
   deletePersonalItem,
@@ -344,6 +344,48 @@ async function claimPendingConfirmation(messageId: string, meta: ConfirmMeta): P
       WHERE id = ? AND meta_json::jsonb #>> '{confirm,status}' = 'pending'`,
     [JSON.stringify(claimed), messageId],
   ) === 1;
+}
+
+export async function recoverInterruptedConfirmations(): Promise<number> {
+  return transaction(async (db) => {
+    const rows = await db.all<Pick<MessageRow, "id" | "meta_json">>(
+      `SELECT id, meta_json FROM messages
+       WHERE sender = 'ai'
+         AND meta_json IS NOT NULL
+         AND meta_json LIKE '%"status":"processing"%'
+       FOR UPDATE`,
+    );
+    let recovered = 0;
+    for (const row of rows) {
+      if (!row.meta_json) continue;
+      try {
+        const meta = JSON.parse(row.meta_json) as ConfirmMeta;
+        if (!meta.confirm || meta.confirm.status !== "processing") continue;
+        const items = Array.isArray(meta.confirm.items) ? meta.confirm.items : [];
+        for (const item of items) {
+          if (item.result === "succeeded") continue;
+          item.result = "failed";
+          item.error = "execution_failed";
+        }
+        meta.confirm.items = items;
+        meta.confirm.failed = Math.max(
+          items.filter((item) => item.result === "failed").length,
+          items.length === 0 ? 1 : 0,
+        );
+        // 已执行到哪一步无法在重启后可靠判定。收敛为终态但绝不重放，
+        // 避免 add/delete 等非幂等动作被执行两次。
+        meta.confirm.status = "confirmed";
+        recovered += await db.run(
+          `UPDATE messages SET meta_json = ?
+           WHERE id = ? AND meta_json = ?`,
+          [JSON.stringify(meta), row.id, row.meta_json],
+        );
+      } catch {
+        console.warn(`[ai-confirm] 无法恢复格式异常的 confirmation: ${row.id}`);
+      }
+    }
+    return recovered;
+  });
 }
 
 export async function confirmAction(

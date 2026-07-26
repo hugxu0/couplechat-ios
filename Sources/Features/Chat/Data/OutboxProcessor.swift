@@ -2,26 +2,27 @@ import Foundation
 
 actor OutboxProcessor {
     private let persistence: any ChatPersistenceProtocol
-    private var flushing = false
-    private var flushRequested = false
+    private var flushingScopes: Set<ChatPersistenceScope> = []
+    private var flushRequestedScopes: Set<ChatPersistenceScope> = []
 
     init(persistence: any ChatPersistenceProtocol = ChatPersistence.shared) {
         self.persistence = persistence
     }
 
     func replay(
+        scope: ChatPersistenceScope,
         isConnected: @escaping @MainActor () -> Bool,
         send: @escaping @MainActor (PendingOutboundMessage) async -> Bool
     ) async {
-        guard !flushing else {
-            flushRequested = true
+        guard !flushingScopes.contains(scope) else {
+            flushRequestedScopes.insert(scope)
             return
         }
-        flushing = true
+        flushingScopes.insert(scope)
 
         repeat {
-            flushRequested = false
-            let pending = await persistence.loadPendingOutbounds()
+            flushRequestedScopes.remove(scope)
+            guard let pending = await persistence.loadPendingOutbounds(scope: scope) else { break }
             for item in pending where !item.requiresManualRetry {
                 guard await isConnected() else { break }
                 let sent = await send(item)
@@ -30,36 +31,56 @@ actor OutboxProcessor {
                     if !connected { break }
                 }
             }
-        } while flushRequested
+        } while flushRequestedScopes.contains(scope)
 
-        flushing = false
+        flushingScopes.remove(scope)
+        flushRequestedScopes.remove(scope)
     }
 
-    func allPending() async -> [PendingOutboundMessage] {
-        await persistence.loadPendingOutbounds()
+    func allPending(scope: ChatPersistenceScope) async -> [PendingOutboundMessage]? {
+        await persistence.loadPendingOutbounds(scope: scope)
     }
 
-    func pending(clientId: String) async -> PendingOutboundMessage? {
-        await persistence.pendingOutbound(clientId: clientId)
+    func pending(
+        clientId: String,
+        scope: ChatPersistenceScope
+    ) async -> PendingOutboundMessage? {
+        await persistence.pendingOutbound(clientId: clientId, scope: scope)
     }
 
-    func save(_ item: PendingOutboundMessage) async -> Bool {
-        await persistence.upsertPendingOutbound(item)
+    func save(_ item: PendingOutboundMessage, scope: ChatPersistenceScope) async -> Bool {
+        await persistence.upsertPendingOutbound(item, scope: scope)
     }
 
-    func remove(clientId: String) async -> PendingOutboundMessage? {
-        guard let item = await persistence.pendingOutbound(clientId: clientId) else { return nil }
-        guard await persistence.deletePendingOutbound(clientId: clientId) else { return nil }
+    func update(_ item: PendingOutboundMessage, scope: ChatPersistenceScope) async -> Bool {
+        await persistence.updatePendingOutbound(item, scope: scope)
+    }
+
+    func remove(
+        clientId: String,
+        scope: ChatPersistenceScope
+    ) async -> PendingOutboundMessage? {
+        guard let item = await persistence.pendingOutbound(
+            clientId: clientId,
+            scope: scope
+        ) else { return nil }
+        guard await persistence.deletePendingOutbound(
+            clientId: clientId,
+            scope: scope
+        ) else { return nil }
         return item
     }
 
-    func complete(clientId: String) async {
-        guard let item = await remove(clientId: clientId) else { return }
+    func complete(clientId: String, scope: ChatPersistenceScope) async {
+        guard let item = await remove(clientId: clientId, scope: scope) else { return }
         removeLocalFiles(for: item)
     }
 
-    func discard(clientId: String) async -> PendingOutboundMessage? {
-        guard let item = await remove(clientId: clientId) else { return nil }
+    func discard(
+        clientId: String,
+        scope: ChatPersistenceScope
+    ) async -> PendingOutboundMessage? {
+        guard let item = await remove(clientId: clientId, scope: scope) else { return nil }
         removeLocalFiles(for: item)
         return item
     }

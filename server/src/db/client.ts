@@ -43,7 +43,16 @@ export async function allOn<T extends object>(
 }
 
 export async function initDatabase(throughVersion?: number): Promise<void> {
-  const nextPool = new Pool({ connectionString: config.databaseUrl, max: 10 });
+  const nextPool = new Pool({
+    connectionString: config.databaseUrl,
+    max: 10,
+    application_name: "couplechat-server",
+    connectionTimeoutMillis: config.databaseConnectionTimeoutMs,
+    statement_timeout: config.databaseStatementTimeoutMs,
+    query_timeout: config.databaseQueryTimeoutMs,
+    lock_timeout: config.databaseLockTimeoutMs,
+    idle_in_transaction_session_timeout: config.databaseIdleTransactionTimeoutMs,
+  });
   // pg.Pool emits idle-client failures as EventEmitter errors. Without a
   // listener, a PostgreSQL restart can terminate the entire Node process.
   nextPool.on("error", (error) => {

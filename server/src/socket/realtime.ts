@@ -115,9 +115,16 @@ export function registerRealtime(io: Server) {
       safeAck(async () => {
         const input = sendMessageSchema.parse(payload ?? {});
         const requestId = `evt_${nanoid(12)}`;
-        const message = await messages.send(user, input, requestId);
-        io.to(roomFor(input.channel, user)).emit(socketEvents.messageNew, message);
-        return { ok: true, id: message.id, message, requestId };
+        const result = await messages.send(user, input, requestId);
+        if (result.created) {
+          io.to(roomFor(input.channel, user)).emit(socketEvents.messageNew, result.message);
+        }
+        return {
+          ok: true,
+          id: result.message.id,
+          message: result.message,
+          requestId,
+        };
       }, ack),
     );
 

@@ -14,6 +14,12 @@ import { aiEnabled } from "./provider";
 import { scheduleContextCatchUp } from "./conversation/context";
 import { onMemoryMessage } from "./memory/extractor";
 import { queueRespond, type ReplySink, type Trigger } from "./agent/replyQueue";
+import {
+  claimAiReplyJob,
+  markAiReplyJobFailed,
+  markAiReplyJobIgnored,
+  markAiReplyJobQueued,
+} from "./agent/replyJobs";
 
 const AI_UNAVAILABLE_REPLY = "大橘现在没有连接 AI 模型，请检查服务端配置。";
 
@@ -84,7 +90,7 @@ async function emitUnavailable(
   messageId: string,
   question: string,
   withTyping: boolean,
-): Promise<void> {
+): Promise<boolean> {
   const trigger = {
     storedChannel,
     question,
@@ -97,27 +103,64 @@ async function emitUnavailable(
   if (withTyping) sink.typing(storedChannel, true);
   try {
     if (withTyping) await new Promise((resolve) => setTimeout(resolve, 400));
-    await sink.emit(storedChannel, AI_UNAVAILABLE_REPLY, true);
+    await sink.emit(storedChannel, AI_UNAVAILABLE_REPLY, true, undefined, messageId);
     sink.activity?.(trigger, "finished");
+    return true;
   } catch (error) {
     sink.activity?.(trigger, "failed");
     console.warn("[ai] 不可用提示发送失败:", error instanceof Error ? error.message : error);
+    return false;
   } finally {
     if (withTyping) sink.typing(storedChannel, false);
   }
+}
+
+async function ignoreTrigger(messageId: string, reason: string): Promise<void> {
+  await markAiReplyJobIgnored(messageId, reason).catch(() => undefined);
+}
+
+async function emitUnavailableForTrigger(
+  sink: ReplySink,
+  storedChannel: string,
+  user: AuthUser,
+  messageId: string,
+  question: string,
+  withTyping: boolean,
+): Promise<boolean> {
+  // Keep the unavailable response on the same durable path as a model reply.
+  // This makes a process crash during the short delay recoverable and keeps
+  // the trigger job from being left in `processing`.
+  if (!await markAiReplyJobQueued(messageId)) return false;
+  if (!await claimAiReplyJob(messageId)) return false;
+  const emitted = await emitUnavailable(
+    sink,
+    storedChannel,
+    user,
+    messageId,
+    question,
+    withTyping,
+  );
+  if (!emitted) {
+    await markAiReplyJobFailed(messageId, "ai_unavailable_reply_emit_failed")
+      .catch(() => undefined);
+  }
+  return emitted;
 }
 
 /**
  * 真人消息已持久化后的 AI 入口（fire-and-forget）。
  * @returns 是否排队了一次用户向回复（不含后台 engagement）
  */
-export function dispatchAfterOwnerMessage(
+export async function dispatchAfterOwnerMessage(
   _io: Server,
   user: AuthUser,
   message: ClientMessage,
   sink: ReplySink,
-): { queuedReply: boolean } {
-  if (message.kind !== "user") return { queuedReply: false };
+): Promise<{ queuedReply: boolean }> {
+  if (message.kind !== "user") {
+    await ignoreTrigger(message.id, "not_owner_message");
+    return { queuedReply: false };
+  }
 
   const storedChannel = toStoredChannel(message.channel, user.username);
   const rawText = message.text ?? "";
@@ -126,14 +169,25 @@ export function dispatchAfterOwnerMessage(
   const hasCaption = meaningfulText;
   const imageUrls = messageImageUrls(message);
   const isImage = imageUrls.length > 0;
-  if (!isText && !isImage) return { queuedReply: false };
+  if (!isText && !isImage) {
+    await ignoreTrigger(message.id, "no_reply_content");
+    return { queuedReply: false };
+  }
 
   // ── 线 1：当日上下文（与是否召唤无关）──────────────────────────
-  scheduleContextCatchUp(storedChannel);
+  try {
+    scheduleContextCatchUp(storedChannel);
+  } catch {
+    // Context is best effort and must never strand the durable reply job.
+  }
 
   // ── 线 2：长期 Memory（仅文本；寒暄过滤在 extractor 内）────────
   if (isText && aiEnabled()) {
-    onMemoryMessage(storedChannel);
+    try {
+      onMemoryMessage(storedChannel);
+    } catch {
+      // Memory extraction is independent from the user-visible reply.
+    }
   }
 
   // ── 线 3：用户向回复 ──────────────────────────────────────────
@@ -145,14 +199,18 @@ export function dispatchAfterOwnerMessage(
     console.log(
       `[ai] skip bare-image auto-reply channel=${storedChannel} messageId=${message.id}`,
     );
+    await ignoreTrigger(message.id, "bare_image");
     return { queuedReply: false };
   }
 
   if (!isPrivate) {
     // 公聊：仅明确召唤才答；无召唤时日上下文与 Memory 仍继续。
-    if (!triggered) return { queuedReply: false };
+    if (!triggered) {
+      await ignoreTrigger(message.id, "not_triggered");
+      return { queuedReply: false };
+    }
     if (!aiEnabled()) {
-      void emitUnavailable(
+      await emitUnavailableForTrigger(
         sink,
         storedChannel,
         user,
@@ -160,23 +218,33 @@ export function dispatchAfterOwnerMessage(
         stripTrigger(rawText),
         false,
       );
-      return { queuedReply: false };
+      return { queuedReply: true };
     }
     // 有图必须带说明/召唤文字才会走到这里；无图召唤则只传文字。
     const question = stripTrigger(rawText) || "（只是喊了你）";
     const trigger = buildUserTrigger(storedChannel, user, message, question, imageUrls);
     sink.activity?.(trigger, "accepted");
-    queueRespond(trigger, sink);
-    return { queuedReply: true };
+    if (!await markAiReplyJobQueued(message.id)) return { queuedReply: false };
+    try {
+      const result = queueRespond(trigger, sink);
+      return { queuedReply: result !== "rejected" };
+    } catch (error) {
+      await markAiReplyJobFailed(
+        message.id,
+        error instanceof Error ? error.message : String(error),
+      ).catch(() => undefined);
+      throw error;
+    }
   }
 
   // 私聊：有真实文字才答（可带图说明）；纯图/占位已在上方 return。
   if (!isText && !(isImage && hasCaption)) {
+    await ignoreTrigger(message.id, "no_private_caption");
     return { queuedReply: false };
   }
 
   if (!aiEnabled()) {
-    void emitUnavailable(
+    await emitUnavailableForTrigger(
       sink,
       storedChannel,
       user,
@@ -184,7 +252,7 @@ export function dispatchAfterOwnerMessage(
       rawText.trim(),
       true,
     );
-    return { queuedReply: false };
+    return { queuedReply: true };
   }
 
   const trigger = buildUserTrigger(
@@ -195,6 +263,15 @@ export function dispatchAfterOwnerMessage(
     imageUrls,
   );
   sink.activity?.(trigger, "accepted");
-  queueRespond(trigger, sink);
-  return { queuedReply: true };
+  if (!await markAiReplyJobQueued(message.id)) return { queuedReply: false };
+  try {
+    const result = queueRespond(trigger, sink);
+    return { queuedReply: result !== "rejected" };
+  } catch (error) {
+    await markAiReplyJobFailed(
+      message.id,
+      error instanceof Error ? error.message : String(error),
+    ).catch(() => undefined);
+    throw error;
+  }
 }

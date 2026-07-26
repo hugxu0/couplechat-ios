@@ -347,8 +347,9 @@ struct CardGameView: View {
         await viewModel.load(token: session.token, username: session.username, force: true)
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 8_000_000_000)
-            guard !Task.isCancelled, scenePhase == .active,
-                  let current = store.session else { return }
+            if Task.isCancelled { return }
+            // 会话短暂缺失只跳过这一轮；退出循环后 .task(id:) 不会重启，轮询会永久停掉。
+            guard let current = store.session else { continue }
             await viewModel.load(token: current.token, username: current.username, force: true)
         }
     }

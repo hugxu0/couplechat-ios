@@ -21,6 +21,7 @@ final class AuthStore: ObservableObject {
     private var verifyingSession = false
     private let httpClient: any HTTPClient
     private let persistence: any ChatPersistenceProtocol
+    private var persistenceScope: ChatPersistenceScope?
     weak var socketProvider: SocketProvider?
 
     init(
@@ -80,10 +81,16 @@ final class AuthStore: ObservableObject {
             timezone: TimeZone.current.identifier)
     }
 
-    func activate(_ newSession: Session, accounts: [Account], persist: Bool) {
+    func activate(
+        _ newSession: Session,
+        accounts: [Account],
+        persist: Bool,
+        persistenceScope: ChatPersistenceScope?
+    ) {
         if persist { Keychain.saveSession(newSession) }
         sessionGeneration &+= 1
         session = newSession
+        self.persistenceScope = persistenceScope
         self.accounts = accounts
         partner = accounts.first { $0.username != newSession.username }
     }
@@ -104,22 +111,32 @@ final class AuthStore: ObservableObject {
     // MARK: - 登出
 
     func logout() async {
-        sessionGeneration &+= 1
-        Keychain.clearSession()
-        session = nil
-        partner = nil
-        accounts = []
-        await persistence.close()
+        let scope = clearSession()
+        if let scope {
+            await persistence.close(scope: scope)
+        }
     }
 
     /// 兼容同步调用点：推进 generation 并异步关库。
-    func logoutSync() {
+    @discardableResult
+    func logoutSync() -> Task<Void, Never> {
+        let scope = clearSession()
+        return Task {
+            if let scope {
+                await persistence.close(scope: scope)
+            }
+        }
+    }
+
+    private func clearSession() -> ChatPersistenceScope? {
+        let scope = persistenceScope
         sessionGeneration &+= 1
         Keychain.clearSession()
         session = nil
+        persistenceScope = nil
         partner = nil
         accounts = []
-        Task { await persistence.close() }
+        return scope
     }
 
     func revokeCurrentDevice(_ current: Session) async {
@@ -157,7 +174,7 @@ final class AuthStore: ObservableObject {
 
     // MARK: - Token 核实
 
-    func verifySessionOrLogout() {
+    func verifySessionOrLogout(onUnauthorized: @escaping () -> Void) {
         guard !verifyingSession, let token = session?.token else { return }
         verifyingSession = true
         Task {
@@ -166,8 +183,8 @@ final class AuthStore: ObservableObject {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             guard let (_, resp) = try? await httpClient.data(for: req),
                   let http = resp as? HTTPURLResponse else { return }
-            if http.statusCode == 401 {
-                logoutSync()
+            if http.statusCode == 401, session?.token == token {
+                onUnauthorized()
             }
         }
     }

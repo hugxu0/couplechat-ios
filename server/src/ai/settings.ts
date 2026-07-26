@@ -11,7 +11,10 @@ export interface GenProfile {
 
 export const GEN = {
   // 输出预算需覆盖推理+1~3 条短回复；过高会抬计费上限，6000 对闲聊偏浪费。
-  reply: { maxTokens: 3500, temperature: 0.85, timeoutMs: 45_000 },
+  // timeoutMs 是整个 Agent run 的截止时间（MCP 连接 + 多轮工具 + 收尾重跑），
+  // 不是单次生成。45s 会让"先查记忆再回答"的多跳检索必然超时。
+  // 时间阶梯：单次 MCP 调用 20s < 本预算 100s < respondTimeoutMs 120s < 任务租约 180s。
+  reply: { maxTokens: 3500, temperature: 0.85, timeoutMs: 100_000 },
   /** Agent 用满工具轮次后的无工具收尾，只根据已有结果生成最终 JSON */
   replyRecovery: {
     maxTokens: 1200,

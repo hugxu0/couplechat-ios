@@ -7,8 +7,16 @@ export function embeddingEnabled(): boolean {
   return config.embeddingPools.length > 0;
 }
 
-async function embedWithKey(baseUrl: string, apiKey: string, texts: string[]): Promise<Float32Array[] | null> {
+async function embedWithKey(
+  baseUrl: string,
+  apiKey: string,
+  texts: string[],
+  externalSignal?: AbortSignal,
+): Promise<Float32Array[] | null> {
   const controller = new AbortController();
+  const cancelFromCaller = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) cancelFromCaller();
+  else externalSignal?.addEventListener("abort", cancelFromCaller, { once: true });
   const timer = setTimeout(() => controller.abort(), 60_000);
   try {
     const res = await fetch(`${baseUrl.replace(/\/$/, "")}/embeddings`, {
@@ -19,26 +27,41 @@ async function embedWithKey(baseUrl: string, apiKey: string, texts: string[]): P
     });
     if (!res.ok) {
       console.warn(`[embedding] HTTP ${res.status}`);
+      await res.body?.cancel().catch(() => undefined);
       return null;
     }
     const data = (await res.json()) as { data?: Array<{ embedding?: number[] }> };
     const rows = data.data ?? [];
     if (rows.length !== texts.length) return null;
+    if (rows.some((row) =>
+      !Array.isArray(row.embedding)
+      || row.embedding.length !== config.embeddingDim
+      || row.embedding.some((value) => !Number.isFinite(value)))) {
+      console.warn(`[embedding] 返回向量维度无效 expected=${config.embeddingDim}`);
+      return null;
+    }
     return rows.map((row) => normalize(Float32Array.from(row.embedding ?? [])));
   } catch (error) {
+    if (externalSignal?.aborted) return null;
     console.warn(`[embedding] 失败: ${error instanceof Error ? error.message : error}`);
     return null;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", cancelFromCaller);
   }
 }
 
-export async function embed(texts: string[]): Promise<Float32Array[] | null> {
-  if (texts.length === 0 || config.embeddingPools.length === 0) return null;
+export async function embed(
+  texts: string[],
+  signal?: AbortSignal,
+): Promise<Float32Array[] | null> {
+  if (texts.length === 0 || config.embeddingPools.length === 0 || signal?.aborted) return null;
   for (const pool of config.embeddingPools) {
     for (const apiKey of pool.apiKeys) {
-      const result = await embedWithKey(pool.baseUrl, apiKey, texts);
+      if (signal?.aborted) return null;
+      const result = await embedWithKey(pool.baseUrl, apiKey, texts, signal);
       if (result) return result;
+      if (signal?.aborted) return null;
       console.warn(`[embedding] ${pool.name} 的一个 key 失败，换下一个`);
     }
   }
@@ -46,8 +69,11 @@ export async function embed(texts: string[]): Promise<Float32Array[] | null> {
   return null;
 }
 
-export async function embedOne(text: string): Promise<Float32Array | null> {
-  const result = await embed([text]);
+export async function embedOne(
+  text: string,
+  signal?: AbortSignal,
+): Promise<Float32Array | null> {
+  const result = await embed([text], signal);
   return result?.[0] ?? null;
 }
 
@@ -63,18 +89,27 @@ function normalize(v: Float32Array): Float32Array {
 
 // 已归一化向量的余弦相似度 = 点积。
 export function similarity(a: Float32Array, b: Float32Array): number {
-  const n = Math.min(a.length, b.length);
+  if (a.length === 0 || a.length !== b.length) return 0;
   let dot = 0;
-  for (let i = 0; i < n; i += 1) dot += a[i] * b[i];
-  return dot;
+  for (let i = 0; i < a.length; i += 1) dot += a[i] * b[i];
+  return Number.isFinite(dot) ? dot : 0;
 }
 
 export function packVector(v: Float32Array): Uint8Array {
+  if (
+    v.length !== config.embeddingDim
+    || v.some((value) => !Number.isFinite(value))
+  ) {
+    throw new Error(
+      `embedding_vector_invalid expected=${config.embeddingDim} actual=${v.length}`,
+    );
+  }
   return new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
 }
 
 export function unpackVector(blob: Uint8Array | null): Float32Array | null {
   if (!blob || blob.byteLength === 0 || blob.byteLength % 4 !== 0) return null;
+  if (blob.byteLength / 4 !== config.embeddingDim) return null;
   // Node.js Buffer has a shared ArrayBuffer under the hood.
   // Slice the ArrayBuffer to ensure we get a clean, independent and aligned memory block.
   const buffer = blob.buffer.slice(blob.byteOffset, blob.byteOffset + blob.byteLength);

@@ -26,6 +26,30 @@ function booleanEnv(name: string, fallback: boolean): boolean {
   return !["0", "false", "no", "off"].includes(value.trim().toLowerCase());
 }
 
+function timeoutEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 3_600_000) {
+    throw new Error(`${name} must be an integer between 0 and 3600000 milliseconds`);
+  }
+  return value;
+}
+
+export function parsePositiveIntegerSetting(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+  maximum: number,
+): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`${name} must be an integer between 1 and ${maximum}`);
+  }
+  return value;
+}
+
 if (nodeEnv === "production" && tokenSecret === "change-me-before-production") {
   throw new Error("TOKEN_SECRET must be changed in production");
 }
@@ -107,6 +131,11 @@ export const config = {
   uploadDir: path.resolve(process.env.UPLOAD_DIR ?? path.join(process.cwd(), "uploads")),
   // PostgreSQL 连接串（部署时用 DATABASE_URL 覆盖）
   databaseUrl: process.env.DATABASE_URL ?? "postgres://couplechat:couplechat@localhost:5432/couplechat",
+  databaseConnectionTimeoutMs: timeoutEnv("DATABASE_CONNECTION_TIMEOUT_MS", 5_000),
+  databaseStatementTimeoutMs: timeoutEnv("DATABASE_STATEMENT_TIMEOUT_MS", 30_000),
+  databaseQueryTimeoutMs: timeoutEnv("DATABASE_QUERY_TIMEOUT_MS", 35_000),
+  databaseLockTimeoutMs: timeoutEnv("DATABASE_LOCK_TIMEOUT_MS", 5_000),
+  databaseIdleTransactionTimeoutMs: timeoutEnv("DATABASE_IDLE_TRANSACTION_TIMEOUT_MS", 30_000),
   ai: {
     chat: providerFromEnv("AI_CHAT", aiShared),
     task: aiTask,
@@ -119,7 +148,12 @@ export const config = {
   aiMcpUrl: process.env.AI_MCP_URL ?? `http://127.0.0.1:${port}/api/ai-mcp`,
   embeddingPools,
   embeddingModel: process.env.EMBEDDING_MODEL ?? fallbackEmbedding?.model ?? "voyage-4",
-  embeddingDim: Number(process.env.EMBEDDING_DIM ?? 1024),
+  embeddingDim: parsePositiveIntegerSetting(
+    "EMBEDDING_DIM",
+    process.env.EMBEDDING_DIM,
+    1024,
+    65_536,
+  ),
   scheduledJobsEnabled: booleanEnv("SCHEDULED_JOBS_ENABLED", true),
   // 生产默认只校验 schema，不在普通 Web 进程启动时执行不可逆迁移。
   // 发布流程使用 `npm run migrate` 的单独 migrator。

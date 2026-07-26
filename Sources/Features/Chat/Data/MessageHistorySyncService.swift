@@ -25,21 +25,35 @@ struct MessageHistorySyncService {
     func sync(
         channel: ChatChannel,
         session: Session,
+        scope: ChatPersistenceScope,
         onProgress: @escaping (_ localCount: Int, _ remoteTotal: Int?) -> Void
     ) async -> MessageHistorySyncResult {
-        var localCount = await persistence.messageCount(channel: channel.rawValue)
+        guard var localCount = await persistence.messageCount(
+            channel: channel.rawValue,
+            scope: scope
+        ) else {
+            return MessageHistorySyncResult(
+                localCount: 0,
+                remoteTotal: nil,
+                downloaded: 0,
+                completed: false,
+                error: "登录会话已切换")
+        }
         let defaults = UserDefaults.standard
         let keys = Self.checkpointKeys(username: session.username, channel: channel)
-        var cursor = defaults.object(forKey: keys.cursor) as? Double
+        var cursorTimestamp = defaults.object(forKey: keys.cursorTimestamp) as? Double
+        var cursorID = defaults.string(forKey: keys.cursorID)
         let checkpointLocalCount = defaults.object(forKey: keys.localCount) as? Int
-        if cursor != nil,
-           checkpointLocalCount.map({ localCount < $0 }) ?? true {
+        if cursorTimestamp != nil,
+           (cursorID?.isEmpty != false ||
+               checkpointLocalCount.map({ localCount < $0 }) ?? true) {
             Self.clearCheckpoint(keys, defaults: defaults)
-            cursor = nil
+            cursorTimestamp = nil
+            cursorID = nil
         }
         // 从断点继续的任务如果最终仍对不上总数，会自动再做一次从最新页开始的
         // 修复扫描；从最新页开始的任务则不会无休止重复。
-        var passStartedFromLatest = cursor == nil
+        var passStartedFromLatest = cursorTimestamp == nil
         let initialLocalCount = localCount
         var remoteTotal: Int?
         var downloaded = 0
@@ -51,24 +65,26 @@ struct MessageHistorySyncService {
         while !Task.isCancelled {
             let page = await remoteDataSource.fetchHistoryPage(
                 channel: channel,
-                before: cursor,
+                before: cursorTimestamp,
+                beforeId: cursorID,
                 limit: pageLimit,
                 session: session)
+            guard await persistence.isActive(scope: scope) else {
+                lastError = "登录会话已切换"
+                break
+            }
             if let total = page.total { remoteTotal = total }
             onProgress(localCount, remoteTotal)
             if let error = page.error {
                 lastError = error
                 break
             }
-            if let remoteTotal, localCount >= remoteTotal {
-                completed = true
-                break
-            }
             guard !page.messages.isEmpty else {
                 completed = remoteTotal.map { localCount >= $0 } ?? true
-                if !completed, cursor != nil, !passStartedFromLatest {
+                if !completed, cursorTimestamp != nil, !passStartedFromLatest {
                     Self.clearCheckpoint(keys, defaults: defaults)
-                    cursor = nil
+                    cursorTimestamp = nil
+                    cursorID = nil
                     passStartedFromLatest = true
                     continue
                 }
@@ -77,25 +93,37 @@ struct MessageHistorySyncService {
                 }
                 break
             }
-            let persisted = await persistence.insertMessages(page.messages)
+            guard let persisted = await persistence.insertMessages(
+                page.messages,
+                scope: scope
+            ) else {
+                lastError = "登录会话已切换"
+                break
+            }
             guard persisted == page.messages.count else {
                 lastError = "写入本地数据库失败"
                 break
             }
-            localCount = await persistence.messageCount(channel: channel.rawValue)
-            downloaded = max(0, localCount - initialLocalCount)
-            onProgress(localCount, remoteTotal)
-            if let remoteTotal, localCount >= remoteTotal {
-                completed = true
+            guard let refreshedCount = await persistence.messageCount(
+                channel: channel.rawValue,
+                scope: scope
+            ) else {
+                lastError = "登录会话已切换"
                 break
             }
+            localCount = refreshedCount
+            downloaded = max(0, localCount - initialLocalCount)
+            onProgress(localCount, remoteTotal)
 
-            let batchOldest = page.messages.map(\.ts).min()
+            let batchOldest = page.messages.min {
+                ChatMessageCollection.isOrderedBefore($0, $1)
+            }
             if page.messages.count < pageLimit {
                 completed = remoteTotal.map { localCount >= $0 } ?? true
-                if !completed, cursor != nil, !passStartedFromLatest {
+                if !completed, cursorTimestamp != nil, !passStartedFromLatest {
                     Self.clearCheckpoint(keys, defaults: defaults)
-                    cursor = nil
+                    cursorTimestamp = nil
+                    cursorID = nil
                     passStartedFromLatest = true
                     continue
                 }
@@ -104,13 +132,19 @@ struct MessageHistorySyncService {
                 }
                 break
             }
-            if let batchOldest, let previous = cursor, batchOldest >= previous {
+            if let batchOldest,
+               let previousTimestamp = cursorTimestamp,
+               let previousID = cursorID,
+               batchOldest.ts > previousTimestamp ||
+                   (batchOldest.ts == previousTimestamp && batchOldest.id >= previousID) {
                 lastError = "同步游标未继续前进"
                 break
             }
-            cursor = batchOldest
-            if let cursor {
-                defaults.set(cursor, forKey: keys.cursor)
+            if let batchOldest {
+                cursorTimestamp = batchOldest.ts
+                cursorID = batchOldest.id
+                defaults.set(batchOldest.ts, forKey: keys.cursorTimestamp)
+                defaults.set(batchOldest.id, forKey: keys.cursorID)
                 defaults.set(localCount, forKey: keys.localCount)
             }
         }
@@ -119,7 +153,14 @@ struct MessageHistorySyncService {
         if completed && lastError == nil {
             Self.clearCheckpoint(keys, defaults: defaults)
         }
-        localCount = await persistence.messageCount(channel: channel.rawValue)
+        if let refreshedCount = await persistence.messageCount(
+            channel: channel.rawValue,
+            scope: scope
+        ) {
+            localCount = refreshedCount
+        } else if lastError == nil {
+            lastError = "登录会话已切换"
+        }
         return MessageHistorySyncResult(
             localCount: localCount,
             remoteTotal: remoteTotal,
@@ -137,18 +178,20 @@ struct MessageHistorySyncService {
     private static func checkpointKeys(
         username: String,
         channel: ChatChannel
-    ) -> (cursor: String, localCount: String) {
+    ) -> (cursorTimestamp: String, cursorID: String, localCount: String) {
         let suffix = "\(username).\(channel.rawValue)"
         return (
-            cursor: "history.sync.v2.cursor.\(suffix)",
-            localCount: "history.sync.v2.local-count.\(suffix)")
+            cursorTimestamp: "history.sync.v3.cursor-ts.\(suffix)",
+            cursorID: "history.sync.v3.cursor-id.\(suffix)",
+            localCount: "history.sync.v3.local-count.\(suffix)")
     }
 
     private static func clearCheckpoint(
-        _ keys: (cursor: String, localCount: String),
+        _ keys: (cursorTimestamp: String, cursorID: String, localCount: String),
         defaults: UserDefaults
     ) {
-        defaults.removeObject(forKey: keys.cursor)
+        defaults.removeObject(forKey: keys.cursorTimestamp)
+        defaults.removeObject(forKey: keys.cursorID)
         defaults.removeObject(forKey: keys.localCount)
     }
 }

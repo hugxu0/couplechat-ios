@@ -104,11 +104,23 @@ systemctl reload nginx
 curl -fsS https://hoo66.top/health
 ```
 
-入口应保留 WebSocket 转发、80 MiB 上传限制和 `server/deploy/nginx-security-headers.conf` 中的基础安全响应头。
+入口应保留 WebSocket 转发、80 MiB 上传限制和 `server/deploy/nginx-security-headers.conf` 中的基础安全响应头。公网 `443` 先经过本机 stream SNI 分流，且 `proxy_protocol off`，所以 HTTP 层看到的 TCP 来源是回环。`hoo66.top` 的 stream 映射必须只把 Cloudflare 与本机流量送到 `127.0.0.1:8444`，把 `hoo66.top:other` 发往拒绝端口；HTTP 层随后只信任回环来源的 `CF-Connecting-IP`，将其恢复为 `$remote_addr`，再用该值覆盖 `X-Real-IP` 与 `X-Forwarded-For`。这三项必须一起变更，否则会把所有请求折叠为回环地址，或允许绕过 Cloudflare 的请求伪造来源。
+
+美国 `13000` 源站只允许日本 Tailnet 节点，应用只监听回环；Fastify 因此只信任 `loopback` 与 Tailscale `100.64.0.0/10` 两段受控代理，再把解析后的 `request.ip` 用作登录限流键。不能扩大可信网段，不能恢复 `$proxy_add_x_forwarded_for` 接受客户端原始链，也不能重新开放 `hoo66.top:other` 到 HTTP 层。修改任一层后同时检查 `nginx -T` 中的 stream 映射、`set_real_ip_from`、`real_ip_header` 和两个转发头，再分别用两个真实公网客户端确认应用日志中的 IP 不相同。
 
 ## 数据库变更
 
 migration 继续按版本追加，不回头修改已经在线使用的旧 migration。普通代码发布不运行 migrator。
+
+Web 进程的数据库连接、普通语句、客户端查询、锁等待和空闲事务默认分别限制为 5 秒、30 秒、35 秒、5 秒和 30 秒，可用 `DATABASE_*_TIMEOUT_MS` 调整。AI provider 调用在数据库事务之外使用各自更长的 AbortSignal，不受该限制。独立 `npm run migrate` 使用单独连接池，不继承 Web 查询上限，避免大 migration 被普通请求阈值中断。
+
+当前生产为 schema v34，待发布源码为 v36：v35 重建消息幂等索引，v36 新增持久 AI 回复任务。这一批次不能调用“普通发布”直接切换，也不能依赖其旧镜像自动回滚，因为旧进程重启时不接受 v36。维护窗口必须：
+
+1. 停止公网写入，等待旧进程正在执行的 AI 回复在既定上限内排空；不要对 v34 之前已存在的历史消息盲目回填回复任务。
+2. 制作同一时点的 PostgreSQL 与 uploads 手工恢复点，并在隔离库至少验证结构版本、核心表计数、序列和媒体抽样。
+3. 用待发布源码的独立 migrator 顺序执行 v35、v36，再启动同一批次的新应用。
+4. 核验三个健康接口、schema、容器重启数、登录、文字/媒体收发、重复 `clientId`、AI 回复和断线补回。
+5. 新版本失败且旧代码不兼容新 schema 时，停止写入并同时恢复该批次数据库、uploads 和旧镜像；不能只切回旧镜像。
 
 只有下面这些改动需要比平时多做一步准备：
 
@@ -116,7 +128,7 @@ migration 继续按版本追加，不回头修改已经在线使用的旧 migrat
 - uploads 目录、媒体格式或签名规则发生不兼容变化；
 - 需要迁移或重建美国源站。
 
-这类操作前保存一份可用的 PostgreSQL 和 uploads 备份，确认能读，再执行变更。个人项目不要求为每次小版本做完整恢复演练。
+这类操作前保存一份可用的 PostgreSQL 和 uploads 备份，确认能读，再执行变更。项目不启用持续自动备份；普通小版本不要求完整恢复演练，但 schema、批量数据和主机迁移必须为当次变更制作并验证恢复点。
 
 ## 回滚
 

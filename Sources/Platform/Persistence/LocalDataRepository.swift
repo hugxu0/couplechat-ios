@@ -31,12 +31,34 @@ struct AppMediaCacheResult: Equatable {
 
 actor LocalDataRepository {
     private let persistence: any ChatPersistenceProtocol
+    private var persistenceScope: ChatPersistenceScope?
 
     init(persistence: any ChatPersistenceProtocol = ChatPersistence.shared) {
         self.persistence = persistence
     }
 
+    func activate(scope: ChatPersistenceScope?) {
+        persistenceScope = scope
+    }
+
+    func deactivate(scope: ChatPersistenceScope?) {
+        guard persistenceScope == scope else { return }
+        persistenceScope = nil
+    }
+
     func stats(for channel: ChatChannel = .couple) async -> AppLocalStatsBuckets {
+        guard let scope = persistenceScope,
+              let persistedDayCounts = await persistence.dayCounts(
+                channel: channel.rawValue,
+                scope: scope
+              ),
+              let persistedMonthCounts = await persistence.monthCounts(
+                channel: channel.rawValue,
+                scope: scope
+              ),
+              await persistence.isActive(scope: scope) else {
+            return AppLocalStatsBuckets(days: [], months: [])
+        }
         let calendar = Self.shanghaiCalendar
         let now = Date()
         let today = calendar.startOfDay(for: now)
@@ -44,12 +66,12 @@ actor LocalDataRepository {
         var dayCounts: [String: [String: Int]] = [:]
         var monthCounts: [String: [String: Int]] = [:]
 
-        for row in await persistence.dayCounts(channel: channel.rawValue) {
+        for row in persistedDayCounts {
             guard let date = Self.dayFormatter.date(from: row.date),
                   calendar.startOfDay(for: date) >= earliestDay else { continue }
             dayCounts[row.date, default: [:]][row.sender] = row.count
         }
-        for row in await persistence.monthCounts(channel: channel.rawValue) {
+        for row in persistedMonthCounts {
             monthCounts[row.date, default: [:]][row.sender] = row.count
         }
 
@@ -75,34 +97,65 @@ actor LocalDataRepository {
             guard let next = calendar.date(byAdding: .month, value: 1, to: monthCursor) else { break }
             monthCursor = next
         }
+        guard await persistence.isActive(scope: scope) else {
+            return AppLocalStatsBuckets(days: [], months: [])
+        }
         return AppLocalStatsBuckets(days: days, months: months)
     }
 
     func storageBreakdown(username: String? = nil) async -> AppStorageBreakdown {
+        guard let scope = persistenceScope else { return Self.emptyStorageBreakdown }
         let downloaded = await MediaFileCache.shared.stats()
         let outbox = OutboxProcessor.storageStats(username: username)
-        return await AppStorageBreakdown(
+        guard let databaseBytes = await persistence.databaseSizeBytes(scope: scope),
+              let coupleMessages = await persistence.messageCount(
+                channel: ChatChannel.couple.rawValue,
+                scope: scope
+              ),
+              let aiMessages = await persistence.messageCount(
+                channel: ChatChannel.ai.rawValue,
+                scope: scope
+              ),
+              await persistence.isActive(scope: scope) else {
+            return Self.emptyStorageBreakdown
+        }
+        return AppStorageBreakdown(
             imageCacheBytes: ImageCache.shared.diskUsageBytes(),
             voiceCacheBytes: downloaded.voice.bytes,
             fileCacheBytes: downloaded.files.bytes,
             outboxBytes: outbox.bytes,
-            databaseBytes: persistence.databaseSizeBytes(),
+            databaseBytes: databaseBytes,
             cachedImageFiles: ImageCache.shared.cachedFileCount(),
             cachedVoiceFiles: downloaded.voice.fileCount,
             cachedPreviewFiles: downloaded.files.fileCount,
             outboxFiles: outbox.fileCount,
-            coupleMessages: persistence.messageCount(channel: ChatChannel.couple.rawValue),
-            aiMessages: persistence.messageCount(channel: ChatChannel.ai.rawValue))
+            coupleMessages: coupleMessages,
+            aiMessages: aiMessages)
     }
 
     func cacheAllImages(
         channels: [ChatChannel] = ChatChannel.allCases,
         onProgress: @escaping (_ completed: Int, _ total: Int, _ failed: Int) -> Void
     ) async -> AppMediaCacheResult {
+        guard let scope = persistenceScope else {
+            onProgress(0, 0, 0)
+            return AppMediaCacheResult(total: 0, completed: 0, failed: 0)
+        }
         var rawURLs: [String] = []
         for channel in channels {
-            rawURLs += await persistence.mediaURLs(
-                channel: channel.rawValue, types: ["image", "sticker"])
+            guard let urls = await persistence.mediaURLs(
+                channel: channel.rawValue,
+                types: ["image", "sticker"],
+                scope: scope
+            ) else {
+                onProgress(0, 0, 0)
+                return AppMediaCacheResult(total: 0, completed: 0, failed: 0)
+            }
+            rawURLs += urls
+        }
+        guard await persistence.isActive(scope: scope) else {
+            onProgress(0, 0, 0)
+            return AppMediaCacheResult(total: 0, completed: 0, failed: 0)
         }
         var seen: Set<String> = []
         let urls = rawURLs.compactMap(ServerConfig.resolveMediaURL).filter {
@@ -113,6 +166,8 @@ actor LocalDataRepository {
         var failed = 0
         for url in urls {
             if Task.isCancelled { break }
+            // 两个条件必须分开写：|| 的右操作数是不支持并发的 autoclosure，await 不能进去。
+            guard await persistence.isActive(scope: scope) else { break }
             if !ImageCache.shared.isCached(url), await ImageCache.shared.image(for: url) == nil {
                 failed += 1
             }
@@ -128,6 +183,18 @@ actor LocalDataRepository {
     }
 
     private static let weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"]
+    private static let emptyStorageBreakdown = AppStorageBreakdown(
+        imageCacheBytes: 0,
+        voiceCacheBytes: 0,
+        fileCacheBytes: 0,
+        outboxBytes: 0,
+        databaseBytes: 0,
+        cachedImageFiles: 0,
+        cachedVoiceFiles: 0,
+        cachedPreviewFiles: 0,
+        outboxFiles: 0,
+        coupleMessages: 0,
+        aiMessages: 0)
     private static var shanghaiCalendar: Calendar = {
         var value = Calendar(identifier: .gregorian)
         value.timeZone = TimeZone(identifier: "Asia/Shanghai")!

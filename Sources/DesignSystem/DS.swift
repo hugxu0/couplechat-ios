@@ -57,14 +57,14 @@ enum DS {
         static let textPrimary = adaptive(
             light: UIColor(red: 0.20, green: 0.16, blue: 0.15, alpha: 1),
             dark: UIColor(white: 0.93, alpha: 1))
-        /// 次要文字（时间戳、副标题）
+        /// 次要文字（时间戳、副标题）。浅色值按卡面 4.5:1 对比度取，原值只有 3.62:1。
         static let textSecondary = adaptive(
-            light: UIColor(red: 0.55, green: 0.50, blue: 0.48, alpha: 1),
-            dark: UIColor(white: 0.62, alpha: 1))
-        /// 三级文字（占位、弱提示）
+            light: UIColor(red: 0.48, green: 0.43, blue: 0.42, alpha: 1),
+            dark: UIColor(white: 0.68, alpha: 1))
+        /// 三级文字（占位、弱提示）。原值 2.46:1 远低于可读下限。
         static let textTertiary = adaptive(
-            light: UIColor(red: 0.66, green: 0.62, blue: 0.60, alpha: 1),
-            dark: UIColor(white: 0.48, alpha: 1))
+            light: UIColor(red: 0.56, green: 0.52, blue: 0.50, alpha: 1),
+            dark: UIColor(white: 0.56, alpha: 1))
         /// 卡片表面（白/深灰 半透明）
         static let cardSurface = adaptive(
             light: UIColor(white: 1, alpha: 0.72),
