@@ -64,7 +64,7 @@ system prompt（`agent/runtime.ts` 的 `instructions`）的核心规则：涉及
 `ai_memory_dependencies`（派生卡引用）、`ai_memory_exclusions`（忘掉的排除项）。
 
 **整理器**（`memory/extractor.ts`）：按游标批读最多 80 条主人纯文本消息送模型；
-80 条立即整理，20+ 条空闲 15 分钟，更少空闲 60 分钟，最老消息满 2 小时强制。
+80 条立即整理，20+ 条空闲 5 分钟，更少空闲 15 分钟，最老消息满 30 分钟强制。
 `memoryKey` 规范为 `{layer}.{subject}.{topic}`。整理不出内容时保留游标重试，
 **连续 3 轮无产出则强制推进游标并告警**——宁可漏一批，不能永久堵死。
 
