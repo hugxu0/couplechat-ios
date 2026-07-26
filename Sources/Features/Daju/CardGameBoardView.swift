@@ -106,32 +106,11 @@ struct CardGameBoardView: View {
             if let card = result.card {
                 CardFaceView(definition: card, compact: true)
             } else {
-                missCard
+                CardMissFace()
             }
         }
         .frame(width: width)
         .transition(.identity)
-    }
-
-    private var missCard: some View {
-        VStack(spacing: 7) {
-            Image(systemName: "heart.fill")
-                .font(.system(size: 26, weight: .bold))
-                .foregroundStyle(DS.Palette.pink.opacity(0.55))
-            Text("差一点")
-                .font(DS.Typo.caption.weight(.semibold))
-                .foregroundStyle(DS.Palette.textSecondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .aspectRatio(0.68, contentMode: .fit)
-        .background(DS.Palette.fieldSurface.opacity(0.8))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(
-                    DS.Palette.pink.opacity(0.3),
-                    style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
-        }
     }
 
     private func faceDownCard(slot: Int, width: CGFloat) -> some View {
@@ -184,7 +163,7 @@ struct CardGameBoardView: View {
             CardFaceView(definition: card, compact: true)
                 .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
         } else {
-            missCard
+            CardMissFace()
                 .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
         }
     }
@@ -202,20 +181,9 @@ struct CardGameBoardView: View {
     private func restoredResult(slot: Int) -> CardGameDraw? {
         let preSessionCount = (snapshot.todayDraws?.count ?? 0) - slotResults.count
         guard preSessionCount > 0 else { return nil }
-        let order = seededSlotOrder()
+        let order = cardGameSeededOrder(day: snapshot.day)
         guard let index = order.firstIndex(of: slot), index < preSessionCount else { return nil }
         return snapshot.todayDraws?[index]
-    }
-
-    private func seededSlotOrder() -> [Int] {
-        var slots = Array(0..<5)
-        var seed = snapshot.day.unicodeScalars.reduce(UInt64(88)) { ($0 &* 31) &+ UInt64($1.value) }
-        for index in stride(from: 4, to: 0, by: -1) {
-            seed = seed &* 6364136223846793005 &+ 1442695040888963407
-            let swap = Int(seed % UInt64(index + 1))
-            slots.swapAt(index, swap)
-        }
-        return slots
     }
 
     @MainActor
@@ -287,4 +255,40 @@ struct CardGameBoardView: View {
             burstFired = false
         }
     }
+}
+
+/// 未翻中的软色调卡面："差一点" + 虚线粉框。
+struct CardMissFace: View {
+    var body: some View {
+        VStack(spacing: 7) {
+            Image(systemName: "heart.fill")
+                .font(.system(size: 26, weight: .bold))
+                .foregroundStyle(DS.Palette.pink.opacity(0.55))
+            Text("差一点")
+                .font(DS.Typo.caption.weight(.semibold))
+                .foregroundStyle(DS.Palette.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .aspectRatio(0.68, contentMode: .fit)
+        .background(DS.Palette.fieldSurface.opacity(0.8))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    DS.Palette.pink.opacity(0.3),
+                    style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
+        }
+    }
+}
+
+/// 日种子洗牌：冷启动把已翻结果映射到卡槽，两台设备布局一致。
+func cardGameSeededOrder(day: String) -> [Int] {
+    var slots = Array(0..<5)
+    var seed = day.unicodeScalars.reduce(UInt64(88)) { ($0 &* 31) &+ UInt64($1.value) }
+    for index in stride(from: 4, to: 0, by: -1) {
+        seed = seed &* 6364136223846793005 &+ 1442695040888963407
+        let swap = Int(seed % UInt64(index + 1))
+        slots.swapAt(index, swap)
+    }
+    return slots
 }
