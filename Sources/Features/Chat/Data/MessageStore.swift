@@ -1692,7 +1692,8 @@ final class MessageStore: ObservableObject {
                 do {
                     let uploaded = try await uploadMedia(
                         fileURL: URL(fileURLWithPath: attachment.localFilePath),
-                        mimeType: attachment.mimeType, purpose: .message, session: session)
+                        mimeType: attachment.mimeType, purpose: .message, session: session,
+                        progressClientId: item.clientId, progressChannel: channel)
                     guard isCurrent(fence) else { return false }
                     item.attachments[index].uploadId = uploaded.id
                     item.attachments[index].uploadURL = uploaded.url
@@ -1743,7 +1744,8 @@ final class MessageStore: ObservableObject {
             let localURL = URL(fileURLWithPath: path)
             do {
                 let uploaded = try await uploadMedia(
-                    fileURL: localURL, mimeType: mimeType, purpose: .message, session: session)
+                    fileURL: localURL, mimeType: mimeType, purpose: .message, session: session,
+                    progressClientId: item.clientId, progressChannel: channel)
                 guard isCurrent(fence) else { return false }
                 item.type = item.type == "file" ? "file" : (uploaded.type.isEmpty ? item.type : uploaded.type)
                 item.uploadId = uploaded.id
@@ -2157,10 +2159,40 @@ final class MessageStore: ObservableObject {
         fileURL: URL,
         mimeType: String,
         purpose: UploadPurpose,
-        session: Session
+        session: Session,
+        progressClientId: String? = nil,
+        progressChannel: ChatChannel? = nil
     ) async throws -> UploadResult {
-        try await mediaUploadService.upload(
-            fileURL: fileURL, mimeType: mimeType, purpose: purpose, session: session)
+        var onProgress: (@Sendable (Double) -> Void)?
+        if let progressClientId, let progressChannel {
+            onProgress = { [weak self] fraction in
+                Task { @MainActor [weak self] in
+                    self?.updateUploadProgress(
+                        clientId: progressClientId,
+                        channel: progressChannel,
+                        progress: fraction)
+                }
+            }
+        }
+        defer {
+            if let progressClientId, let progressChannel {
+                updateUploadProgress(clientId: progressClientId, channel: progressChannel, progress: nil)
+            }
+        }
+        return try await mediaUploadService.upload(
+            fileURL: fileURL, mimeType: mimeType, purpose: purpose, session: session,
+            onProgress: onProgress)
+    }
+
+    /// 进度按 ≥5% 的步进写入气泡，避免每个网络分片都触发一次时间线刷新。
+    private func updateUploadProgress(clientId: String, channel: ChatChannel, progress: Double?) {
+        updateMessages(channel) { list in
+            guard let index = ChatMessageCollection.index(matchingClientId: clientId, in: list),
+                  list[index].pending else { return }
+            if let progress, let current = list[index].uploadProgress,
+               progress - current < 0.05, progress < 1 { return }
+            list[index].uploadProgress = progress
+        }
     }
 
 }

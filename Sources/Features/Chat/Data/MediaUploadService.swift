@@ -60,7 +60,8 @@ struct MediaUploadService {
         fileURL: URL,
         mimeType: String,
         purpose: MediaUploadPurpose,
-        session: Session
+        session: Session,
+        onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> MediaUploadResult {
         let boundary = "Boundary-\(UUID().uuidString)"
         let multipartURL = try await Task.detached(priority: .utility) {
@@ -69,7 +70,8 @@ struct MediaUploadService {
         }.value
         defer { try? FileManager.default.removeItem(at: multipartURL) }
         let request = authorizedRequest(purpose: purpose, session: session, boundary: boundary)
-        let (responseData, response) = try await httpClient.upload(for: request, fromFile: multipartURL)
+        let (responseData, response) = try await httpClient.upload(
+            for: request, fromFile: multipartURL, onProgress: onProgress)
         return try decode(responseData, response: response)
     }
 
