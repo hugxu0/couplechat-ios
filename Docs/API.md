@@ -96,7 +96,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | `PATCH` | `/api/me/items/:id` | 修改事项 |
 | `DELETE` | `/api/me/items/:id` | 删除事项 |
 
-`kind` 为 `reminder` 或 `memo`，`scope` 为 `personal` 或 `shared`。主要字段为 `title`、`bodyMarkdown`、`dueAt` 和 `isDone`。
+`kind` 为 `reminder` 或 `memo`，`scope` 为 `personal` 或 `shared`。主要字段为 `title`、`bodyMarkdown`、`dueAt`、`isDone` 和 `version`。`PATCH` 可带 `baseVersion` 做乐观并发：版本过期返回 `409 version_conflict` 和权威 `item`；不带则保持旧的 last-write-wins（兼容老客户端）。
 
 到期通知由服务端 Bark 调度器负责：`shared` 提醒发送给当前两位账号的全部有效设备 endpoint，`personal` 只发送给 `owner` 的全部有效设备。投递按提醒、到期时间和收件账号持久化记账，服务重启会补扫最近 7 天，成功不重复、失败继续重试。iOS 不再额外安排本地到期通知；旧账号单 Bark key 仍作为兼容 fallback。
 
@@ -112,7 +112,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 
 `scope` 为 `all/shared/private`；`layer` 为 `fact/event/plan/state/relationship/insight`；`perspective` 为 `people/daju`；`kind` 为 `standard/instruction/observation`；`status` 为 `active/all`；`subject` 为 `xu/si/both`；`q` 搜索正文、分类和主体。`limit` 范围 `1...200`、默认 `100`。列表默认只返回 active Memory，并按时间键 `COALESCE(occurred_at, valid_from, created_at)` 倒序，再以 `id` 倒序稳定排序；响应含 `nextCursor/hasMore`。`cursor` 是服务端不透明值，分页游标携带该时间键和 id。未指定 `perspective` 时，Agent 的普通人物检索只读取 `people`；客户端选择“大橘”时会显式请求 `daju`，并按指令或观察分类。
 
-共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion? }`，importance 范围 `1...5`；提供旧 `baseVersion` 时返回 409 和权威 `item`，客户端会载入它。删除会按卡片 key 记录 exclusion，避免后台再次自动生成；主人之后明确重新下达同主题指令时可以恢复。`POST refresh` body 为 `{ scope: "shared" | "private" }`；服务端最多同步等待 20 秒，响应中的 `pending` 表示整理仍在后台进行，完成后的 Memory 变更通过 Sync V2 触发客户端重新读取。
+共同 Memory 对双方可见；`ai:<username>` 私聊 Memory 只对对应账号可见。`PATCH` body 为 `{ content, importance?, baseVersion? }`，importance 范围 `1...5`；提供旧 `baseVersion` 时返回 409 和权威 `item`，客户端会载入它。删除会按卡片 key + 内容指纹记录 exclusion：被删的那版内容不再自动复活，同主题的新信息仍可正常写入。`POST refresh` body 为 `{ scope: "shared" | "private" }`；服务端最多同步等待 20 秒，响应中的 `pending` 表示整理仍在后台进行，完成后的 Memory 变更通过 Sync V2 触发客户端重新读取。
 
 ### 今日推荐
 
@@ -162,7 +162,7 @@ iOS 在前台约每 10 秒补拉一次，并在 Socket 重连、启动和回前�
 | `DELETE` | `/api/v2/albums/:albumId/items/:itemId` | 从相册移除，不删除原聊天媒体 |
 | `PATCH` | `/api/v2/media-assets/:assetId/note` | 写双方可见注脚 |
 
-相册分页 `limit` 范围 `1...100`、默认 `30`。列表响应为 `{ albums, nextCursor, hasMore }`，每本相册同时返回稳定 `coverURL` 和最多三项 `previewItems`。创建 body 为 `{ title, summary? }`；修改封面、标题或摘要以及删除相册均使用 `baseVersion`。直接上传 body 为 `{ uploadId, takenAt?, postId? }`；同一次发表复用同一 `postId`，因此不同拍摄时间的多张照片/视频仍属于一条可整体编辑或删除的时间线动态。聊天消息入册以 `message:<messageId>` 作为动态分组。v25 之前没有 `postId` 的旧项目继续按拍摄分钟和文案兼容分组。同一媒体重复加入同一本相册会幂等为空。
+相册分页 `limit` 范围 `1...100`、默认 `30`。列表响应为 `{ albums, nextCursor, hasMore }`，每本相册同时返回稳定 `coverURL` 和最多三项 `previewItems`。创建 body 为 `{ title, summary? }`；修改封面、标题或摘要以及删除相册均使用 `baseVersion`。直接上传 body 为 `{ uploadId, takenAt?, postId? }`，响应含 `added` 与相册当前权威 `version`（重复添加同一 upload 时不加版本，客户端只认回传值、不本地自增）。同一次发表复用同一 `postId`，因此不同拍摄时间的多张照片/视频仍属于一条可整体编辑或删除的时间线动态。聊天消息入册以 `message:<messageId>` 作为动态分组。v25 之前没有 `postId` 的旧项目继续按拍摄分钟和文案兼容分组。同一媒体重复加入同一本相册会幂等为空。
 
 相册图片/视频预览复用聊天媒体浏览器：全屏、左右只浏览当前动态的媒体，上下拖动超过阈值缩回对应缩略图；文案编辑入口位于时间线正文右侧，不放进图片浏览器。
 
