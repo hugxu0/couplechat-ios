@@ -1926,7 +1926,7 @@ async function main() {
     );
     await db.run(
       `INSERT INTO card_game_inventory (id, account_id, card_key, rarity, quantity, created_at, updated_at)
-       VALUES ('cardinv_smoke_addtime', ?, 'support_addtime', 'rare', 1, ?, ?)
+       VALUES ('cardinv_smoke_add_time', ?, 'support_add_time', 'rare', 1, ?, ?)
        ON CONFLICT(account_id, card_key, rarity)
        DO UPDATE SET quantity = card_game_inventory.quantity + 1`,
       [currentUser!.accountId, Date.now(), Date.now()],
@@ -1936,12 +1936,19 @@ async function main() {
       url: "/api/v2/card-game/use",
       headers: { authorization },
       payload: {
-        cardKey: "support_addtime",
+        cardKey: "support_add_time",
         rarity: "rare",
         idempotencyKey: "smoke-card-addtime-foreign",
         effectId: foreignEffectID,
       },
     });
+    if (foreignAddTime.statusCode < 400 || foreignAddTime.json().error !== "effect_not_owned") {
+      console.log(
+        "[smoke] foreignAddTime 非预期响应:",
+        foreignAddTime.statusCode,
+        foreignAddTime.body,
+      );
+    }
     assertOk(
       "加时卡不能作用在对方打出的效果上",
       foreignAddTime.statusCode >= 400 && foreignAddTime.json().error === "effect_not_owned",
