@@ -175,6 +175,7 @@ async function main() {
       [34, "repair_card_game_table_ownership"],
       [35, "scope_message_idempotency_to_device"],
       [36, "durable_ai_reply_jobs"],
+      [37, "card_game_five_flips"],
     ] as const;
     assertOk(
       "数据库结构版本完整",
@@ -1745,7 +1746,7 @@ async function main() {
       "情侣卡牌快照返回每日次数与个人卡库",
       cardSnapshotResponse.statusCode === 200 &&
         cardSnapshotBody.ok === true &&
-        cardSnapshotBody.game?.drawsRemaining === 3 &&
+        cardSnapshotBody.game?.drawsRemaining === 5 &&
         cardSnapshotBody.game.inventory?.some((item) => item.cardKey === "intimacy_massage") === true,
     );
     const cardUseResponse = await app.inject({
@@ -1889,26 +1890,35 @@ async function main() {
       cardUseReplay.statusCode === 200 && cardUseReplay.json().effect?.id === cardUseEffectID,
     );
     const drawResponses = await Promise.all(
-      [1, 2, 3].map((index) => app.inject({
+      [1, 2, 3, 4, 5].map((index) => app.inject({
         method: "POST",
         url: "/api/v2/card-game/draw",
         headers: { authorization },
         payload: { idempotencyKey: "smoke-card-draw-" + index },
       })),
     );
-    const fourthDraw = await app.inject({
+    const sixthDraw = await app.inject({
       method: "POST",
       url: "/api/v2/card-game/draw",
       headers: { authorization },
-      payload: { idempotencyKey: "smoke-card-draw-4" },
+      payload: { idempotencyKey: "smoke-card-draw-6" },
     });
     assertOk(
-      "情侣卡牌每天最多三次抽卡",
-      drawResponses.every((response) => response.statusCode === 200) && fourthDraw.statusCode === 429,
+      "情侣卡牌每天最多五次翻牌",
+      drawResponses.every((response) => response.statusCode === 200) && sixthDraw.statusCode === 429,
     );
+    const boardSnapshot = await app.inject({
+      method: "GET", url: "/api/v2/card-game", headers: { authorization },
+    });
+    const boardGame = boardSnapshot.json().game as {
+      drawsUsed?: number;
+      todayDraws?: Array<{ success: boolean; card: { key: string } | null }>;
+    };
     assertOk(
-      "当日最后一抽保底：三次抽卡至少命中一次",
-      drawResponses.some((response) => response.json().draw?.success === true),
+      "快照返回今日翻牌结果供牌阵还原",
+      boardGame.drawsUsed === 5 &&
+        boardGame.todayDraws?.length === 5 &&
+        boardGame.todayDraws.every((draw) => draw.success === (draw.card !== null)),
     );
     const cardForeignSender = await db.get<{ id: string }>(
       "SELECT id FROM accounts WHERE id <> ? LIMIT 1",

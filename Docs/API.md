@@ -198,7 +198,7 @@ iOS 在前台约每 10 秒补拉一次，并在 Socket 重连、启动和回前�
 | POST | /api/v2/card-game/draw | 消耗一次今日抽卡尝试；body { idempotencyKey }，命中时返回 draw.card 并写入个人卡库 |
 | POST | /api/v2/card-game/use | 使用一张卡并扣除一张库存；body { cardKey, rarity, idempotencyKey, effectId?, sourceCardKey?, sourceRarity? } |
 
-每日每个账号最多 3 次尝试，按 Asia/Shanghai 自然日计算；每次命中概率约为三分之一。卡片和效果属于当前情侣空间，服务端用事务和账号幂等键保证重复请求不会重复扣卡。时间型效果从成功使用时开始倒计时，addTime 增加倒计时、postpone 延后效果，copy 复制对方卡库的一张卡，qiankun 把当前对自己生效的效果转给对方。卡牌页在前台每 8 秒轮询 GET，当前版本不发送通知、不使用 Socket 或 Sync 事件。
+每日每个账号最多 5 次翻牌，按 Asia/Shanghai 自然日计算；每张独立约五分之一翻中。快照含 `todayDraws`（今日已翻结果按顺序）供翻牌阵还原。卡片和效果属于当前情侣空间，服务端用事务和账号幂等键保证重复请求不会重复扣卡。时间型效果从成功使用时开始倒计时，addTime 增加倒计时、postpone 延后效果，copy 复制对方卡库的一张卡，qiankun 把当前对自己生效的效果转给对方。卡牌页在前台每 8 秒轮询 GET，当前版本不发送通知、不使用 Socket 或 Sync 事件。
 
 ## Socket.IO
 

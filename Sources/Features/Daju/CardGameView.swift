@@ -9,9 +9,7 @@ struct CardGameView: View {
     @StateObject private var viewModel = CardGameViewModel()
     @State private var selectedItem: CardGameInventoryItem?
     @State private var showCollection = false
-    @State private var revealCard: CardGameDefinition?
-    @State private var showReveal = false
-    @State private var drawMessage: String?
+    @State private var showcaseCard: CardGameDefinition?
 
     var body: some View {
         ZStack {
@@ -47,11 +45,11 @@ struct CardGameView: View {
             .scrollIndicators(.hidden)
             .refreshable { await refresh(force: true) }
 
-            if showReveal, let revealCard {
-                CardRevealOverlay(card: revealCard) {
-                    showReveal = false
+            if let showcaseCard {
+                CardShowcaseOverlay(definition: showcaseCard) {
+                    withAnimation(DS.Anim.ease) { self.showcaseCard = nil }
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                .transition(.opacity)
                 .zIndex(3)
             }
         }
@@ -97,13 +95,6 @@ struct CardGameView: View {
             if let snapshot = viewModel.snapshot {
                 CardGameCollectionView(snapshot: snapshot)
             }
-        }
-        .alert("这次没有抽中", isPresented: Binding(
-            get: { drawMessage != nil },
-            set: { if !$0 { drawMessage = nil } })) {
-            Button("好") { drawMessage = nil }
-        } message: {
-            Text(drawMessage ?? "再来试试，今天还剩下机会。")
         }
     }
 
@@ -157,7 +148,7 @@ struct CardGameView: View {
                 Text("抽到就留下，想用时再出牌")
                     .font(.system(.title2, design: .rounded).weight(.bold))
                     .fixedSize(horizontal: false, vertical: true)
-                Text("每天每人 3 次机会，前两次都没中时最后一次必中。使用后卡片消耗，效果会留在这里等对方看到。")
+                Text("每天五张牌，点一张翻一张，每张约五分之一翻中。使用后卡片消耗，效果会留在这里等对方看到。")
                     .font(DS.Typo.secondary)
                     .foregroundStyle(.white.opacity(0.82))
                     .lineSpacing(3)
@@ -175,65 +166,16 @@ struct CardGameView: View {
     }
 
     private func drawPanel(snapshot: CardGameSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("今日抽卡")
-                        .font(DS.Typo.cardTitle)
-                    Text("北京时间每天 00:00 重置")
-                        .font(DS.Typo.caption)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                }
-                Spacer()
-                // 与下方进度条同一语义（已用几次），否则"0/3"配三条满格看着自相矛盾。
-                Text("\(snapshot.drawsUsed) / 3")
-                    .font(DS.Typo.displayNumber.monospacedDigit())
-                    .foregroundStyle(snapshot.drawsRemaining > 0 ? DS.Palette.purple : DS.Palette.textTertiary)
-            }
-
-            HStack(spacing: 8) {
-                ForEach(0..<3, id: \.self) { index in
-                    Capsule()
-                        .fill(index < snapshot.drawsUsed ? DS.Palette.purple : DS.Palette.textTertiary.opacity(0.16))
-                        .frame(height: 9)
-                }
-            }
-
-            Button {
-                Haptics.medium()
-                Task { await draw() }
-            } label: {
-                HStack(spacing: 9) {
-                    if viewModel.isMutating {
-                        ProgressView().tint(.white)
-                    } else {
-                        Image(systemName: snapshot.drawsRemaining == 0 ? "moon.zzz.fill" : "shuffle")
-                    }
-                    Text(buttonTitle(snapshot: snapshot))
-                        .font(DS.Typo.button)
-                    Spacer()
-                    if snapshot.drawsRemaining > 0 {
-                        Text("约 1/3 命中 · 末抽保底")
-                            .font(DS.Typo.micro)
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 16)
-                .frame(minHeight: 52)
-                .background(
-                    LinearGradient(
-                        colors: [DS.Palette.purple, DS.Palette.blue],
-                        startPoint: .leading,
-                        endPoint: .trailing),
-                    in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
-            }
-            .buttonStyle(PressableStyle())
-            .disabled(snapshot.drawsRemaining == 0 || viewModel.isMutating)
-            .opacity(snapshot.drawsRemaining == 0 ? 0.55 : 1)
-        }
-        .padding(DS.Spacing.card)
-        .dsCard(radius: DS.Radius.panel)
+        CardGameBoardView(
+            snapshot: snapshot,
+            isBusy: viewModel.isMutating,
+            onFlip: { [weak viewModel] in
+                guard let session = store.session, let viewModel else { return nil }
+                return await viewModel.draw(token: session.token, username: session.username)
+            },
+            onShowcase: { card in
+                withAnimation(DS.Anim.motion(DS.Anim.spring)) { showcaseCard = card }
+            })
     }
 
     private func activeEffects(snapshot: CardGameSnapshot) -> some View {
@@ -324,12 +266,6 @@ struct CardGameView: View {
         }
     }
 
-    private func buttonTitle(snapshot: CardGameSnapshot) -> String {
-        if viewModel.isMutating { return "正在洗牌…" }
-        if snapshot.drawsRemaining == 0 { return "今天抽完了，明天 00:00 再来" }
-        return "抽一张"
-    }
-
     private func collectedCount(_ snapshot: CardGameSnapshot) -> Int {
         let owned = Set(snapshot.inventory.map { "\($0.cardKey)|\($0.rarity.rawValue)" })
         return snapshot.catalog.filter { owned.contains("\($0.key)|\($0.rarity.rawValue)") }.count
@@ -352,17 +288,6 @@ struct CardGameView: View {
             item: item,
             effectID: effectID,
             source: source)
-    }
-
-    private func draw() async {
-        guard let session = store.session else { return }
-        guard let result = await viewModel.draw(token: session.token, username: session.username) else { return }
-        if result.success, let card = result.card {
-            revealCard = card
-            withAnimation(DS.Anim.motion(DS.Anim.spring)) { showReveal = true }
-        } else {
-            drawMessage = "这次没有抽中。今天前两次都没中的话，最后一次必中。"
-        }
     }
 
     private func refresh(force: Bool) async {
