@@ -11,6 +11,10 @@ final class CardGameViewModel: ObservableObject {
     private var account: String?
     private var activeLoadID: UUID?
     private var generation = 0
+    // 幂等键按"用户意图"生成：失败重试沿用同一个键，服务端才能识别重复请求。
+    // 每次调用都换新键会让超时重试变成第二次扣次数/扣卡。
+    private var drawIntentKey: String?
+    private var useIntent: (signature: String, key: String)?
 
     init(repository: CardGameRepository = CardGameRepository()) {
         self.repository = repository
@@ -45,9 +49,12 @@ final class CardGameViewModel: ObservableObject {
         guard !isMutating else { return nil }
         isMutating = true
         defer { isMutating = false }
+        let key = drawIntentKey ?? UUID().uuidString
+        drawIntentKey = key
         do {
-            let result = try await repository.draw(token: token)
+            let result = try await repository.draw(token: token, idempotencyKey: key)
             guard account == username else { return nil }
+            drawIntentKey = nil
             snapshot = result.snapshot
             errorMessage = nil
             return result.draw
@@ -67,6 +74,10 @@ final class CardGameViewModel: ObservableObject {
         guard !isMutating else { return false }
         isMutating = true
         defer { isMutating = false }
+        let signature = [item.cardKey, item.rarity.rawValue, effectID ?? "-",
+                         source?.cardKey ?? "-", source?.rarity.rawValue ?? "-"].joined(separator: "|")
+        let key = useIntent?.signature == signature ? useIntent!.key : UUID().uuidString
+        useIntent = (signature, key)
         do {
             let result = try await repository.use(
                 token: token,
@@ -74,8 +85,10 @@ final class CardGameViewModel: ObservableObject {
                 rarity: item.rarity,
                 effectID: effectID,
                 sourceCardKey: source?.cardKey,
-                sourceRarity: source?.rarity)
+                sourceRarity: source?.rarity,
+                idempotencyKey: key)
             guard account == username else { return false }
+            useIntent = nil
             snapshot = result.snapshot
             errorMessage = nil
             return true
@@ -94,5 +107,7 @@ final class CardGameViewModel: ObservableObject {
         errorMessage = nil
         isLoading = false
         isMutating = false
+        drawIntentKey = nil
+        useIntent = nil
     }
 }

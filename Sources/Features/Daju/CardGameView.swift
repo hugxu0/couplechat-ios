@@ -8,7 +8,7 @@ struct CardGameView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = CardGameViewModel()
     @State private var selectedItem: CardGameInventoryItem?
-    @State private var showSelection = false
+    @State private var showCollection = false
     @State private var revealCard: CardGameDefinition?
     @State private var showReveal = false
     @State private var drawMessage: String?
@@ -34,7 +34,8 @@ struct CardGameView: View {
                         unavailableState
                     }
 
-                    if let error = viewModel.errorMessage {
+                    // 无快照时 unavailableState 已展示错误，这里只兜局部失败，避免同一句话出现两遍。
+                    if let error = viewModel.errorMessage, viewModel.snapshot != nil {
                         StatusBanner(text: error, kind: .warning)
                     }
                 }
@@ -56,6 +57,17 @@ struct CardGameView: View {
         }
         .navigationTitle("情侣卡牌")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    Haptics.light()
+                    showCollection = true
+                } label: {
+                    Label("图鉴", systemImage: "book.closed.fill")
+                }
+                .disabled(viewModel.snapshot == nil)
+            }
+        }
         .task(id: store.session?.username) {
             await pollingLoop()
         }
@@ -63,22 +75,27 @@ struct CardGameView: View {
             guard phase == .active else { return }
             Task { await refresh(force: true) }
         }
-        .sheet(isPresented: $showSelection) {
-            if let selectedItem,
-               let snapshot = viewModel.snapshot,
-               let definition = snapshot.definition(for: selectedItem) {
+        // sheet(item:) 保证内容与所选卡一起出现，不会再弹出一张空白页。
+        .sheet(item: $selectedItem) { item in
+            if let snapshot = viewModel.snapshot,
+               let definition = snapshot.definition(for: item) {
                 CardGameSelectionSheet(
-                    item: selectedItem,
+                    item: item,
                     definition: definition,
                     effects: snapshot.activeEffects,
                     partnerInventory: snapshot.partnerInventory,
                     catalog: snapshot.catalog,
                     currentUsername: store.session?.username ?? "",
                     onUse: { effectID, source in
-                        showSelection = false
-                        Task { await use(item: selectedItem, effectID: effectID, source: source) }
+                        selectedItem = nil
+                        Task { await use(item: item, effectID: effectID, source: source) }
                     })
                 .presentationSizing(.form)
+            }
+        }
+        .sheet(isPresented: $showCollection) {
+            if let snapshot = viewModel.snapshot {
+                CardGameCollectionView(snapshot: snapshot)
             }
         }
         .alert("这次没有抽中", isPresented: Binding(
@@ -133,14 +150,14 @@ struct CardGameView: View {
                         .padding(.vertical, 6)
                         .background(.white.opacity(0.16), in: Capsule())
                     Spacer()
-                    Text("\(snapshot.inventory.count) 种")
+                    Text("图鉴 \(collectedCount(snapshot)) / \(snapshot.catalog.count)")
                         .font(DS.Typo.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.78))
                 }
                 Text("抽到就留下，想用时再出牌")
                     .font(.system(.title2, design: .rounded).weight(.bold))
                     .fixedSize(horizontal: false, vertical: true)
-                Text("每天每人 3 次机会，每次约三分之一概率抽中。使用后卡片消耗，效果会留在这里等对方看到。")
+                Text("每天每人 3 次机会，前两次都没中时最后一次必中。使用后卡片消耗，效果会留在这里等对方看到。")
                     .font(DS.Typo.secondary)
                     .foregroundStyle(.white.opacity(0.82))
                     .lineSpacing(3)
@@ -194,7 +211,7 @@ struct CardGameView: View {
                     Text(viewModel.isMutating ? "正在洗牌…" : "抽一张")
                         .font(DS.Typo.button)
                     Spacer()
-                    Text("命中率约 1 / 3")
+                    Text("约 1/3 命中 · 末抽保底")
                         .font(DS.Typo.micro)
                         .foregroundStyle(.white.opacity(0.75))
                 }
@@ -247,14 +264,17 @@ struct CardGameView: View {
                 .frame(maxWidth: .infinity, minHeight: 130)
                 .dsCard(radius: DS.Radius.panel, elevated: false)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 11)], spacing: 11) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 112, maximum: 150), spacing: 11)], spacing: 13) {
                     ForEach(snapshot.inventory) { item in
                         if let definition = snapshot.definition(for: item) {
-                            CardGameCardTile(
-                                item: item,
-                                definition: definition,
-                                isBusy: viewModel.isMutating,
-                                onUse: { beginUse(item) })
+                            Button {
+                                Haptics.light()
+                                beginUse(item)
+                            } label: {
+                                CardFaceView(definition: definition, quantity: item.quantity, compact: true)
+                            }
+                            .buttonStyle(PressableStyle())
+                            .disabled(viewModel.isMutating)
                         }
                     }
                 }
@@ -301,15 +321,14 @@ struct CardGameView: View {
         }
     }
 
+    private func collectedCount(_ snapshot: CardGameSnapshot) -> Int {
+        let owned = Set(snapshot.inventory.map { "\($0.cardKey)|\($0.rarity.rawValue)" })
+        return snapshot.catalog.filter { owned.contains("\($0.key)|\($0.rarity.rawValue)") }.count
+    }
+
+    /// 所有卡都先进详情弹窗看大卡面再确认使用；不再有"点一下直接消耗"的路径。
     private func beginUse(_ item: CardGameInventoryItem) {
-        guard let snapshot = viewModel.snapshot,
-              let definition = snapshot.definition(for: item) else { return }
-        if definition.modifier == nil {
-            Task { await use(item: item) }
-        } else {
-            selectedItem = item
-            showSelection = true
-        }
+        selectedItem = item
     }
 
     private func use(
@@ -333,7 +352,7 @@ struct CardGameView: View {
             revealCard = card
             withAnimation(DS.Anim.motion(DS.Anim.spring)) { showReveal = true }
         } else {
-            drawMessage = "这次没有抽中卡片，但抽卡次数已经记录。"
+            drawMessage = "这次没有抽中。今天前两次都没中的话，最后一次必中。"
         }
     }
 
