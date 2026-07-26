@@ -30,7 +30,7 @@ struct CardGameEntryCard: View {
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(.white.opacity(0.74))
                     }
-                    Text("每天三抽，把想说的和想做的存进卡库")
+                    Text("每天六张牌，翻中的都会留进卡库")
                         .font(.system(.title3, design: .rounded).weight(.bold))
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 7) {
@@ -39,7 +39,7 @@ struct CardGameEntryCard: View {
                         badge("紫色 史诗")
                         badge("金色 传说")
                     }
-                    Text("卡片可以留着，使用后对方进入这里就能看到效果")
+                    Text("点一张翻一张，出牌后对方进来就能看到效果")
                         .font(DS.Typo.caption)
                         .foregroundStyle(.white.opacity(0.78))
                 }

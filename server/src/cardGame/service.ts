@@ -12,8 +12,8 @@ import {
   type CardRarity,
 } from "./catalog";
 
-const DAILY_DRAW_LIMIT = 5;
-const DRAW_HIT_DENOMINATOR = 5;
+const DAILY_DRAW_LIMIT = 6;
+const DRAW_HIT_DENOMINATOR = 6;
 const POSTPONE_MS = 24 * 60 * 60_000;
 
 interface AccountRef {
