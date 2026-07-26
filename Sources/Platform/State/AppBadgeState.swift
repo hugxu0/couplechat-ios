@@ -15,7 +15,8 @@ final class AppBadgeState: ObservableObject {
     func refreshReminders(token: String) async {
         async let personal = repository.fetch(kind: .reminder, scope: "personal", token: token)
         async let shared = repository.fetch(kind: .reminder, scope: "shared", token: token)
-        let (personalItems, sharedItems) = await (personal, shared)
+        // 任一侧拉取失败就保留当前角标；断网时清零会谎报"没有到期提醒"。
+        guard let personalItems = await personal, let sharedItems = await shared else { return }
         let reminders = personalItems + sharedItems
         let now = Date()
         reminderCount = reminders.filter { item in

@@ -9,19 +9,23 @@ struct PersonalItemsRepository {
         self.httpClient = httpClient
     }
 
+    /// nil 表示网络或解码失败——和「加载成功但列表为空」是两回事。
+    /// 调用方据此显示错误而不是假的空状态，也不能把角标清零。
     func fetch(
         kind: PersonalItemKind? = nil,
         scope: String = "personal",
         token: String
-    ) async -> [PersonalItem] {
+    ) async -> [PersonalItem]? {
         var query: [String] = []
         if let kind { query.append("kind=\(kind.rawValue)") }
         query.append("scope=\(scope)")
         guard let request = APIRequestFactory.authorized(
             path: "api/me/items?\(query.joined(separator: "&"))", token: token),
               let (data, response) = try? await httpClient.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
-        return (try? JSONDecoder().decode(ItemsResponse.self, from: data))?.items ?? []
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let items = (try? JSONDecoder().decode(ItemsResponse.self, from: data))?.items
+        else { return nil }
+        return items
     }
 
     func create(

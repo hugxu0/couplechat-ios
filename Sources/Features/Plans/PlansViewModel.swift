@@ -68,13 +68,22 @@ final class PlansViewModel: ObservableObject {
             async let calendar = calendarRepository.events(
                 monthContaining: date, token: token)
             let (newItems, newEvents) = try await (personal, calendar)
-            replaceItems(newItems, scope: scope)
+            applyFetchedItems(newItems, scope: scope)
             events = newEvents
         } catch {
-            replaceItems(await personal, scope: scope)
+            applyFetchedItems(await personal, scope: scope)
             errorMessage = error.localizedDescription
         }
         loading = false
+    }
+
+    /// 拉取失败（nil）时保留上次数据并显示错误，不能把失败伪装成空列表。
+    private func applyFetchedItems(_ newItems: [PersonalItem]?, scope: String) {
+        guard let newItems else {
+            if errorMessage == nil { errorMessage = "提醒和备忘加载失败，展示的是上次内容" }
+            return
+        }
+        replaceItems(newItems, scope: scope)
     }
 
     func visibleItems(kind: PersonalItemKind, scope: String) -> [PersonalItem] {

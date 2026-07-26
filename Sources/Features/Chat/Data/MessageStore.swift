@@ -197,7 +197,10 @@ final class MessageStore: ObservableObject {
             print("[MessageStore] ⚠️ 拒绝路由到不匹配频道的消息 id=\(msg.id)")
             return
         }
-        guard let fence = activeSessionFence else { return }
+        guard let fence = activeSessionFence else {
+            print("[MessageStore] ⚠️ 会话未激活，丢弃实时消息 id=\(msg.id) channel=\(channel.rawValue)")
+            return
+        }
         let latestConfirmed = messages(for: channel)
             .filter { !$0.pending && !$0.failed }
             .max(by: { ChatMessageCollection.isOrderedBefore($0, $1) })

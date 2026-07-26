@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PersonalItemEditor: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: ChatStore
     let mode: PlanEditorMode
     let scope: String
     let onSave: (String, String, Int?) -> Void
@@ -25,6 +26,11 @@ struct PersonalItemEditor: View {
         _dueDate = State(initialValue: item?.dueDate ?? Date().addingTimeInterval(30 * 60))
     }
 
+    private var barkConfigured: Bool {
+        guard let username = store.auth.session?.username else { return true }
+        return BarkSettingsSheet.isConfigured(for: username)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -46,6 +52,13 @@ struct PersonalItemEditor: View {
                             if hasDueDate {
                                 DatePicker("时间", selection: $dueDate, displayedComponents: [.date, .hourAndMinute])
                                     .datePickerStyle(.compact)
+                                if !barkConfigured {
+                                    // Bark 是唯一推送通道；没配置时到点静默，必须提前说清。
+                                    Label("这台设备还没配置离线通知，提醒到点不会收到推送。可在「我的 → 离线通知」设置 Bark。", systemImage: "bell.slash")
+                                        .font(DS.Typo.caption)
+                                        .foregroundStyle(DS.Palette.textSecondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                             }
                         }
                         .padding(DS.Spacing.card - 2)
