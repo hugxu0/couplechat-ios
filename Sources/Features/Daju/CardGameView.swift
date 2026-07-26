@@ -9,7 +9,13 @@ struct CardGameView: View {
     @StateObject private var viewModel = CardGameViewModel()
     @State private var selectedItem: CardGameInventoryItem?
     @State private var showCollection = false
-    @State private var showcaseCard: CardGameDefinition?
+    @State private var pendingReveal: PendingReveal?
+
+    private struct PendingReveal: Identifiable {
+        let id = UUID()
+        let draw: CardGameDraw
+        let completion: () -> Void
+    }
 
     var body: some View {
         ZStack {
@@ -45,9 +51,10 @@ struct CardGameView: View {
             .scrollIndicators(.hidden)
             .refreshable { await refresh(force: true) }
 
-            if let showcaseCard {
-                CardShowcaseOverlay(definition: showcaseCard) {
-                    withAnimation(DS.Anim.ease) { self.showcaseCard = nil }
+            if let pendingReveal {
+                CardFlipRevealOverlay(draw: pendingReveal.draw) {
+                    pendingReveal.completion()
+                    withAnimation(DS.Anim.ease) { self.pendingReveal = nil }
                 }
                 .transition(.opacity)
                 .zIndex(3)
@@ -173,8 +180,10 @@ struct CardGameView: View {
                 guard let session = store.session, let viewModel else { return nil }
                 return await viewModel.draw(token: session.token, username: session.username)
             },
-            onShowcase: { card in
-                withAnimation(DS.Anim.motion(DS.Anim.spring)) { showcaseCard = card }
+            onReveal: { draw, completion in
+                withAnimation(DS.Anim.motion(DS.Anim.spring)) {
+                    pendingReveal = PendingReveal(draw: draw, completion: completion)
+                }
             })
     }
 

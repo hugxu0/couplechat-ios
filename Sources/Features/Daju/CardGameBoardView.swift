@@ -8,18 +8,11 @@ struct CardGameBoardView: View {
     let snapshot: CardGameSnapshot
     let isBusy: Bool
     let onFlip: () async -> CardGameDraw?
-    let onShowcase: (CardGameDefinition) -> Void
+    /// 结果就绪后交给父级在屏幕中央播放揭示浮层；完成回调里落位。
+    let onReveal: (CardGameDraw, @escaping () -> Void) -> Void
 
     @State private var slotResults: [Int: CardGameDraw] = [:]
     @State private var flippingSlot: Int?
-    @State private var phase: FlipPhase = .idle
-    @State private var spinAngle: Double = 0
-    @State private var auraBloom = false
-    @State private var burstTier: CardFlipTier?
-    @State private var burstSlot: Int?
-    @State private var burstFired = false
-
-    private enum FlipPhase { case idle, charging, airborne, landing }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -59,9 +52,6 @@ struct CardGameBoardView: View {
                     slotCard(slot: slot, width: cardWidth)
                         .position(positions[slot])
                 }
-                if let tier = burstTier, let burstSlot {
-                    CardFlipBurstLayer(tier: tier, center: positions[burstSlot], fired: burstFired)
-                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -95,7 +85,7 @@ struct CardGameBoardView: View {
             if let result, !isFlipping {
                 revealedCard(result: result, width: width)
             } else if isFlipping {
-                flippingCard(slot: slot, width: width)
+                flipPlaceholder
             } else {
                 faceDownCard(slot: slot, width: width)
             }
@@ -126,48 +116,22 @@ struct CardGameBoardView: View {
                 CardBackView()
                     .rotationEffect(.degrees(slotTilt(slot)))
                     .offset(y: bob)
-                    .opacity(flippable ? 1 : 0.5)
             }
             .buttonStyle(PressableStyle())
             .disabled(!flippable)
         }
     }
 
-    private func flippingCard(slot: Int, width: CGFloat) -> some View {
-        let result = slotResults[slot]
-        let tier = CardFlipTier(rarity: result?.card?.rarity ?? (result?.success == true ? .common : nil))
-        return ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            (auraBloom ? tier.color : Color.white).opacity(phase == .charging ? 0.5 : 0.75),
-                            .clear,
-                        ],
-                        center: .center, startRadius: 4, endRadius: width * 1.25))
-                .frame(width: width * 2.6, height: width * 2.6)
-                .opacity(phase == .idle ? 0 : 1)
-
-            flipSides(result: result)
-                .rotation3DEffect(.degrees(spinAngle), axis: (x: 0, y: 1, z: 0), perspective: 0.55)
-                .scaleEffect(phase == .airborne ? 1.55 : (phase == .charging ? 1.06 : 1))
-                .offset(y: phase == .airborne ? -46 : 0)
-        }
-        .zIndex(2)
-    }
-
-    @ViewBuilder
-    private func flipSides(result: CardGameDraw?) -> some View {
-        // 810° 是侧棱视角，在这一帧换面不穿帮；卡面预转 180° 抵消最终朝向。
-        if spinAngle < 810 {
-            CardBackView()
-        } else if let card = result?.card {
-            CardFaceView(definition: card, compact: true)
-                .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
-        } else {
-            CardMissFace()
-                .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
-        }
+    /// 翻牌进行中：槽位留一个轻脉动的虚线空位，演出在屏幕中央的浮层里。
+    private var flipPlaceholder: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(
+                DS.Palette.purple.opacity(0.35),
+                style: StrokeStyle(lineWidth: 1.4, dash: [6, 5]))
+            .background(
+                DS.Palette.purple.opacity(0.06),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .aspectRatio(0.68, contentMode: .fit)
     }
 
     private var canFlip: Bool {
@@ -193,70 +157,16 @@ struct CardGameBoardView: View {
         guard canFlip else { return }
         Haptics.light()
         flippingSlot = slot
-        phase = .charging
-        spinAngle = 0
-        auraBloom = false
-
-        let result = await onFlip()
-        guard let result else {
-            // 请求失败：卡片落回原位，错误横幅由外层展示。
-            withAnimation(DS.Anim.ease) { phase = .idle }
+        guard let result = await onFlip() else {
             flippingSlot = nil
             return
         }
-        slotResults[slot] = result
-
-        if reduceMotion {
-            spinAngle = 900
-            phase = .landing
-            finishFlip(slot: slot, result: result)
-            return
-        }
-
-        withAnimation(.easeIn(duration: 0.32)) { phase = .airborne }
-        withAnimation(.easeInOut(duration: 1.05).delay(0.1)) { spinAngle = 900 }
-        // 空中过半时光色绽放——稀有度在这一刻揭晓。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.62) {
-            withAnimation(.easeOut(duration: 0.3)) { auraBloom = true }
-            let tier = CardFlipTier(rarity: result.card?.rarity)
-            if tier >= .epic { Haptics.medium() }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.68)) { phase = .landing }
-            finishFlip(slot: slot, result: result)
-        }
-    }
-
-    @MainActor
-    private func finishFlip(slot: Int, result: CardGameDraw) {
-        let tier = CardFlipTier(rarity: result.card?.rarity ?? (result.success ? .common : nil))
-        Haptics.medium()
-        fireBurst(tier: tier, slot: slot)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        onReveal(result) {
+            slotResults[slot] = result
             flippingSlot = nil
-            phase = .idle
-            spinAngle = 0
-            auraBloom = false
-            if tier.showsShowcase, let card = result.card {
-                onShowcase(card)
-            }
         }
     }
 
-    private func fireBurst(tier: CardFlipTier, slot: Int) {
-        burstTier = tier
-        burstSlot = slot
-        burstFired = false
-        // 先以收拢状态插入，下一拍再展开+淡出，保证起始帧可见。
-        DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: tier == .legendary ? 1.2 : 0.85)) { burstFired = true }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            burstTier = nil
-            burstSlot = nil
-            burstFired = false
-        }
-    }
 }
 
 /// 未翻中的软色调卡面："差一点" + 虚线粉框。
@@ -272,7 +182,7 @@ struct CardMissFace: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .aspectRatio(0.68, contentMode: .fit)
-        .background(DS.Palette.fieldSurface.opacity(0.8))
+        .background(DS.Palette.cardSurface)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
