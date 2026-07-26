@@ -4,11 +4,12 @@
 
 ## 当前状态
 
-- **生产已运行 release `2e23b1d`、schema v36**（2026-07-26 晚维护窗口上线，
-  停机约 3 分钟）。迁移前恢复点在美国主机 `/var/backups/couplechat/pre-v36-*`
+- **生产已运行 release `3bf72be`、schema v36**（2026-07-26 晚：先维护窗口上线
+  v36，停机约 3 分钟；随后普通发布第五批「记忆及时性」，63 秒无停机）。
+  迁移前恢复点在美国主机 `/var/backups/couplechat/pre-v36-*`
   （PostgreSQL dump + uploads.tar + env，已做隔离库恢复验证：40 万条消息、
   815 个媒体文件逐一核对）。回滚镜像 `couplechat-server:rollback-7ce4e08`
-  仍保留，但 schema 已前进，回滚需连数据一起恢复。
+  仍保留，但 schema 已前进，回滚需连数据一起恢复。IPA 0.2.0(16) 真机实测通过。
 - 上线后核验：容器零重启、日志干净、三层健康检查通过、`ai_reply_jobs` 与
   v35/v36 索引就位、Socket.IO 握手正常。
 - main 含四批修复与精简（丢消息、已读归零、记忆召回、撤回假报错、抽取死锁、
