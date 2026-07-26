@@ -178,7 +178,17 @@ struct BarkSettingsSheet: View {
     }
 
     private func enabledStorageKey(_ username: String) -> String {
+        Self.enabledStorageKey(username)
+    }
+
+    static func enabledStorageKey(_ username: String) -> String {
         "bark.enabled.\(username)"
     }
 
+    /// 这台设备是否配置了可用的 Bark 通知。提醒编辑器用它提示
+    /// 「没配通知时到点不会推送」——Bark 是全仓唯一的推送通道。
+    static func isConfigured(for username: String) -> Bool {
+        UserDefaults.standard.bool(forKey: enabledStorageKey(username))
+            && Keychain.loadBarkKey(for: username)?.isEmpty == false
+    }
 }
