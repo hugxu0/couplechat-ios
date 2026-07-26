@@ -1746,7 +1746,7 @@ async function main() {
       "情侣卡牌快照返回每日次数与个人卡库",
       cardSnapshotResponse.statusCode === 200 &&
         cardSnapshotBody.ok === true &&
-        cardSnapshotBody.game?.drawsRemaining === 5 &&
+        cardSnapshotBody.game?.drawsRemaining === 6 &&
         cardSnapshotBody.game.inventory?.some((item) => item.cardKey === "intimacy_massage") === true,
     );
     const cardUseResponse = await app.inject({
@@ -1890,22 +1890,22 @@ async function main() {
       cardUseReplay.statusCode === 200 && cardUseReplay.json().effect?.id === cardUseEffectID,
     );
     const drawResponses = await Promise.all(
-      [1, 2, 3, 4, 5].map((index) => app.inject({
+      [1, 2, 3, 4, 5, 6].map((index) => app.inject({
         method: "POST",
         url: "/api/v2/card-game/draw",
         headers: { authorization },
         payload: { idempotencyKey: "smoke-card-draw-" + index },
       })),
     );
-    const sixthDraw = await app.inject({
+    const seventhDraw = await app.inject({
       method: "POST",
       url: "/api/v2/card-game/draw",
       headers: { authorization },
-      payload: { idempotencyKey: "smoke-card-draw-6" },
+      payload: { idempotencyKey: "smoke-card-draw-7" },
     });
     assertOk(
-      "情侣卡牌每天最多五次翻牌",
-      drawResponses.every((response) => response.statusCode === 200) && sixthDraw.statusCode === 429,
+      "情侣卡牌每天最多六次翻牌",
+      drawResponses.every((response) => response.statusCode === 200) && seventhDraw.statusCode === 429,
     );
     const boardSnapshot = await app.inject({
       method: "GET", url: "/api/v2/card-game", headers: { authorization },
@@ -1916,8 +1916,8 @@ async function main() {
     };
     assertOk(
       "快照返回今日翻牌结果供牌阵还原",
-      boardGame.drawsUsed === 5 &&
-        boardGame.todayDraws?.length === 5 &&
+      boardGame.drawsUsed === 6 &&
+        boardGame.todayDraws?.length === 6 &&
         boardGame.todayDraws.every((draw) => draw.success === (draw.card !== null)),
     );
     const cardForeignSender = await db.get<{ id: string }>(

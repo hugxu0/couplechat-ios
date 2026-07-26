@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 每日翻牌阵：五张背面卡手撒排开（3+2、微倾角、待机浮动），点一张翻一张。
+/// 每日翻牌阵：六张背面卡对称双排（3+3、微倾角、待机浮动），点一张翻一张。
 /// 翻牌序列：充能发光（掩盖网络请求）→ 升起多圈旋转 → 空中光色绽放揭晓
 /// 稀有度 → 落回卡槽 → 分级爆发。已翻结果由服务端快照还原，跨设备一致。
 struct CardGameBoardView: View {
@@ -43,7 +43,7 @@ struct CardGameBoardView: View {
                     .foregroundStyle(DS.Palette.textSecondary)
             }
             Spacer()
-            Text("\(snapshot.drawsUsed) / 5")
+            Text("\(snapshot.drawsUsed) / 6")
                 .font(DS.Typo.displayNumber.monospacedDigit())
                 .foregroundStyle(snapshot.drawsRemaining > 0 ? DS.Palette.purple : DS.Palette.textTertiary)
         }
@@ -55,7 +55,7 @@ struct CardGameBoardView: View {
             let cardHeight = cardWidth / 0.68
             let positions = slotPositions(in: proxy.size, cardWidth: cardWidth, cardHeight: cardHeight)
             ZStack {
-                ForEach(0..<5, id: \.self) { slot in
+                ForEach(0..<6, id: \.self) { slot in
                     slotCard(slot: slot, width: cardWidth)
                         .position(positions[slot])
                 }
@@ -65,7 +65,7 @@ struct CardGameBoardView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(height: 330)
+        .frame(height: 348)
     }
 
     private func slotPositions(in size: CGSize, cardWidth: CGFloat, cardHeight: CGFloat) -> [CGPoint] {
@@ -73,12 +73,14 @@ struct CardGameBoardView: View {
         let topY = cardHeight / 2 + 12
         let bottomY = topY + cardHeight + 18
         let centerX = size.width / 2
+        // 3+3 对称双排。
         return [
             CGPoint(x: centerX - gapX, y: topY),
             CGPoint(x: centerX, y: topY),
             CGPoint(x: centerX + gapX, y: topY),
-            CGPoint(x: centerX - gapX / 2, y: bottomY),
-            CGPoint(x: centerX + gapX / 2, y: bottomY),
+            CGPoint(x: centerX - gapX, y: bottomY),
+            CGPoint(x: centerX, y: bottomY),
+            CGPoint(x: centerX + gapX, y: bottomY),
         ]
     }
 
@@ -173,7 +175,7 @@ struct CardGameBoardView: View {
     }
 
     private func slotTilt(_ slot: Int) -> Double {
-        [-2.4, 1.6, -1.2, 2.2, -1.8][slot]
+        [-2.4, 1.6, -1.2, 2.2, -1.8, 1.4][slot]
     }
 
     /// 冷启动还原：会话开始前的结果按日种子映射到卡槽（两台设备布局一致）；
@@ -283,9 +285,9 @@ struct CardMissFace: View {
 
 /// 日种子洗牌：冷启动把已翻结果映射到卡槽，两台设备布局一致。
 func cardGameSeededOrder(day: String) -> [Int] {
-    var slots = Array(0..<5)
+    var slots = Array(0..<6)
     var seed = day.unicodeScalars.reduce(UInt64(88)) { ($0 &* 31) &+ UInt64($1.value) }
-    for index in stride(from: 4, to: 0, by: -1) {
+    for index in stride(from: 5, to: 0, by: -1) {
         seed = seed &* 6364136223846793005 &+ 1442695040888963407
         let swap = Int(seed % UInt64(index + 1))
         slots.swapAt(index, swap)

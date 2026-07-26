@@ -148,7 +148,7 @@ struct CardGameView: View {
                 Text("抽到就留下，想用时再出牌")
                     .font(.system(.title2, design: .rounded).weight(.bold))
                     .fixedSize(horizontal: false, vertical: true)
-                Text("每天五张牌，点一张翻一张，每张约五分之一翻中。使用后卡片消耗，效果会留在这里等对方看到。")
+                Text("每天六张牌，点一张翻一张，每张约六分之一翻中。使用后卡片消耗，效果会留在这里等对方看到。")
                     .font(DS.Typo.secondary)
                     .foregroundStyle(.white.opacity(0.82))
                     .lineSpacing(3)
