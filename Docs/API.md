@@ -44,6 +44,8 @@ Authorization: Bearer <token>
 
 PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`buildNumber`、`locale`、`timezone` 和可为 null 的 `barkKey`。安装 ID 由 iOS Keychain 持久化；同一账号的 iPhone/iPad 可各自保留独立 Bark key。
 
+`GET /api/v2/chat/stats` 只统计当前 active couple conversation。服务端按会话合并并缓存 60 秒的相同并发计算，响应使用 `Cache-Control: private`；无当前情侣身份时返回 `403 unauthorized`。iOS 首次进入从服务端读取历史月份，此后当前设备的新消息计数使用本地时间线防抖更新，不因页面重绘反复扫描全库。
+
 `GET /api/messages` 参数：
 
 | 参数 | 说明 |
@@ -56,7 +58,7 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | `beforeId` / `afterId` / `sinceId` | 可选，与对应时间戳组成 `(ts,id)` 复合游标；缺省时仅 `ts`（兼容旧客户端） |
 | `limit` | `1...300`，默认 `80` |
 
-响应为 `{ ok, list, total }`。`after` 与 `before` 可以组合；`around`、`since` 与方向分页不要组合。推荐始终带上锚点消息 `id`，避免同毫秒漏重。
+响应为 `{ ok, list, total }`。无 `before/after/since/around` 的初始页返回会话总数；带方向或增量游标的后续页返回 `total: null`，客户端保留初始页已知总数，不在每次翻页触发全会话计数。`after` 与 `before` 可以组合；`around`、`since` 与方向分页不要组合。推荐始终带上锚点消息 `id`，避免同毫秒漏重。
 
 `GET /api/messages/:id` 必须带 `channel=couple|ai`，响应为 `{ ok, message }`。服务端先按当前账号解析共享空间，再以共享空间和消息 ID 联合查询；找不到或不属于当前共享空间时统一返回 `404 not_found`。客户端只在点击引用预览且原消息不在内存或本地数据库时使用该接口，取回后继续加载消息附近的有界窗口。
 
@@ -79,11 +81,11 @@ PUT body 包含 `installationId`、`platform`、`deviceName`、`appVersion`、`b
 | `GET` | `/media/:id/thumbnail?sig=...&exp=...` | 与原资源同签名范围的静态 JPEG 缩略图；不存在时返回 404 |
 | `GET` | `/uploads/:filename` | 已有消息的兼容媒体地址 |
 
-上传成功返回 `id`、`url`、`mimeType`、`size` 和 `type`。发送媒体消息时必须使用返回的 `id` 作为 `uploadId`。新版 iOS 对可静态预览的图片在后台生成最长边 720 px、最多 512 KiB 的 JPEG，并在原文件 part 之前以 `thumbnailBase64` 文本字段提交；服务端只接受规范 Base64、JPEG 文件头和允许的原图 MIME，字段或文件超限、截断及签名不符均拒绝整个上传。旧客户端仍可只提交 `file`。
+上传成功返回 `id`、`url`、`mimeType`、`size` 和 `type`。发送媒体消息时必须使用返回的 `id` 作为 `uploadId`，服务端会校验上传 MIME 与消息类型一致，并拒绝把 `avatar`、`sticker` 或 `album` purpose 的上传跨用途绑定为消息；迁移前遗留的 `legacy` 记录继续兼容。`avatar` 和 `sticker` purpose 只接受图片。新版 iOS 对可静态预览的图片在后台生成最长边 720 px、最多 512 KiB 的 JPEG，并在原文件 part 之前以 `thumbnailBase64` 文本字段提交；服务端只接受规范 Base64、JPEG 文件头和允许的原图 MIME，字段或文件超限、截断及签名不符均拒绝整个上传。旧客户端仍可只提交 `file`。
 
-服务端优先保存已校验的客户端缩略图；旧客户端未附带时，再为可安全静态解码的 JPEG、PNG、WebP、HEIC/HEIF 尝试生成相同规格的预览。动图、当前图像库无法解码的格式以及发布前已有媒体可能没有缩略图；客户端必须在 404 时回退原资源。缩略图是上传文件的派生旁路文件，撤回和过期附件清理会同时删除，备份与恢复随 `uploads/` 一起处理。
+服务端优先保存已校验的客户端缩略图；旧客户端未附带时，再为可安全静态解码的 JPEG、PNG、WebP、HEIC/HEIF 尝试生成相同规格的预览。动图、当前图像库无法解码的格式以及发布前已有媒体可能没有缩略图；客户端必须在 404 时回退原资源。缩略图是上传文件的派生旁路文件，撤回和过期附件清理会同时删除，备份与恢复随 `uploads/` 一起处理。过期附件清理先原子移除仍未绑定的数据库记录并写入可靠文件队列，正在被消息或相册事务绑定的上传不会被清理。头像与贴纸引用写入时锁定 upload；清理只回收超过 24 小时且不再被头像、贴纸库或贴纸消息引用的文件，删除墓碑本身不保留文件。
 
-三个媒体读取入口均支持单段 HTTP Range，并返回 `Accept-Ranges: bytes`、`206` 和 `Content-Range`。必须正确支持 `bytes=start-end`、`bytes=start-` 与 `bytes=-suffixLength`；视频播放器会使用 suffix Range 读取文件尾部元数据，不能把它退化成整文件响应。
+三个媒体读取入口均支持单段 HTTP Range，并返回 `Accept-Ranges: bytes`；有效范围返回 `206` 与 `Content-Range`。必须正确支持 `bytes=start-end`、`bytes=start-` 与 `bytes=-suffixLength`；视频播放器会使用 suffix Range 读取文件尾部元数据。格式错误、多段或不可满足的范围返回 `416`、`Content-Range: bytes */<size>` 和空 body，绝不能退化成整文件 `200`。
 
 ### 提醒与备忘
 
@@ -243,10 +245,10 @@ io("https://hoo66.top", { auth: { token } })
 
 - `type`：`text/image/video/sticker/voice/file`。
 - `text` 最长 8,000 字符；`replyPreview` 最长 500 字符。
-- 图片、视频、语音和文件必须引用 `uploadId`；贴纸可使用已有贴纸 URL。
+- 图片、视频、语音和文件必须引用 `uploadId`；贴纸必须使用已有贴纸 URL。本服务签发的贴纸 URL 会按稳定 upload id 校验 `sticker` purpose、重新签名并以消息历史作为文件引用。
 - 新版语音消息可带 `meta.media.durationMs`，值为 `1...600000` 的整数毫秒；该字段只允许用于 `type=voice`。旧客户端可省略，服务端原样返回并持久化合法元数据。
 - 服务端契约支持最多 9 个 Live Photo asset（最多 18 个 attachment part）；每个 asset 必须有 `photo`，可带一个 `pairedVideo`，同一上传不能重复引用。当前 iOS 选择器仍只发送静态照片。
-- `clientId` 应始终提供，用于重试幂等。
+- `clientId` 应始终提供，并在同一待发项的超时、断线和重启重试中保持不变。幂等作用域为会话、发送账号和设备；重复请求的 ACK 返回原完整消息，不再产生 `message:new`、AI 回复或推送副作用。
 
 ### 服务端推送
 

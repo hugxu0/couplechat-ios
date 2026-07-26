@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { all, get, run, transaction, type MessageRow, type ReadReceiptRow, type UploadRow } from "../db";
+import { config } from "../config";
 import type { SendMessagePayload } from "../contracts/realtime";
 import type { AuthUser, ClientChannel, ClientMessage, ClientMessageAttachment, MessageKind, MessageType, StoredChannel } from "../types";
 import { toClientChannel } from "../types";
@@ -9,10 +10,21 @@ import { redactTraceForMessage } from "../ai/debug/trace";
 import { conversationIdentity, conversationIdentityIn } from "../auth/identity";
 import { appendSyncEvent } from "../sync/events";
 import { enqueueTranscriptForMessage } from "../transcription/service";
-import { refreshSignedMediaUrl } from "../upload/mediaAccess";
+import {
+  legacyUploadFilenameFromUrl,
+  mediaUploadIdFromUrl,
+  refreshSignedMediaUrl,
+  signedMediaURL,
+} from "../upload/mediaAccess";
 import { removeUploadArtifacts } from "../upload/thumbnail";
+import { enqueueAiReplyJob } from "../ai/agent/replyJobs";
 
 export type SendMessageInput = SendMessagePayload;
+export interface CreateMessageResult {
+  message: ClientMessage;
+  created: boolean;
+}
+
 export interface FetchMessagesInput {
   channel: ClientChannel;
   since?: number;
@@ -125,7 +137,21 @@ function normalizedReply(input: SendMessageInput): unknown {
   };
 }
 
-export async function createMessage(user: AuthUser, input: SendMessageInput): Promise<ClientMessage> {
+function uploadMessageType(mimeType: string): "image" | "video" | "voice" | "file" {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "voice";
+  return "file";
+}
+
+function isMessageUploadPurpose(purpose: string): boolean {
+  return purpose === "message" || purpose === "legacy";
+}
+
+export async function createMessageWithStatus(
+  user: AuthUser,
+  input: SendMessageInput,
+): Promise<CreateMessageResult> {
   return transaction(async (db) => {
     const identity = await conversationIdentityIn(db, user, input.channel);
     if (!identity) throw new Error(errorCodes.unauthorized);
@@ -144,15 +170,28 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
         )
         : await db.get<MessageRow>(`SELECT ${messageProjection} FROM messages message
             LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
-            WHERE message.sender = ? AND message.client_id = ?`, [
+            WHERE message.sender = ? AND message.client_id = ?
+              AND message.origin_device_id IS NULL`, [
             user.username,
             input.clientId,
           ]);
     };
 
+    if (input.clientId) {
+      const idempotencyLock = [
+        identity.conversationId,
+        identity.accountId,
+        user.deviceId ?? "legacy",
+        input.clientId,
+      ].join(":");
+      await db.run("SELECT pg_advisory_xact_lock(hashtext(?))", [idempotencyLock]);
+    }
+
     // clientId 是客户端离线队列的幂等键：重试必须返回原消息，不能重复写入。
     const existingByClientId = await loadByClientId();
-    if (existingByClientId) return mapMessage(existingByClientId, input.channel);
+    if (existingByClientId) {
+      return { message: mapMessage(existingByClientId, input.channel), created: false };
+    }
 
     const requiresUpload = ["image", "video", "voice", "file"].includes(input.type) && !input.attachments?.length;
     let attachmentURL: string | null = input.url ?? null;
@@ -166,16 +205,77 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
       if (!upload) throw new Error("upload_not_found");
       if (upload.message_id) throw new Error("upload_already_attached");
       if (input.url && input.url !== upload.url) throw new Error("upload_url_mismatch");
+      if (!isMessageUploadPurpose(upload.purpose)) {
+        throw new Error(errorCodes.uploadPurposeMismatch);
+      }
+      if (uploadMessageType(upload.mime_type) !== input.type) {
+        throw new Error(errorCodes.uploadMessageTypeMismatch);
+      }
       attachmentURL = upload.url;
     }
+    if (input.type === "sticker" && input.url) {
+      const stickerUploadId = mediaUploadIdFromUrl(input.url);
+      const legacyFilename = stickerUploadId
+        ? undefined
+        : legacyUploadFilenameFromUrl(input.url);
+      if (!stickerUploadId && !legacyFilename) {
+        throw new Error(errorCodes.uploadNotFound);
+      }
+      const scopeSql = "(upload.owner = ? OR owner_member.couple_id = ?)";
+      const scopeParams = [user.username, identity.coupleId];
+      const legacySuffix = legacyFilename ? `/uploads/${legacyFilename}` : undefined;
+      const stickerUpload = stickerUploadId
+        ? await db.get<Pick<UploadRow, "id" | "purpose" | "mime_type">>(
+          `SELECT upload.id, upload.purpose, upload.mime_type
+             FROM uploads upload
+             LEFT JOIN accounts owner_account ON owner_account.username = upload.owner
+             LEFT JOIN couple_members owner_member
+               ON owner_member.account_id = owner_account.id AND owner_member.state = 'active'
+            WHERE upload.id = ?
+              AND ${scopeSql}
+            FOR UPDATE OF upload`,
+          [stickerUploadId, ...scopeParams],
+        )
+        : await db.get<Pick<UploadRow, "id" | "purpose" | "mime_type">>(
+          `SELECT upload.id, upload.purpose, upload.mime_type
+             FROM uploads upload
+             LEFT JOIN accounts owner_account ON owner_account.username = upload.owner
+             LEFT JOIN couple_members owner_member
+               ON owner_member.account_id = owner_account.id AND owner_member.state = 'active'
+            WHERE (upload.url = ? OR RIGHT(upload.url, LENGTH(?)) = ?)
+              AND ${scopeSql}
+            ORDER BY upload.created_at DESC, upload.id COLLATE "C" DESC
+            LIMIT 1
+            FOR UPDATE OF upload`,
+          [input.url, legacySuffix, legacySuffix, ...scopeParams],
+        );
+      if (!stickerUpload) throw new Error(errorCodes.uploadNotFound);
+      const validPurpose = stickerUploadId
+        ? stickerUpload.purpose === "sticker"
+        : stickerUpload.purpose === "sticker" || stickerUpload.purpose === "legacy";
+      if (!validPurpose || !stickerUpload.mime_type.startsWith("image/")) {
+        throw new Error(errorCodes.uploadPurposeMismatch);
+      }
+      // The library may hold an expired URL; persist a canonical URL only after
+      // resolving it to an upload owned by the requester or their active couple.
+      attachmentURL = stickerUploadId
+        ? signedMediaURL(stickerUpload.id)
+        : new URL(`/uploads/${legacyFilename}`, config.publicBaseURL).toString();
+    }
     if (input.attachments?.length) {
-      for (const attachment of input.attachments) {
+      const lockOrderedAttachments = [...input.attachments].sort((left, right) =>
+        left.uploadId < right.uploadId ? -1 : left.uploadId > right.uploadId ? 1 : 0
+      );
+      for (const attachment of lockOrderedAttachments) {
         const selected = await db.get<UploadRow>(
           "SELECT * FROM uploads WHERE id = ? AND owner = ? FOR UPDATE",
           [attachment.uploadId, user.username],
         );
         if (!selected) throw new Error("upload_not_found");
         if (selected.message_id) throw new Error("upload_already_attached");
+        if (!isMessageUploadPurpose(selected.purpose)) {
+          throw new Error(errorCodes.uploadPurposeMismatch);
+        }
         if (attachment.role === "photo" && !selected.mime_type.startsWith("image/")) {
           throw new Error("attachment_photo_type_mismatch");
         }
@@ -225,40 +325,48 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
       server_seq: null,
     };
 
-    try {
-      await db.run(
-        `INSERT INTO messages
+    const inserted = await db.get<{ id: string }>(
+      `INSERT INTO messages
           (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json,
            attachments_json, ts, client_id, conversation_id, sender_account_id, origin_device_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          row.id,
-          row.channel,
-          row.sender,
-          row.sender_name,
-          row.kind,
-          row.type,
-          row.text,
-          row.url,
-          row.reply_json,
-          row.meta_json,
-          row.attachments_json,
-          row.ts,
-          row.client_id,
-          row.conversation_id,
-          row.sender_account_id,
-          row.origin_device_id,
-        ],
-      );
-    } catch (error) {
-      // 并发重试可能撞唯一索引：回查原消息而不是 500。
-      const code = (error as { code?: string })?.code;
-      if (input.clientId && (code === "23505" || String(error).includes("unique"))) {
-        const raced = await loadByClientId();
-        if (raced) return mapMessage(raced, input.channel);
-      }
-      throw error;
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ${input.clientId ? "ON CONFLICT DO NOTHING" : ""}
+         RETURNING id`,
+      [
+        row.id,
+        row.channel,
+        row.sender,
+        row.sender_name,
+        row.kind,
+        row.type,
+        row.text,
+        row.url,
+        row.reply_json,
+        row.meta_json,
+        row.attachments_json,
+        row.ts,
+        row.client_id,
+        row.conversation_id,
+        row.sender_account_id,
+        row.origin_device_id,
+      ],
+    );
+    if (!inserted) {
+      const raced = await loadByClientId();
+      if (raced) return { message: mapMessage(raced, input.channel), created: false };
+      throw new Error("message_idempotency_conflict");
     }
+
+    // The trigger is durable before the socket ACK leaves this transaction.
+    // A process crash between message.send and the in-memory AI queue can
+    // therefore be recovered without replaying old pre-migration messages.
+    await enqueueAiReplyJob(db, {
+      message: mapMessage(row, input.channel),
+      accountId: identity.accountId,
+      conversationId: identity.conversationId,
+      storedChannel: storedChannel as StoredChannel,
+      now: ts,
+    });
 
     if (upload) {
       const bound = await db.run(
@@ -285,7 +393,137 @@ export async function createMessage(user: AuthUser, input: SendMessageInput): Pr
       row.transcript_corrected = false;
       row.transcript_version = 0;
     }
-    return mapMessage(row, input.channel);
+    return { message: mapMessage(row, input.channel), created: true };
+  });
+}
+
+export async function createMessage(user: AuthUser, input: SendMessageInput): Promise<ClientMessage> {
+  return (await createMessageWithStatus(user, input)).message;
+}
+
+export interface AiMessagePart {
+  text: string;
+  meta?: unknown;
+}
+
+export async function createAiMessages(
+  channel: StoredChannel,
+  parts: AiMessagePart[],
+  user?: AuthUser,
+  triggerMessageId?: string,
+): Promise<ClientMessage[]> {
+  if (!parts.length) throw new Error("ai_reply_empty");
+  const clientChannel: ClientChannel = channel.startsWith("ai:") ? "ai" : "couple";
+  return transaction(async (db) => {
+    const identity = user ? await conversationIdentityIn(db, user, clientChannel) : null;
+    if (user && !identity) throw new Error(errorCodes.unauthorized);
+    if (identity && identity.storedChannel !== channel) {
+      throw new Error(errorCodes.unauthorized);
+    }
+    const conversation = identity
+      ? { id: identity.conversationId }
+      : channel === "couple"
+      ? await db.get<{ id: string }>(
+          "SELECT id FROM conversations WHERE kind = 'couple' AND couple_id = 'cpl_legacy_xusi' AND archived_at IS NULL",
+        )
+      : await db.get<{ id: string }>(
+          `SELECT conversation.id FROM conversations conversation
+           JOIN accounts account ON account.id = conversation.owner_account_id
+           WHERE conversation.kind = 'ai' AND account.username = ? AND conversation.archived_at IS NULL`,
+          [channel.slice("ai:".length)],
+        );
+    if (!conversation) throw new Error(errorCodes.unauthorized);
+
+    let jobId: string | null = null;
+    if (triggerMessageId) {
+      if (!identity) throw new Error(errorCodes.unauthorized);
+      const job = await db.get<{
+        id: string;
+        status: string;
+        conversation_id: string;
+        requester_account_id: string;
+        stored_channel: string;
+        reply_message_id: string | null;
+      }>(
+        `SELECT id, status, conversation_id, requester_account_id, stored_channel,
+                reply_message_id
+           FROM ai_reply_jobs
+          WHERE trigger_message_id = ?
+          FOR UPDATE`,
+        [triggerMessageId],
+      );
+      if (
+        !job
+        || job.conversation_id !== conversation.id
+        || job.requester_account_id !== identity.accountId
+        || job.stored_channel !== channel
+        || job.status !== "processing"
+      ) {
+        throw new Error("ai_reply_cancelled");
+      }
+      jobId = job.id;
+    }
+
+    const baseTs = Date.now();
+    const rows: MessageRow[] = parts.map((part, index) => ({
+      id: jobId ? `ai_${jobId}_${index}` : `ai_${nanoid(16)}`,
+      channel,
+      sender: "ai",
+      sender_name: "大橘",
+      kind: "user",
+      type: "text",
+      text: part.text,
+      url: null,
+      reply_json: null,
+      meta_json: part.meta !== undefined && part.meta !== null
+        ? JSON.stringify(part.meta)
+        : null,
+      attachments_json: null,
+      recalled_text: null,
+      ts: baseTs + index,
+      client_id: null,
+      conversation_id: conversation.id,
+      sender_account_id: null,
+      origin_device_id: null,
+      server_seq: null,
+    }));
+
+    for (const row of rows) {
+      const inserted = await db.run(
+        `INSERT INTO messages
+          (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json,
+           attachments_json, ts, client_id, conversation_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          row.id,
+          row.channel,
+          row.sender,
+          row.sender_name,
+          row.kind,
+          row.type,
+          row.text,
+          row.url,
+          row.reply_json,
+          row.meta_json,
+          row.attachments_json,
+          row.ts,
+          row.client_id,
+          row.conversation_id,
+        ],
+      );
+      if (inserted !== 1) throw new Error("ai_reply_insert_failed");
+    }
+    if (triggerMessageId) {
+      const completed = await db.run(
+        `UPDATE ai_reply_jobs
+            SET status = 'completed', lease_until = NULL, reply_message_id = ?,
+                last_error = NULL, updated_at = ?, completed_at = ?
+          WHERE trigger_message_id = ? AND status = 'processing'`,
+        [rows[0].id, baseTs, baseTs, triggerMessageId],
+      );
+      if (completed !== 1) throw new Error("ai_reply_cancelled");
+    }
+    return rows.map((row) => mapMessage(row, clientChannel));
   });
 }
 
@@ -294,68 +532,15 @@ export async function createAiMessage(
   text: string,
   meta?: unknown,
   user?: AuthUser,
+  triggerMessageId?: string,
 ): Promise<ClientMessage> {
-  const clientChannel: ClientChannel = channel.startsWith("ai:") ? "ai" : "couple";
-  const identity = user ? await conversationIdentity(user, clientChannel) : null;
-  const conversation = identity
-    ? { id: identity.conversationId }
-    : channel === "couple"
-    ? await get<{ id: string }>(
-        "SELECT id FROM conversations WHERE kind = 'couple' AND couple_id = 'cpl_legacy_xusi' AND archived_at IS NULL",
-      )
-    : await get<{ id: string }>(
-        `SELECT conversation.id FROM conversations conversation
-         JOIN accounts account ON account.id = conversation.owner_account_id
-         WHERE conversation.kind = 'ai' AND account.username = ? AND conversation.archived_at IS NULL`,
-        [channel.slice("ai:".length)],
-      );
-  if (!conversation) throw new Error(errorCodes.unauthorized);
-  const metaJson = meta !== undefined && meta !== null ? JSON.stringify(meta) : null;
-  const row: MessageRow = {
-    id: `ai_${nanoid(16)}`,
+  const messages = await createAiMessages(
     channel,
-    sender: "ai",
-    sender_name: "大橘",
-    kind: "user",
-    type: "text",
-    text,
-    url: null,
-    reply_json: null,
-    meta_json: metaJson,
-    attachments_json: null,
-    recalled_text: null,
-    ts: Date.now(),
-    client_id: null,
-    conversation_id: conversation?.id ?? null,
-    sender_account_id: null,
-    origin_device_id: null,
-    server_seq: null,
-  };
-
-  await run(
-    `INSERT INTO messages
-      (id, channel, sender, sender_name, kind, type, text, url, reply_json, meta_json,
-       attachments_json, ts, client_id, conversation_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      row.id,
-      row.channel,
-      row.sender,
-      row.sender_name,
-      row.kind,
-      row.type,
-      row.text,
-      row.url,
-      row.reply_json,
-      row.meta_json,
-      row.attachments_json,
-      row.ts,
-      row.client_id,
-      row.conversation_id,
-    ],
+    [{ text, meta }],
+    user,
+    triggerMessageId,
   );
-
-  return mapMessage(row, clientChannel);
+  return messages[0];
 }
 
 export async function fetchMessages(user: AuthUser, input: FetchMessagesInput) {
@@ -497,14 +682,17 @@ export async function searchMessages(
   const cursorClause = cursor
     ? "AND (message.ts < ? OR (message.ts = ? AND message.id < ?))"
     : "";
-  const params: unknown[] = [identity.conversationId, `%${query}%`, `%${query}%`];
+  // 转义 LIKE 通配符，否则搜 "100%" 或 "a_b" 会匹配到整个会话。
+  const pattern = `%${query.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+  const params: unknown[] = [identity.conversationId, pattern, pattern];
   if (cursor) params.push(cursor.ts, cursor.ts, cursor.id);
   params.push(pageSize + 1);
   const rows = await all<MessageRow>(
     `SELECT ${messageProjection} FROM messages message
      LEFT JOIN message_transcripts transcript ON transcript.message_id = message.id
      WHERE message.conversation_id = ?
-       AND (message.text ILIKE ? OR COALESCE(transcript.corrected_text, transcript.text, '') ILIKE ?)
+       AND (message.text ILIKE ? ESCAPE '\\'
+            OR COALESCE(transcript.corrected_text, transcript.text, '') ILIKE ? ESCAPE '\\')
        ${cursorClause}
      ORDER BY message.ts DESC, message.id DESC LIMIT ?`,
     params,
@@ -543,26 +731,17 @@ export async function recallMessage(user: AuthUser, id: string) {
       "SELECT * FROM uploads WHERE message_id = ? OR (url = ? AND purpose = 'message') FOR UPDATE",
       [id, existing.url ?? ""],
     );
-    // 只清本会话内引用，避免全表 FOR UPDATE。
-    const replies = existing.conversation_id
-      ? await db.all<{ id: string; reply_json: string }>(
-        `SELECT id, reply_json FROM messages
-          WHERE conversation_id = ? AND reply_json IS NOT NULL FOR UPDATE`,
-        [existing.conversation_id],
-      )
-      : await db.all<{ id: string; reply_json: string }>(
-        `SELECT id, reply_json FROM messages
-          WHERE channel = ? AND reply_json IS NOT NULL FOR UPDATE`,
-        [existing.channel],
-      );
-    for (const reply of replies) {
-      try {
-        const value = JSON.parse(reply.reply_json) as { id?: unknown };
-        if (value.id === id) await db.run("UPDATE messages SET reply_json = NULL WHERE id = ?", [reply.id]);
-      } catch {
-        // 历史第三方客户端可能留下非法 JSON；撤回不能因此失败。
-      }
-    }
+    // 一条 UPDATE 直接命中引用本消息的行。旧写法要把会话内所有带引用的消息
+    // FOR UPDATE 锁住再逐条 JSON.parse，历史越长越慢，期间同会话发送全被阻塞。
+    // IS JSON 跳过历史第三方客户端留下的非法 JSON，撤回不会因此失败。
+    await db.run(
+      `UPDATE messages SET reply_json = NULL
+        WHERE ${existing.conversation_id ? "conversation_id = ?" : "channel = ?"}
+          AND reply_json IS NOT NULL
+          AND reply_json IS JSON
+          AND reply_json::jsonb ->> 'id' = ?`,
+      [existing.conversation_id ?? existing.channel, id],
+    );
     await db.run(
       `DELETE FROM ai_memory_import_candidates candidate
        WHERE EXISTS (
@@ -580,10 +759,11 @@ export async function recallMessage(user: AuthUser, id: string) {
       );
       await db.run("DELETE FROM uploads WHERE id = ?", [uploadItem.id]);
     }
+    // 重置上下文即可：消息此时已从 messages 删除，重建自然不会再包含它。
+    // 不再连带删除 ai_episodes——那是按天累积的历史小结、没有消息级关联，
+    // 为一条撤回清空整个频道的 episodes 既不成比例也无法恢复。
     await db.run("DELETE FROM ai_runtime_state WHERE key = ?", [`context:${existing.channel}`]);
     await db.run("DELETE FROM ai_runtime_state WHERE key = ?", [`context:v2:${existing.channel}`]);
-    // 旧 legacy AI 表仅按 channel 清理 episodes；不再全局清空 ai_facts/ai_docs。
-    await db.run("DELETE FROM ai_episodes WHERE channel = ?", [existing.channel]);
 
     const conversation = existing.conversation_id
       ? await db.get<{ id: string; couple_id: string | null; owner_account_id: string | null }>(
@@ -739,13 +919,13 @@ export async function upsertReadReceipt(user: AuthUser, channel: ClientChannel, 
 export async function getReadReceipts(user: AuthUser, channel: ClientChannel) {
   const identity = await conversationIdentity(user, channel);
   if (!identity) return {};
+  // 直接读 read_receipts 的单调 ts。旧写法从 conversation_reads.last_read_message_id
+  // JOIN 回 messages 推导时间，而撤回是硬删除且该列没有外键——对方最后已读的那条
+  // 一被撤回，COALESCE 就返回 0，整段历史退回未读。而且 socket ACK 与 read:update
+  // 返回的本来就是 read_receipts.ts，改完两条链路才是同一个事实源。
   const rows = await all<{ username: string; ts: number }>(
-    `SELECT account.username, COALESCE(message.ts, 0) AS ts
-       FROM conversation_reads receipt
-       JOIN accounts account ON account.id = receipt.account_id
-       LEFT JOIN messages message ON message.id = receipt.last_read_message_id
-      WHERE receipt.conversation_id = ?`,
-    [identity.conversationId],
+    "SELECT username, ts FROM read_receipts WHERE channel = ?",
+    [identity.storedChannel],
   );
   return Object.fromEntries(rows.map((row) => [row.username, row.ts]));
 }

@@ -24,11 +24,7 @@ const loginBody = z.object({
   device: loginDeviceBody,
 });
 
-function clientIp(request: { ip: string; headers: Record<string, unknown> }): string {
-  const forwarded = request.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && forwarded.trim()) {
-    return forwarded.split(",")[0]?.trim() || request.ip;
-  }
+export function loginRateLimitIp(request: { ip: string }): string {
   return request.ip.replace(/^::ffff:/, "");
 }
 
@@ -43,7 +39,7 @@ export async function registerAuthRoutes(app: FastifyInstance) {
     const parsed = loginBody.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: errorCodes.invalidRequest });
 
-    const ip = clientIp(request);
+    const ip = loginRateLimitIp(request);
     const usernameKey = parsed.data.username.trim().toLowerCase();
     // 每 IP 每分钟 20 次；每用户名每分钟 10 次。失败与成功都计入，防扫库。
     const ipLimit = consumeRateLimit({ key: `login:ip:${ip}`, limit: 20, windowMs: 60_000 });

@@ -148,6 +148,9 @@ export async function registerUploadRoutes(app: FastifyInstance) {
     if (!file) return reply.code(400).send({ error: errorCodes.fileRequired });
     if (file.fieldname !== "file") return reply.code(400).send({ error: errorCodes.invalidRequest });
     if (!allowedMime.has(file.mimetype)) return reply.code(415).send({ error: errorCodes.unsupportedMediaType });
+    if (["avatar", "sticker"].includes(query.data.purpose) && !file.mimetype.startsWith("image/")) {
+      return reply.code(415).send({ error: errorCodes.unsupportedMediaType });
+    }
 
     const id = `up_${nanoid(16)}`;
     const operation = startOperation("upload.create", {

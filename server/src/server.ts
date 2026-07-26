@@ -4,7 +4,7 @@ import { config } from "./config";
 import { closeDatabase, initDatabase } from "./db";
 import { seedAccounts } from "./auth/accounts";
 import { registerRealtime } from "./socket/realtime";
-import { initAi, setAiSocketIO, shutdownAi } from "./ai";
+import { initAi, recoverAiReplyJobs, setAiSocketIO, shutdownAi } from "./ai";
 import { createReminderScheduler } from "./personalItems/reminderScheduler";
 import { startUploadCleanup } from "./upload/cleanup";
 import { socketEvents } from "./contracts/realtime";
@@ -30,7 +30,6 @@ async function main() {
     },
   });
   io = new Server(app.server, { cors: { origin: true } });
-  setAiSocketIO(io);
   registerRealtime(io);
 
   const reminderScheduler = createReminderScheduler();
@@ -44,6 +43,7 @@ async function main() {
     diaryScheduler.start();
   }
   await app.listen({ host: config.host, port: config.port });
+  setAiSocketIO(io);
   const stopUploadCleanup = config.scheduledJobsEnabled ? startUploadCleanup() : () => undefined;
 
   let shuttingDown = false;
@@ -52,12 +52,12 @@ async function main() {
     shuttingDown = true;
     try {
       await shutdownServer({
-        stopSchedulers: () => {
+        stopSchedulers: async () => {
           reminderScheduler.stop();
           transcriptScheduler.stop();
           recommendationScheduler.stop();
           diaryScheduler.stop();
-          shutdownAi();
+          await shutdownAi();
         },
         stopUploadCleanup,
         closeSocket: () => new Promise((resolve) => io?.close(() => resolve()) ?? resolve()),
@@ -72,6 +72,12 @@ async function main() {
   };
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
+  void recoverAiReplyJobs(io, true).catch((error) => {
+    console.warn(
+      "[ai] 启动恢复失败:",
+      error instanceof Error ? error.message : error,
+    );
+  });
 }
 
 main().catch((error) => {

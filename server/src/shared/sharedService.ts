@@ -1,7 +1,14 @@
-import { all, transaction } from "../db";
+import { all, transaction, type DatabaseTransaction, type UploadRow } from "../db";
 import type { AuthUser } from "../types";
 import { activeIdentity, activeIdentityIn } from "../auth/identity";
 import { appendSyncEvent } from "../sync/events";
+import { errorCodes } from "../errors/errorCodes";
+import {
+  refreshSharedMediaReferences,
+  sharedMediaUrls,
+  type SharedMediaUrl,
+} from "../upload/sharedMediaReferences";
+import { legacyUploadFilenameFromUrl, mediaUploadIdFromUrl } from "../upload/mediaAccess";
 
 interface CoupleSettingRow {
   key: string;
@@ -33,7 +40,7 @@ export async function getSharedState(user: AuthUser) {
     rows.map((row) => [
       row.key,
       {
-        value: parse(row.value_json),
+        value: refreshSharedMediaReferences(row.key, parse(row.value_json)),
         updatedBy: row.updated_by_username,
         updatedAt: row.updated_at,
       },
@@ -109,10 +116,85 @@ export async function getSharedState(user: AuthUser) {
   return state;
 }
 
+async function lockSharedMediaUploads(
+  db: DatabaseTransaction,
+  user: AuthUser,
+  coupleId: string,
+  key: string,
+  value: unknown,
+): Promise<void> {
+  const scopeSql = "(upload.owner = ? OR owner_member.couple_id = ?)";
+  const scopeParams = [user.username, coupleId];
+  const resolved = new Map<string, { id: string; references: Array<{ reference: SharedMediaUrl; legacy: boolean }> }>();
+
+  // Resolve first without taking row locks, then acquire every lock in upload-id
+  // order. This makes concurrent shared:set transactions use one global order
+  // even when their JSON arrays arrive in opposite orders.
+  for (const reference of sharedMediaUrls(key, value)) {
+    const uploadId = mediaUploadIdFromUrl(reference.url);
+    const legacyFilename = uploadId ? undefined : legacyUploadFilenameFromUrl(reference.url);
+    if (!uploadId && !legacyFilename) throw new Error(errorCodes.uploadNotFound);
+    const legacySuffix = legacyFilename ? `/uploads/${legacyFilename}` : undefined;
+    const upload = uploadId
+      ? await db.get<Pick<UploadRow, "id" | "purpose" | "mime_type">>(
+          `SELECT upload.id, upload.purpose, upload.mime_type
+             FROM uploads upload
+             LEFT JOIN accounts owner_account ON owner_account.username = upload.owner
+             LEFT JOIN couple_members owner_member
+               ON owner_member.account_id = owner_account.id AND owner_member.state = 'active'
+            WHERE upload.id = ? AND ${scopeSql}`,
+          [uploadId, ...scopeParams],
+        )
+      : await db.get<Pick<UploadRow, "id" | "purpose" | "mime_type">>(
+          `SELECT upload.id, upload.purpose, upload.mime_type
+             FROM uploads upload
+             LEFT JOIN accounts owner_account ON owner_account.username = upload.owner
+             LEFT JOIN couple_members owner_member
+               ON owner_member.account_id = owner_account.id AND owner_member.state = 'active'
+            WHERE (upload.url = ? OR RIGHT(upload.url, LENGTH(?)) = ?)
+              AND ${scopeSql}
+            ORDER BY upload.created_at DESC, upload.id COLLATE "C" DESC
+            LIMIT 1`,
+          [reference.url, legacySuffix, legacySuffix, ...scopeParams],
+        );
+    if (!upload) throw new Error(errorCodes.uploadNotFound);
+    const entry = resolved.get(upload.id) ?? { id: upload.id, references: [] };
+    entry.references.push({ reference, legacy: Boolean(legacyFilename) });
+    resolved.set(upload.id, entry);
+  }
+
+  for (const entry of [...resolved.values()].sort((left, right) =>
+    left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+  )) {
+    const upload = await db.get<Pick<UploadRow, "id" | "purpose" | "mime_type">>(
+      `SELECT upload.id, upload.purpose, upload.mime_type
+         FROM uploads upload
+         LEFT JOIN accounts owner_account ON owner_account.username = upload.owner
+         LEFT JOIN couple_members owner_member
+           ON owner_member.account_id = owner_account.id AND owner_member.state = 'active'
+        WHERE upload.id = ? AND ${scopeSql}
+        FOR UPDATE OF upload`,
+      [entry.id, ...scopeParams],
+    );
+    if (!upload) throw new Error(errorCodes.uploadNotFound);
+    for (const { reference, legacy } of entry.references) {
+      const validPurpose = upload.purpose === reference.purpose ||
+        (legacy && upload.purpose === "legacy");
+      if (!validPurpose || !upload.mime_type.startsWith("image/")) {
+        throw new Error(errorCodes.uploadPurposeMismatch);
+      }
+    }
+  }
+}
+
 export async function setSharedItem(user: AuthUser, key: string, value: unknown) {
   return transaction(async (db) => {
     const identity = await activeIdentityIn(db, user);
     if (!identity?.coupleId) throw new Error("couple_required");
+    const normalizedValue = refreshSharedMediaReferences(key, value);
+    // Reference writers and the garbage collector lock the same upload row. A
+    // cleanup can therefore never commit between validating and persisting a URL.
+    await lockSharedMediaUploads(db, user, identity.coupleId, key, normalizedValue);
     const now = Date.now();
     await db.run(
       `INSERT INTO couple_settings
@@ -123,9 +205,9 @@ export async function setSharedItem(user: AuthUser, key: string, value: unknown)
          updated_by_account_id = excluded.updated_by_account_id,
          updated_by_username = excluded.updated_by_username,
          updated_at = excluded.updated_at`,
-      [identity.coupleId, key, JSON.stringify(value), identity.accountId, user.username, now],
+      [identity.coupleId, key, JSON.stringify(normalizedValue), identity.accountId, user.username, now],
     );
-    const update = { key, value, updatedBy: user.username, updatedAt: now };
+    const update = { key, value: normalizedValue, updatedBy: user.username, updatedAt: now };
     const version = await appendSyncEvent(db, {
       coupleId: identity.coupleId,
       entityType: "coupleSetting",

@@ -184,9 +184,9 @@ struct ChatHomeView: View {
                 .allowsHitTesting(false)
         )
         .shadow(
-            color: colorScheme == .dark ? .black.opacity(0.34) : .black.opacity(0.08),
-            radius: 18,
-            y: 7
+            color: DS.Surface.shadow,
+            radius: DS.Surface.shadowRadius,
+            y: DS.Surface.shadowY
         )
     }
 

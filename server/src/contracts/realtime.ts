@@ -74,11 +74,11 @@ export const sendMessageSchema = z.object({
     if (value.uploadId) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uploadId"], message: "legacy_upload_conflicts_with_attachments" });
     }
-    const assets = new Map<string, Set<string>>();
+    const assets = new Map<string, { photo: number; pairedVideo: number }>();
     const uploadIds = new Set<string>();
     for (const attachment of value.attachments ?? []) {
-      const roles = assets.get(attachment.assetId) ?? new Set<string>();
-      roles.add(attachment.role);
+      const roles = assets.get(attachment.assetId) ?? { photo: 0, pairedVideo: 0 };
+      roles[attachment.role] += 1;
       assets.set(attachment.assetId, roles);
       if (uploadIds.has(attachment.uploadId)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["attachments"], message: "duplicate_upload_reference" });
@@ -89,7 +89,7 @@ export const sendMessageSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["attachments"], message: "asset_count_out_of_range" });
     }
     for (const roles of assets.values()) {
-      if (!roles.has("photo") || roles.size > 2) {
+      if (roles.photo !== 1 || roles.pairedVideo > 1) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["attachments"], message: "invalid_live_photo_pair" });
       }
     }
@@ -99,6 +99,9 @@ export const sendMessageSchema = z.object({
   }
   if (!requiresUpload && value.uploadId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uploadId"], message: "upload_reference_not_allowed" });
+  }
+  if (value.type === "sticker" && !value.url) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "sticker_url_required" });
   }
   if (value.meta?.media && value.type !== "voice") {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["meta", "media"], message: "media_duration_requires_voice" });

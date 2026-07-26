@@ -153,15 +153,17 @@ final class AlbumDetailViewModel: ObservableObject {
 
     func addUpload(uploadId: String, takenAt: Int, postId: String, token: String) async -> [MomentAsset] {
         do {
-            let added = try await repository.addUpload(
+            let (added, version) = try await repository.addUpload(
                 albumId: album.id, uploadId: uploadId, takenAt: takenAt,
                 postId: postId, token: token)
             for asset in added.reversed() where !assets.contains(where: { $0.id == asset.id }) {
                 assets.insert(asset, at: 0)
                 album.itemCount += 1
             }
+            // 重复添加同一张图时服务端不会加版本号，所以只认服务端回传的版本，
+            // 不按 added 非空自增，否则本地版本会漂移并让之后每次编辑都误报冲突。
+            if let version { album.version = version }
             if !added.isEmpty {
-                album.version += 1
                 NotificationCenter.default.post(name: MomentsViewModel.albumsChanged, object: nil)
             }
             return added

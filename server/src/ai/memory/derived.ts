@@ -48,10 +48,6 @@ function sourceLine(memory: MemoryItem): string {
   return `[${memory.id}] ${memory.layer}/${memory.subjects[0] ?? "?"} ${time} ${memory.content.slice(0, 220)}`;
 }
 
-function continuityLine(memory: MemoryItem): string {
-  return `[${memory.id}] ${memory.layer} ${memory.content.slice(0, 280)}`;
-}
-
 function validSourceIds(card: DerivedCard | null | undefined, allowed: Set<string>): string[] {
   return [...new Set(card?.sourceMemoryIds ?? [])].filter((id) => allowed.has(id)).slice(0, 60);
 }
@@ -73,9 +69,20 @@ function derivedPrompt(relationshipDue: boolean, insightDue: boolean): string {
 
 export async function refreshDerivedMemory(
   channel: string,
-  options: { forceRelationship?: boolean; forceAll?: boolean } = {},
+  options: {
+    forceRelationship?: boolean;
+    forceAll?: boolean;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<{ relationship: boolean; insight: boolean }> {
   if (channel !== "couple") return { relationship: false, insight: false };
+  const assertActive = () => {
+    if (!options.signal?.aborted) return;
+    throw options.signal.reason instanceof Error
+      ? options.signal.reason
+      : new Error("memory_derivation_cancelled");
+  };
+  assertActive();
   const now = Date.now();
   const stateKey = `memory:derived:${channel}`;
   const state = parseState(await readRuntimeState(stateKey));
@@ -100,18 +107,15 @@ export async function refreshDerivedMemory(
     || changedSinceInsight >= INSIGHT_CHANGED_SOURCE_THRESHOLD);
   if (!relationshipDue && !insightDue) return { relationship: false, insight: false };
 
-  const continuity = allActive.filter((memory) =>
-    memory.layer === "relationship" || memory.layer === "insight").slice(0, 6);
   const output = await chat({
     profile: "task",
     scope: "memory.derived",
     system: derivedPrompt(relationshipDue, insightDue),
-    user: [
-      `【基础记忆卡】\n${sources.map(sourceLine).join("\n")}`,
-      `【旧高层卡，仅用于保持连续】\n${continuity.map(continuityLine).join("\n") || "（无）"}`,
-    ].join("\n\n"),
+    user: `【基础记忆卡】\n${sources.map(sourceLine).join("\n")}`,
     gen: { ...GEN.extractFacts, timeoutMs: 120_000 },
+    signal: options.signal,
   });
+  assertActive();
   if (!output) throw new Error("派生记忆模型无输出");
   const parsed = extractJson<DerivedOutput>(output);
   if (!parsed) throw new Error("派生记忆 JSON 无效");
@@ -120,6 +124,7 @@ export async function refreshDerivedMemory(
   let insight = false;
 
   if (relationshipDue) {
+    assertActive();
     const sourceMemoryIds = validSourceIds(parsed.relationship, allowed);
     if (parsed.relationship?.content && sourceMemoryIds.length) {
       const saved = await addMemory({
@@ -135,7 +140,8 @@ export async function refreshDerivedMemory(
         validFrom: now,
         metadata: { derived: true, synthesis: "relationship", sourceWindowDays: 30 },
         sourceMemoryIds,
-      }, SYSTEM_MEMORY_SYNC);
+      }, { ...SYSTEM_MEMORY_SYNC, signal: options.signal });
+      assertActive();
       if (saved) {
         await archiveSiblingMemories(saved.id, false, now);
         relationship = true;
@@ -145,6 +151,7 @@ export async function refreshDerivedMemory(
   }
 
   if (insightDue) {
+    assertActive();
     const sourceMemoryIds = validSourceIds(parsed.insight, allowed);
     if (parsed.insight?.content && sourceMemoryIds.length >= 3) {
       const saved = await addMemory({
@@ -160,7 +167,8 @@ export async function refreshDerivedMemory(
         validFrom: now,
         metadata: { derived: true, synthesis: "interaction", sourceWindowDays: 30 },
         sourceMemoryIds,
-      }, SYSTEM_MEMORY_SYNC);
+      }, { ...SYSTEM_MEMORY_SYNC, signal: options.signal });
+      assertActive();
       if (saved) {
         await archiveSiblingMemories(saved.id, false, now);
         insight = true;
@@ -169,6 +177,7 @@ export async function refreshDerivedMemory(
     state.insightAt = now;
   }
 
+  assertActive();
   await writeRuntimeState(stateKey, JSON.stringify(state));
   return { relationship, insight };
 }

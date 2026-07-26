@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import { createHash } from "node:crypto";
 import {
   all,
   get,
@@ -9,6 +10,7 @@ import {
 import { embedOne, embeddingEnabled, packVector, similarity, unpackVector } from "../embeddings";
 import { searchTerms } from "../conversation/search";
 import { appendSyncEvent } from "../../sync/events";
+import { config } from "../../config";
 
 export const MEMORY_LAYERS = ["fact", "event", "plan", "state", "relationship", "insight"] as const;
 export type MemoryLayer = typeof MEMORY_LAYERS[number];
@@ -71,6 +73,7 @@ export interface MemoryWriteSync {
   actorAccountId?: string | null;
   actorDeviceId?: string | null;
   restoreExcluded?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface MemoryCursor {
@@ -366,6 +369,25 @@ function memoryOwnerSQL(owner: ResolvedMemoryOwner): { clause: string; value: st
     : { clause: "owner_account_id = ?", value: owner.accountId! };
 }
 
+function isRollingMemoryLayer(layer: MemoryLayer): boolean {
+  return layer === "state" || layer === "relationship" || layer === "insight";
+}
+
+/**
+ * 排除项一律按 key + 内容指纹记录。只按裸 key 排除会让"忘掉这一条"变成
+ * "这个主题以后再也写不进来"——抽取器不带 restoreExcluded，被拉黑的 key
+ * 永远回不来。带上指纹后，被删的那版内容不再复活，同主题的新信息照常写入。
+ */
+export function memoryExclusionKey(
+  _layer: MemoryLayer,
+  memoryKey: string,
+  content: string,
+): string {
+  const normalizedContent = content.replace(/\s+/g, " ").trim();
+  const fingerprint = createHash("sha256").update(normalizedContent).digest("hex");
+  return `${memoryKey}:${fingerprint}`;
+}
+
 export async function addMemory(
   candidate: MemoryCandidate,
   sync?: MemoryWriteSync,
@@ -386,23 +408,28 @@ export async function addMemory(
   const owner = await resolveMemoryOwner(candidate.scope);
   if (!owner) return null;
   const ownerSQL = memoryOwnerSQL(owner);
-  const sourceMemories = requestedSourceMemoryIds.length
+  let sourceMemories = requestedSourceMemoryIds.length
     ? await all<AiMemoryRow>(
         `SELECT * FROM ai_memory
          WHERE id IN (${requestedSourceMemoryIds.map(() => "?").join(",")})
-           AND scope = ? AND layer IN ('fact','event','plan','state')
-           AND status <> 'retracted' AND ${ownerSQL.clause}`,
+            AND scope = ? AND layer IN ('fact','event','plan','state')
+           AND status = 'active' AND ${ownerSQL.clause}`,
         [...requestedSourceMemoryIds, candidate.scope, ownerSQL.value],
       )
     : [];
-  if ((candidate.layer === "relationship" || candidate.layer === "insight") && sourceMemories.length === 0) return null;
+  const derived = candidate.layer === "relationship" || candidate.layer === "insight";
+  if (derived && (
+    requestedSourceMemoryIds.length === 0
+    || sourceMemories.length !== requestedSourceMemoryIds.length
+  )) return null;
+  const exclusionKey = memoryExclusionKey(candidate.layer, memoryKey, content);
   const excluded = await get<{ found: number }>(
     `SELECT 1 AS found FROM ai_memory_exclusions exclusion
      WHERE ${owner.coupleId ? "exclusion.couple_id = ?" : "exclusion.account_id = ?"}
        AND exclusion.memory_key = ?
        AND exclusion.source_message_id IS NULL
      LIMIT 1`,
-    [ownerSQL.value, memoryKey],
+    [ownerSQL.value, exclusionKey],
   );
   if (excluded && !sync?.restoreExcluded) return null;
 
@@ -415,22 +442,32 @@ export async function addMemory(
       category: candidate.category,
       subjects,
       content,
-    }));
+    }), sync?.signal);
     if (vector) embedding = packVector(vector);
   }
+  if (sync?.signal?.aborted) return null;
 
   const versioned = candidate.layer !== "event";
-  const rolling = candidate.layer === "state"
-    || candidate.layer === "relationship"
-    || candidate.layer === "insight";
+  const rolling = isRollingMemoryLayer(candidate.layer);
   return transaction(async (db) => {
     if (excluded && sync?.restoreExcluded) {
       await db.run(
         `DELETE FROM ai_memory_exclusions
          WHERE ${owner.coupleId ? "couple_id = ?" : "account_id = ?"}
            AND memory_key = ? AND source_message_id IS NULL`,
-        [ownerSQL.value, memoryKey],
+        [ownerSQL.value, exclusionKey],
       );
+    }
+    if (derived) {
+      sourceMemories = await db.all<AiMemoryRow>(
+        `SELECT * FROM ai_memory
+         WHERE id IN (${requestedSourceMemoryIds.map(() => "?").join(",")})
+           AND scope = ? AND layer IN ('fact','event','plan','state')
+           AND status = 'active' AND ${ownerSQL.clause}
+         FOR SHARE`,
+        [...requestedSourceMemoryIds, candidate.scope, ownerSQL.value],
+      );
+      if (sourceMemories.length !== requestedSourceMemoryIds.length) return null;
     }
     const finishWrite = async (row: AiMemoryRow): Promise<MemoryItem> => {
       if (!sync) return mapItem(row);
@@ -643,9 +680,10 @@ export async function repairMissingMemoryEmbeddings(limit = 25): Promise<number>
   if (!embeddingEnabled()) return 0;
   const rows = await all<AiMemoryRow>(
     `SELECT * FROM ai_memory
-     WHERE status = 'active' AND embedding IS NULL
+     WHERE status = 'active'
+       AND (embedding IS NULL OR octet_length(embedding) <> ?)
      ORDER BY updated_at DESC LIMIT ?`,
-    [Math.max(1, Math.min(100, limit))],
+    [config.embeddingDim * 4, Math.max(1, Math.min(100, limit))],
   );
   let repaired = 0;
   for (const row of rows) {
@@ -653,8 +691,9 @@ export async function repairMissingMemoryEmbeddings(limit = 25): Promise<number>
     const vector = await embedOne(embeddingText(item));
     if (!vector) continue;
     repaired += await run(
-      "UPDATE ai_memory SET embedding = ? WHERE id = ? AND embedding IS NULL",
-      [packVector(vector), item.id],
+      `UPDATE ai_memory SET embedding = ?
+       WHERE id = ? AND (embedding IS NULL OR octet_length(embedding) <> ?)`,
+      [packVector(vector), item.id, config.embeddingDim * 4],
     );
   }
   return repaired;
@@ -695,16 +734,47 @@ export async function expireMemoryStates(now = Date.now()): Promise<number> {
 
 export async function reconcileMemoryLifecycle(now = Date.now()): Promise<{ expired: number; retracted: number }> {
   const expired = await expireMemoryStates(now);
-  const retracted = await run(
-    `UPDATE ai_memory memory SET status = 'retracted', updated_at = ?
-     WHERE memory.status = 'active' AND memory.layer IN ('relationship', 'insight')
-       AND NOT EXISTS (
-         SELECT 1 FROM ai_memory_dependencies dependency
-         JOIN ai_memory source ON source.id = dependency.source_memory_id
-         WHERE dependency.memory_id = memory.id AND source.status <> 'retracted'
-       )`,
-    [now],
-  );
+  const retracted = await transaction(async (db) => {
+    const rows = await db.all<AiMemoryRow>(
+      `SELECT memory.* FROM ai_memory memory
+       WHERE memory.status = 'active' AND memory.layer IN ('relationship', 'insight')
+         AND (
+           NOT EXISTS (
+             SELECT 1 FROM ai_memory_dependencies dependency
+             WHERE dependency.memory_id = memory.id
+           )
+           OR EXISTS (
+             SELECT 1 FROM ai_memory_dependencies dependency
+             JOIN ai_memory source ON source.id = dependency.source_memory_id
+             WHERE dependency.memory_id = memory.id AND source.status <> 'active'
+           )
+         )
+       FOR UPDATE`,
+    );
+    if (!rows.length) return 0;
+    await db.run(
+      `UPDATE ai_memory SET status = 'retracted', updated_at = ?
+       WHERE id IN (${rows.map(() => "?").join(",")})`,
+      [now, ...rows.map((row) => row.id)],
+    );
+    for (const row of rows) {
+      if (Boolean(row.couple_id) === Boolean(row.owner_account_id)) {
+        console.warn(`[memory] 无法为归属异常的派生记忆发送 Sync delete: ${row.id}`);
+        continue;
+      }
+      await appendSyncEvent(db, {
+        coupleId: row.couple_id,
+        accountId: row.owner_account_id,
+        entityType: "memory",
+        entityId: row.id,
+        operation: "delete",
+        payload: { id: row.id },
+        actorAccountId: null,
+        createdAt: now,
+      });
+    }
+    return rows.length;
+  });
   return { expired, retracted };
 }
 
@@ -725,6 +795,7 @@ export interface SearchMemoryInput {
   /** 可选：与控制中心一致的 ownership 收紧。 */
   coupleId?: string | null;
   accountId?: string | null;
+  signal?: AbortSignal;
 }
 
 export async function searchMemory(input: SearchMemoryInput): Promise<Array<MemoryItem & { score: number; lexicalHits: number }>> {
@@ -776,7 +847,9 @@ export async function searchMemory(input: SearchMemoryInput): Promise<Array<Memo
   const filtered = rows.map(mapItem).filter((item) => subjects.size === 0
     || item.subjects.some((subject) => subjects.has(subject))
     || (input.subjectMode !== "exact" && item.subjects.includes("both")));
-  const vector = input.query.trim() && embeddingEnabled() ? await embedOne(input.query) : null;
+  const vector = input.query.trim() && embeddingEnabled()
+    ? await embedOne(input.query, input.signal)
+    : null;
   const terms = searchTerms(input.query);
   const scored = filtered.map((item) => {
     const lower = item.content.toLowerCase();
@@ -1111,25 +1184,55 @@ export async function deleteMemoryForControl(input: {
       params,
     );
     if (!target) return false;
-    await db.run(
-      `INSERT INTO ai_memory_exclusions
-       (id, couple_id, account_id, memory_key, source_message_id, created_by_account_id, created_at)
-       VALUES (?, ?, ?, ?, NULL, ?, ?)
-       ON CONFLICT DO NOTHING`,
-      [`mex_${nanoid(16)}`, target.couple_id ?? null, target.owner_account_id ?? null,
-        target.memory_key, input.editorAccountId, Date.now()],
+    const dependents = await db.all<AiMemoryRow>(
+      `WITH RECURSIVE dependent_ids(id) AS (
+         SELECT dependency.memory_id
+           FROM ai_memory_dependencies dependency
+          WHERE dependency.source_memory_id = ?
+         UNION
+         SELECT dependency.memory_id
+           FROM ai_memory_dependencies dependency
+           JOIN dependent_ids parent ON parent.id = dependency.source_memory_id
+       )
+       SELECT memory.*
+         FROM ai_memory memory
+         JOIN dependent_ids dependent ON dependent.id = memory.id
+        ORDER BY memory.created_at ASC, memory.id ASC`,
+      [target.id],
     );
-    await appendSyncEvent(db, {
-      coupleId: target.couple_id,
-      accountId: target.owner_account_id,
-      entityType: "memory",
-      entityId: target.id,
-      operation: "delete",
-      payload: { id: target.id },
-      actorAccountId: input.editorAccountId,
-      actorDeviceId: input.editorDeviceId,
-    });
-    await db.run("DELETE FROM ai_memory WHERE id = ?", [target.id]);
+    const deletedRows = [...dependents, target];
+    const now = Date.now();
+    for (const row of deletedRows) {
+      await db.run(
+        `INSERT INTO ai_memory_exclusions
+         (id, couple_id, account_id, memory_key, source_message_id, created_by_account_id, created_at)
+         VALUES (?, ?, ?, ?, NULL, ?, ?)
+         ON CONFLICT DO NOTHING`,
+        [
+          `mex_${nanoid(16)}`,
+          row.couple_id ?? null,
+          row.owner_account_id ?? null,
+          memoryExclusionKey(row.layer as MemoryLayer, row.memory_key, row.content),
+          input.editorAccountId,
+          now,
+        ],
+      );
+      await appendSyncEvent(db, {
+        coupleId: row.couple_id,
+        accountId: row.owner_account_id,
+        entityType: "memory",
+        entityId: row.id,
+        operation: "delete",
+        payload: { id: row.id },
+        actorAccountId: input.editorAccountId,
+        actorDeviceId: input.editorDeviceId,
+        createdAt: now,
+      });
+    }
+    await db.run(
+      `DELETE FROM ai_memory WHERE id IN (${deletedRows.map(() => "?").join(",")})`,
+      deletedRows.map((row) => row.id),
+    );
     return true;
   });
 }

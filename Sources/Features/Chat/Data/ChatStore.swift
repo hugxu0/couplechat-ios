@@ -105,7 +105,9 @@ final class ChatStore: ObservableObject {
             self?.partnerOnline = false
             self?.presenceKnown = false
         },
-        onUnauthorized: { [weak self] in self?.auth.verifySessionOrLogout() })
+        onUnauthorized: { [weak self] in
+            self?.auth.verifySessionOrLogout { [weak self] in self?.logout() }
+        })
     private lazy var eventRouter = RealtimeEventRouter(
         auth: auth,
         messageStore: messageStore,
@@ -127,6 +129,10 @@ final class ChatStore: ObservableObject {
     private var persistentSyncTask: Task<Void, Never>?
     private var connectionRecoveryTask: Task<Void, Never>?
     private var connectionRecoveryToken = UUID()
+    private var connectionRecoveryPending = false
+    private var persistenceScope: ChatPersistenceScope?
+    private var logoutCleanupTask: Task<Void, Never>?
+    private var logoutCleanupToken = UUID()
     private var deferredIncomingInteractions: [String: InteractionPresentation] = [:]
     private var knownInteractionPresentationIDs = Set<String>()
     private var lastInteractionSentAt = Date.distantPast
@@ -198,28 +204,44 @@ final class ChatStore: ObservableObject {
 
     func bootstrap() async {
         guard let session = auth.savedSession() else { return }
-        shared.activate(username: session.username)
         let snapshotTask = Task { try await fetchBootstrap(session: session) }
-        localCacheAvailable = await openLocalDatabase(username: session.username)
+        let scope = await openLocalDatabase(username: session.username)
+        persistenceScope = scope
+        localCacheAvailable = scope != nil
+        await localData.activate(scope: scope)
+        shared.activate(username: session.username, persistenceScope: scope)
+        auth.activate(
+            session,
+            accounts: [],
+            persist: false,
+            persistenceScope: scope)
+        messageStore.activateSession(
+            session,
+            generation: auth.sessionGeneration,
+            persistenceScope: scope)
         if localCacheAvailable {
             await messageStore.restoreLocalCache(for: session)
             await shared.restoreCachedSharedState()
         }
-        auth.activate(session, accounts: [], persist: false)
+        let recoveryCursors = messageStore.latestConfirmedCursors()
         StickerStore.shared.activate(username: session.username)
         MediaFavoriteStore.shared.activate(username: session.username)
         auth.restoreCachedPartner()
         realtime.connect()
         do {
             let snapshot = try await snapshotTask.value
-            await messageStore.applyBootstrap(snapshot, session: session)
+            await messageStore.applyBootstrap(
+                snapshot,
+                session: session,
+                recoveryCursors: recoveryCursors)
+            guard auth.session?.token == session.token else { return }
             shared.applySharedInit(snapshot.sharedState)
             completeStickerInitialSync(for: session)
             auth.applyAccounts(snapshot.accounts, for: session)
             await recoverSyncV2()
         } catch BootstrapError.unauthorized {
             StickerStore.shared.deactivate()
-            await auth.logout()
+            logout()
         } catch {
             // 已登录用户离线启动时仍可查看有界本地缓存；连接恢复后前台刷新会补最新快照。
             realtime.setLastError(error.localizedDescription)
@@ -229,22 +251,41 @@ final class ChatStore: ObservableObject {
     // MARK: - 登录/登出
 
     func login(username: String, password: String) async throws {
+        if let logoutCleanupTask {
+            await logoutCleanupTask.value
+        }
         let session = try await auth.authenticate(username: username, password: password)
-        shared.activate(username: session.username)
         let snapshotTask = Task { try await fetchBootstrap(session: session) }
-        localCacheAvailable = await openLocalDatabase(username: session.username)
+        let scope = await openLocalDatabase(username: session.username)
+        persistenceScope = scope
+        localCacheAvailable = scope != nil
+        await localData.activate(scope: scope)
+        shared.activate(username: session.username, persistenceScope: scope)
+        auth.activate(
+            session,
+            accounts: [],
+            persist: true,
+            persistenceScope: scope)
+        messageStore.activateSession(
+            session,
+            generation: auth.sessionGeneration,
+            persistenceScope: scope)
         if localCacheAvailable {
             await messageStore.restoreLocalCache(for: session)
             await shared.restoreCachedSharedState()
         }
-        auth.activate(session, accounts: [], persist: true)
+        let recoveryCursors = messageStore.latestConfirmedCursors()
         StickerStore.shared.activate(username: session.username)
         MediaFavoriteStore.shared.activate(username: session.username)
         auth.restoreCachedPartner()
         realtime.connect()
         do {
             let snapshot = try await snapshotTask.value
-            await messageStore.applyBootstrap(snapshot, session: session)
+            await messageStore.applyBootstrap(
+                snapshot,
+                session: session,
+                recoveryCursors: recoveryCursors)
+            guard auth.session?.token == session.token else { return }
             shared.applySharedInit(snapshot.sharedState)
             completeStickerInitialSync(for: session)
             auth.applyAccounts(snapshot.accounts, for: session)
@@ -257,8 +298,8 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    private func openLocalDatabase(username: String) async -> Bool {
-        await persistence.open(username: username)
+    private func openLocalDatabase(username: String) async -> ChatPersistenceScope? {
+        await persistence.openScoped(username: username)
     }
 
     private func completeStickerInitialSync(for session: Session) {
@@ -286,11 +327,17 @@ final class ChatStore: ObservableObject {
     private func refreshBootstrap() async -> Bool {
         guard let session = auth.session else { return false }
         let generation = auth.sessionGeneration
+        let recoveryCursors = messageStore.latestConfirmedCursors()
         do {
             let snapshot = try await fetchBootstrap(session: session)
             guard auth.sessionGeneration == generation,
                   auth.session?.token == session.token else { return false }
-            await messageStore.applyBootstrap(snapshot, session: session)
+            await messageStore.applyBootstrap(
+                snapshot,
+                session: session,
+                recoveryCursors: recoveryCursors)
+            guard auth.sessionGeneration == generation,
+                  auth.session?.token == session.token else { return false }
             shared.applySharedInit(snapshot.sharedState)
             completeStickerInitialSync(for: session)
             guard auth.applyAccounts(snapshot.accounts, for: session) else { return false }
@@ -307,13 +354,18 @@ final class ChatStore: ObservableObject {
 
     func logout() {
         let sessionToRevoke = auth.session
-        let generation = auth.sessionGeneration
+        let localDataScope = persistenceScope
+        let cleanupToken = UUID()
+        logoutCleanupToken = cleanupToken
         stopPersistentSyncLoop()
         connectionRecoveryTask?.cancel()
         connectionRecoveryTask = nil
         connectionRecoveryToken = UUID()
         historySync.cancelForLogout()
         realtime.disconnect()
+        messageStore.deactivateSession()
+        persistenceScope = nil
+        let databaseCloseTask = auth.logoutSync()
         partnerOnline = false
         presenceKnown = false
         resetTransientAIState()
@@ -324,14 +376,19 @@ final class ChatStore: ObservableObject {
         StickerStore.shared.deactivate()
         MediaFavoriteStore.shared.deactivate()
         shared.deactivate()
-        Task {
+        logoutCleanupTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.logoutCleanupToken == cleanupToken {
+                    self.logoutCleanupTask = nil
+                }
+            }
+            await self.localData.deactivate(scope: localDataScope)
+            await databaseCloseTask.value
             await ImageCache.shared.clearAllAsync()
             await MediaFileCache.shared.clearAll()
-            await auth.logout()
-            // 若期间已登录新账号，不再 revoke 旧设备之外的操作。
             guard let sessionToRevoke else { return }
             await auth.revokeCurrentDevice(sessionToRevoke)
-            _ = generation
         }
     }
 
@@ -723,7 +780,13 @@ final class ChatStore: ObservableObject {
                 _ = await self?.verifyRealtimeHealth()
             }
         }
-        guard connectionRecoveryTask == nil else { return }
+        // bootstrap 最长 15 秒，期间弱网/切网很容易再断再连一次。那一段断线期错过的
+        // 消息没有别的补拉路径（Sync V2 只同步撤回），所以重复请求要排队而不是丢弃。
+        guard connectionRecoveryTask == nil else {
+            connectionRecoveryPending = true
+            return
+        }
+        connectionRecoveryPending = false
         let generation = auth.sessionGeneration
         let token = UUID()
         connectionRecoveryToken = token
@@ -732,6 +795,9 @@ final class ChatStore: ObservableObject {
             defer {
                 if self.connectionRecoveryToken == token {
                     self.connectionRecoveryTask = nil
+                    if self.connectionRecoveryPending, self.auth.sessionGeneration == generation {
+                        self.scheduleConnectionRecovery(verifyRealtime: false)
+                    }
                 }
             }
             guard !Task.isCancelled, self.auth.sessionGeneration == generation else { return }
@@ -750,7 +816,9 @@ final class ChatStore: ObservableObject {
     }
 
     private func recoverSyncV2() async {
-        guard !syncingV2, let session = auth.session else { return }
+        guard !syncingV2,
+              let session = auth.session,
+              let scope = persistenceScope else { return }
         let generation = auth.sessionGeneration
         syncingV2 = true
         defer { syncingV2 = false }
@@ -758,19 +826,35 @@ final class ChatStore: ObservableObject {
         let legacyKey = "sync.v2.cursor.\(session.username).\(Keychain.installationID())"
         let metaKey = "sync.v2.cursor.\(Keychain.installationID())"
         // 优先账号库 app_meta；兼容旧 UserDefaults 游标并迁移一次。
-        var cursor = Int64((await persistence.metaValue(forKey: metaKey)).flatMap(Int64.init) ?? 0)
+        var cursor = Int64((await persistence.metaValue(
+            forKey: metaKey,
+            scope: scope
+        )).flatMap(Int64.init) ?? 0)
+        guard auth.sessionGeneration == generation,
+              auth.session?.token == session.token,
+              persistenceScope == scope,
+              await persistence.isActive(scope: scope) else { return }
         if cursor == 0, let legacy = defaults.object(forKey: legacyKey) as? Int {
             cursor = Int64(legacy)
             if cursor > 0 {
-                _ = await persistence.setMetaValue(String(cursor), forKey: metaKey)
+                _ = await persistence.setMetaValue(
+                    String(cursor),
+                    forKey: metaKey,
+                    scope: scope)
             }
         }
         var changedEntityTypes = Set<String>()
         do {
             var hasMore = true
             while hasMore {
-                guard auth.sessionGeneration == generation, auth.session?.username == session.username else { return }
+                guard auth.sessionGeneration == generation,
+                      auth.session?.token == session.token,
+                      persistenceScope == scope else { return }
                 let page = try await syncV2.fetch(after: cursor, token: session.token)
+                guard auth.sessionGeneration == generation,
+                      auth.session?.token == session.token,
+                      persistenceScope == scope,
+                      await persistence.isActive(scope: scope) else { return }
                 guard Self.validatedSyncMessageChannels(page.events) != nil else {
                     throw SyncV2Error.invalidPayload
                 }
@@ -784,15 +868,30 @@ final class ChatStore: ObservableObject {
                     ) else {
                         throw SyncV2Error.localPersistence
                     }
+                    guard auth.sessionGeneration == generation,
+                          auth.session?.token == session.token,
+                          persistenceScope == scope else { return }
                 }
                 changedEntityTypes.formUnion(page.events.map(\.entityType))
                 cursor = max(cursor, page.nextCursor)
                 // 按页推进：与本页 delete 落库同代次后写入，减少崩溃窗口。
-                _ = await persistence.setMetaValue(String(cursor), forKey: metaKey)
+                guard await persistence.setMetaValue(
+                    String(cursor),
+                    forKey: metaKey,
+                    scope: scope
+                ) else {
+                    throw SyncV2Error.localPersistence
+                }
+                guard auth.sessionGeneration == generation,
+                      auth.session?.token == session.token,
+                      persistenceScope == scope else { return }
                 defaults.set(Int(cursor), forKey: legacyKey)
                 hasMore = page.hasMore
             }
-            guard auth.sessionGeneration == generation, auth.session?.username == session.username else { return }
+            guard auth.sessionGeneration == generation,
+                  auth.session?.token == session.token,
+                  persistenceScope == scope,
+                  await persistence.isActive(scope: scope) else { return }
             await syncV2.acknowledge(cursor, token: session.token)
             if !changedEntityTypes.isEmpty {
                 NotificationCenter.default.post(
@@ -801,7 +900,7 @@ final class ChatStore: ObservableObject {
                     userInfo: ["entityTypes": Array(changedEntityTypes)])
             }
         } catch SyncV2Error.unauthorized {
-            auth.verifySessionOrLogout()
+            auth.verifySessionOrLogout { [weak self] in self?.logout() }
         } catch {
             // Socket/前台恢复会再次尝试；cursor 只在一页完整应用后推进。
         }

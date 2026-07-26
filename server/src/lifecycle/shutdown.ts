@@ -1,5 +1,5 @@
 export interface ShutdownDependencies {
-  stopSchedulers(): void;
+  stopSchedulers(): void | Promise<void>;
   stopUploadCleanup(): void;
   closeSocket(): Promise<void>;
   closeHttp(): Promise<void>;
@@ -7,7 +7,7 @@ export interface ShutdownDependencies {
 }
 
 export async function shutdownServer(dependencies: ShutdownDependencies): Promise<void> {
-  dependencies.stopSchedulers();
+  await dependencies.stopSchedulers();
   dependencies.stopUploadCleanup();
   await dependencies.closeSocket();
   await dependencies.closeHttp();

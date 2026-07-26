@@ -230,7 +230,11 @@ struct CardGameHistoryRow: View {
                 Text(effect.title)
                     .font(DS.Typo.secondary.weight(.semibold))
                     .foregroundStyle(DS.Palette.textPrimary)
-                Text(relationText)
+                Text(effect.summary)
+                    .font(DS.Typo.caption)
+                    .foregroundStyle(DS.Palette.textPrimary.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("\(relationText) · \(timeText)")
                     .font(DS.Typo.caption)
                     .foregroundStyle(DS.Palette.textSecondary)
             }
@@ -240,6 +244,13 @@ struct CardGameHistoryRow: View {
                 .foregroundStyle(effect.rarity.tint)
         }
         .padding(.vertical, 11)
+    }
+
+    private var timeText: String {
+        ChatTimelineBuilder.timeLabel(
+            for: Date(timeIntervalSince1970: Double(effect.createdAt) / 1000),
+            calendar: .current,
+            now: Date())
     }
 
     private var relationText: String {

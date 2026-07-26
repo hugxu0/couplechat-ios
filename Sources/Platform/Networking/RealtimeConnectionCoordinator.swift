@@ -4,6 +4,26 @@ import Network
 import OSLog
 import SocketIO
 
+private final class RealtimeAckContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<[Any], Never>?
+
+    init(_ continuation: CheckedContinuation<[Any], Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning value: [Any]) {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return
+        }
+        self.continuation = nil
+        lock.unlock()
+        continuation.resume(returning: value)
+    }
+}
+
 private struct RealtimeNetworkPath: Equatable, Sendable {
     let isSatisfied: Bool
     let usesWiFi: Bool
@@ -224,8 +244,16 @@ final class RealtimeConnectionCoordinator: ObservableObject, SocketProvider {
             return false
         }
         let result: [Any] = await withCheckedContinuation { continuation in
+            let gate = RealtimeAckContinuation(continuation)
             probeSocket.emitWithAck(SocketEvent.health.rawValue).timingOut(after: Self.healthAckTimeout) {
-                continuation.resume(returning: $0)
+                gate.resume(returning: $0)
+            }
+            // Socket.IO 的 ACK timeout 回调在底层连接切换时可能不触发；独立硬
+            // 期限保证前台恢复任务不会永久占住 healthCheckTask。
+            Task {
+                try? await Task.sleep(
+                    nanoseconds: UInt64((Self.healthAckTimeout + 1) * 1_000_000_000))
+                gate.resume(returning: [])
             }
         }
         let healthy = (result.first as? [String: Any])?["ok"] as? Bool == true

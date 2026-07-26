@@ -14,7 +14,7 @@ messages 落库
   └─ 3 reply         公聊仅 AI_TRIGGER_ALIASES；私聊仅有文字时答（纯图不答）
                        → ReplyQueue（同频道串行，pending≤5 后 coalesce 最新）
                        → 已提交总览 + 原文热窗口 → Agent + MCP
-                       → createAiMessage + Socket 广播
+                       → createAiMessages（整批事务）+ Socket 广播
                        → 再 scheduleContextCatchUp（纳入大橘发言）
 ```
 
@@ -36,11 +36,14 @@ messages 落库
 | `imageAttachment.ts` | 需要看图时解析本条/最近图组 |
 | `agent/runtime.ts` | Agent、多模态注入与工具触发的重跑 |
 | `agent/replyQueue.ts` | 队列、超时、多条回复与确认卡 |
+| `agent/replyJobs.ts` | v36 持久回复任务、租约、限次重试与启动恢复 |
+| `actions/personalItems.ts` | 确认卡认领、执行与启动恢复 |
 | `engagement.ts` | 公聊冲突/搭话（本地预过滤 + 精简分类） |
 | `textSignals.ts` | 低信息量文本判定（上下文与 Memory 共用） |
 | `mcp/` | 工具、单轮身份、预算 |
 | `memory/store.ts` | Memory 持久化与检索 |
 | `memory/extractor.ts` | 批处理整理 |
+| `memory/dajuInstructions.ts` | 按当前 requester 隔离读取大橘指令 |
 | `memory/maintenance.ts` | 生命周期与 embedding 补齐 |
 | `conversation/context.ts` | day-digest-v2、微段、热窗口 |
 | `debug/` | 本机 Trace / Memory 调试页 |
@@ -60,7 +63,7 @@ messages 落库
 - 公聊与私聊同一套；**消化双方全部有效聊天**，不再只摘要「大橘会话」。
 - 约每 40 条有效消息（或空闲 10 分钟 / 最老消息 45 分钟）压成微段，再以小型增量补丁折入当日总览；贴纸与短寒暄（嗯/哈哈等）不计入微段。微段任务使用无推理 20 秒上限，日总览补丁使用无推理 15 秒上限；日总览连续两次无有效补丁会熔断 10 分钟并立即走本地时段摘录，避免上游变慢时每段反复等待。
 - 任意主人消息后防抖调度追赶；Agent 回答不等待摘要模型，只读取已提交总览和最近原文。落后时在后台按微段阈值继续追赶，并在 prompt 中提示可用 `search_chat_messages`。
-- 日切后昨日总览归档；Agent 输入可带【昨日话题标题】一行（无细节）。
+- 跨日积压必须按消息顺序逐日消费，只有确认旧游标后已无消息时才能滚到今天；日切后昨日总览归档，Agent 输入可带【昨日话题标题】一行（无细节）。
 - 状态保存在 `ai_runtime_state`（`context:v2:{channel}`），可重建，不是长期事实库；跨天稳定事实仍靠 Memory。
 - **大橘日记**：调度器定期确保「上一作息日」日记（`ai_daily_diaries`）；生成时直接读取该作息日完整的 couple 公聊（含大橘在公聊中的发言），不读任一账号 AI 私聊，也不再把日总览、选材标签或局部摘录当成正文材料。单次写作任务由大橘通读全部聊天后只选择一条真正放不下的暗线、变化或疑问，具体事件只用于让大橘的观察、联想和思考生长，不按时间逐项复述；标题使用有具体意象和余韵的诗性短句，允许借夜色、灯影和猫的感官写出意境，正文目标为 420～560 个中文字符、4～5 个自然段。模型不可用时使用极小的事实受限兜底。已有日记默认幂等返回，客户端详情页可确认后以显式 `force` 重写；REST 见 `GET/POST /api/v2/ai/diaries*`。
 
@@ -80,11 +83,15 @@ messages 落库
 ### Token 纪律（实现约定）
 
 - Agent system 只保留总则；工具细则以 MCP tool description 为准，MCP server.instructions 保持极短。
-- 行为要求预注入 user 后，默认不再调用 `get_daju_instructions`。
+- 行为要求预注入 user 后，默认不再调用 `get_daju_instructions`；预注入与 MCP 读取共用 requester subject 过滤，只返回当前主人和 `both` 指令，不能把另一位主人的个人要求带入本轮。
 - 后台介入线索不附带最近原文（热窗口已有）；Memory 批处理单条正文截断；日总览合并只送瘦身 JSON。
 - 输出预算：`GEN.reply` 等见 `settings.ts`，避免为闲聊预留过大 maxTokens。
 - 常规 Agent 最多运行 6 轮（工具附图后的多模态重跑最多 4 轮）。若模型把轮次全部用在工具调用上，会在 15 秒内追加一次**无工具收尾**：复用已经取得的工具结果，强制生成最终 JSON；收尾仍失败才发送兜底文案。
 - `ai.reply` 操作日志区分正常成功、超时和内部失败；内部失败即使已经发出兜底，也以 `error + degraded=true` 记录。无工具收尾成功仍算回复成功，并标记 `recoveredFromMaxTurns=true`。
+- ReplyQueue 监听消息撤回并取消对应的运行中/等待任务；服务关闭时先停止接单、取消队列并清理 Context/Memory 定时器，再关闭 Socket、HTTP 与数据库。超时兜底落库也有独立短期限，不能继续占住频道队列。
+- 每条新主人消息在消息事务内同时插入 `ai_reply_jobs`。不触发回复的任务明确标记 `ignored`；触发任务经 `queued → processing` 租约领取，失败有限退避并最多尝试五次。服务必须先开始 HTTP 监听，再异步释放上一进程租约并恢复任务，保证图像 URL 已可读取且发布健康检查不等待模型 backlog。
+- 运行时写回复必须重新解析 active identity，并同时匹配 job 的 requester account、conversation 与 stored channel。Agent 的 1～3 段正文及只出现在末段的搜索来源/确认卡一次性写入同一事务，全部成功后才把 job 标记 `completed`；随后逐段广播。提交后即使进程在广播间隙退出，客户端仍可从 bootstrap/分页补齐完整批次。
+- 服务启动时将上一进程遗留的 `processing` confirmation 收敛为 `confirmed + failed`：已持久化为 succeeded 的子项保持成功，其余标记执行失败；不会重放无法确认幂等性的提醒或备忘动作。
 
 ## Memory
 
@@ -102,7 +109,7 @@ messages 落库
 - `ai_memory`：结构化内容、状态、范围、置信度、时间和 embedding；
 - `ai_memory_cursor`：每个 conversation 已整理到的 `(cursor_ts, cursor_id)`，保留 legacy channel 兼容键；
 - `ai_memory_dependencies`：关系与理解卡引用的基础记忆；
-- `ai_memory_exclusions`：用户忘掉后按卡片 key 阻止重新生成；
+- `ai_memory_exclusions`：稳定卡忘掉后按 key 阻止重新生成；滚动卡按 key + 正文指纹只阻止被删版本；
 - `ai_runtime_state`：上下文摘要和派生记忆维护游标等可重建状态。
 
 `ai_memory.perspective` 区分 `people` 与 `daju`，`memory_kind` 区分 `standard`、`instruction` 和 `observation`。主人在当前对话中明确提出长期的大橘行为要求时，由回复 Agent 理解整句话并直接调用 `save_daju_instruction` 写入，不使用关键词规则，也不等待批量整理；仅当前一次的临时要求和推断偏好不会保存。大橘观察仍由后台整理器生成，必须引用至少两张基础记忆卡，并按有效期自动过期。普通人物检索默认只看 `people`，大橘行为要求由 Agent 自动注入，观察仅在复盘、分析和调解时按需读取。
@@ -113,7 +120,7 @@ messages 落库
 
 - AI 自己的回答不会进入基础记忆整理输入；
 - 撤回聊天不会自动删除已经生成的记忆，错误记忆由控制中心纠正或忘掉；
-- 关系与理解不读取聊天原文，只引用事实、经历、计划和近况卡；
+- 关系与理解不读取聊天原文或旧高层卡，只引用当前 active 的事实、经历、计划和近况卡；任一基础来源被忘掉或失效时，依赖卡同步删除或失效；
 - 公聊只读取双方公开数据，私聊可额外读取当前用户私聊；
 - 不确定时明确表示无法确认，不能把搜索候选写成确定事实。
 
@@ -124,7 +131,7 @@ messages 落库
 - 共同范围按 `couple_id` 隔离；个人范围按 `account_id` 隔离，legacy scope 字符串只保留兼容，不能跨账号读取私聊。
 - 顶部只提供全部、两人可见、仅自己和大橘四个入口；普通记忆按层级分类，大橘入口只分指令与观察。
 - 手动纠正正文时记录修改者和时间、清空旧 embedding，后续维护任务会重新生成向量。
-- “忘掉”物理删除 Memory 行并按卡片 key 写 exclusion，原聊天消息保持不变。
+- “忘掉”物理删除 Memory 行；稳定卡按 key 写 exclusion，滚动卡按 key + 正文指纹屏蔽被删版本，后续新近况仍可生成。含有该卡内容的关系/理解依赖卡会在同一事务内删除并发送 Sync delete，原聊天消息保持不变。
 - 可以分别立即整理共同聊天和当前账号的 AI 私聊。
 - 列表已支持 cursor 分页、版本冲突和 Sync V2 跨设备刷新。
 
@@ -144,6 +151,8 @@ Memory 本地离线缓存尚未完成；runtime/tool 以 `conversation_id/couple
 事项动作始终以当前登录账号授权，模型给出的 `ownerName` 不能变成另一账号身份；shared 变更同步双方，personal 只作用于当前账号。结构化回答会主动使用合法 Markdown 标题、列表或表格，普通闲聊保持自然文本。
 
 每次工具执行生成一条结构化 `ai.tool` 操作日志，只记录工具名、状态、耗时、当前工具次数和本轮总次数；不记录参数、查询内容或工具结果。Streamable HTTP 客户端的例行 GET 探测继续返回 405，但该预期请求不写访问日志；POST 工具请求的异常仍正常记录。
+
+模型上游 HTTP 失败日志只记录任务 scope、状态码、`request-id` 与 `retry-after` 等安全响应元数据；响应正文不会读取或写入日志。
 
 ## 今日推荐
 
@@ -193,6 +202,8 @@ EMBEDDING_DIM=1024
 
 `AI_CHAT_*` 用于直接回复，`AI_TASK_*` 用于整理、摘要和后台内容；未单独配置时使用 `AI_*`。`*_API_MODE` 仅支持 `responses` / `chat_completions`（OpenAI 兼容），未声明时默认 Chat Completions；不再提供 Anthropic 原生协议分支。服务端只执行配置指定的协议，不在失败后切换另一套模型协议。`*_REASONING_EFFORT` 支持 `none/minimal/low/medium/high/xhigh`。
 
+`EMBEDDING_DIM` 必须是 `1...65536` 的整数，并与上游实际返回维度完全一致。API 返回、数据库序列化和反序列化都会校验该维度；历史或异常向量维度不一致时不参与相似度计算，并由维护任务重新生成。
+
 **图片理解**：统一用对话主模型多模态，**不再使用独立 `AI_VISION` 转写**。
 
 | 场景 | 行为 |
@@ -206,7 +217,7 @@ EMBEDDING_DIM=1024
 
 ## 本机调试
 
-仅在迁移到当前 schema v34 的隔离恢复库运行调试服务后打开本地 `http://127.0.0.1:8080/ai-debug`（若本地修改 `PORT`，地址随之变化）。连接生产库启动本地调试服务的入口已移除。调试页支持：
+仅在迁移到当前源码 schema v36 的隔离恢复库运行调试服务后打开本地 `http://127.0.0.1:8080/ai-debug`（若本地修改 `PORT`，地址随之变化）。连接生产库启动本地调试服务的入口已移除。调试页支持：
 
 - 两位账号与公聊/私聊切换；
 - 查看 Agent instructions、输入、工具调用、输出和耗时；

@@ -14,6 +14,7 @@ import { GEN, responsesReasoningSettings } from "../settings";
 import { personaCore } from "../persona";
 import { extractJson, extractReplyText, type Citation } from "../provider";
 import { beijingDateTime } from "../time";
+import { listDajuInstructionsForRequester } from "../memory/dajuInstructions";
 import { searchMemory, visibleMemoryScopes } from "../memory/store";
 import { resolveImageAttachment, sameImageSet } from "../imageAttachment";
 import { tracePrompt, type TraceEntry } from "../debug/trace";
@@ -43,22 +44,20 @@ function instructions(trigger: Trigger): string {
   const names = accounts().map((account) => account.name);
   const isPrivate = trigger.storedChannel.startsWith("ai:");
   const background = trigger.origin === "conflict" || trigger.origin === "interject";
-  // 工具细则以 MCP tool description 为准，此处只保留总则，避免与 MCP instructions 三重叠。
+  // 工具细则以 MCP tool description 为准，此处只保留总则。
   return [
     personaCore(names),
     isPrivate
       ? "私聊：仅当前主人可见；不得泄露另一位主人的私聊。"
       : "公聊：双方都看得到；不得索取任一方私聊数据。",
-    "工具：普通闲聊可不调用。事实/经历/计划/近况/关系用对应 search_* 或 get_*；人物身份 search_facts→search_events→（仍无或要原话）search_chat_messages；命中结构化记忆后勿再翻聊天。无可靠结果就说没找到，禁止脑补。大橘旧回复不能当事实证据。",
+    "记忆优先：问题只要涉及主人的身份、偏好、习惯、健康、过去经历或计划，先查记忆再回答——search_facts / search_events / search_plans / get_current_states。拿不准要不要查就查。查到了直接用，不用再翻聊天记录；确实没查到再说没找到，禁止脑补。你自己以前的回复不算证据。",
+    "证据顺序：主人当前原话 > 最近原文 > 今日总览（答「今天聊了啥」用它）> 记忆卡。冲突时以更新的主人原话为准；主人说你答错了就丢掉旧答案重来。search_chat_messages 的 query 放核心概念，不要声称查过全部记录。",
     background
-      ? "【大橘当前行为要求】若在用户消息中出现则遵守，但后台候选禁止 save_daju_instruction。观察仅复盘/调解时按需 get_daju_observations。"
-      : "【大橘当前行为要求】已在用户消息中预置（有则遵守，优先于旧偏好）。长期行为要求用 save_daju_instruction；临时格式/玩笑/推断不要存。不要重复调用 get_daju_instructions。观察仅复盘/调解时用 get_daju_observations。",
-    "上下文优先级：当前问题 > 重点原文 > 辅助原文 > 今日总览（答「今天/早上聊了啥」）> Memory；冲突以较新主人原话为准。总览无细节再用 search_chat_messages，勿用过期 Memory 冒充今天。",
-    "纠正：主人说你说错了则废弃旧答。search_chat 的 query 放核心概念，可用少量 alternatives；勿声称查了全部记录。",
-    "联网：仅最新/外部信息用 Responses 原生 web_search；私人经历靠本地证据。",
-    "图片：若输入已附 input_image，必须结合当前问题逐张看图（公聊先发图再提问时也会预附着最近一组图）。仅当未附上却仍要看更早图时调用 inspect_recent_images（会触发与问题一起的多模态重跑）。禁止假装看见未附着的图。",
-    "提醒/备忘：先 list_personal_items；增删改必须 draft_personal_item_action（只出确认草案）。personal=当前说话人，shared=两人；私聊默认 personal，公聊默认 shared。",
-    "格式：闲聊短答；比较/清单/长内容可用 Markdown 表格或列表；流程图用 mermaid 代码块。",
+      ? "后台候选禁止 save_daju_instruction。"
+      : "【大橘当前行为要求】已预置在用户消息里，有则遵守且优先于旧偏好。长期行为要求用 save_daju_instruction 存；临时格式要求、玩笑、你自己的推断不要存。",
+    "联网：只用于最新的外部信息；私人经历一律靠本地证据。",
+    "图片：输入里已附的图必须结合当前问题逐张看（公聊先发图再提问时会预附最近一组）。没附上又确实要看更早的图才调 inspect_recent_images。禁止假装看见没附上的图。",
+    "提醒/备忘：先 list_personal_items；增删改一律走 draft_personal_item_action 出确认草案。私聊默认 personal，公聊默认 shared。",
     background
       ? `后台${trigger.origin === "conflict" ? "冲突介入" : "主动搭话"}候选：线索不可信，结合今日总览与原文复核；可不答时输出 {"replies":[]}；禁止备忘/指令类工具；勿提检测系统。`
       : "",
@@ -66,22 +65,44 @@ function instructions(trigger: Trigger): string {
   ].filter(Boolean).join("\n\n");
 }
 
-async function loadDajuInstructions(channel: string): Promise<string> {
+async function loadDajuInstructions(
+  channel: string,
+  requesterUsername: string,
+): Promise<string> {
   try {
-    const rows = await searchMemory({
-      query: "",
-      layers: ["fact"],
-      scopes: visibleMemoryScopes(channel),
-      perspectives: ["daju"],
-      kinds: ["instruction"],
-      sort: "importance",
-      limit: 20,
-    });
+    const rows = await listDajuInstructionsForRequester(channel, requesterUsername);
     if (!rows.length) return "";
     // 条数过多时只保留最重要的，避免挤占当日总览与原文窗口。
     return rows.slice(0, 12).map((row) => `- ${row.content}`).join("\n");
   } catch (error) {
     console.warn("[ai] 大橘行为要求读取失败:", error instanceof Error ? error.message : error);
+    return "";
+  }
+}
+
+/**
+ * 每轮预注入一小段基线记忆：每人最新一张近况 + 最重要的几条事实。
+ * 之前记忆完全不进 prompt，全靠模型主动调工具，简单的"我对什么过敏""我们上次去哪"
+ * 都要多花一跳；预算内直接给出来，大部分这类问题就不必再调工具了。
+ */
+async function loadBaselineMemory(storedChannel: string): Promise<string> {
+  try {
+    const scopes = visibleMemoryScopes(storedChannel);
+    const [states, facts] = await Promise.all([
+      searchMemory({ query: "", layers: ["state"], scopes, sort: "recent", limit: 12 }),
+      searchMemory({ query: "", layers: ["fact"], scopes, sort: "importance", limit: 5 }),
+    ]);
+    const latestBySubject = new Map<string, (typeof states)[number]>();
+    for (const row of states) {
+      const subject = row.subjects[0] ?? "both";
+      if (!latestBySubject.has(subject)) latestBySubject.set(subject, row);
+    }
+    const lines = [...latestBySubject.values(), ...facts]
+      .map((row) => `- ${row.content}`.trim())
+      .filter((line) => line.length > 2);
+    return [...new Set(lines)].join("\n");
+  } catch (error) {
+    console.warn("[ai] 基线记忆读取失败:", error instanceof Error ? error.message : error);
     return "";
   }
 }
@@ -169,7 +190,10 @@ export async function runAgentReply(
   let usedVision = activeImageUrls.length > 0;
 
   const context = await buildConversationContext(trigger.storedChannel, trigger.messageId);
-  const dajuInstructions = await loadDajuInstructions(trigger.storedChannel);
+  const [dajuInstructions, baselineMemory] = await Promise.all([
+    loadDajuInstructions(trigger.storedChannel, trigger.requesterUsername),
+    loadBaselineMemory(trigger.storedChannel),
+  ]);
 
   const buildUserText = (imageUrls: string[], imageNote: string) => {
     const currentMessage = background
@@ -183,6 +207,7 @@ export async function runAgentReply(
       `现在是 ${beijingDateTime(Date.now())}（北京时间）。`,
       `说话人：${trigger.requesterName}（${trigger.requesterUsername}）· ${trigger.storedChannel === "couple" ? "公聊" : "私聊"}`,
       dajuInstructions ? `【大橘当前行为要求】\n${dajuInstructions}` : "",
+      baselineMemory ? `【你已经记住的】\n${baselineMemory}\n（不够就再查记忆工具。）` : "",
       conversationContextText(context),
       imageNote,
       imageUrls.length
@@ -229,7 +254,8 @@ export async function runAgentReply(
     url: config.aiMcpUrl,
     name: "CoupleChat MCP",
     cacheToolsList: true,
-    timeout: 45_000,
+    // 单次工具调用的上限，必须远小于整个 run 的预算，否则一次慢调用就吃光全部时间。
+    timeout: 20_000,
     requestInit: { headers: { "x-couplechat-ai-run": token } },
   });
 

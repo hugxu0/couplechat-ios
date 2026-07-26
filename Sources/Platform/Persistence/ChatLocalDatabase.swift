@@ -541,6 +541,41 @@ final class ChatLocalDatabase {
         sqlite3_finalize(stmt)
         return messages.reversed() // Return chronologically ordered
     }
+
+    func fetchMessagesAfter(
+        channel: String,
+        afterTimestamp: Double,
+        afterId: String,
+        limit: Int
+    ) -> [ChatMessage] {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        let sql = """
+        SELECT id, channel, sender, senderName, kind, type, text, url, replyTo, replyPreview, ts, clientId, metaJson, recalledText, attachmentsJson
+        FROM messages
+        WHERE channel = ? AND (ts > ? OR (ts = ? AND id > ?))
+        ORDER BY ts ASC, id ASC
+        LIMIT ?;
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            return []
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, channel, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 2, afterTimestamp)
+        sqlite3_bind_double(stmt, 3, afterTimestamp)
+        sqlite3_bind_text(stmt, 4, afterId, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(stmt, 5, Int32(limit))
+
+        var messages: [ChatMessage] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let message = parseMessageRow(stmt) {
+                messages.append(message)
+            }
+        }
+        return messages
+    }
     
     /// 拉取某个时间区间内的全部消息（含端点），按时间正序。
     /// 用于「搜索结果跳转」把命中消息与当前已加载窗口之间的空档补齐，保证能定位。
@@ -587,7 +622,9 @@ final class ChatLocalDatabase {
                 seen.insert(msg.id)
                 return true
             }
-            .sorted { $0.ts < $1.ts }
+            .sorted { lhs, rhs in
+                lhs.ts < rhs.ts || (lhs.ts == rhs.ts && lhs.id < rhs.id)
+            }
     }
 
     func fetchMessages(channel: String, fromInclusive: Double, toExclusive: Double, limit: Int? = nil) -> [ChatMessage] {
@@ -737,6 +774,55 @@ final class ChatLocalDatabase {
                     self.bindTextResult(stmt, index: 16, value: attachmentsJSON),
                 ]
             })
+    }
+
+    /// Updates an existing outbox row without recreating it after a concurrent
+    /// authoritative message confirmation removed the row.
+    func updatePendingOutbound(_ item: PendingOutboundMessage) -> Bool {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        guard ChatChannel(rawValue: item.channel) != nil else { return false }
+        let attachmentsJSON: String
+        do {
+            let data = try JSONEncoder().encode(item.attachments)
+            guard let value = String(data: data, encoding: .utf8) else { return false }
+            attachmentsJSON = value
+        } catch {
+            print("[ChatLocalDatabase] ⚠️ 待发消息附件编码失败 clientId=\(item.clientId)")
+            return false
+        }
+        let sql = """
+        UPDATE pending_outbound_messages
+        SET channel = ?, type = ?, text = ?, replyTo = ?, replyPreview = ?,
+            localFilePath = ?, mimeType = ?, uploadId = ?, uploadURL = ?,
+            createdAt = ?, attempts = ?, lastError = ?, requiresManualRetry = ?,
+            metaJson = ?, attachmentsJson = ?
+        WHERE clientId = ?;
+        """
+        let updated = performPreparedWrite(
+            sql: sql,
+            operation: "update pending outbound",
+            bindings: { stmt in
+                [
+                    sqlite3_bind_text(stmt, 1, item.channel, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 2, item.type, -1, self.SQLITE_TRANSIENT),
+                    sqlite3_bind_text(stmt, 3, item.text, -1, self.SQLITE_TRANSIENT),
+                    self.bindTextResult(stmt, index: 4, value: item.replyTo),
+                    self.bindTextResult(stmt, index: 5, value: item.replyPreview),
+                    self.bindTextResult(stmt, index: 6, value: item.localFilePath),
+                    self.bindTextResult(stmt, index: 7, value: item.mimeType),
+                    self.bindTextResult(stmt, index: 8, value: item.uploadId),
+                    self.bindTextResult(stmt, index: 9, value: item.uploadURL),
+                    sqlite3_bind_double(stmt, 10, item.createdAt),
+                    sqlite3_bind_int(stmt, 11, Int32(item.attempts)),
+                    self.bindTextResult(stmt, index: 12, value: item.lastError),
+                    sqlite3_bind_int(stmt, 13, item.requiresManualRetry ? 1 : 0),
+                    self.bindTextResult(stmt, index: 14, value: item.metaJSON),
+                    self.bindTextResult(stmt, index: 15, value: attachmentsJSON),
+                    sqlite3_bind_text(stmt, 16, item.clientId, -1, self.SQLITE_TRANSIENT),
+                ]
+            })
+        return updated && sqlite3_changes(db) > 0
     }
 
     func pendingOutbound(clientId: String) -> PendingOutboundMessage? {
@@ -993,8 +1079,11 @@ final class ChatLocalDatabase {
         defer { databaseLock.unlock() }
         guard ChatChannel(rawValue: channel) != nil else { return false }
         let sql = """
-        INSERT OR REPLACE INTO read_receipts (channel, username, ts, updatedAt)
-        VALUES (?, ?, ?, ?);
+        INSERT INTO read_receipts (channel, username, ts, updatedAt)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(channel, username) DO UPDATE SET
+            ts = MAX(read_receipts.ts, excluded.ts),
+            updatedAt = MAX(read_receipts.updatedAt, excluded.updatedAt);
         """
         return performPreparedWrite(
             sql: sql,
@@ -1037,8 +1126,13 @@ final class ChatLocalDatabase {
         databaseLock.lock()
         defer { databaseLock.unlock() }
         let sql = """
-        INSERT OR REPLACE INTO shared_state (key, valueJson, updatedBy, updatedAt)
-        VALUES (?, ?, ?, ?);
+        INSERT INTO shared_state (key, valueJson, updatedBy, updatedAt)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            valueJson = excluded.valueJson,
+            updatedBy = excluded.updatedBy,
+            updatedAt = excluded.updatedAt
+        WHERE excluded.updatedAt >= shared_state.updatedAt;
         """
         return performPreparedWrite(
             sql: sql,

@@ -14,6 +14,8 @@ export const errorCodes = {
   uploadNotFound: "upload_not_found",
   uploadAlreadyAttached: "upload_already_attached",
   uploadURLMismatch: "upload_url_mismatch",
+  uploadPurposeMismatch: "upload_purpose_mismatch",
+  uploadMessageTypeMismatch: "upload_message_type_mismatch",
   attachmentPhotoTypeMismatch: "attachment_photo_type_mismatch",
   attachmentVideoTypeMismatch: "attachment_video_type_mismatch",
   internal: "internal_error",

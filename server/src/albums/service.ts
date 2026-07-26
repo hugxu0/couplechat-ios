@@ -429,6 +429,9 @@ export async function addUploadedMedia(
       await db.run("UPDATE album_items SET post_id = COALESCE(post_id, ?) WHERE id = ?", [postId, item.id]);
     }
     const added = [{ itemId: item.id, postId, asset: mapAsset(asset, user.username) }];
+    // 重复添加同一个 upload 时不加版本号。必须把权威版本回给客户端，否则它按
+    // "added 非空就 +1" 自增，之后每次编辑都会误报 409。
+    let version = album.version;
     if (inserted) {
       const cover = album.cover_asset_id ?? asset.id;
       await db.run(
@@ -436,6 +439,7 @@ export async function addUploadedMedia(
         [cover, now, albumId],
       );
       const updated = await ownedAlbum(db, identity.coupleId, albumId);
+      version = updated?.version ?? album.version + 1;
       await appendSyncEvent(db, {
         coupleId: identity.coupleId,
         entityType: "album",
@@ -447,7 +451,7 @@ export async function addUploadedMedia(
         createdAt: now,
       });
     }
-    return { uploadMissing: false as const, noMedia: false as const, added };
+    return { uploadMissing: false as const, noMedia: false as const, added, version };
   });
 }
 

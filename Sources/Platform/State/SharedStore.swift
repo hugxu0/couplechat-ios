@@ -12,6 +12,7 @@ final class SharedStore: ObservableObject {
     private let persistence: any ChatPersistenceProtocol
     private let defaults: UserDefaults
     private var activeUsername: String?
+    private var persistenceScope: ChatPersistenceScope?
     private var pendingWrites: [String: [String: Any]] = [:]
     private var pendingWriteTokens: [String: UUID] = [:]
 
@@ -29,9 +30,14 @@ final class SharedStore: ObservableObject {
 
     // MARK: - 共享状态读写
 
-    func activate(username: String) {
-        guard activeUsername != username else { return }
+    func activate(username: String, persistenceScope: ChatPersistenceScope?) {
+        if activeUsername == username {
+            self.persistenceScope = persistenceScope
+            return
+        }
         activeUsername = username
+        self.persistenceScope = persistenceScope
+        sharedState = [:]
         pendingWriteTokens.removeAll()
         pendingWrites = loadPendingWrites(username: username)
         overlayPendingWrites()
@@ -39,31 +45,29 @@ final class SharedStore: ObservableObject {
 
     func deactivate() {
         activeUsername = nil
+        persistenceScope = nil
         pendingWrites.removeAll()
         pendingWriteTokens.removeAll()
+        sharedState = [:]
     }
 
     func setShared(_ key: String, value: [String: Any], session: Session?) {
-        guard let session else { return }
-        if activeUsername != session.username { activate(username: session.username) }
+        guard let session,
+              activeUsername == session.username,
+              let scope = persistenceScope,
+              scope.username == session.username else { return }
         sharedState[key] = ["key": key, "value": value]
         pendingWrites[key] = value
         persistPendingWrites()
-        if let valueJson = jsonObjectString(value) {
-            Task {
-                await persistence.saveSharedState(
-                    key: key, valueJson: valueJson,
-                    updatedBy: session.username,
-                    updatedAt: Date().timeIntervalSince1970 * 1000)
-            }
-        }
-        emitPendingWrite(key: key)
+        emitPendingWrite(key: key, expectedScope: scope)
     }
 
     /// 断线期间的最后一次本地意图会持久化；重连后逐项带 ACK 重发。
     func flushPendingWrites() {
+        guard let scope = persistenceScope,
+              scope.username == activeUsername else { return }
         for key in pendingWrites.keys.sorted() {
-            emitPendingWrite(key: key)
+            emitPendingWrite(key: key, expectedScope: scope)
         }
     }
 
@@ -116,6 +120,9 @@ final class SharedStore: ObservableObject {
     // MARK: - 从 Socket 事件更新
 
     func applySharedInit(_ state: [String: Any]) {
+        guard let username = activeUsername,
+              let scope = persistenceScope,
+              scope.username == username else { return }
         var sanitizedState: [String: Any] = [:]
         var persisted: [(String, String, String, Double)] = []
         for (key, val) in state {
@@ -132,20 +139,39 @@ final class SharedStore: ObservableObject {
                 print("[SharedStore] 忽略格式不合法的共享状态: \(key)")
             }
         }
-        sharedState = sanitizedState
+        var mergedState = sanitizedState
+        for (key, current) in sharedState {
+            guard let currentEntry = current as? [String: Any] else { continue }
+            let currentUpdatedAt = (currentEntry["updatedAt"] as? NSNumber)?.doubleValue ?? 0
+            let snapshotUpdatedAt = ((sanitizedState[key] as? [String: Any])?["updatedAt"]
+                as? NSNumber)?.doubleValue ?? 0
+            if sanitizedState[key] == nil || currentUpdatedAt > snapshotUpdatedAt {
+                mergedState[key] = currentEntry
+            }
+        }
+        sharedState = mergedState
         overlayPendingWrites()
         Task {
             for row in persisted {
-                await persistence.saveSharedState(
-                    key: row.0, valueJson: row.1, updatedBy: row.2, updatedAt: row.3)
+                _ = await persistence.saveSharedState(
+                    key: row.0,
+                    valueJson: row.1,
+                    updatedBy: row.2,
+                    updatedAt: row.3,
+                    scope: scope)
             }
         }
     }
 
     func applySharedUpdate(_ update: [String: Any]) {
-        guard let key = update["key"] as? String else { return }
+        guard let username = activeUsername,
+              let scope = persistenceScope,
+              scope.username == username,
+              let key = update["key"] as? String else { return }
         if let value = update["value"],
            let valueJson = jsonObjectString(value) {
+            let updatedAt = (update["updatedAt"] as? NSNumber)?.doubleValue
+                ?? Date().timeIntervalSince1970 * 1000
             if let pending = pendingWrites[key] {
                 let updatedBy = update["updatedBy"] as? String
                 if updatedBy == activeUsername, Self.jsonObjectsEqual(pending, value) {
@@ -157,12 +183,18 @@ final class SharedStore: ObservableObject {
                     return
                 }
             }
+            let currentUpdatedAt = ((sharedState[key] as? [String: Any])?["updatedAt"]
+                as? NSNumber)?.doubleValue ?? 0
+            guard updatedAt >= currentUpdatedAt else { return }
             sharedState[key] = update
             let updatedBy = update["updatedBy"] as? String ?? ""
-            let updatedAt = (update["updatedAt"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
             Task {
-                await persistence.saveSharedState(
-                    key: key, valueJson: valueJson, updatedBy: updatedBy, updatedAt: updatedAt)
+                _ = await persistence.saveSharedState(
+                    key: key,
+                    valueJson: valueJson,
+                    updatedBy: updatedBy,
+                    updatedAt: updatedAt,
+                    scope: scope)
             }
         } else {
             print("[SharedStore] 忽略格式不合法的共享状态更新: \(key)")
@@ -170,7 +202,11 @@ final class SharedStore: ObservableObject {
     }
 
     func restoreCachedSharedState() async {
-        sharedState = await persistence.loadSharedState()
+        guard let scope = persistenceScope,
+              let restored = await persistence.loadSharedState(scope: scope),
+              persistenceScope == scope,
+              activeUsername == scope.username else { return }
+        sharedState = restored
         overlayPendingWrites()
     }
 
@@ -222,10 +258,15 @@ final class SharedStore: ObservableObject {
 
     // MARK: - 私有辅助
 
-    private func emitPendingWrite(key: String) {
+    private func emitPendingWrite(
+        key: String,
+        expectedScope: ChatPersistenceScope
+    ) {
         guard let value = pendingWrites[key],
               let socket = socketProvider?.socket,
-              socketProvider?.isConnected == true else { return }
+              socketProvider?.isConnected == true,
+              persistenceScope == expectedScope,
+              activeUsername == expectedScope.username else { return }
         let token = UUID()
         pendingWriteTokens[key] = token
         socket.emitWithAck(SocketEvent.sharedSet.rawValue, ["key": key, "value": value])
@@ -233,6 +274,9 @@ final class SharedStore: ObservableObject {
                 Task { @MainActor in
                     guard let self,
                           self.pendingWriteTokens[key] == token,
+                          self.persistenceScope == expectedScope,
+                          self.activeUsername == expectedScope.username,
+                          self.socketProvider?.socket === socket,
                           let ack = response.first as? [String: Any],
                           ack["ok"] as? Bool == true else { return }
                     self.pendingWriteTokens.removeValue(forKey: key)

@@ -41,25 +41,33 @@ interface ChatArgs {
   system: string;
   user: string;
   gen: GenProfile;
+  signal?: AbortSignal;
 }
 
 function logScope(args: ChatArgs): string {
   return args.scope?.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 60) || args.profile;
 }
 
-async function logHttpFailure(scope: string, res: Response): Promise<void> {
-  let detail = "";
-  try {
-    detail = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 400);
-  } catch {
-    // 读取错误响应失败时，状态码本身仍足够用于定位。
-  }
-  const retryAfter = res.headers.get("retry-after");
-  console.warn(
-    `[ai] ${scope} HTTP ${res.status}` +
-      (retryAfter ? ` retry-after=${retryAfter}` : "") +
-      (detail ? ` body=${detail}` : ""),
+function safeHeaderValue(value: string | null): string {
+  return value?.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 160) ?? "";
+}
+
+export function formatProviderHttpFailure(scope: string, res: Response): string {
+  const requestId = safeHeaderValue(
+    res.headers.get("x-request-id")
+      ?? res.headers.get("request-id")
+      ?? res.headers.get("openai-request-id"),
   );
+  const retryAfter = safeHeaderValue(res.headers.get("retry-after"));
+  return `[ai] ${scope} HTTP ${res.status}`
+    + (requestId ? ` request-id=${requestId}` : "")
+    + (retryAfter ? ` retry-after=${retryAfter}` : "");
+}
+
+async function logHttpFailure(scope: string, res: Response): Promise<void> {
+  const line = formatProviderHttpFailure(scope, res);
+  await res.body?.cancel().catch(() => undefined);
+  console.warn(line);
 }
 
 async function chatOpenAi(p: AiProvider, args: ChatArgs, signal: AbortSignal): Promise<string | null> {
@@ -118,6 +126,9 @@ export async function chat(args: ChatArgs): Promise<string | null> {
   const provider = providerFor(args.profile);
   if (!provider) return null;
   const controller = new AbortController();
+  const cancelFromCaller = () => controller.abort(args.signal?.reason);
+  if (args.signal?.aborted) cancelFromCaller();
+  else args.signal?.addEventListener("abort", cancelFromCaller, { once: true });
   const timer = setTimeout(() => controller.abort(), args.gen.timeoutMs ?? 30_000);
   try {
     if (provider.apiMode === "responses") {
@@ -125,11 +136,17 @@ export async function chat(args: ChatArgs): Promise<string | null> {
     }
     return await chatOpenAi(provider, args, controller.signal);
   } catch (error) {
+    if (args.signal?.aborted) {
+      throw args.signal.reason instanceof Error
+        ? args.signal.reason
+        : new Error("ai_request_cancelled");
+    }
     const name = error instanceof Error ? error.name : "";
     console.warn(`[ai] ${logScope(args)} ${name === "AbortError" ? "超时" : `失败: ${error instanceof Error ? error.message : error}`}`);
     return null;
   } finally {
     clearTimeout(timer);
+    args.signal?.removeEventListener("abort", cancelFromCaller);
   }
 }
 

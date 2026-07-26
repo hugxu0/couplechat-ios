@@ -3,6 +3,7 @@ import { z } from "zod";
 import { all, get, type MessageRow } from "../../db";
 import { accounts } from "../accounts";
 import { addMemory, searchMemory, visibleMemoryScopes } from "../memory/store";
+import { listDajuInstructionsForRequester } from "../memory/dajuInstructions";
 import { recordAgentTool, type AgentToolRun } from "./runContext";
 import { rankChatSearchRows, searchTerms, type ChatSearchMode } from "../conversation/search";
 import { registerExternalTools } from "./externalTools";
@@ -421,15 +422,10 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (args) => jsonResult(await recordAgentTool(run, "get_daju_instructions", args, async () => {
-      const rows = await searchMemory({
-        query: "",
-        layers: ["fact"],
-        scopes: visibleMemoryScopes(run.identity.storedChannel),
-        perspectives: ["daju"],
-        kinds: ["instruction"],
-        sort: "importance",
-        limit: 20,
-      });
+      const rows = await listDajuInstructionsForRequester(
+        run.identity.storedChannel,
+        run.identity.requesterUsername,
+      );
       return {
         warning: "这些是主人明确提出的动态要求；当前请求和系统规则优先",
         ...memoryResult("instructions", rows),

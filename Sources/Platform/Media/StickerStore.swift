@@ -122,10 +122,15 @@ final class StickerStore: ObservableObject {
     func add(url: String, groupId: String = StickerStore.defaultGroupId) {
         let url = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !url.isEmpty else { return }
+        let identity = Self.itemIdentity(for: url)
         let revision = nextRevision()
-        let clearedTombstone = itemTombstones.removeValue(forKey: url) != nil
+        let clearedTombstone = itemTombstones.removeValue(forKey: identity) != nil
 
-        if let index = stickers.firstIndex(where: { $0.url == url }) {
+        if let index = stickers.firstIndex(where: {
+            Self.itemIdentity(for: $0.url) == identity
+        }) {
+            // 同一上传资源的新签名 URL 应刷新展示地址，而不是生成第二个表情。
+            stickers[index].url = url
             if isValidCustomGroup(groupId), stickers[index].groupId != groupId {
                 stickers[index].groupId = groupId
             }
@@ -148,9 +153,10 @@ final class StickerStore: ObservableObject {
 
     func delete(_ sticker: Sticker) {
         guard stickers.contains(where: { $0.id == sticker.id }) else { return }
+        let identity = Self.itemIdentity(for: sticker.url)
         let revision = nextRevision()
-        stickers.removeAll { $0.url == sticker.url }
-        itemTombstones[sticker.url] = max(itemTombstones[sticker.url] ?? 0, revision)
+        stickers.removeAll { Self.itemIdentity(for: $0.url) == identity }
+        itemTombstones[identity] = max(itemTombstones[identity] ?? 0, revision)
         saveAndSync(stickersChanged: true, tombstonesChanged: true)
     }
 
@@ -361,7 +367,7 @@ final class StickerStore: ObservableObject {
 
     private var syncPayload: [String: Any] {
         [
-            "version": 3,
+            "version": 4,
             "items": stickers.map { sticker -> [String: Any] in
                 [
                     "id": sticker.id,
@@ -420,7 +426,13 @@ final class StickerStore: ObservableObject {
         itemTombstones: [String: Double],
         groupTombstones: [String: Double]
     ) -> ResolvedStickerLibrary {
-        var resolvedItemTombstones = itemTombstones
+        var resolvedItemTombstones: [String: Double] = [:]
+        for (rawIdentity, revision) in itemTombstones {
+            let identity = itemIdentity(for: rawIdentity)
+            resolvedItemTombstones[identity] = max(
+                resolvedItemTombstones[identity] ?? 0,
+                revision)
+        }
         var resolvedGroupTombstones = groupTombstones
         resolvedGroupTombstones.removeValue(forKey: Self.defaultGroupId)
 
@@ -437,20 +449,22 @@ final class StickerStore: ObservableObject {
         }
         let resolvedGroups = normalizedGroups(Array(groupsByID.values))
 
-        var stickersByURL = Dictionary(
-            uniqueKeysWithValues: mergedStickers(stickers).map { ($0.url, $0) })
-        for (url, tombstoneRevision) in Array(resolvedItemTombstones) {
-            guard let sticker = stickersByURL[url] else { continue }
+        var stickersByIdentity = Dictionary(
+            uniqueKeysWithValues: mergedStickers(stickers).map {
+                (itemIdentity(for: $0.url), $0)
+            })
+        for (identity, tombstoneRevision) in Array(resolvedItemTombstones) {
+            guard let sticker = stickersByIdentity[identity] else { continue }
             if tombstoneRevision >= sticker.revision {
-                stickersByURL.removeValue(forKey: url)
+                stickersByIdentity.removeValue(forKey: identity)
             } else {
                 // re-add/更新比旧删除新，旧墓碑不应继续占用同步载荷。
-                resolvedItemTombstones.removeValue(forKey: url)
+                resolvedItemTombstones.removeValue(forKey: identity)
             }
         }
 
         let validGroupIDs = Set(resolvedGroups.map(\.id))
-        var resolvedStickers = Array(stickersByURL.values)
+        var resolvedStickers = Array(stickersByIdentity.values)
         for index in resolvedStickers.indices {
             let groupID = resolvedStickers[index].groupId
             guard groupID != Self.defaultGroupId, !validGroupIDs.contains(groupID) else { continue }
@@ -472,17 +486,27 @@ final class StickerStore: ObservableObject {
     }
 
     private static func mergedStickers(_ items: [Sticker]) -> [Sticker] {
-        var byURL: [String: Sticker] = [:]
+        var byIdentity: [String: Sticker] = [:]
         for rawSticker in items {
             var sticker = rawSticker
             sticker.updatedAt = sticker.revision
-            guard let current = byURL[sticker.url] else {
-                byURL[sticker.url] = sticker
+            let identity = itemIdentity(for: sticker.url)
+            guard let current = byIdentity[identity] else {
+                byIdentity[identity] = sticker
                 continue
             }
-            if prefers(sticker, over: current) { byURL[sticker.url] = sticker }
+            if prefers(sticker, over: current) {
+                byIdentity[identity] = sticker
+            } else if sticker.id == current.id,
+                      sticker.revision == current.revision,
+                      sticker.groupId == current.groupId,
+                      sticker.addedAt == current.addedAt {
+                // 合并顺序是远端在前、本地在后；内容修订相同但签名不同，保留
+                // 远端刚刷新的 URL。
+                continue
+            }
         }
-        return Array(byURL.values)
+        return Array(byIdentity.values)
     }
 
     private static func mergedGroups(_ items: [StickerGroup]) -> [StickerGroup] {
@@ -543,9 +567,21 @@ final class StickerStore: ObservableObject {
             guard let identifier = value[identifierKey] as? String,
                   !identifier.isEmpty,
                   let revision = (value["deletedAt"] as? NSNumber)?.doubleValue else { continue }
-            result[identifier] = max(result[identifier] ?? 0, revision)
+            let normalizedIdentifier = identifierKey == "url"
+                ? itemIdentity(for: identifier)
+                : identifier
+            result[normalizedIdentifier] = max(
+                result[normalizedIdentifier] ?? 0,
+                revision)
         }
         return result
+    }
+
+    /// 签名授权参数会轮换，不能参与表情库的去重、合并或删除身份。
+    private static func itemIdentity(for rawURL: String) -> String {
+        let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let resolved = ServerConfig.resolveMediaURL(trimmed) else { return trimmed }
+        return MediaCacheIdentity.value(for: resolved)
     }
 
     private static func sticker(from value: [String: Any]) -> Sticker? {

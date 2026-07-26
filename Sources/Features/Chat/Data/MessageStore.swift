@@ -22,6 +22,13 @@ private final class MessageAckContinuation: @unchecked Sendable {
     }
 }
 
+private struct MessageSessionFence: Equatable {
+    let token: String
+    let username: String
+    let generation: UInt64
+    let persistenceScope: ChatPersistenceScope?
+}
+
 enum OutboxRetryResult: Equatable {
     case started
     case missingLocalFile
@@ -97,6 +104,7 @@ final class MessageStore: ObservableObject {
     private let mediaUploadService: MediaUploadService
     private let outboxProcessor: OutboxProcessor
     private let readReceiptCoordinator = ReadReceiptCoordinator()
+    private var activeSessionFence: MessageSessionFence?
 
     private static let mediaTypes = ["image", "video"]
     private static let managedAttachmentTypes = ["image", "video", "file"]
@@ -122,6 +130,58 @@ final class MessageStore: ObservableObject {
         outboxProcessor = OutboxProcessor(persistence: persistence)
     }
 
+    func activateSession(
+        _ session: Session,
+        generation: UInt64,
+        persistenceScope: ChatPersistenceScope?
+    ) {
+        activeSessionFence = MessageSessionFence(
+            token: session.token,
+            username: session.username,
+            generation: generation,
+            persistenceScope: persistenceScope)
+    }
+
+    func deactivateSession() {
+        activeSessionFence = nil
+        readReceiptCoordinator.reset()
+        confirmationRequestsInFlight.removeAll()
+        optimisticRecalls.removeAll()
+        recallDrafts.removeAll()
+    }
+
+    func latestConfirmedCursors() -> [String: MessageSearchCursor] {
+        var cursors: [String: MessageSearchCursor] = [:]
+        for channel in ChatChannel.allCases {
+            guard let latest = messages(for: channel)
+                .filter({ !$0.pending && !$0.failed })
+                .max(by: { ChatMessageCollection.isOrderedBefore($0, $1) })
+            else { continue }
+            cursors[channel.rawValue] = MessageSearchCursor(ts: latest.ts, id: latest.id)
+        }
+        return cursors
+    }
+
+    private func sessionFence(for session: Session) -> MessageSessionFence? {
+        guard let fence = activeSessionFence,
+              fence.token == session.token,
+              fence.username == session.username else { return nil }
+        return fence
+    }
+
+    private func isCurrent(_ fence: MessageSessionFence) -> Bool {
+        activeSessionFence == fence
+    }
+
+    private func currentPersistenceContext() -> (
+        fence: MessageSessionFence,
+        scope: ChatPersistenceScope
+    )? {
+        guard let fence = activeSessionFence,
+              let scope = fence.persistenceScope else { return nil }
+        return (fence, scope)
+    }
+
     // MARK: - 消息读写
 
     func messages(for channel: ChatChannel) -> [ChatMessage] {
@@ -137,19 +197,34 @@ final class MessageStore: ObservableObject {
             print("[MessageStore] ⚠️ 拒绝路由到不匹配频道的消息 id=\(msg.id)")
             return
         }
+        guard let fence = activeSessionFence else { return }
+        let latestConfirmed = messages(for: channel)
+            .filter { !$0.pending && !$0.failed }
+            .max(by: { ChatMessageCollection.isOrderedBefore($0, $1) })
         let shouldUpdateLatest = !msg.pending && !msg.failed
-            && messages(for: channel).last.map({ $0.ts <= msg.ts }) != false
-        Task {
-            guard await persistence.insertMessage(msg) else {
-                print("[MessageStore] ⚠️ 消息写入本地数据库失败 id=\(msg.id)")
-                return
+            && latestConfirmed.map {
+                $0.id == msg.id || ChatMessageCollection.isOrderedBefore($0, msg)
+            } != false
+        if let scope = fence.persistenceScope {
+            Task {
+                guard self.isCurrent(fence),
+                      await persistence.insertMessage(msg, scope: scope),
+                      self.isCurrent(fence) else {
+                    print("[MessageStore] ⚠️ 消息写入本地数据库失败 id=\(msg.id)")
+                    return
+                }
+                if shouldUpdateLatest {
+                    latestPersistedMessageIDs[channel.rawValue] = msg.id
+                }
+                if !msg.pending, !msg.failed, let clientId = msg.clientId {
+                    await completePendingOutbound(
+                        clientId: clientId,
+                        scope: scope,
+                        fence: fence)
+                }
             }
-            if shouldUpdateLatest {
-                latestPersistedMessageIDs[channel.rawValue] = msg.id
-            }
-            if !msg.pending, !msg.failed, let clientId = msg.clientId {
-                await completePendingOutbound(clientId: clientId)
-            }
+        } else {
+            print("[MessageStore] ⚠️ 本地数据库不可用，仅在当前会话展示消息 id=\(msg.id)")
         }
         updateMessages(channel) { list in
             ChatMessageCollection.upsert(msg, into: &list)
@@ -163,16 +238,22 @@ final class MessageStore: ObservableObject {
             print("[MessageStore] ⚠️ 拒绝包含频道不匹配消息的批次 channel=\(channel.rawValue)")
             return false
         }
-        let persisted = await persistence.insertMessages(msgs)
-        guard persisted == msgs.count else {
+        guard let fence = activeSessionFence,
+              let scope = fence.persistenceScope else { return false }
+        let persisted = await persistence.insertMessages(msgs, scope: scope)
+        guard persisted == msgs.count, isCurrent(fence) else {
             print("[MessageStore] ⚠️ 批量消息写入失败 channel=\(channel.rawValue)")
             return false
         }
         for msg in msgs {
             if !msg.pending, !msg.failed, let clientId = msg.clientId {
-                await completePendingOutbound(clientId: clientId)
+                await completePendingOutbound(
+                    clientId: clientId,
+                    scope: scope,
+                    fence: fence)
             }
         }
+        guard isCurrent(fence) else { return false }
         updateMessages(channel) { list in
             ChatMessageCollection.upsert(msgs, into: &list)
         }
@@ -182,105 +263,243 @@ final class MessageStore: ObservableObject {
     // MARK: - 本地缓存
 
     func restoreLocalCache(for session: Session) async {
+        guard let fence = sessionFence(for: session),
+              let scope = fence.persistenceScope else { return }
+        guard let couple = await persistence.fetchLatestMessages(
+            channel: ChatChannel.couple.rawValue,
+            limit: 50,
+            scope: scope
+        ), isCurrent(fence) else { return }
+        guard let ai = await persistence.fetchLatestMessages(
+            channel: ChatChannel.ai.rawValue,
+            limit: 50,
+            scope: scope
+        ), isCurrent(fence) else { return }
+        guard let coupleRead = await persistence.loadReadReceipts(
+            channel: ChatChannel.couple.rawValue,
+            scope: scope
+        ), isCurrent(fence) else { return }
+        guard let aiRead = await persistence.loadReadReceipts(
+            channel: ChatChannel.ai.rawValue,
+            scope: scope
+        ), isCurrent(fence) else { return }
         let cachedMessages = [
-            ChatChannel.couple.rawValue: await persistence.fetchLatestMessages(
-                channel: ChatChannel.couple.rawValue, limit: 50),
-            ChatChannel.ai.rawValue: await persistence.fetchLatestMessages(
-                channel: ChatChannel.ai.rawValue, limit: 50),
+            ChatChannel.couple.rawValue: couple,
+            ChatChannel.ai.rawValue: ai,
         ]
-        messagesByChannel = cachedMessages
-        readStates = [
-            ChatChannel.couple.rawValue: await persistence.loadReadReceipts(
-                channel: ChatChannel.couple.rawValue),
-            ChatChannel.ai.rawValue: await persistence.loadReadReceipts(
-                channel: ChatChannel.ai.rawValue),
-        ]
-        latestPersistedMessageIDs = cachedMessages.compactMapValues { $0.last?.id }
-        await reconcilePendingOutbounds(with: cachedMessages.values.flatMap { $0 })
-        // 正式消息和待发消息分表存储；重启后把 outbox 重新投影成聊天气泡。
-        for item in await outboxProcessor.allPending() {
+        var restored = cachedMessages
+        await reconcilePendingOutbounds(
+            with: cachedMessages.values.flatMap { $0 },
+            scope: scope,
+            fence: fence)
+        guard isCurrent(fence),
+              let pending = await outboxProcessor.allPending(scope: scope),
+              isCurrent(fence) else { return }
+        for item in pending {
             guard let channel = ChatChannel(rawValue: item.channel) else {
                 print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
                 continue
             }
-            let optimistic = item.optimisticMessage(session: session, waitingToSend: true)
-            updateMessages(channel) { list in
-                ChatMessageCollection.upsert(optimistic, into: &list)
-            }
-        }
-    }
-
-    func applyBootstrap(_ snapshot: AppBootstrapSnapshot, session: Session) async {
-        let remote = snapshot.messagesByChannel
-        let receipts = snapshot.readStates
-        var next = messagesByChannel
-        var persistedLatestIDs = latestPersistedMessageIDs
-        var persistedRemoteMessages: [ChatMessage] = []
-        for channel in ChatChannel.allCases {
-            let rawChannel = channel.rawValue
-            let messages = remote[rawChannel] ?? []
-            guard !messages.isEmpty else {
-                next[rawChannel] = []
-                persistedLatestIDs.removeValue(forKey: rawChannel)
-                continue
-            }
-            let persisted = await persistence.insertMessages(messages)
-            if persisted == messages.count {
-                persistedLatestIDs[rawChannel] = messages.last?.id
-                next[rawChannel] = messages
-                persistedRemoteMessages.append(contentsOf: messages)
-            } else {
-                print("[MessageStore] ⚠️ bootstrap 消息写入失败 channel=\(rawChannel)")
-            }
-        }
-        let now = Date().timeIntervalSince1970 * 1000
-        for (channel, state) in receipts {
-            for (username, ts) in state {
-                await persistence.saveReadReceipt(
-                    channel: channel, username: username, ts: ts, updatedAt: now)
-            }
-        }
-
-        await reconcilePendingOutbounds(with: persistedRemoteMessages)
-        for item in await outboxProcessor.allPending() {
-            guard let channel = ChatChannel(rawValue: item.channel) else {
-                print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
-                continue
-            }
-            var list = next[channel.rawValue] ?? []
+            var list = restored[channel.rawValue] ?? []
             ChatMessageCollection.upsert(
                 item.optimisticMessage(session: session, waitingToSend: true),
                 into: &list)
+            restored[channel.rawValue] = list
+        }
+        guard isCurrent(fence) else { return }
+        messagesByChannel = restored
+        readStates = [
+            ChatChannel.couple.rawValue: coupleRead,
+            ChatChannel.ai.rawValue: aiRead,
+        ]
+        latestPersistedMessageIDs = cachedMessages.compactMapValues { $0.last?.id }
+    }
+
+    func applyBootstrap(
+        _ snapshot: AppBootstrapSnapshot,
+        session: Session,
+        recoveryCursors: [String: MessageSearchCursor] = [:]
+    ) async {
+        guard let fence = sessionFence(for: session) else { return }
+        let scope = fence.persistenceScope
+        let remote = snapshot.messagesByChannel
+        let receipts = snapshot.readStates
+        var persistedRemoteMessages: [ChatMessage] = []
+        var remoteLatestPersistedIDs: [String: String] = [:]
+        for channel in ChatChannel.allCases {
+            let rawChannel = channel.rawValue
+            let messages = remote[rawChannel] ?? []
+            guard !messages.isEmpty else { continue }
+            if let scope {
+                let persisted = await persistence.insertMessages(messages, scope: scope)
+                guard isCurrent(fence) else { return }
+                guard persisted == messages.count else {
+                    print("[MessageStore] ⚠️ bootstrap 消息写入失败 channel=\(rawChannel)")
+                    continue
+                }
+                persistedRemoteMessages.append(contentsOf: messages)
+                remoteLatestPersistedIDs[rawChannel] = messages.last?.id
+            }
+        }
+        if let scope {
+            let now = Date().timeIntervalSince1970 * 1000
+            for (channel, state) in receipts {
+                for (username, ts) in state {
+                    _ = await persistence.saveReadReceipt(
+                        channel: channel,
+                        username: username,
+                        ts: ts,
+                        updatedAt: now,
+                        scope: scope)
+                    guard isCurrent(fence) else { return }
+                }
+            }
+            await reconcilePendingOutbounds(
+                with: persistedRemoteMessages,
+                scope: scope,
+                fence: fence)
+            guard isCurrent(fence) else { return }
+        }
+
+        var next = messagesByChannel
+        for channel in ChatChannel.allCases {
+            var list = next[channel.rawValue] ?? []
+            ChatMessageCollection.upsert(remote[channel.rawValue] ?? [], into: &list)
             next[channel.rawValue] = list
         }
+        if let scope {
+            guard let pending = await outboxProcessor.allPending(scope: scope),
+                  isCurrent(fence) else { return }
+            for item in pending {
+                guard let channel = ChatChannel(rawValue: item.channel) else {
+                    print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
+                    continue
+                }
+                var list = next[channel.rawValue] ?? []
+                ChatMessageCollection.upsert(
+                    item.optimisticMessage(session: session, waitingToSend: true),
+                    into: &list)
+                next[channel.rawValue] = list
+            }
+        }
+
+        var mergedReadStates = readStates
+        for (channel, state) in receipts {
+            var merged = mergedReadStates[channel] ?? [:]
+            for (username, ts) in state {
+                merged[username] = max(merged[username] ?? 0, ts)
+            }
+            mergedReadStates[channel] = merged
+        }
+        var persistedLatestIDs = latestPersistedMessageIDs
+        for channel in ChatChannel.allCases {
+            let rawChannel = channel.rawValue
+            let candidates = [
+                persistedLatestIDs[rawChannel],
+                remoteLatestPersistedIDs[rawChannel],
+            ].compactMap { $0 }
+            let list = next[rawChannel] ?? []
+            persistedLatestIDs[rawChannel] = list
+                .filter { candidates.contains($0.id) }
+                .max(by: { ChatMessageCollection.isOrderedBefore($0, $1) })?
+                .id
+        }
+        guard isCurrent(fence) else { return }
         messagesByChannel = next
-        readStates = receipts
+        readStates = mergedReadStates
         latestPersistedMessageIDs = persistedLatestIDs
+
+        await recoverBootstrapGaps(
+            after: recoveryCursors,
+            session: session,
+            fence: fence)
+    }
+
+    private func recoverBootstrapGaps(
+        after recoveryCursors: [String: MessageSearchCursor],
+        session: Session,
+        fence: MessageSessionFence
+    ) async {
+        guard let scope = fence.persistenceScope else { return }
+        let pageLimit = 300
+        for channel in ChatChannel.allCases {
+            guard var cursor = recoveryCursors[channel.rawValue] else { continue }
+            while !Task.isCancelled, isCurrent(fence) {
+                let page = await remoteDataSource.fetchNewerPage(
+                    channel: channel,
+                    since: cursor.ts,
+                    sinceId: cursor.id,
+                    limit: pageLimit,
+                    session: session)
+                guard isCurrent(fence), page.error == nil else { break }
+                guard !page.messages.isEmpty else { break }
+                guard await persistence.insertMessages(
+                    page.messages,
+                    scope: scope
+                ) == page.messages.count, isCurrent(fence) else {
+                    print("[MessageStore] ⚠️ bootstrap 增量补洞写入失败 channel=\(channel.rawValue)")
+                    break
+                }
+                for message in page.messages {
+                    if let clientId = message.clientId {
+                        await completePendingOutbound(
+                            clientId: clientId,
+                            scope: scope,
+                            fence: fence)
+                    }
+                }
+                guard isCurrent(fence),
+                      let latest = page.messages.max(
+                        by: { ChatMessageCollection.isOrderedBefore($0, $1) }),
+                      latest.ts > cursor.ts || (latest.ts == cursor.ts && latest.id > cursor.id)
+                else { break }
+                updateMessages(channel) { current in
+                    ChatMessageCollection.upsert(page.messages, into: &current)
+                }
+                latestPersistedMessageIDs[channel.rawValue] = latest.id
+                cursor = MessageSearchCursor(ts: latest.ts, id: latest.id)
+                if page.messages.count < pageLimit { break }
+            }
+        }
     }
 
     // MARK: - 搜索跳转
 
     @discardableResult
     func ensureMessageLoaded(_ target: ChatMessage, channel: ChatChannel) async -> Bool {
+        guard let context = currentPersistenceContext(),
+              var window = await persistence.fetchMessagesAround(
+                channel: channel.rawValue,
+                centerTimestamp: target.ts,
+                beforeLimit: 40,
+                afterLimit: 60,
+                scope: context.scope
+              ),
+              isCurrent(context.fence) else { return false }
         // 即使命中消息已经在内存，也必须重建它附近的连续窗口。此前的直接返回
         // 会保留旧版搜索产生的「历史片段 + 最新片段」断层。
-        var window = await persistence.fetchMessagesAround(
-            channel: channel.rawValue, centerTimestamp: target.ts, beforeLimit: 40, afterLimit: 60)
         if !window.contains(where: { $0.id == target.id }), socketProvider?.isConnected == true {
             let remote = await fetchRemoteMessages(
                 MessagePageRequest(channel: channel, around: target.ts, limit: 100),
                 context: "ensureMessageAround:\(channel.rawValue)")
+            guard isCurrent(context.fence) else { return false }
             if !remote.isEmpty {
                 let candidates = remote + [target]
-                guard await persistence.insertMessages(candidates) == candidates.count else {
+                guard await persistence.insertMessages(
+                    candidates,
+                    scope: context.scope
+                ) == candidates.count, isCurrent(context.fence) else {
                     print("[MessageStore] ⚠️ 搜索窗口写入本地数据库失败")
                     return false
                 }
-                window = await persistence.fetchMessagesAround(
+                guard let refreshed = await persistence.fetchMessagesAround(
                     channel: channel.rawValue,
                     centerTimestamp: target.ts,
                     beforeLimit: 40,
-                    afterLimit: 60)
+                    afterLimit: 60,
+                    scope: context.scope
+                ), isCurrent(context.fence) else { return false }
+                window = refreshed
             }
         }
         if !window.contains(where: { $0.id == target.id }) {
@@ -297,12 +516,18 @@ final class MessageStore: ObservableObject {
         if let loaded = messages(for: channel).first(where: { $0.id == id }) {
             return loaded
         }
-        let local = await persistence.fetchMessage(id: id, channel: channel.rawValue)
+        guard let context = currentPersistenceContext() else { return nil }
+        let local = await persistence.fetchMessage(
+            id: id,
+            channel: channel.rawValue,
+            scope: context.scope)
+        guard isCurrent(context.fence) else { return nil }
         let target: ChatMessage?
         if let local {
             target = local
         } else if let session = socketProvider?.currentSession {
             target = await remoteDataSource.fetchMessage(id: id, channel: channel, session: session)
+            guard isCurrent(context.fence) else { return nil }
         } else {
             target = nil
         }
@@ -313,9 +538,15 @@ final class MessageStore: ObservableObject {
 
     @discardableResult
     func ensureDateLoaded(_ date: Date, channel: ChatChannel) async -> ChatMessage? {
+        guard let context = currentPersistenceContext() else { return nil }
         let range = ChatMessageWindowing.dayRange(for: date)
-        var dayMessages = await persistence.fetchMessages(
-            channel: channel.rawValue, fromInclusive: range.start, toExclusive: range.end, limit: 80)
+        guard var dayMessages = await persistence.fetchMessages(
+            channel: channel.rawValue,
+            fromInclusive: range.start,
+            toExclusive: range.end,
+            limit: 80,
+            scope: context.scope
+        ), isCurrent(context.fence) else { return nil }
         if dayMessages.isEmpty {
             let incoming = await fetchRemoteMessages(
                 MessagePageRequest(channel: channel, after: range.start, before: range.end, limit: 80),
@@ -325,9 +556,14 @@ final class MessageStore: ObservableObject {
             dayMessages = incoming
         }
         guard let target = dayMessages.first else { return nil }
-        let context = await persistence.fetchMessagesAround(
-            channel: channel.rawValue, centerTimestamp: target.ts, beforeLimit: 20, afterLimit: 44)
-        if !context.isEmpty { dayMessages = context }
+        guard let nearby = await persistence.fetchMessagesAround(
+            channel: channel.rawValue,
+            centerTimestamp: target.ts,
+            beforeLimit: 20,
+            afterLimit: 44,
+            scope: context.scope
+        ), isCurrent(context.fence) else { return nil }
+        if !nearby.isEmpty { dayMessages = nearby }
         updateMessages(channel) { list in
             list = ChatMessageWindowing.mergedWindow(dayMessages, with: list, around: target.id)
         }
@@ -344,7 +580,13 @@ final class MessageStore: ObservableObject {
         // 登录恢复阶段已把最近消息放进内存。聊天转场时不应再同步访问 SQLite，
         // 否则大量历史记录会让 push / interactive-pop 手势出现卡顿。
         guard current.isEmpty else { return }
-        let local = await persistence.fetchLatestMessages(channel: channel.rawValue, limit: 50)
+        guard let context = currentPersistenceContext(),
+              let local = await persistence.fetchLatestMessages(
+                channel: channel.rawValue,
+                limit: 50,
+                scope: context.scope
+              ),
+              isCurrent(context.fence) else { return }
         guard !local.isEmpty else { return }
         updateMessages(channel) { list in
             list = local
@@ -354,21 +596,34 @@ final class MessageStore: ObservableObject {
     /// 搜索跳转会把内存中的消息裁成目标附近的一小段。用户明确选择“回到最新”时，
     /// 必须重新加载最新窗口，不能只修改滚动状态，否则下一次刷新仍会回到历史窗口。
     func restoreLatestMessages(_ channel: ChatChannel) async {
-        var latest = await persistence.fetchLatestMessages(channel: channel.rawValue, limit: 50)
+        guard let context = currentPersistenceContext(),
+              var latest = await persistence.fetchLatestMessages(
+                channel: channel.rawValue,
+                limit: 50,
+                scope: context.scope
+              ),
+              isCurrent(context.fence) else { return }
         if latest.isEmpty, socketProvider?.isConnected == true {
             latest = await fetchRemoteMessages(
                 MessagePageRequest(channel: channel, limit: 50),
                 context: "restoreLatest:\(channel.rawValue)")
+            guard isCurrent(context.fence) else { return }
             if !latest.isEmpty,
-               await persistence.insertMessages(latest) != latest.count {
+               await persistence.insertMessages(
+                latest,
+                scope: context.scope
+               ) != latest.count {
                 print("[MessageStore] ⚠️ 最新消息窗口写入本地数据库失败")
                 return
             }
         }
         guard !latest.isEmpty else { return }
         let pendingOptimistic: [ChatMessage]
-        if let session = socketProvider?.currentSession {
-            let pending = await outboxProcessor.allPending()
+        if let session = socketProvider?.currentSession,
+           let fence = sessionFence(for: session),
+           let scope = fence.persistenceScope,
+           let pending = await outboxProcessor.allPending(scope: scope),
+           isCurrent(fence) {
             pendingOptimistic = pending
                 .filter { $0.channel == channel.rawValue }
                 .map { $0.optimisticMessage(session: session, waitingToSend: true) }
@@ -382,7 +637,7 @@ final class MessageStore: ObservableObject {
         }
         if let lastConfirmed = latest
             .filter({ !$0.pending && !$0.failed })
-            .max(by: { $0.ts < $1.ts }) {
+            .max(by: { ChatMessageCollection.isOrderedBefore($0, $1) }) {
             latestPersistedMessageIDs[channel.rawValue] = lastConfirmed.id
         }
     }
@@ -408,6 +663,7 @@ final class MessageStore: ObservableObject {
 
     func loadOlderAsync(_ channel: ChatChannel = .couple) async {
         guard let first = messages(for: channel).first else { return }
+        guard let context = currentPersistenceContext() else { return }
         guard !loadingOlderChannels.contains(channel.rawValue) else { return }
         if let last = lastLoadOlderAt[channel.rawValue], Date().timeIntervalSince(last) < 0.45 { return }
         lastLoadOlderAt[channel.rawValue] = Date()
@@ -420,8 +676,7 @@ final class MessageStore: ObservableObject {
 
         // 联网时云端页才是连续性的事实源。本地库可能因旧断点、系统中断或搜索
         // 按日期补取而存在孤立片段，直接取“本地下一条”会跨过整个缺口。
-        if socketProvider?.isConnected == true,
-           let session = socketProvider?.currentSession {
+        if let session = socketProvider?.currentSession {
             attemptedCloudPage = true
             let page = await remoteDataSource.fetchHistoryPage(
                 channel: channel,
@@ -429,9 +684,13 @@ final class MessageStore: ObservableObject {
                 beforeId: firstId,
                 limit: limit,
                 session: session)
+            guard isCurrent(context.fence) else { return }
             if page.error == nil {
                 guard !page.messages.isEmpty else { return }
-                guard await persistence.insertMessages(page.messages) == page.messages.count else {
+                guard await persistence.insertMessages(
+                    page.messages,
+                    scope: context.scope
+                ) == page.messages.count, isCurrent(context.fence) else {
                     print("[MessageStore] ⚠️ 较早消息页写入本地数据库失败")
                     return
                 }
@@ -443,8 +702,13 @@ final class MessageStore: ObservableObject {
         }
 
         // 无网或云端请求失败时仍允许浏览已经保存到设备上的历史。
-        let localOlder = await persistence.fetchMessages(
-            channel: channel.rawValue, beforeTimestamp: firstTs, beforeId: firstId, limit: limit)
+        guard let localOlder = await persistence.fetchMessages(
+            channel: channel.rawValue,
+            beforeTimestamp: firstTs,
+            beforeId: firstId,
+            limit: limit,
+            scope: context.scope
+        ), isCurrent(context.fence) else { return }
         if !localOlder.isEmpty {
             updateMessages(channel) { current in
                 ChatMessageCollection.prependUnique(localOlder, to: &current)
@@ -455,8 +719,12 @@ final class MessageStore: ObservableObject {
         let older = await fetchRemoteMessages(
             MessagePageRequest(channel: channel, before: firstTs, beforeId: firstId, limit: limit),
             context: "loadOlder:\(channel.rawValue)")
+        guard isCurrent(context.fence) else { return }
         guard !older.isEmpty else { return }
-        guard await persistence.insertMessages(older) == older.count else {
+        guard await persistence.insertMessages(
+            older,
+            scope: context.scope
+        ) == older.count, isCurrent(context.fence) else {
             print("[MessageStore] ⚠️ 较早消息写入本地数据库失败")
             return
         }
@@ -467,6 +735,7 @@ final class MessageStore: ObservableObject {
 
     func loadNewerAsync(_ channel: ChatChannel = .couple) async {
         guard let last = messages(for: channel).last else { return }
+        guard let context = currentPersistenceContext() else { return }
         guard !loadingNewerChannels.contains(channel.rawValue) else { return }
         if let lastLoad = lastLoadNewerAt[channel.rawValue], Date().timeIntervalSince(lastLoad) < 0.45 { return }
         lastLoadNewerAt[channel.rawValue] = Date()
@@ -479,17 +748,20 @@ final class MessageStore: ObservableObject {
         // 搜索定位后的内存窗口可能与“本机安装后的近期缓存”之间隔着很长缺口。
         // 联网时必须先向云端请求紧邻当前尾部的下一页，不能让本地孤立片段把时间线
         // 直接跳到近期消息。
-        if socketProvider?.isConnected == true,
-           let session = socketProvider?.currentSession {
+        if let session = socketProvider?.currentSession {
             let page = await remoteDataSource.fetchNewerPage(
                 channel: channel,
                 since: lastTs,
                 sinceId: lastId,
                 limit: limit,
                 session: session)
+            guard isCurrent(context.fence) else { return }
             if page.error == nil {
                 guard !page.messages.isEmpty else { return }
-                guard await persistence.insertMessages(page.messages) == page.messages.count else {
+                guard await persistence.insertMessages(
+                    page.messages,
+                    scope: context.scope
+                ) == page.messages.count, isCurrent(context.fence) else {
                     print("[MessageStore] ⚠️ 较新消息页写入本地数据库失败")
                     return
                 }
@@ -501,9 +773,13 @@ final class MessageStore: ObservableObject {
         }
 
         // 无网或云端请求失败时，仅浏览设备里已有的连续缓存。
-        let localNewer = await persistence.fetchMessages(
-            channel: channel.rawValue, fromInclusive: lastTs + 0.001,
-            toExclusive: Double.greatestFiniteMagnitude, limit: limit)
+        guard let localNewer = await persistence.fetchMessagesAfter(
+            channel: channel.rawValue,
+            afterTimestamp: lastTs,
+            afterId: lastId,
+            limit: limit,
+            scope: context.scope
+        ), isCurrent(context.fence) else { return }
         if !localNewer.isEmpty {
             updateMessages(channel) { current in
                 ChatMessageCollection.appendUnique(localNewer, to: &current)
@@ -517,6 +793,8 @@ final class MessageStore: ObservableObject {
     func sendText(_ text: String, channel: ChatChannel = .couple,
                   replyTo: String? = nil, replyPreview: String? = nil,
                   meta: ChatMessageMeta? = nil, session: Session) async {
+        guard let fence = sessionFence(for: session),
+              let scope = fence.persistenceScope else { return }
         let draft = PendingMessageFactory.text(
             text,
             channel: channel,
@@ -524,12 +802,10 @@ final class MessageStore: ObservableObject {
             replyPreview: replyPreview,
             meta: meta,
             session: session)
+        guard await outboxProcessor.save(draft.outbound, scope: scope),
+              isCurrent(fence) else { return }
         updateMessages(channel) { messages in
             ChatMessageCollection.upsert(draft.message, into: &messages)
-        }
-        guard await outboxProcessor.save(draft.outbound) else {
-            markPendingFailed(clientId: draft.outbound.clientId, channel: channel, error: "本地保存失败")
-            return
         }
         await schedulePendingOutbound(draft.outbound, channel: channel, session: session)
     }
@@ -549,10 +825,15 @@ final class MessageStore: ObservableObject {
     func sendMedia(data: Data, mimeType: String, preferredType: String, localPreviewURL: URL?,
                    channel: ChatChannel = .couple, displayText: String? = nil,
                    durationMs: Int? = nil, session: Session) async {
+        guard let fence = sessionFence(for: session) else { return }
         let clientId = "tmp-" + UUID().uuidString
         let createdAt = Date().timeIntervalSince1970 * 1000
         let durableURL = await outboxProcessor.persistMedia(
             data: data, mimeType: mimeType, clientId: clientId, username: session.username)
+        guard isCurrent(fence) else {
+            if let durableURL { try? FileManager.default.removeItem(at: durableURL) }
+            return
+        }
         await finalizeMediaSend(
             durableURL: durableURL,
             preferredType: preferredType,
@@ -577,10 +858,15 @@ final class MessageStore: ObservableObject {
         durationMs: Int? = nil,
         session: Session
     ) async {
+        guard let fence = sessionFence(for: session) else { return }
         let clientId = "tmp-" + UUID().uuidString
         let createdAt = Date().timeIntervalSince1970 * 1000
         let durableURL = await outboxProcessor.persistMediaFile(
             source: fileURL, mimeType: mimeType, clientId: clientId, username: session.username)
+        guard isCurrent(fence) else {
+            if let durableURL { try? FileManager.default.removeItem(at: durableURL) }
+            return
+        }
         await finalizeMediaSend(
             durableURL: durableURL,
             preferredType: preferredType,
@@ -606,6 +892,13 @@ final class MessageStore: ObservableObject {
         clientId: String,
         createdAt: Double
     ) async {
+        guard let fence = sessionFence(for: session),
+              let scope = fence.persistenceScope else {
+            if let durableURL {
+                try? FileManager.default.removeItem(at: durableURL)
+            }
+            return
+        }
         let draft = PendingMessageFactory.media(
             type: preferredType,
             text: displayText,
@@ -617,29 +910,29 @@ final class MessageStore: ObservableObject {
             durationMs: durationMs,
             clientId: clientId,
             createdAt: createdAt)
+        guard let durableURL else {
+            print("[MessageStore] ⚠️ 媒体保存失败 clientId=\(clientId)")
+            return
+        }
+        guard await outboxProcessor.save(draft.outbound, scope: scope) else {
+            try? FileManager.default.removeItem(at: durableURL)
+            return
+        }
+        guard isCurrent(fence) else { return }
         updateMessages(channel) { messages in
             ChatMessageCollection.upsert(draft.message, into: &messages)
-        }
-        guard let durableURL else {
-            markPendingFailed(clientId: clientId, channel: channel, error: "媒体保存失败")
-            return
-        }
-        guard await outboxProcessor.save(draft.outbound) else {
-            try? FileManager.default.removeItem(at: durableURL)
-            markPendingFailed(clientId: clientId, channel: channel, error: "本地保存失败")
-            return
         }
         await schedulePendingOutbound(draft.outbound, channel: channel, session: session)
     }
 
     func sendSticker(url: String, channel: ChatChannel = .couple, session: Session) async {
+        guard let fence = sessionFence(for: session),
+              let scope = fence.persistenceScope else { return }
         let draft = PendingMessageFactory.sticker(url: url, channel: channel, session: session)
+        guard await outboxProcessor.save(draft.outbound, scope: scope),
+              isCurrent(fence) else { return }
         updateMessages(channel) { messages in
             ChatMessageCollection.upsert(draft.message, into: &messages)
-        }
-        guard await outboxProcessor.save(draft.outbound) else {
-            markPendingFailed(clientId: draft.outbound.clientId, channel: channel, error: "本地保存失败")
-            return
         }
         await schedulePendingOutbound(draft.outbound, channel: channel, session: session)
     }
@@ -660,7 +953,12 @@ final class MessageStore: ObservableObject {
     }
 
     func retryFailedMessage(clientId: String, session: Session) async -> OutboxRetryResult {
-        guard var pending = await outboxProcessor.pending(clientId: clientId) else {
+        guard let fence = sessionFence(for: session),
+              let scope = fence.persistenceScope else { return .notFound }
+        guard var pending = await outboxProcessor.pending(
+            clientId: clientId,
+            scope: scope
+        ), isCurrent(fence) else {
             return .notFound
         }
         guard await outboxProcessor.canRetry(pending) else {
@@ -670,7 +968,8 @@ final class MessageStore: ObservableObject {
         pending.lastError = nil
         pending.attempts = 0
         pending.requiresManualRetry = false
-        guard await outboxProcessor.save(pending) else { return .notFound }
+        guard await outboxProcessor.update(pending, scope: scope),
+              isCurrent(fence) else { return .notFound }
         guard let channel = ChatChannel(rawValue: pending.channel) else {
             print("[MessageStore] ⚠️ 拒绝重试未知频道待发消息 clientId=\(pending.clientId)")
             return .notFound
@@ -680,7 +979,12 @@ final class MessageStore: ObservableObject {
     }
 
     func discardFailedMessage(clientId: String) async {
-        guard let pending = await outboxProcessor.discard(clientId: clientId) else {
+        guard let fence = activeSessionFence,
+              let scope = fence.persistenceScope else { return }
+        guard let pending = await outboxProcessor.discard(
+            clientId: clientId,
+            scope: scope
+        ), isCurrent(fence) else {
             removeOptimisticMessage(clientId: clientId)
             return
         }
@@ -720,12 +1024,17 @@ final class MessageStore: ObservableObject {
             var next = readStates
             next[channel.rawValue] = state
             readStates = next
-            Task {
-                await persistence.saveReadReceipt(
-                    channel: channel.rawValue,
-                    username: username,
-                    ts: timestamp,
-                    updatedAt: Date().timeIntervalSince1970 * 1000)
+            if let fence = activeSessionFence,
+               let scope = fence.persistenceScope {
+                Task {
+                    guard self.isCurrent(fence) else { return }
+                    _ = await persistence.saveReadReceipt(
+                        channel: channel.rawValue,
+                        username: username,
+                        ts: timestamp,
+                        updatedAt: Date().timeIntervalSince1970 * 1000,
+                        scope: scope)
+                }
             }
         }
     }
@@ -740,7 +1049,10 @@ final class MessageStore: ObservableObject {
     }
 
     func clearAllChannels() {
-        messagesByChannel = [:]
+        timelineStore.reset()
+        lastLoadOlderAt.removeAll()
+        lastLoadNewerAt.removeAll()
+        aiTyping = false
         aiReplying = false
     }
 
@@ -754,13 +1066,20 @@ final class MessageStore: ObservableObject {
 
     private func emitReadReceipt(channel: ChatChannel, timestamp: Double) -> Bool {
         guard let socket = socketProvider?.socket,
-              socketProvider?.isConnected == true else { return false }
+              socketProvider?.isConnected == true,
+              let fence = activeSessionFence,
+              let username = socketProvider?.sessionUsername,
+              socketProvider?.currentSession?.token == fence.token else { return false }
         socket.emitWithAck(
             SocketEvent.read.rawValue,
             SocketPayloadEncoder.encode(ReadReceiptRequest(channel: channel, ts: timestamp)))
             .timingOut(after: 3) { [weak self] response in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self,
+                          self.isCurrent(fence),
+                          self.socketProvider?.socket === socket,
+                          self.socketProvider?.currentSession?.token == fence.token,
+                          self.socketProvider?.sessionUsername == username else { return }
                     guard let ack = response.first as? [String: Any],
                           ack["ok"] as? Bool == true,
                           let effectiveTimestamp = (ack["ts"] as? NSNumber)?.doubleValue else {
@@ -776,9 +1095,7 @@ final class MessageStore: ObservableObject {
                     self.readReceiptCoordinator.acknowledge(
                         channel,
                         requestTimestamp: timestamp)
-                    if let username = self.socketProvider?.sessionUsername {
-                        self.setReadState(channel, user: username, ts: effectiveTimestamp)
-                    }
+                    self.setReadState(channel, user: username, ts: effectiveTimestamp)
                 }
             }
         return true
@@ -803,12 +1120,17 @@ final class MessageStore: ObservableObject {
             readReceiptCoordinator.confirm(channel, through: confirmed)
         }
         for (user, ts) in state {
-            Task {
-                await persistence.saveReadReceipt(
-                    channel: channel.rawValue,
-                    username: user,
-                    ts: ts,
-                    updatedAt: Date().timeIntervalSince1970 * 1000)
+            if let fence = activeSessionFence,
+               let scope = fence.persistenceScope {
+                Task {
+                    guard self.isCurrent(fence) else { return }
+                    _ = await persistence.saveReadReceipt(
+                        channel: channel.rawValue,
+                        username: user,
+                        ts: ts,
+                        updatedAt: Date().timeIntervalSince1970 * 1000,
+                        scope: scope)
+                }
             }
         }
     }
@@ -843,7 +1165,10 @@ final class MessageStore: ObservableObject {
     }
 
     func recallMessage(_ message: ChatMessage, channel: ChatChannel) {
-        guard let s = socketProvider?.socket, socketProvider?.isConnected == true else { return }
+        guard let s = socketProvider?.socket,
+              socketProvider?.isConnected == true,
+              let fence = activeSessionFence,
+              fence.persistenceScope != nil else { return }
         guard optimisticRecalls[message.id] == nil else { return }
         let editable = message.type == "text"
             ? message.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -860,7 +1185,9 @@ final class MessageStore: ObservableObject {
             SocketPayloadEncoder.encode(MessageRecallRequest(id: message.id))).timingOut(after: 9) { [weak self] response in
                 let ok = (response.first as? [String: Any])?["ok"] as? Bool == true
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self,
+                          self.isCurrent(fence),
+                          self.socketProvider?.socket === s else { return }
                     if ok {
                         if !(await self.applyRecall(id: message.id, channel: channel)) {
                             print("[MessageStore] ⚠️ 撤回已获服务器确认，等待本地持久化重试 id=\(message.id)")
@@ -884,22 +1211,29 @@ final class MessageStore: ObservableObject {
     }
 
     func applyRecallPersisted(id: String, channel: ChatChannel) async -> Bool {
+        guard let context = currentPersistenceContext() else { return false }
         let persistedMessage = await persistence.fetchMessage(
             id: id,
-            channel: channel.rawValue)
-        guard await persistRecall(id: id, channel: channel) else { return false }
+            channel: channel.rawValue,
+            scope: context.scope)
+        guard isCurrent(context.fence),
+              await persistRecall(id: id, channel: channel, scope: context.scope),
+              isCurrent(context.fence) else { return false }
         await applyRecallLocally(
             id: id,
             channel: channel,
-            persistedMessage: persistedMessage)
-        return true
+            persistedMessage: persistedMessage,
+            fence: context.fence)
+        return isCurrent(context.fence)
     }
 
     private func applyRecallLocally(
         id: String,
         channel: ChatChannel,
-        persistedMessage: ChatMessage?
+        persistedMessage: ChatMessage?,
+        fence: MessageSessionFence
     ) async {
+        guard isCurrent(fence) else { return }
         optimisticRecalls.removeValue(forKey: id)
         var mediaURLs: Set<URL> = []
         if let url = persistedMessage?.mediaURL { mediaURLs.insert(url) }
@@ -930,13 +1264,23 @@ final class MessageStore: ObservableObject {
             object: nil,
             userInfo: ["messageId": id])
         for url in mediaURLs {
+            guard isCurrent(fence) else { return }
             await ImageCache.shared.removeMedia(for: url)
+            guard isCurrent(fence) else { return }
             await MediaFileCache.shared.removeMedia(for: url)
         }
     }
 
-    private func persistRecall(id: String, channel: ChatChannel) async -> Bool {
-        guard await persistence.deleteMessage(id: id, channel: channel.rawValue) else {
+    private func persistRecall(
+        id: String,
+        channel: ChatChannel,
+        scope: ChatPersistenceScope
+    ) async -> Bool {
+        guard await persistence.deleteMessage(
+            id: id,
+            channel: channel.rawValue,
+            scope: scope
+        ) else {
             print("[MessageStore] ⚠️ 撤回消息未能从本地数据库删除 id=\(id)")
             return false
         }
@@ -949,10 +1293,12 @@ final class MessageStore: ObservableObject {
 
     @discardableResult
     func applyMessageUpdate(id: String, meta: [String: Any]?) async -> Bool {
+        guard let context = currentPersistenceContext() else { return false }
         for c in ChatChannel.allCases {
             guard var updated = messages(for: c).first(where: { $0.id == id }) else { continue }
             updated.meta = meta.flatMap { ChatMessageMeta(dict: $0) }
-            guard await persistence.insertMessage(updated) else {
+            guard await persistence.insertMessage(updated, scope: context.scope),
+                  isCurrent(context.fence) else {
                 print("[MessageStore] ⚠️ 消息更新未能写入本地数据库 id=\(id)")
                 return false
             }
@@ -974,6 +1320,8 @@ final class MessageStore: ObservableObject {
               !confirmationRequestsInFlight.contains(messageId),
               let socket = socketProvider?.socket,
               socketProvider?.isConnected == true,
+              let fence = activeSessionFence,
+              fence.persistenceScope != nil,
               setConfirmationStatusInMemory(messageId: messageId, status: "processing") else {
             completion(false)
             return
@@ -990,7 +1338,12 @@ final class MessageStore: ObservableObject {
                 let ok = acknowledgement?["ok"] as? Bool == true
                 let finalMeta = acknowledgement?["meta"] as? [String: Any]
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self,
+                          self.isCurrent(fence),
+                          self.socketProvider?.socket === socket else {
+                        completion(false)
+                        return
+                    }
                     self.confirmationRequestsInFlight.remove(messageId)
 
                     if ok, let finalMeta {
@@ -1046,6 +1399,7 @@ final class MessageStore: ObservableObject {
     }
 
     private func persistConfirmationStatus(messageId: String, status: String) async -> Bool {
+        guard let context = currentPersistenceContext() else { return false }
         for channel in ChatChannel.allCases {
             guard var updated = messages(for: channel).first(where: { $0.id == messageId }),
                   var meta = updated.meta,
@@ -1053,7 +1407,8 @@ final class MessageStore: ObservableObject {
             confirm.status = status
             meta.confirm = confirm
             updated.meta = meta
-            guard await persistence.insertMessage(updated) else { return false }
+            guard await persistence.insertMessage(updated, scope: context.scope),
+                  isCurrent(context.fence) else { return false }
             updateMessages(channel) { list in
                 guard let index = list.firstIndex(where: { $0.id == messageId }) else { return }
                 list[index] = updated
@@ -1075,9 +1430,18 @@ final class MessageStore: ObservableObject {
         guard !q.isEmpty else {
             return MessageSearchPage(messages: [], nextCursor: nil, hasMore: false)
         }
+        guard let fence = activeSessionFence else {
+            return MessageSearchPage(messages: [], nextCursor: nil, hasMore: false)
+        }
         let local: [ChatMessage]
-        if cursor == nil {
-            local = await persistence.searchMessages(query: q, channel: channel.rawValue)
+        if cursor == nil, let scope = fence.persistenceScope {
+            local = await persistence.searchMessages(
+                query: q,
+                channel: channel.rawValue,
+                scope: scope) ?? []
+            guard isCurrent(fence) else {
+                return MessageSearchPage(messages: [], nextCursor: nil, hasMore: false)
+            }
         } else {
             local = []
         }
@@ -1094,16 +1458,23 @@ final class MessageStore: ObservableObject {
                     cursor: cursor)))
                 .timingOut(after: 9) { continuation.resume(returning: $0) }
         }
-        guard let dict = data.first as? [String: Any],
+        guard isCurrent(fence),
+              socketProvider?.socket === s,
+              let dict = data.first as? [String: Any],
               dict["ok"] as? Bool == true,
               let list = dict["list"] as? [[String: Any]] else {
             return MessageSearchPage(messages: local, nextCursor: nil, hasMore: false)
         }
         let remote = Self.parseMessages(list, context: "search:\(channel.rawValue)")
             .filter { $0.channel == channel.rawValue }
-        if !remote.isEmpty,
-           await persistence.insertMessages(remote) != remote.count {
-            print("[MessageStore] ⚠️ 搜索结果写入本地数据库不完整")
+        if !remote.isEmpty, let scope = fence.persistenceScope {
+            let persisted = await persistence.insertMessages(remote, scope: scope)
+            guard isCurrent(fence) else {
+                return MessageSearchPage(messages: [], nextCursor: nil, hasMore: false)
+            }
+            if persisted != remote.count {
+                print("[MessageStore] ⚠️ 搜索结果写入本地数据库不完整")
+            }
         }
         let cursorDict = dict["nextCursor"] as? [String: Any]
         let nextTimestamp = (cursorDict?["ts"] as? NSNumber)?.doubleValue
@@ -1123,13 +1494,26 @@ final class MessageStore: ObservableObject {
         includeFiles: Bool = false,
         limit: Int? = nil
     ) async -> [ChatMessage] {
+        guard let context = currentPersistenceContext() else { return [] }
         let types = includeFiles ? Self.managedAttachmentTypes : Self.mediaTypes
-        return await persistence.mediaMessages(channel: channel.rawValue, types: types, limit: limit)
+        guard let messages = await persistence.mediaMessages(
+            channel: channel.rawValue,
+            types: types,
+            limit: limit,
+            scope: context.scope
+        ), isCurrent(context.fence) else { return [] }
+        return messages
     }
 
     func mediaItemCount(for channel: ChatChannel, includeFiles: Bool = false) async -> Int {
+        guard let context = currentPersistenceContext() else { return 0 }
         let types = includeFiles ? Self.managedAttachmentTypes : Self.mediaTypes
-        return await persistence.mediaCount(channel: channel.rawValue, types: types)
+        guard let count = await persistence.mediaCount(
+            channel: channel.rawValue,
+            types: types,
+            scope: context.scope
+        ), isCurrent(context.fence) else { return 0 }
+        return count
     }
 
     // MARK: - 全量同步
@@ -1139,33 +1523,63 @@ final class MessageStore: ObservableObject {
         _ channel: ChatChannel,
         onProgress: @escaping (_ localCount: Int, _ remoteTotal: Int?) -> Void
     ) async -> HistorySyncResult {
-        guard let session = socketProvider?.currentSession else {
+        guard let session = socketProvider?.currentSession,
+              let context = currentPersistenceContext(),
+              sessionFence(for: session) == context.fence else {
             return HistorySyncResult(
-                localCount: await persistence.messageCount(channel: channel.rawValue),
+                localCount: 0,
                 remoteTotal: nil, downloaded: 0, completed: false, error: "当前未登录")
         }
         let result = await historySyncService.sync(
             channel: channel,
             session: session,
+            scope: context.scope,
             onProgress: onProgress)
-        let latest = await persistence.fetchLatestMessages(channel: channel.rawValue, limit: 50)
-        if !latest.isEmpty { updateMessages(channel) { $0 = latest } }
-        latestPersistedMessageIDs[channel.rawValue] = latest.last?.id
+        guard isCurrent(context.fence) else {
+            return HistorySyncResult(
+                localCount: result.localCount,
+                remoteTotal: result.remoteTotal,
+                downloaded: result.downloaded,
+                completed: false,
+                error: "登录会话已切换")
+        }
+        guard let latest = await persistence.fetchLatestMessages(
+            channel: channel.rawValue,
+            limit: 50,
+            scope: context.scope
+        ), isCurrent(context.fence) else {
+            return HistorySyncResult(
+                localCount: result.localCount,
+                remoteTotal: result.remoteTotal,
+                downloaded: result.downloaded,
+                completed: false,
+                error: "登录会话已切换")
+        }
+        if !latest.isEmpty {
+            updateMessages(channel) { messages in
+                ChatMessageCollection.upsert(latest, into: &messages)
+            }
+        }
+        latestPersistedMessageIDs[channel.rawValue] = latest.max {
+            ChatMessageCollection.isOrderedBefore($0, $1)
+        }?.id
         return result
     }
 
     func clearLocalHistory() async {
-        guard await persistence.deleteMessages(channel: nil) else {
+        guard let context = currentPersistenceContext(),
+              await persistence.deleteMessages(channel: nil, scope: context.scope),
+              isCurrent(context.fence) else {
             print("[MessageStore] ⚠️ 清理本地聊天记录失败")
             return
         }
-        if let username = socketProvider?.currentSession?.username {
-            MessageHistorySyncService.resetCheckpoint(username: username, channel: .couple)
-            MessageHistorySyncService.resetCheckpoint(username: username, channel: .ai)
-        }
+        MessageHistorySyncService.resetCheckpoint(username: context.fence.username, channel: .couple)
+        MessageHistorySyncService.resetCheckpoint(username: context.fence.username, channel: .ai)
         messagesByChannel = [:]
         latestPersistedMessageIDs = [:]
+        guard isCurrent(context.fence) else { return }
         await ImageCache.shared.clearAllAsync()
+        guard isCurrent(context.fence) else { return }
         await MediaFileCache.shared.clearAll()
     }
 
@@ -1188,25 +1602,44 @@ final class MessageStore: ObservableObject {
     /// 连接建立后按创建时间串行重放。服务端以 clientId 幂等，ACK 丢失也不会生成重复消息。
     func flushOutbox(session: Session) {
         guard socketProvider?.isConnected == true,
-              socketProvider?.socket != nil else { return }
+              socketProvider?.socket != nil,
+              let fence = sessionFence(for: session),
+              let scope = fence.persistenceScope else { return }
         Task { [weak self] in
-            guard let self else { return }
+            guard let self, self.isCurrent(fence) else { return }
             await self.outboxProcessor.replay(
-                isConnected: { [weak self] in self?.socketProvider?.isConnected == true },
-                send: { [weak self] item in
+                scope: scope,
+                isConnected: { [weak self] in
                     guard let self else { return false }
+                    return self.isCurrent(fence)
+                        && self.socketProvider?.currentSession?.token == fence.token
+                        && self.socketProvider?.isConnected == true
+                },
+                send: { [weak self] item in
+                    guard let self, self.isCurrent(fence) else { return false }
                     guard let channel = ChatChannel(rawValue: item.channel) else {
                         print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
                         return false
                     }
                     self.markPendingSending(clientId: item.clientId, channel: channel)
-                    return await self.transmitPendingOutbound(item, session: session)
+                    return await self.transmitPendingOutbound(
+                        item,
+                        session: session,
+                        scope: scope,
+                        fence: fence)
                 })
         }
     }
 
-    private func transmitPendingOutbound(_ original: PendingOutboundMessage, session: Session) async -> Bool {
-        guard socketProvider?.isConnected == true else { return false }
+    private func transmitPendingOutbound(
+        _ original: PendingOutboundMessage,
+        session: Session,
+        scope: ChatPersistenceScope,
+        fence: MessageSessionFence
+    ) async -> Bool {
+        guard isCurrent(fence),
+              socketProvider?.currentSession?.token == session.token,
+              socketProvider?.isConnected == true else { return false }
         var item = original
         guard let channel = ChatChannel(rawValue: item.channel) else {
             print("[MessageStore] ⚠️ 拒绝发送未知频道待发消息 clientId=\(item.clientId)")
@@ -1217,17 +1650,24 @@ final class MessageStore: ObservableObject {
             for index in item.attachments.indices where item.attachments[index].uploadId == nil {
                 let attachment = item.attachments[index]
                 guard FileManager.default.fileExists(atPath: attachment.localFilePath) else {
-                    await recordPendingFailure(item, channel: channel, message: "相册资源不可用")
+                    await recordPendingFailure(
+                        item,
+                        channel: channel,
+                        scope: scope,
+                        fence: fence,
+                        message: "相册资源不可用")
                     return false
                 }
                 do {
                     let uploaded = try await uploadMedia(
                         fileURL: URL(fileURLWithPath: attachment.localFilePath),
                         mimeType: attachment.mimeType, purpose: .message, session: session)
+                    guard isCurrent(fence) else { return false }
                     item.attachments[index].uploadId = uploaded.id
                     item.attachments[index].uploadURL = uploaded.url
                     item.lastError = nil
-                    _ = await outboxProcessor.save(item)
+                    guard await outboxProcessor.update(item, scope: scope),
+                          isCurrent(fence) else { return false }
                     if attachment.mimeType.hasPrefix("image/"),
                        let remoteURL = ServerConfig.resolveMediaURL(uploaded.url) {
                         cacheUploadedImage(
@@ -1247,26 +1687,39 @@ final class MessageStore: ObservableObject {
                         }
                     }
                 } catch {
-                    await recordUploadFailure(error, item: item, channel: channel, session: session)
+                    await recordUploadFailure(
+                        error,
+                        item: item,
+                        channel: channel,
+                        session: session,
+                        scope: scope,
+                        fence: fence)
                     return false
                 }
             }
         } else if item.isMedia, item.uploadId == nil {
             guard let path = item.localFilePath,
-                  let mimeType = item.mimeType,
-                  FileManager.default.fileExists(atPath: path) else {
-                await recordPendingFailure(item, channel: channel, message: "本地媒体文件不可用")
+                   let mimeType = item.mimeType,
+                   FileManager.default.fileExists(atPath: path) else {
+                await recordPendingFailure(
+                    item,
+                    channel: channel,
+                    scope: scope,
+                    fence: fence,
+                    message: "本地媒体文件不可用")
                 return false
             }
             let localURL = URL(fileURLWithPath: path)
             do {
                 let uploaded = try await uploadMedia(
                     fileURL: localURL, mimeType: mimeType, purpose: .message, session: session)
+                guard isCurrent(fence) else { return false }
                 item.type = item.type == "file" ? "file" : (uploaded.type.isEmpty ? item.type : uploaded.type)
                 item.uploadId = uploaded.id
                 item.uploadURL = uploaded.url
                 item.lastError = nil
-                _ = await outboxProcessor.save(item)
+                guard await outboxProcessor.update(item, scope: scope),
+                      isCurrent(fence) else { return false }
 
                 if item.type == "image",
                    let remoteURL = ServerConfig.resolveMediaURL(uploaded.url) {
@@ -1278,13 +1731,24 @@ final class MessageStore: ObservableObject {
                     list[index].url = item.uploadURL
                 }
             } catch {
-                await recordUploadFailure(error, item: item, channel: channel, session: session)
+                await recordUploadFailure(
+                    error,
+                    item: item,
+                    channel: channel,
+                    session: session,
+                    scope: scope,
+                    fence: fence)
                 return false
             }
         }
 
         guard let request = item.sendRequest(channel: channel) else {
-            await recordPendingFailure(item, channel: channel, message: "附件上传不完整")
+            await recordPendingFailure(
+                item,
+                channel: channel,
+                scope: scope,
+                fence: fence,
+                message: "附件上传不完整")
             return false
         }
         guard socketProvider?.currentSession?.token == session.token,
@@ -1294,15 +1758,28 @@ final class MessageStore: ObservableObject {
             return false
         }
         let ack = await waitForSendAck(socket: socket, request: request)
-        let succeeded = await handleSendAck(ack, clientId: item.clientId, channel: channel)
+        guard isCurrent(fence), socketProvider?.socket === socket else { return false }
+        let succeeded = await handleSendAck(
+            ack,
+            clientId: item.clientId,
+            channel: channel,
+            scope: scope,
+            fence: fence)
         if succeeded {
-            await retainCompletedMediaCache(item)
-            await completePendingOutbound(clientId: item.clientId)
+            await finalizeConfirmedOutbound(
+                clientId: item.clientId,
+                scope: scope,
+                fence: fence)
         } else {
             let payload = ack.first as? [String: Any]
             if let code = payload?["error"] as? String {
                 let message = ServerErrorCode.message(for: code, fallback: "发送失败")
-                await recordPendingFailure(item, channel: channel, message: message)
+                await recordPendingFailure(
+                    item,
+                    channel: channel,
+                    scope: scope,
+                    fence: fence,
+                    message: message)
             } else if ack.isEmpty {
                 if socketProvider?.socket === socket {
                     socketProvider?.recoverConnection()
@@ -1311,12 +1788,16 @@ final class MessageStore: ObservableObject {
                     item,
                     channel: channel,
                     session: session,
+                    scope: scope,
+                    fence: fence,
                     message: "发送确认超时")
             } else {
                 await recordTransientPendingFailure(
                     item,
                     channel: channel,
                     session: session,
+                    scope: scope,
+                    fence: fence,
                     message: "发送结果未能保存")
             }
         }
@@ -1341,7 +1822,9 @@ final class MessageStore: ObservableObject {
 
     private func markPendingSending(clientId: String, channel: ChatChannel) {
         updateMessages(channel) { list in
-            guard let index = ChatMessageCollection.index(matchingClientId: clientId, in: list) else { return }
+            guard let index = ChatMessageCollection.index(matchingClientId: clientId, in: list),
+                  list[index].pending || list[index].failed || list[index].id.hasPrefix("tmp-")
+            else { return }
             list[index].pending = true
             list[index].failed = false
             list[index].waitingToSend = false
@@ -1351,7 +1834,8 @@ final class MessageStore: ObservableObject {
     private func markPendingWaiting(clientId: String, channel: ChatChannel) {
         updateMessages(channel) { list in
             guard let index = ChatMessageCollection.index(matchingClientId: clientId, in: list),
-                  !list[index].failed else { return }
+                  !list[index].failed,
+                  list[index].pending || list[index].id.hasPrefix("tmp-") else { return }
             list[index].pending = true
             list[index].waitingToSend = true
         }
@@ -1369,7 +1853,9 @@ final class MessageStore: ObservableObject {
 
     private func markPendingFailed(clientId: String, channel: ChatChannel, error: String) {
         updateMessages(channel) { list in
-            guard let index = ChatMessageCollection.index(matchingClientId: clientId, in: list) else { return }
+            guard let index = ChatMessageCollection.index(matchingClientId: clientId, in: list),
+                  list[index].pending || list[index].failed || list[index].id.hasPrefix("tmp-")
+            else { return }
             list[index].pending = false
             list[index].failed = true
             list[index].waitingToSend = false
@@ -1384,13 +1870,21 @@ final class MessageStore: ObservableObject {
     private func recordPendingFailure(
         _ original: PendingOutboundMessage,
         channel: ChatChannel,
+        scope: ChatPersistenceScope,
+        fence: MessageSessionFence,
         message: String
     ) async {
-        var item = await outboxProcessor.pending(clientId: original.clientId) ?? original
+        guard isCurrent(fence),
+              var item = await outboxProcessor.pending(
+                clientId: original.clientId,
+                scope: scope
+              ),
+              isCurrent(fence) else { return }
         item.attempts += 1
         item.lastError = message
         item.requiresManualRetry = true
-        _ = await outboxProcessor.save(item)
+        guard await outboxProcessor.update(item, scope: scope),
+              isCurrent(fence) else { return }
         markPendingFailed(clientId: item.clientId, channel: channel, error: message)
     }
 
@@ -1398,13 +1892,21 @@ final class MessageStore: ObservableObject {
         _ original: PendingOutboundMessage,
         channel: ChatChannel,
         session: Session,
+        scope: ChatPersistenceScope,
+        fence: MessageSessionFence,
         message: String
     ) async {
-        var item = await outboxProcessor.pending(clientId: original.clientId) ?? original
+        guard isCurrent(fence),
+              var item = await outboxProcessor.pending(
+                clientId: original.clientId,
+                scope: scope
+              ),
+              isCurrent(fence) else { return }
         item.attempts += 1
         item.lastError = message
         item.requiresManualRetry = item.attempts >= Self.maxAutomaticSendAttempts
-        _ = await outboxProcessor.save(item)
+        guard await outboxProcessor.update(item, scope: scope),
+              isCurrent(fence) else { return }
 
         guard !item.requiresManualRetry else {
             markPendingFailed(clientId: item.clientId, channel: channel, error: message)
@@ -1416,6 +1918,7 @@ final class MessageStore: ObservableObject {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard let self,
+                  self.isCurrent(fence),
                   self.socketProvider?.currentSession?.token == expectedToken,
                   let currentSession = self.socketProvider?.currentSession else { return }
             guard self.socketProvider?.isConnected == true else {
@@ -1430,16 +1933,25 @@ final class MessageStore: ObservableObject {
         _ error: Error,
         item: PendingOutboundMessage,
         channel: ChatChannel,
-        session: Session
+        session: Session,
+        scope: ChatPersistenceScope,
+        fence: MessageSessionFence
     ) async {
         if Self.isRetryableUploadError(error) {
             await recordTransientPendingFailure(
                 item,
                 channel: channel,
                 session: session,
+                scope: scope,
+                fence: fence,
                 message: error.localizedDescription)
         } else {
-            await recordPendingFailure(item, channel: channel, message: error.localizedDescription)
+            await recordPendingFailure(
+                item,
+                channel: channel,
+                scope: scope,
+                fence: fence,
+                message: error.localizedDescription)
         }
     }
 
@@ -1468,28 +1980,79 @@ final class MessageStore: ObservableObject {
         }
     }
 
-    private func completePendingOutbound(clientId: String) async {
-        await outboxProcessor.complete(clientId: clientId)
+    private func completePendingOutbound(
+        clientId: String,
+        scope: ChatPersistenceScope,
+        fence: MessageSessionFence
+    ) async {
+        await finalizeConfirmedOutbound(
+            clientId: clientId,
+            scope: scope,
+            fence: fence)
     }
 
-    private func reconcilePendingOutbounds(with confirmedMessages: [ChatMessage]) async {
+    private func finalizeConfirmedOutbound(
+        clientId: String,
+        scope: ChatPersistenceScope,
+        fence: MessageSessionFence
+    ) async {
+        guard isCurrent(fence),
+              let item = await outboxProcessor.pending(
+                clientId: clientId,
+                scope: scope
+              ),
+              isCurrent(fence) else { return }
+        await retainCompletedMediaCache(item)
+        guard isCurrent(fence) else { return }
+        await outboxProcessor.complete(clientId: clientId, scope: scope)
+    }
+
+    private func reconcilePendingOutbounds(
+        with confirmedMessages: [ChatMessage],
+        scope: ChatPersistenceScope,
+        fence: MessageSessionFence
+    ) async {
         let confirmedClientIDs = Set(confirmedMessages.compactMap { message -> String? in
             guard !message.pending, !message.failed else { return nil }
             return message.clientId
         })
         guard !confirmedClientIDs.isEmpty else { return }
 
-        for item in await outboxProcessor.allPending()
-        where confirmedClientIDs.contains(item.clientId) {
-            await retainCompletedMediaCache(item)
-            await completePendingOutbound(clientId: item.clientId)
+        guard let pending = await outboxProcessor.allPending(scope: scope),
+              isCurrent(fence) else { return }
+        for item in pending where confirmedClientIDs.contains(item.clientId) {
+            await finalizeConfirmedOutbound(
+                clientId: item.clientId,
+                scope: scope,
+                fence: fence)
         }
     }
 
     private func retainCompletedMediaCache(_ item: PendingOutboundMessage) async {
-        guard item.attachments.isEmpty,
-              let path = item.localFilePath,
+        if !item.attachments.isEmpty {
+            for attachment in item.attachments
+            where attachment.mimeType.hasPrefix("image/") {
+                guard let remoteURL = ServerConfig.resolveMediaURL(attachment.uploadURL) else { continue }
+                let data = await Task.detached(priority: .utility) {
+                    try? Data(contentsOf: URL(fileURLWithPath: attachment.localFilePath))
+                }.value
+                if let data {
+                    ImageCache.shared.store(data: data, for: remoteURL)
+                }
+            }
+            return
+        }
+        guard let path = item.localFilePath,
               let remoteURL = ServerConfig.resolveMediaURL(item.uploadURL) else { return }
+        if item.type == "image" {
+            let data = await Task.detached(priority: .utility) {
+                try? Data(contentsOf: URL(fileURLWithPath: path))
+            }.value
+            if let data {
+                ImageCache.shared.store(data: data, for: remoteURL)
+            }
+            return
+        }
         let kind: DownloadedMediaKind
         switch item.type {
         case "voice": kind = .voice
@@ -1504,7 +2067,14 @@ final class MessageStore: ObservableObject {
     }
 
     @discardableResult
-    private func handleSendAck(_ data: [Any], clientId: String, channel: ChatChannel) async -> Bool {
+    private func handleSendAck(
+        _ data: [Any],
+        clientId: String,
+        channel: ChatChannel,
+        scope: ChatPersistenceScope,
+        fence: MessageSessionFence
+    ) async -> Bool {
+        guard isCurrent(fence) else { return false }
         guard let payload = data.first as? [String: Any] else { return false }
         guard payload["ok"] as? Bool == true else { return false }
         guard let acknowledgedMessage = Self.parseSendAckMessage(
@@ -1517,7 +2087,10 @@ final class MessageStore: ObservableObject {
         // ACK 只有在完整消息落入 SQLite 后才可以替换 UI pending。否则本次
         // messages 发布会先把已确认消息放到旧 latest anchor 后面，时间线随即
         // 把它误判为历史窗口并显示“回到最新”。
-        guard await persistence.insertMessage(acknowledgedMessage) else {
+        guard await persistence.insertMessage(
+            acknowledgedMessage,
+            scope: scope
+        ), isCurrent(fence) else {
             print("[MessageStore] ⚠️ 发送确认未能持久化 clientId=\(clientId)")
             return false
         }

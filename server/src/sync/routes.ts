@@ -35,11 +35,12 @@ export async function registerSyncRoutes(app: FastifyInstance) {
     const operation = startOperation("sync.bootstrap", { requestId: request.id, channel: "all" });
 
     try {
-      const [accounts, couple, ai, coupleRead, sharedState] = await Promise.all([
+      const [accounts, couple, ai, coupleRead, aiRead, sharedState] = await Promise.all([
         listPublicAccounts(user),
         fetchMessages(user, { channel: "couple", limit: 40 }),
         fetchMessages(user, { channel: "ai", limit: 40 }),
         getReadReceipts(user, "couple"),
+        getReadReceipts(user, "ai"),
         getSharedState(user),
       ]);
       operation.success({ coupleCount: couple.length, aiCount: ai.length });
@@ -49,7 +50,7 @@ export async function registerSyncRoutes(app: FastifyInstance) {
         serverTime: Date.now(),
         accounts,
         messages: { couple, ai },
-        readStates: { couple: coupleRead, ai: {} },
+        readStates: { couple: coupleRead, ai: aiRead },
         sharedState,
       };
     } catch (error) {
@@ -69,11 +70,16 @@ export async function registerSyncRoutes(app: FastifyInstance) {
       direction: parsed.data.before !== undefined ? "before" : parsed.data.around !== undefined ? "around" : "latest",
     });
     try {
-      const [list, total] = await Promise.all([
-        fetchMessages(user, parsed.data),
-        countMessages(user, parsed.data.channel),
-      ]);
-      operation.success({ resultCount: list.length, total });
+      const hasCursor = parsed.data.before !== undefined
+        || parsed.data.after !== undefined
+        || parsed.data.since !== undefined
+        || parsed.data.around !== undefined;
+      const list = await fetchMessages(user, parsed.data);
+      // COUNT(*) is useful for the initial progress indicator, but repeating
+      // it for every backwards page turns a long history sync into an O(n^2)
+      // workload. The client retains the first observed total thereafter.
+      const total = hasCursor ? null : await countMessages(user, parsed.data.channel);
+      operation.success({ resultCount: list.length, ...(total === null ? {} : { total }) });
       return { ok: true, list, total };
     } catch (error) {
       operation.failure(errorCodeFor(error));

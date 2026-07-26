@@ -29,12 +29,42 @@ export interface AppDependencies {
   personalItemEvents?: PersonalItemRouteEvents;
 }
 
+interface RequestLogShape {
+  method?: string;
+  url?: string;
+  hostname?: string;
+  ip?: string;
+  socket?: { remotePort?: number };
+}
+
+export function sanitizeRequestUrl(url: string | undefined): string | undefined {
+  if (!url) return url;
+  const queryIndex = url.indexOf("?");
+  return queryIndex >= 0 ? url.slice(0, queryIndex) : url;
+}
+
+function serializeRequestForLog(request: RequestLogShape) {
+  return {
+    method: request.method,
+    url: sanitizeRequestUrl(request.url),
+    host: request.hostname,
+    remoteAddress: request.ip,
+    remotePort: request.socket?.remotePort,
+  };
+}
+
 export async function buildApp(dependencies: AppDependencies = {}) {
   fs.mkdirSync(config.uploadDir, { recursive: true });
 
   const app = Fastify({
+    // Public traffic crosses the JP edge and the Tailnet-only US origin proxy.
+    // The edge overwrites XFF, while the US application itself is loopback-only.
+    trustProxy: ["loopback", "100.64.0.0/10"],
     logger: {
       level: config.isProduction ? "info" : "debug",
+      serializers: {
+        req: serializeRequestForLog,
+      },
     },
   });
 
