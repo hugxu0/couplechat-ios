@@ -37,6 +37,7 @@ const updateBody = z.object({
   bodyMarkdown: z.string().max(20000).optional(),
   dueAt: z.number().int().positive().nullable().optional(),
   isDone: z.boolean().optional(),
+  baseVersion: z.number().int().nonnegative().optional(),
 });
 
 const paramsSchema = z.object({
@@ -71,10 +72,13 @@ export async function registerPersonalItemRoutes(
       return reply.code(400).send({ error: "invalid_request" });
     }
 
-    const item = await updatePersonalItem(request.user, params.data.id, body.data);
-    if (!item) return reply.code(404).send({ error: "not_found" });
-    events.sharedItemChanged("updated", item);
-    return { item };
+    const result = await updatePersonalItem(request.user, params.data.id, body.data);
+    if (!result) return reply.code(404).send({ error: "not_found" });
+    if ("conflict" in result) {
+      return reply.code(409).send({ error: "version_conflict", item: result.item });
+    }
+    events.sharedItemChanged("updated", result);
+    return { item: result };
   });
 
   app.delete("/api/me/items/:id", { preHandler: requireAuth }, async (request, reply) => {

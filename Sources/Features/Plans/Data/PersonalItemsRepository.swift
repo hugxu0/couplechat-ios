@@ -56,6 +56,8 @@ struct PersonalItemsRepository {
         if let bodyMarkdown { body["bodyMarkdown"] = bodyMarkdown }
         if clearsDueAt { body["dueAt"] = NSNull() } else if let dueAt { body["dueAt"] = dueAt }
         if let isDone { body["isDone"] = isDone }
+        // 带上读到的版本号，服务端据此拒绝过期写入（409），避免两台设备静默互相覆盖。
+        if let version = item.version { body["baseVersion"] = version }
         return await send(
             path: "api/me/items/\(item.id)", method: "PATCH", body: body, token: token)
     }
@@ -80,8 +82,14 @@ struct PersonalItemsRepository {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         guard let (data, response) = try? await httpClient.data(for: request),
-              let code = (response as? HTTPURLResponse)?.statusCode,
-              (200..<300).contains(code),
+              let code = (response as? HTTPURLResponse)?.statusCode else { return nil }
+        if code == 409 {
+            // 版本冲突：服务端回传了当前实体。刷新一次让界面走到服务端版本，
+            // 用户看到的是对方的改动，而不是一个没有下文的失败。
+            NotificationCenter.default.post(name: Self.changedNotification, object: nil)
+            return nil
+        }
+        guard (200..<300).contains(code),
               let item = (try? JSONDecoder().decode(ItemResponse.self, from: data))?.item else { return nil }
         NotificationCenter.default.post(name: Self.changedNotification, object: nil)
         return item
