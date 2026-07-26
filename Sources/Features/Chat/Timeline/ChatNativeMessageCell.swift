@@ -711,7 +711,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
             if message.failed {
                 fileMetaLabel.text = "发送失败 · 轻点重试"
             } else if message.pending {
-                fileMetaLabel.text = message.waitingToSend ? "等待发送" : "正在上传"
+                fileMetaLabel.text = message.waitingToSend
+                    ? "等待发送"
+                    : message.uploadProgress.map { "正在上传 \(Int($0 * 100))%" } ?? "正在上传"
             } else {
                 fileMetaLabel.text = "文件 · 轻点预览"
             }
@@ -1074,6 +1076,9 @@ final class ChatNativeMessageCell: UICollectionViewCell, UIScrollViewDelegate, U
     private func statusAccessibilityLabel(message: ChatMessage, read: Bool) -> String {
         if message.failed { return "发送失败" }
         if message.pending, message.waitingToSend { return "等待发送" }
+        if message.pending, let progress = message.uploadProgress {
+            return "正在上传 \(Int(progress * 100))%"
+        }
         if message.pending { return "正在发送" }
         return read ? "已读" : "已发送"
     }

@@ -21,6 +21,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var failed = false
     /// 仅用于本地乐观消息：已可靠入队，但当前尚未真正占用发送通道。
     var waitingToSend = false
+    /// 上传进度 0...1，仅存在于内存中的乐观消息；不参与编码（不在 CodingKeys）。
+    var uploadProgress: Double?
 
     private enum CodingKeys: String, CodingKey {
         case id, sender, senderName, kind, type, text, url, channel, ts, clientId
