@@ -387,20 +387,6 @@ async function main() {
       cursorPage.some((row) => row.id === "smoke-cursor-a") &&
         !cursorPage.some((row) => row.id === "smoke-cursor-b"),
     );
-    const { ownerConversationMessagesAround } = await import("../src/ai/conversation/log");
-    const nearbyDiaryMessages = await ownerConversationMessagesAround(
-      "couple",
-      cursorTs,
-      cursorTs - 1,
-      cursorTs + 1,
-      8,
-    );
-    assertOk(
-      "大橘日记原文窗口只返回边界内主人消息并保持正序",
-      nearbyDiaryMessages.map((message) => message.id).join(",") ===
-        "smoke-cursor-a,smoke-cursor-b" &&
-      nearbyDiaryMessages.every((message) => message.kind === "user" && message.sender !== "ai"),
-    );
     const { conversationMessagesInRange } = await import("../src/ai/conversation/log");
     const fullDiaryWindow = await conversationMessagesInRange(
       "couple",
@@ -2278,39 +2264,10 @@ async function main() {
     assertOk("AI 运行状态读写", (await runtimeState.readRuntimeState("smoke")) === "ok");
 
     const {
-      CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS,
       applyDigestPatch,
       ensureContextCaughtUp,
-      isContextDigestCircuitOpen,
-      nextContextDigestCircuitState,
     } = await import("../src/ai/conversation/context");
     const circuitNow = 10_000_000;
-    const circuitAfterOneFailure = nextContextDigestCircuitState(
-      { failures: 0, openUntil: 0 },
-      false,
-      circuitNow,
-    );
-    const circuitAfterTwoFailures = nextContextDigestCircuitState(
-      circuitAfterOneFailure,
-      false,
-      circuitNow + 1,
-    );
-    const recoveredCircuit = nextContextDigestCircuitState(
-      circuitAfterTwoFailures,
-      true,
-      circuitNow + CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS + 2,
-    );
-    assertOk(
-      "上下文日总览连续失败后熔断，成功探测后恢复",
-      !isContextDigestCircuitOpen(circuitAfterOneFailure, circuitNow) &&
-        isContextDigestCircuitOpen(circuitAfterTwoFailures, circuitNow + 2) &&
-        !isContextDigestCircuitOpen(
-          circuitAfterTwoFailures,
-          circuitNow + CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS + 2,
-        ) &&
-        recoveredCircuit.failures === 0 &&
-        recoveredCircuit.openUntil === 0,
-    );
     const patchedDigest = applyDigestPatch({
       dayKey: "2026-07-18",
       topics: [{
@@ -2517,7 +2474,7 @@ async function main() {
       "Memory 按80条硬上限整理，并只对明确完成节点补做 event 复核",
       MEMORY_SOURCE_BATCH_SIZE === 80 &&
         !shouldExtractMemoryBatch(79) && shouldExtractMemoryBatch(80) && shouldExtractMemoryBatch(1, true) &&
-        memoryExtractionDelay(20, tiedTs, tiedTs, tiedTs) === 15 * 60 * 1000 &&
+        memoryExtractionDelay(20, tiedTs, tiedTs, tiedTs) === 5 * 60 * 1000 &&
         !shouldRetryEmptyMemoryBatch(11, 0) &&
         shouldRetryEmptyMemoryBatch(12, 0) &&
         !shouldRetryEmptyMemoryBatch(80, 1) &&

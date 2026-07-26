@@ -20,9 +20,6 @@ export async function registerTranscriptionRoutes(app: FastifyInstance) {
     if (!params.success) return reply.code(400).send({ error: "invalid_request" });
     const result = await retryTranscript(request.user, params.data.messageId);
     if (!result) return reply.code(404).send({ error: "not_found" });
-    if (result.unavailable) {
-      return { transcript: result.transcript };
-    }
     return { transcript: result.transcript };
   });
 }

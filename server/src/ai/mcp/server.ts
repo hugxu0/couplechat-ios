@@ -3,7 +3,6 @@ import { z } from "zod";
 import { all, get, type MessageRow } from "../../db";
 import { accounts } from "../accounts";
 import { addMemory, searchMemory, visibleMemoryScopes } from "../memory/store";
-import { listDajuInstructionsForRequester } from "../memory/dajuInstructions";
 import { recordAgentTool, type AgentToolRun } from "./runContext";
 import { rankChatSearchRows, searchTerms, type ChatSearchMode } from "../conversation/search";
 import { registerExternalTools } from "./externalTools";
@@ -30,7 +29,7 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
     {
       // 细则写在各 tool description；此处只保留一行总则，避免与 Agent system 重复。
       instructions:
-        "工具按名选用；记忆与聊天不得越权。人物：facts→events→原话搜索。行为要求通常已在对话上下文中，勿重复 get_daju_instructions。",
+        "工具按名选用；记忆与聊天不得越权。",
     },
   );
 
@@ -413,24 +412,6 @@ export function createCoupleChatMcpServer(run: AgentToolRun): McpServer {
       };
     })),
   );
-
-  server.registerTool(
-    "get_daju_instructions",
-    {
-      description: "仅当用户消息中没有【大橘当前行为要求】块时使用；通常已预置，勿重复调用。",
-      inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false },
-    },
-    async (args) => jsonResult(await recordAgentTool(run, "get_daju_instructions", args, async () => {
-      const rows = await listDajuInstructionsForRequester(
-        run.identity.storedChannel,
-        run.identity.requesterUsername,
-      );
-      return {
-        warning: "这些是主人明确提出的动态要求；当前请求和系统规则优先",
-        ...memoryResult("instructions", rows),
-      };
-    })));
 
   server.registerTool(
     "get_daju_observations",

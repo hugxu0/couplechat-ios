@@ -57,7 +57,8 @@ export const GEN = {
   },
   dailyRecommendation: { maxTokens: 400, temperature: 0.75, timeoutMs: 30_000 },
   /** 大橘日记：约 500 字的诗性手记 */
-  diary: { maxTokens: 850, temperature: 0.8, timeoutMs: 90_000 },
+  // 正文目标 420~560 汉字 + 标题 + JSON 转义，850 token 大概率截断导致解析失败。
+  diary: { maxTokens: 1600, temperature: 0.8, timeoutMs: 90_000 },
 } satisfies Record<string, GenProfile>;
 
 /**
@@ -85,8 +86,11 @@ export const CONTEXT = {
   segmentMaxAgeMs: 45 * 60 * 1000,
   /** 当日总览渲染进 prompt 的汉字上限 */
   dayDigestMaxChars: 2500,
-  /** 当日活跃话题卡上限 */
-  dayTopicMax: 24,
+  /**
+   * 当日活跃话题卡上限。12 卡 × 每卡 6 点 ≈ 2100 字，落在 dayDigestMaxChars
+   * 之内；24 卡时必然截断，而渲染按 lastAt 降序，被砍掉的正是早上的话题。
+   */
+  dayTopicMax: 12,
   /** prompt 中附带的最近微段数（总览已吸收多数要点，1 段通常够） */
   pendingSegmentPromptMax: 1,
   /** @大橘 前同步追赶预算 */
@@ -95,11 +99,6 @@ export const CONTEXT = {
   catchUpPageSize: 80,
   /** 新消息后防抖调度 */
   scheduleDebounceMs: 3_000,
-  /** 兼容旧引用：摘要类任务字符上限 */
-  summaryMaxChars: 2500,
-  taskReminderCount: 20,
-  taskMemoCount: 12,
-  taskMemoTextMax: 200,
 } as const;
 
 export const PACE = {

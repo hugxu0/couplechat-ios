@@ -82,38 +82,6 @@ const updateChains = new Map<string, Promise<void>>();
 const scheduleTimers = new Map<string, NodeJS.Timeout>();
 let acceptingContextWork = true;
 let contextWorkController = new AbortController();
-export const CONTEXT_DIGEST_CIRCUIT_FAILURE_THRESHOLD = 2;
-export const CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS = 10 * 60 * 1000;
-
-export interface ContextDigestCircuitState {
-  failures: number;
-  openUntil: number;
-}
-
-export function isContextDigestCircuitOpen(
-  state: ContextDigestCircuitState,
-  now: number,
-): boolean {
-  return state.openUntil > now;
-}
-
-export function nextContextDigestCircuitState(
-  state: ContextDigestCircuitState,
-  succeeded: boolean,
-  now: number,
-): ContextDigestCircuitState {
-  if (succeeded) return { failures: 0, openUntil: 0 };
-  const failures = state.failures + 1;
-  return {
-    failures,
-    openUntil: failures >= CONTEXT_DIGEST_CIRCUIT_FAILURE_THRESHOLD
-      ? now + CONTEXT_DIGEST_CIRCUIT_COOLDOWN_MS
-      : 0,
-  };
-}
-
-let digestCircuitState: ContextDigestCircuitState = { failures: 0, openUntil: 0 };
-
 function stateKey(channel: string): string {
   return `${STATE_KEY_PREFIX}${channel}`;
 }
@@ -547,16 +515,9 @@ async function mergeSegmentsIntoDigest(
   segments: DaySegment[],
 ): Promise<DayDigest> {
   if (!segments.length) return digest;
-  const now = Date.now();
-  if (isContextDigestCircuitOpen(digestCircuitState, now)) {
-    console.log(
-      `[context] digest mode=fallback reason=circuit_open ` +
-        `retryInMs=${digestCircuitState.openUntil - now} segments=${segments.length}`,
-    );
-    return localDigestFallback(digest, segments);
-  }
-
-  // 只让模型返回当前微段引起的增量，不再反复重写最多 24 张完整话题卡。
+  // 只让模型返回当前微段引起的增量，不再反复重写全部话题卡。
+  // 模型不可用时直接走 localDigestFallback，本地兜底本身就是降级方案，
+  // 不再额外维护熔断状态机。
   const digestIndex = {
     dayKey: digest.dayKey,
     topics: digest.topics.slice(0, CONTEXT.dayTopicMax).map((topic) => ({
@@ -592,16 +553,13 @@ async function mergeSegmentsIntoDigest(
   const latestSegmentAt = segments.reduce((max, segment) => Math.max(max, segment.to.ts), 0);
   const applied = parsed ? applyDigestPatch(digest, parsed, latestSegmentAt) : null;
   if (!applied) {
-    digestCircuitState = nextContextDigestCircuitState(digestCircuitState, false, Date.now());
     console.warn(
       `[context] digest mode=fallback reason=${output ? "invalid_patch" : "empty_response"} ` +
-        `durationMs=${Date.now() - startedAt} failures=${digestCircuitState.failures} ` +
-        `circuitOpen=${isContextDigestCircuitOpen(digestCircuitState, Date.now())} segments=${segments.length}`,
+        `durationMs=${Date.now() - startedAt} segments=${segments.length}`,
     );
     return localDigestFallback(digest, segments);
   }
 
-  digestCircuitState = nextContextDigestCircuitState(digestCircuitState, true, Date.now());
   console.log(
     `[context] digest mode=model status=ok durationMs=${Date.now() - startedAt} ` +
       `segments=${segments.length} topicPatches=${applied.topicPatchCount}`,
