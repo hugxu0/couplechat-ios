@@ -352,7 +352,16 @@ export async function drawCard(
         WHERE account_id = ? AND draw_day = ?`,
       [now, context.identity.accountId, today],
     );
-    const success = randomInt(0, DRAW_HIT_DENOMINATOR) === 0;
+    // 保底：当天最后一次机会且前面全部未中时必中。没有保底时
+    // P(整天空手) = (2/3)^3 ≈ 30%，三成的日子零收获是反游戏设计。
+    const priorHits = await db.get<{ hits: number }>(
+      `SELECT COUNT(*)::int AS hits FROM card_game_draws
+        WHERE account_id = ? AND draw_day = ? AND success = TRUE`,
+      [context.identity.accountId, today],
+    );
+    const isLastChance = (daily?.used_count ?? 0) === DAILY_DRAW_LIMIT - 1;
+    const pity = isLastChance && (priorHits?.hits ?? 0) === 0;
+    const success = pity || randomInt(0, DRAW_HIT_DENOMINATOR) === 0;
     const card = success
       ? randomCardFor(randomRarity(randomInt(0, 1_000_000) / 1_000_000),
         randomInt(0, 1_000_000) / 1_000_000)
@@ -557,6 +566,11 @@ export async function useCard(
         });
       } else {
         if (target.expires_at === null) return { ok: false, error: "effect_not_active" };
+        // 加时/延期只能作用在自己打出的效果上：延长自己给对方的券说得通，
+        // 延长对方对你生效的效果等于替对方改牌。
+        if (target.sender_account_id !== context.identity.accountId) {
+          return { ok: false, error: "effect_not_owned" };
+        }
         const shift = definition.durationMs ?? POSTPONE_MS;
         const consumed = await consumeInventory(db, context.identity.accountId, input.cardKey, input.rarity);
         if (!consumed.ok) return consumed;

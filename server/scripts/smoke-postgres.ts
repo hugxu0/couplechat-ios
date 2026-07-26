@@ -1906,6 +1906,53 @@ async function main() {
       "情侣卡牌每天最多三次抽卡",
       drawResponses.every((response) => response.statusCode === 200) && fourthDraw.statusCode === 429,
     );
+    assertOk(
+      "当日最后一抽保底：三次抽卡至少命中一次",
+      drawResponses.some((response) => response.json().draw?.success === true),
+    );
+    const cardForeignSender = await db.get<{ id: string }>(
+      "SELECT id FROM accounts WHERE id <> ? LIMIT 1",
+      [currentUser!.accountId],
+    );
+    const foreignEffectID = `cardfx_smoke_foreign`;
+    await db.run(
+      `INSERT INTO card_game_effects
+       (id, couple_id, sender_account_id, target_account_id, card_key, rarity, effect_kind,
+        starts_at, expires_at, status, payload_json, idempotency_key, created_at, updated_at)
+       VALUES (?, 'cpl_legacy_xusi', ?, ?, 'intimacy_kiss', 'rare', 'timed',
+        ?, ?, 'active', '{}', 'smoke-card-foreign-effect', ?, ?)`,
+      [foreignEffectID, cardForeignSender!.id, currentUser!.accountId,
+        Date.now(), Date.now() + 10 * 60_000, Date.now(), Date.now()],
+    );
+    await db.run(
+      `INSERT INTO card_game_inventory (id, account_id, card_key, rarity, quantity, created_at, updated_at)
+       VALUES ('cardinv_smoke_add_time', ?, 'support_add_time', 'rare', 1, ?, ?)
+       ON CONFLICT(account_id, card_key, rarity)
+       DO UPDATE SET quantity = card_game_inventory.quantity + 1`,
+      [currentUser!.accountId, Date.now(), Date.now()],
+    );
+    const foreignAddTime = await app.inject({
+      method: "POST",
+      url: "/api/v2/card-game/use",
+      headers: { authorization },
+      payload: {
+        cardKey: "support_add_time",
+        rarity: "rare",
+        idempotencyKey: "smoke-card-addtime-foreign",
+        effectId: foreignEffectID,
+      },
+    });
+    if (foreignAddTime.statusCode < 400 || foreignAddTime.json().error !== "effect_not_owned") {
+      console.log(
+        "[smoke] foreignAddTime 非预期响应:",
+        foreignAddTime.statusCode,
+        foreignAddTime.body,
+      );
+    }
+    assertOk(
+      "加时卡不能作用在对方打出的效果上",
+      foreignAddTime.statusCode >= 400 && foreignAddTime.json().error === "effect_not_owned",
+    );
     const oldAuthorization = await app.inject({
       method: "GET", url: "/api/me", headers: { authorization: `Bearer ${createToken(user)}` },
     });
