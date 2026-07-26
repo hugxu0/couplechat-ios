@@ -1632,29 +1632,33 @@ final class MessageStore: ObservableObject {
               socketProvider?.socket != nil,
               let fence = sessionFence(for: session),
               let scope = fence.persistenceScope else { return }
-        Task { [weak self] in
-            guard let self, self.isCurrent(fence) else { return }
-            await self.outboxProcessor.replay(
-                scope: scope,
-                isConnected: { [weak self] in
-                    guard let self else { return false }
-                    return self.isCurrent(fence)
-                        && self.socketProvider?.currentSession?.token == fence.token
-                        && self.socketProvider?.isConnected == true
-                },
-                send: { [weak self] item in
-                    guard let self, self.isCurrent(fence) else { return false }
-                    guard let channel = ChatChannel(rawValue: item.channel) else {
-                        print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
-                        return false
-                    }
-                    self.markPendingSending(clientId: item.clientId, channel: channel)
-                    return await self.transmitPendingOutbound(
-                        item,
-                        session: session,
-                        scope: scope,
-                        fence: fence)
-                })
+        // 两条车道并行重放：文字/贴纸不等媒体上传，媒体内部仍串行。
+        for lane in OutboxLane.allCases {
+            Task { [weak self] in
+                guard let self, self.isCurrent(fence) else { return }
+                await self.outboxProcessor.replay(
+                    scope: scope,
+                    lane: lane,
+                    isConnected: { [weak self] in
+                        guard let self else { return false }
+                        return self.isCurrent(fence)
+                            && self.socketProvider?.currentSession?.token == fence.token
+                            && self.socketProvider?.isConnected == true
+                    },
+                    send: { [weak self] item in
+                        guard let self, self.isCurrent(fence) else { return false }
+                        guard let channel = ChatChannel(rawValue: item.channel) else {
+                            print("[MessageStore] ⚠️ 隔离未知频道待发消息 clientId=\(item.clientId)")
+                            return false
+                        }
+                        self.markPendingSending(clientId: item.clientId, channel: channel)
+                        return await self.transmitPendingOutbound(
+                            item,
+                            session: session,
+                            scope: scope,
+                            fence: fence)
+                    })
+            }
         }
     }
 

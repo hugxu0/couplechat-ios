@@ -1,9 +1,21 @@
 import Foundation
 
+/// 待发队列的两条车道。文字和贴纸只是一次 socket 发送，不该排在
+/// 大文件上传后面——否则视频上传的一两分钟里所有文字都被队头阻塞。
+/// 每条车道内部仍按 createdAt 串行，保证同类消息的相对顺序。
+enum OutboxLane: CaseIterable {
+    case quick
+    case media
+
+    func accepts(_ item: PendingOutboundMessage) -> Bool {
+        (self == .media) == item.isMedia
+    }
+}
+
 actor OutboxProcessor {
     private let persistence: any ChatPersistenceProtocol
-    private var flushingScopes: Set<ChatPersistenceScope> = []
-    private var flushRequestedScopes: Set<ChatPersistenceScope> = []
+    private var flushingScopes: [OutboxLane: Set<ChatPersistenceScope>] = [:]
+    private var flushRequestedScopes: [OutboxLane: Set<ChatPersistenceScope>] = [:]
 
     init(persistence: any ChatPersistenceProtocol = ChatPersistence.shared) {
         self.persistence = persistence
@@ -11,19 +23,20 @@ actor OutboxProcessor {
 
     func replay(
         scope: ChatPersistenceScope,
+        lane: OutboxLane,
         isConnected: @escaping @MainActor () -> Bool,
         send: @escaping @MainActor (PendingOutboundMessage) async -> Bool
     ) async {
-        guard !flushingScopes.contains(scope) else {
-            flushRequestedScopes.insert(scope)
+        guard !flushingScopes[lane, default: []].contains(scope) else {
+            flushRequestedScopes[lane, default: []].insert(scope)
             return
         }
-        flushingScopes.insert(scope)
+        flushingScopes[lane, default: []].insert(scope)
 
         repeat {
-            flushRequestedScopes.remove(scope)
+            flushRequestedScopes[lane]?.remove(scope)
             guard let pending = await persistence.loadPendingOutbounds(scope: scope) else { break }
-            for item in pending where !item.requiresManualRetry {
+            for item in pending where lane.accepts(item) && !item.requiresManualRetry {
                 guard await isConnected() else { break }
                 let sent = await send(item)
                 if !sent {
@@ -31,10 +44,10 @@ actor OutboxProcessor {
                     if !connected { break }
                 }
             }
-        } while flushRequestedScopes.contains(scope)
+        } while flushRequestedScopes[lane, default: []].contains(scope)
 
-        flushingScopes.remove(scope)
-        flushRequestedScopes.remove(scope)
+        flushingScopes[lane]?.remove(scope)
+        flushRequestedScopes[lane]?.remove(scope)
     }
 
     func allPending(scope: ChatPersistenceScope) async -> [PendingOutboundMessage]? {
