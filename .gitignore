@@ -61,3 +61,6 @@ device-udids.*
 .npmrc
 .netrc
 .ssh/
+
+# 本地 IPA 备份（不入库）
+/CoupleChat-IPA/
