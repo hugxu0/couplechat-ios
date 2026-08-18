@@ -1,18 +1,18 @@
 # 项目现状
 
-> 更新：2026-07-27。
+> 更新：2026-08-19。
 
 ## 当前状态
 
-- **生产运行 release `964ae81`、schema v37**（2026-07-27 凌晨）。当晚共 11 个 PR
-  (#21–#31)：诚实错误态、双车道待发队列、上传进度、UI 一致性常量、卡牌大改版
-  （卡面美术 v2、六张 3+3 翻牌阵 1/6 无保底、居中翻牌演出、图鉴 85 张、真心话卡、
-  出牌记录重设计）、旧表情发送修复（legacy 路径放行 message purpose）、图片上传
-  提速（>1.5MB 静态图重压缩 2560px JPEG）。
-- v37 为兼容性迁移（翻牌次数约束放宽），零停机上线；恢复点
-  `/var/backups/couplechat/pre-v37-*`。v36 恢复点仍在 `pre-v36-*`。
-- 装机 IPA = `964ae81` 版（`D:\Desktop\CoupleChat-IPA\`）。卡牌翻牌阵、
-  演出与旧表情修复均经真机迭代验证。
+- **生产运行 release `0a8ec74`、schema v37**（2026-08-19）。源站已从 RackNerd
+  迁移到小米 10（Ubuntu 24.04 ARM64 chroot，自编译 PostgreSQL 16.13，
+  mmap + POSIX 信号量适配无 SYSVIPC 内核）；公网入口不变
+  （`https://hoo66.top` → RFCHost → Tailnet → 手机）。RackNerd 侧 CoupleChat
+  数据与运行环境已清理；数据权威在手机，42 号看护每日备份到 NAS
+  （`/mnt/nas/backups/couplechat`，14 天滚动）。
+- 部署、migration 与回滚见 [SERVER.md](SERVER.md)；运维仓库另有完整迁移记录。
+- 装机 IPA = `964ae81` 版（`D:\Desktop\CoupleChat-IPA\`）。客户端未变，
+  本次迁移对 App 完全透明，无需重新安装。
 
 ## 产品边界
 
@@ -24,7 +24,7 @@
 - 客户端：iOS/iPadOS 26、Swift 5.9、SwiftUI + UIKit；版本 `0.2.0 (16)`；
   Bundle ID `com.hugxu0.couplechat.native`；工程由 `project.yml` 生成。
 - 依赖：Socket.IO Client Swift `16.1.1`、GLTFKit2 `0.5.15`。
-- 服务端：Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16。
+- 服务端：Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16；生产主机为小米 10（ARM64 chroot），发布用 `publish-phone.ps1`。
 - 公开基地址 `https://hoo66.top`；Debug 与 Release 都连生产，调试时别批量删改数据。
 - unsigned IPA 由 GitHub Actions 构建，自己的电脑用免费 Personal Team 签名，
   约 7 天刷新一次。
@@ -42,6 +42,7 @@
 - **我的**：主题、壁纸、头像、设备管理、Bark、收藏、表情库、存储管理。
 
 ## 已知问题与限制
+`n- 源站是手机单点：手机断网/断电即服务下线（Magisk 看护可自动恢复）；NAS 是唯一备份副本，建议定期做异机拷贝。
 
 - Live Photo 按静态图发送；iPad 双栏、照片拖放、完整键盘快捷键未完成。
 - 卡牌不发通知、不写聊天消息、不接 Sync/Socket，对方靠进页轮询看到效果。

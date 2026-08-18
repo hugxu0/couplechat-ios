@@ -5,7 +5,7 @@
 
 - 客户端：iOS/iPadOS 26，Swift 5.9，SwiftUI + UIKit（工程由 `project.yml` 生成）
 - 服务端：Node.js 22、Fastify 5、Socket.IO 4、PostgreSQL 16
-- 公开基地址 `https://hoo66.top`；日本只做入口中转，美国是唯一可写主机
+- 公开基地址 `https://hoo66.top`；日本只做入口中转，源站部署在小米 10（ARM64 chroot，自编译 PostgreSQL）
 - CI 产出 unsigned IPA，自己的设备用免费 Personal Team 签名（约 7 天刷新）
 - 仓库保持公开；运维与签名秘密永不进 Git（`private/` 已 gitignore）
 

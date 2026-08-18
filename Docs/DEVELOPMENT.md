@@ -48,7 +48,7 @@ project.yml            XcodeGen 工程配置
 
 ## 服务端开发
 
-环境需要 Node.js 22、npm 和本地 PostgreSQL。
+环境需要 Node.js 22、npm 和本地 PostgreSQL。生产部署在小米 10（Ubuntu ARM64 chroot，自编译 PostgreSQL 16）；服务端发布用 `.\server\deploy\publish-phone.ps1`，流程见 [SERVER.md](SERVER.md)。
 
 ```powershell
 cd server
