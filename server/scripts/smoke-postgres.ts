@@ -19,6 +19,9 @@ async function main() {
     password: "couplechat",
     port: PORT,
     persistent: false,
+    // Windows 中文系统默认 GBK locale 会让 initdb 报 UTF-8 非法字节；
+    // 冒烟库固定 C locale + UTF-8，与生产（手机）行为一致。
+    initdbFlags: ["--locale=C", "--encoding=UTF8"],
   });
 
   console.log("[1/5] 初始化内嵌 PostgreSQL…");
