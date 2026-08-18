@@ -51,7 +51,10 @@ export function questionLooksLikeImageReaction(question: string): boolean {
   if (/(好看|漂亮|可爱|帅气?|美|丑|糊|清楚|清晰|离谱|好笑|搞笑|绝了|哇塞?|厉害|不错|糟糕|恶心)/.test(q)) {
     return true;
   }
-  if (/^(怎么样|什么啊|啥啊|这是|那是|？|\?)+$/.test(q)) return true;
+  // 发图后的指代追问：「这是什么」「这是啥」「那什么」「什么东西」等。
+  // 例：用户发图后问「这是什么」——此前该问法不匹配任何规则，先跑一轮纯文本
+  // Agent 再带图重跑，识图要多花一倍时间；现在第一轮就直接预附着最近图组。
+  if (/^(怎么样|什么啊|啥啊|这是|那是|这|那|什么|啥|这个|那个|东西|？|\?)+$/.test(q)) return true;
   if (/(怎么样|好不好|行不行|喜不喜欢|觉得|以为|像不像)/.test(q) && q.length <= 24) return true;
   return false;
 }
