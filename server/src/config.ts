@@ -72,7 +72,7 @@ function providerFromEnv(prefix: string, fallback?: AiProvider): AiProvider | un
   // 未声明时默认 chat_completions；显式 responses 走 Responses API。不再自动识别 Claude/Anthropic。
   const apiMode = declaredMode === "responses" ? "responses" : "chat_completions";
   const declaredEffort = (process.env[`${prefix}_REASONING_EFFORT`] ?? fallback?.reasoningEffort ?? "").trim().toLowerCase();
-  const reasoningEffort = ["none", "minimal", "low", "medium", "high", "xhigh"].includes(declaredEffort)
+  const reasoningEffort = ["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(declaredEffort)
     ? declaredEffort as AiProvider["reasoningEffort"]
     : undefined;
   return { baseUrl, apiKey, model, apiMode, reasoningEffort };
