@@ -97,9 +97,12 @@ function embeddingPoolFromEnv(prefix: string): EmbeddingPool | undefined {
   return { name, baseUrl, apiKeys };
 }
 
-// chat 用于用户回复，task 用于记忆提取和后台任务。
+// chat 用于用户回复，task 用于记忆提取和后台任务，
+// vision 用于识图（DeepSeek 等纯文本模型不识图，配置为多模态模型如 gpt-5.6-luna）。
 const aiShared = providerFromEnv("AI");
 const aiTask = providerFromEnv("AI_TASK", aiShared);
+const aiChat = providerFromEnv("AI_CHAT", aiShared);
+const aiVision = providerFromEnv("AI_VISION", aiChat);
 // 向量池：优先用新的多 key 池格式（EMBEDDING_<NAME>_PROVIDER/_BASE_URL/_API_KEYS）；
 // 没配的话退回旧的单 key 格式（EMBEDDING_BASE_URL/_API_KEY/_MODEL），保持兼容。
 const embeddingPools = [embeddingPoolFromEnv("VOYAGE"), embeddingPoolFromEnv("MONGODB")].filter(
@@ -137,8 +140,9 @@ export const config = {
   databaseLockTimeoutMs: timeoutEnv("DATABASE_LOCK_TIMEOUT_MS", 5_000),
   databaseIdleTransactionTimeoutMs: timeoutEnv("DATABASE_IDLE_TRANSACTION_TIMEOUT_MS", 30_000),
   ai: {
-    chat: providerFromEnv("AI_CHAT", aiShared),
+    chat: aiChat,
     task: aiTask,
+    vision: aiVision,
     // couple 频道召唤词；ai 私聊频道每条都答，不需要召唤。
     triggerAliases: (process.env.AI_TRIGGER_ALIASES ?? "@大橘")
       .split(/[,，;；]/)

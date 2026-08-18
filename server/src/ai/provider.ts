@@ -6,7 +6,7 @@ import { responsesReasoningSettings, type GenProfile } from "./settings";
 
 // 图片理解统一走对话主模型多模态（见 imageAttachment + agent/runtime），不再有独立识图 API。
 
-export type ChatProfile = "chat" | "task";
+export type ChatProfile = "chat" | "task" | "vision";
 
 export function aiEnabled(): boolean {
   return Boolean(config.ai.chat || config.ai.task);

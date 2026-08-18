@@ -84,7 +84,7 @@ App 内控制中心（我的 → 大橘与记忆）：分范围/层级浏览、�
 触发多模态重跑）、联网搜索。不提供任意 SQL、跨用户私聊读取。工具日志只记
 工具名/状态/耗时，不记参数与结果。
 
-图片：纯图不自动回复；本条带图或问题明显在问图时随问题一并进模型；预判
+图片：纯图不自动回复；本条带图或问题明显在问图时随问题一并进模型。纯文本模型（如 deepseek-v4-flash）不识图，带图时自动改用 AI_VISION_* 多模态模型（如 gpt-5.6-luna，max 档位）；未配置 AI_VISION 则退回对话模型。预判
 未附着但 Agent 要看图时才调工具重跑。
 
 ## 今日推荐
@@ -98,7 +98,7 @@ App 内控制中心（我的 → 大橘与记忆）：分范围/层级浏览、�
 环境变量（完整示例见 `server/.env.production.example`）：
 
 ```env
-AI_BASE_URL= / AI_API_KEY= / AI_MODEL=deepseek-v4-flash / AI_API_MODE=responses / AI_REASONING_EFFORT=max
+AI_BASE_URL= / AI_API_KEY= / AI_MODEL=deepseek-v4-flash / AI_API_MODE=responses / AI_REASONING_EFFORT=max；识图 AI_VISION_MODEL=gpt-5.6-luna / AI_VISION_REASONING_EFFORT=max
 AI_CHAT_*（对话）与 AI_TASK_*（整理摘要）可分开配，缺省用 AI_*
 AI_TRIGGER_ALIASES=@大橘
 EMBEDDING_*（Voyage / MongoDB 多 key 池）、EMBEDDING_DIM 必须与上游一致

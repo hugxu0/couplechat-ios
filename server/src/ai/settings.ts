@@ -20,40 +20,34 @@ export const GEN = {
     maxTokens: 1200,
     temperature: 0.3,
     timeoutMs: 15_000,
-    reasoningEffort: "low",
   },
   extractFacts: {
     maxTokens: 3200,
     temperature: 0.2,
     timeoutMs: 120_000,
-    reasoningEffort: "low",
   },
   /** 基础提取遗漏明确里程碑时的单张 event 聚焦复核 */
   eventRecovery: {
     maxTokens: 700,
     temperature: 0.1,
     timeoutMs: 45_000,
-    reasoningEffort: "low",
   },
   contextSummary: {
     maxTokens: 700,
     temperature: 0.15,
     timeoutMs: 20_000,
-    reasoningEffort: "none",
   },
   /** 将新微段增量合并进日总览；只返回小补丁，不重写整份总览 */
   contextDigest: {
     maxTokens: 800,
     temperature: 0.1,
     timeoutMs: 15_000,
-    reasoningEffort: "none",
   },
   /** 公聊冲突/搭话精简分类 */
   engagement: {
     maxTokens: 180,
     temperature: 0.15,
     timeoutMs: 20_000,
-    reasoningEffort: "low",
   },
   dailyRecommendation: { maxTokens: 400, temperature: 0.75, timeoutMs: 30_000 },
   /** 大橘日记：约 500 字的诗性手记 */
