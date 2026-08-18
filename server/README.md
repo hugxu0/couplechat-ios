@@ -35,4 +35,4 @@ npm run check
 - [服务器与部署](../Docs/SERVER.md)
 - [开发指南](../Docs/DEVELOPMENT.md)
 
-生产 Node 端口是 `3000`，`8080` 可用于本地开发。普通代码发布使用 `deploy/publish-server.ps1`，服务器初始化和主机配置放在 VPS 项目中。
+生产 Node 端口是 `3000`，`8080` 可用于本地开发。普通代码发布使用 `deploy/publish-phone.ps1`（部署到小米 10）；服务器初始化和主机配置放在 VPS 运维项目中。
