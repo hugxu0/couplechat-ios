@@ -4,7 +4,7 @@
 import { config, type AiProvider } from "../config";
 import { responsesReasoningSettings, type GenProfile } from "./settings";
 
-// 图片理解统一走对话主模型多模态（见 imageAttachment + agent/runtime），不再有独立识图 API。
+// 图片理解走 agent/runtime 的 vision 多模态模型（DeepSeek 等纯文本模型不识图）。
 
 export type ChatProfile = "chat" | "task" | "vision";
 
@@ -71,6 +71,7 @@ async function logHttpFailure(scope: string, res: Response): Promise<void> {
 }
 
 async function chatOpenAi(p: AiProvider, args: ChatArgs, signal: AbortSignal): Promise<string | null> {
+  const effort = args.gen.reasoningEffort ?? p.reasoningEffort;
   const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
@@ -78,6 +79,7 @@ async function chatOpenAi(p: AiProvider, args: ChatArgs, signal: AbortSignal): P
       model: p.model,
       max_tokens: args.gen.maxTokens,
       temperature: args.gen.temperature,
+      ...(effort ? { reasoning_effort: effort } : {}),
       messages: [
         { role: "system", content: args.system },
         { role: "user", content: args.user },

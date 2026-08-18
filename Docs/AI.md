@@ -98,7 +98,7 @@ App 内控制中心（我的 → 大橘与记忆）：分范围/层级浏览、�
 环境变量（完整示例见 `server/.env.production.example`）：
 
 ```env
-AI_BASE_URL= / AI_API_KEY= / AI_MODEL=deepseek-v4-flash / AI_API_MODE=responses / AI_REASONING_EFFORT=max；识图 AI_VISION_MODEL=gpt-5.6-luna / AI_VISION_REASONING_EFFORT=max
+AI_BASE_URL= / AI_API_KEY= / AI_MODEL=deepseek-v4-flash / AI_API_MODE=responses / AI_REASONING_EFFORT=max；识图 AI_VISION_MODEL=gpt-5.6-luna / AI_VISION_REASONING_EFFORT=max / AI_VISION_API_MODE=chat_completions（网关 /responses 不支持图片时必须用 chat_completions 识图）
 AI_CHAT_*（对话）与 AI_TASK_*（整理摘要）可分开配，缺省用 AI_*
 AI_TRIGGER_ALIASES=@大橘
 EMBEDDING_*（Voyage / MongoDB 多 key 池）、EMBEDDING_DIM 必须与上游一致

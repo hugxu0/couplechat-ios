@@ -232,7 +232,9 @@ export async function runAgentReply(
   tracePrompt(trace, { system: instructions(trigger), user: userText });
   trace.agent = {
     enabled: true,
-    model: providerSettings.model,
+    model: activeImageUrls.length > 0
+      ? (config.ai.vision?.model ?? providerSettings.model)
+      : providerSettings.model,
     toolCalls: [],
     conversation: {
       continued: context.recent.length > 0,
@@ -288,6 +290,7 @@ export async function runAgentReply(
       // 纯文本走 chat（如 deepseek-v4-flash）；带图走 vision 多模态模型
       // （如 gpt-5.6-luna）；未配置 vision 时退回 chat（旧行为）。
       const activeSettings = imageUrls.length > 0 ? (config.ai.vision ?? providerSettings) : providerSettings;
+      if (trace.agent) trace.agent.model = activeSettings.model;
       const useResponses = activeSettings.apiMode === "responses";
       const modelSettings = {
         ...baseModelSettings,
@@ -316,7 +319,7 @@ export async function runAgentReply(
         const agent = new Agent({
           name: "大橘",
           instructions: instructions(trigger),
-          model: providerSettings.model,
+          model: activeSettings.model,
           tools: useResponses ? [webSearchTool({ searchContextSize: "medium" })] : [],
           mcpServers: [mcp],
           modelSettings,
