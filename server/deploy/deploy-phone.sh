@@ -195,7 +195,7 @@ export PATH="$(dirname "$NODE22"):$PATH"
 # --- 可选：带 migration 发布 ---------------------------------------------
 if [[ "$WITH_MIGRATIONS" -eq 1 ]]; then
   backup_file="$BACKUP_DIR/pre-${target_sha}-$(date +%Y%m%d-%H%M%S).dump"
-  sudo -n -u postgres pg_dump -Fc "$DB_NAME" > "$backup_file"
+  sudo -n -u postgres env PATH="$PGBIN:$PATH" pg_dump -h /var/run/postgresql -Fc "$DB_NAME" > "$backup_file"
   [[ -s "$backup_file" ]] || die "迁移前备份失败"
   echo "[deploy-phone] pre-migration dump: $backup_file"
   # .env 在 APP_DIR（release 目录外），用 --env-file 直调受控 migrator
