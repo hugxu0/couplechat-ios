@@ -7,9 +7,9 @@
 ```text
 iOS / iPadOS App（REST + Socket.IO）
   → https://hoo66.top
-  → 日本 Nginx 公开入口（TLS、WebSocket 转发，不存业务数据）
+  → 日本 RFC Nginx 公开入口（TLS、WebSocket 转发，不存业务数据）
   → Tailscale 私网
-  → 美国 Fastify + Socket.IO · 127.0.0.1:3000
+  → 小米 10 Ubuntu chroot · Tailscale Serve :13000 → 127.0.0.1:3000（Fastify + Socket.IO）
       ├─ PostgreSQL（唯一事实源）
       ├─ uploads/（媒体文件）
       ├─ AI Agent / Memory / MCP
@@ -46,9 +46,9 @@ iOS / iPadOS App（REST + Socket.IO）
 `server.ts` 装配进程，`app.ts` 注册 HTTP，Socket handler 只做解析、授权、调用
 use case。领域目录：`auth`、`chat/socket/sync`、`upload`、`personalItems`、
 `calendar`、`albums`、`pet`、`daily`、`cardGame`、`transcription`、`push`、`ai`、
-`contracts`（实时协议权威定义）。
+`shared`、`stats`、`contracts`（实时协议权威定义）。
 
-PostgreSQL 访问集中在 `db/`；migration 只追加不改写，当前 v36。公聊事件发到
+PostgreSQL 访问集中在 `db/`；migration 只追加不改写，当前 v37。公聊事件发到
 `couple:<id>`，账号私有事件发到 `account:<id>`。
 
 ## 数据事实源

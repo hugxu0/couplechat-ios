@@ -1,10 +1,10 @@
 # 项目现状
 
-> 更新：2026-08-19。
+> 更新：2026-08-22。
 
 ## 当前状态
 
-- **生产运行 release `0a8ec74`、schema v37**（2026-08-19）。源站已从 RackNerd
+- **生产运行 release `6445177`、schema v37**（2026-08-22）。源站已从 RackNerd
   迁移到小米 10（Ubuntu 24.04 ARM64 chroot，自编译 PostgreSQL 16.13，
   mmap + POSIX 信号量适配无 SYSVIPC 内核）；公网入口不变
   （`https://hoo66.top` → RFCHost → Tailnet → 手机）。RackNerd 侧 CoupleChat
@@ -42,7 +42,7 @@
 - **我的**：主题、壁纸、头像、设备管理、Bark、收藏、表情库、存储管理。
 
 ## 已知问题与限制
-`n- 源站是手机单点：手机断网/断电即服务下线（Magisk 看护可自动恢复）；NAS 是唯一备份副本，建议定期做异机拷贝。
+- 源站是手机单点：手机断网/断电即服务下线（Magisk 看护可自动恢复）；NAS 是唯一备份副本，建议定期做异机拷贝。
 
 - Live Photo 按静态图发送；iPad 双栏、照片拖放、完整键盘快捷键未完成。
 - 卡牌不发通知、不写聊天消息、不接 Sync/Socket，对方靠进页轮询看到效果。
