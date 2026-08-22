@@ -94,6 +94,8 @@ ensure_app_running() {
   if ! pgrep -f "48-mi10-couplechat.sh --watch" >/dev/null 2>&1; then
     echo "[deploy-phone] watchdog not running; starting app directly" >&2
     install -d -m 0755 "$(dirname "$APP_LOG")"
+    # 不要把部署锁 fd 传给后台应用，否则应用会持有锁阻塞下次发布。
+    exec 9>&-
     setsid env NODE_ENV=production HOST=127.0.0.1 PORT="$PORT" \
       "$NODE22" --env-file="$APP_DIR/.env" dist/server.js \
       </dev/null >>"$APP_LOG" 2>&1 &
