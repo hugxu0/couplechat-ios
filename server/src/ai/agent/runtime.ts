@@ -31,13 +31,9 @@ export interface AgentReplyResult {
   recoveredFromMaxTurns: boolean;
 }
 
-function providerConfig() {
-  return config.ai.provider;
-}
-
 export function agentRuntimeEnabled(): boolean {
-  // 任意已配置的 chat/task provider 即可；统一走 OpenAI 兼容协议。
-  return Boolean(providerConfig());
+  // 统一走 OpenAI 兼容协议；未配置 AI_* 时不可用。
+  return Boolean(config.ai.provider);
 }
 
 function instructions(trigger: Trigger): string {
@@ -165,8 +161,8 @@ export async function runAgentReply(
   trace: TraceEntry,
   externalSignal?: AbortSignal,
 ): Promise<AgentReplyResult | null> {
-  const providerSettings = providerConfig();
-  if (!agentRuntimeEnabled() || !providerSettings) return null;
+  const providerSettings = config.ai.provider;
+  if (!providerSettings) return null;
 
   const background = trigger.origin === "conflict" || trigger.origin === "interject";
   const messageImageUrls = refreshSignedMediaUrls([

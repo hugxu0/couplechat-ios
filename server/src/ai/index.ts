@@ -14,7 +14,6 @@ import {
   pushPrivateAiMessageToUnavailableRecipient,
 } from "../push/pushService";
 import { config } from "../config";
-import { aiEnabled } from "./provider";
 import { loadAccounts } from "./accounts";
 import {
   hasQueuedReplyForMessage,
@@ -69,8 +68,9 @@ export async function initAi(): Promise<void> {
   });
   await initializeMemory();
   if (config.scheduledJobsEnabled) startMemoryMaintenance();
-  if (aiEnabled()) {
-    console.log("[ai] 大橘已就位（AI 模型已配置）");
+  const provider = config.ai.provider;
+  if (provider) {
+    console.log(`[ai] 大橘已就位 model=${provider.model} api=${provider.apiMode} effort=${provider.reasoningEffort ?? "unset"}`);
     console.log(`[ai] Agent + MCP ${agentRuntimeEnabled() ? "已就绪" : "不可用，请检查模型兼容性"}`);
   } else {
     console.log("[ai] 未配置 AI_* 环境变量，大橘只返回不可用提示");
