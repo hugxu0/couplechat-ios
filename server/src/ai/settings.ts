@@ -41,7 +41,7 @@ export const GEN = {
   contextDigest: {
     maxTokens: 800,
     temperature: 0.1,
-    timeoutMs: 15_000,
+    timeoutMs: 30_000,
   },
   /** 公聊冲突/搭话精简分类 */
   engagement: {
