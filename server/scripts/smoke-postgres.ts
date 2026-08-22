@@ -19,9 +19,9 @@ async function main() {
     password: "couplechat",
     port: PORT,
     persistent: false,
-    // Windows 中文系统默认 GBK locale 会让 initdb 报 UTF-8 非法字节；
-    // 冒烟库固定 C locale + UTF-8，与生产（手机）行为一致。
-    initdbFlags: ["--locale=C", "--encoding=UTF8"],
+    // Windows 内置 Postgres 的 UTF-8 初始化存在编码缺陷（0xbf）；
+    // 冒烟库使用 no-locale（默认 SQL_ASCII），内容以字节传输，生产手机仍为 UTF8。
+    initdbFlags: ["--no-locale"],
   });
 
   console.log("[1/5] 初始化内嵌 PostgreSQL…");
@@ -43,8 +43,6 @@ async function main() {
     // 冒烟必须完全离线；即使开发机 .env 配了真实模型或向量服务，也不能出站。
     for (const key of [
       "AI_API_KEY",
-      "AI_CHAT_API_KEY",
-      "AI_TASK_API_KEY",
       "EMBEDDING_API_KEY",
       "EMBEDDING_VOYAGE_API_KEYS",
       "EMBEDDING_MONGODB_API_KEYS",

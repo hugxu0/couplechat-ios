@@ -300,7 +300,6 @@ async function generateSegment(
     timeRangeLabel: timeRangeLabel(messages),
   };
   const output = await chat({
-    profile: "task",
     scope: "context.segment",
     system:
       '时段要点整理。输出JSON {"bullets":["..."]} 5~8条≤60字。保留话题/人物/时间/决定/否定/未决/情绪；删寒暄；不编造。',
@@ -537,7 +536,6 @@ async function mergeSegmentsIntoDigest(
   }));
   const startedAt = Date.now();
   const output = await chat({
-    profile: "task",
     scope: "context.digest",
     system: [
       "把新微段增量合并进当日总览；不要重写或复述全部旧总览。",

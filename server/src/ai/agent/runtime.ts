@@ -32,7 +32,7 @@ export interface AgentReplyResult {
 }
 
 function providerConfig() {
-  return config.ai.chat ?? config.ai.task;
+  return config.ai.provider;
 }
 
 export function agentRuntimeEnabled(): boolean {
@@ -232,9 +232,7 @@ export async function runAgentReply(
   tracePrompt(trace, { system: instructions(trigger), user: userText });
   trace.agent = {
     enabled: true,
-    model: activeImageUrls.length > 0
-      ? (config.ai.vision?.model ?? providerSettings.model)
-      : providerSettings.model,
+    model: providerSettings.model,
     toolCalls: [],
     conversation: {
       continued: context.recent.length > 0,
@@ -287,23 +285,21 @@ export async function runAgentReply(
     await mcp.connect();
 
     const runOnce = async (text: string, imageUrls: string[], maxTurns: number) => {
-      // 纯文本走 chat（如 deepseek-v4-flash）；带图走 vision 多模态模型
-      // （如 gpt-5.6-luna）；未配置 vision 时退回 chat（旧行为）。
-      const activeSettings = imageUrls.length > 0 ? (config.ai.vision ?? providerSettings) : providerSettings;
-      if (trace.agent) trace.agent.model = activeSettings.model;
-      const useResponses = activeSettings.apiMode === "responses";
+      // 文本与图片统一使用同一个 deepseek 模型。
+      if (trace.agent) trace.agent.model = providerSettings.model;
+      const useResponses = providerSettings.apiMode === "responses";
       const modelSettings = {
         ...baseModelSettings,
         reasoning: useResponses
-          ? responsesReasoningSettings(activeSettings.reasoningEffort)
-          : activeSettings.reasoningEffort
-            ? { effort: activeSettings.reasoningEffort }
+          ? responsesReasoningSettings(providerSettings.reasoningEffort)
+          : providerSettings.reasoningEffort
+            ? { effort: providerSettings.reasoningEffort }
             : undefined,
         store: false,
       } as const;
       const provider = new OpenAIProvider({
-        apiKey: activeSettings.apiKey,
-        baseURL: activeSettings.baseUrl,
+        apiKey: providerSettings.apiKey,
+        baseURL: providerSettings.baseUrl,
         useResponses,
         strictFeatureValidation: useResponses,
       });
@@ -319,7 +315,7 @@ export async function runAgentReply(
         const agent = new Agent({
           name: "大橘",
           instructions: instructions(trigger),
-          model: activeSettings.model,
+          model: providerSettings.model,
           tools: useResponses ? [webSearchTool({ searchContextSize: "medium" })] : [],
           mcpServers: [mcp],
           modelSettings,
@@ -344,9 +340,9 @@ export async function runAgentReply(
                   maxTokens: GEN.replyRecovery.maxTokens,
                   temperature: GEN.replyRecovery.temperature,
                   reasoning: useResponses
-                    ? responsesReasoningSettings(activeSettings.reasoningEffort)
-                    : activeSettings.reasoningEffort
-                      ? { effort: activeSettings.reasoningEffort }
+                    ? responsesReasoningSettings(providerSettings.reasoningEffort)
+                    : providerSettings.reasoningEffort
+                      ? { effort: providerSettings.reasoningEffort }
                       : undefined,
                   store: false,
                 } as const;
@@ -356,7 +352,7 @@ export async function runAgentReply(
                     instructions(trigger),
                     "【工具收尾】工具阶段已经结束，禁止再调用任何工具。只根据对话和已有工具结果直接作答；证据不足就明确说没找到，不得编造。",
                   ].join("\n\n"),
-                  model: activeSettings.model,
+                  model: providerSettings.model,
                   modelSettings: recoveryModelSettings,
                 });
                 const finalizerRunner = new Runner({

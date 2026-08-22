@@ -108,7 +108,6 @@ export async function refreshDerivedMemory(
   if (!relationshipDue && !insightDue) return { relationship: false, insight: false };
 
   const output = await chat({
-    profile: "task",
     scope: "memory.derived",
     system: derivedPrompt(relationshipDue, insightDue),
     user: `【基础记忆卡】\n${sources.map(sourceLine).join("\n")}`,

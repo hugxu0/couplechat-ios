@@ -394,7 +394,6 @@ async function generateRecommendation(
   const rejected = [...excluded];
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const generated = await chat({
-      profile: "task",
       scope: "recommendation",
       gen: GEN.dailyRecommendation,
       system: [

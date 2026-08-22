@@ -240,7 +240,6 @@ async function recoverEventCandidate(
   signal?: AbortSignal,
 ): Promise<ExtractedMemory | null> {
   const output = await chat({
-    profile: "task",
     scope: "memory.event_recovery",
     system: [
       "你是基础记忆的 event 漏检复核器，只复核本批是否存在一个已完成且值得以后回忆/检索的独立节点。",
@@ -300,7 +299,6 @@ async function scanChannel(channel: string, force = false): Promise<void> {
     }
 
     const output = await chat({
-      profile: "task",
       scope: "memory.extract",
       system: systemPrompt(),
       user: `【本批新消息，频道=${channel}】\n${modelMessages.map(messageLine).join("\n")}`,

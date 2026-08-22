@@ -60,7 +60,7 @@ export interface AiProvider {
   model: string;
   /** 仅 OpenAI 兼容：Responses 或 Chat Completions。 */
   apiMode: "responses" | "chat_completions";
-  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 function providerFromEnv(prefix: string, fallback?: AiProvider): AiProvider | undefined {
@@ -97,12 +97,8 @@ function embeddingPoolFromEnv(prefix: string): EmbeddingPool | undefined {
   return { name, baseUrl, apiKeys };
 }
 
-// chat 用于用户回复，task 用于记忆提取和后台任务，
-// vision 用于识图（DeepSeek 等纯文本模型不识图，配置为多模态模型如 gpt-5.6-luna）。
-const aiShared = providerFromEnv("AI");
-const aiTask = providerFromEnv("AI_TASK", aiShared);
-const aiChat = providerFromEnv("AI_CHAT", aiShared);
-const aiVision = providerFromEnv("AI_VISION", aiChat);
+// 对话、记忆提取与后台任务统一使用同一个 OpenAI 兼容 provider（当前模型：deepseek）。
+const aiProvider = providerFromEnv("AI");
 // 向量池：优先用新的多 key 池格式（EMBEDDING_<NAME>_PROVIDER/_BASE_URL/_API_KEYS）；
 // 没配的话退回旧的单 key 格式（EMBEDDING_BASE_URL/_API_KEY/_MODEL），保持兼容。
 const embeddingPools = [embeddingPoolFromEnv("VOYAGE"), embeddingPoolFromEnv("MONGODB")].filter(
@@ -140,9 +136,7 @@ export const config = {
   databaseLockTimeoutMs: timeoutEnv("DATABASE_LOCK_TIMEOUT_MS", 5_000),
   databaseIdleTransactionTimeoutMs: timeoutEnv("DATABASE_IDLE_TRANSACTION_TIMEOUT_MS", 30_000),
   ai: {
-    chat: aiChat,
-    task: aiTask,
-    vision: aiVision,
+    provider: aiProvider,
     // couple 频道召唤词；ai 私聊频道每条都答，不需要召唤。
     triggerAliases: (process.env.AI_TRIGGER_ALIASES ?? "@大橘")
       .split(/[,，;；]/)

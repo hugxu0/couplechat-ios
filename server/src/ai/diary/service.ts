@@ -209,7 +209,6 @@ export async function ensureDiaryForDay(dayKey: string, options?: { force?: bool
   let acceptedModelBody = false;
   try {
     const raw = await chat({
-      profile: "task",
       scope: "diary",
       system: [
         "你是大橘。请把下面上一作息日的完整情侣公聊，写成一篇真正属于大橘自己的日记。",

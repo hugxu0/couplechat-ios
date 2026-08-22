@@ -4,16 +4,10 @@
 import { config, type AiProvider } from "../config";
 import { responsesReasoningSettings, type GenProfile } from "./settings";
 
-// 图片理解走 agent/runtime 的 vision 多模态模型（DeepSeek 等纯文本模型不识图）。
-
-export type ChatProfile = "chat" | "task" | "vision";
+// 图片与文本都由同一个 provider 处理（当前模型：deepseek）。
 
 export function aiEnabled(): boolean {
-  return Boolean(config.ai.chat || config.ai.task);
-}
-
-function providerFor(profile: ChatProfile): AiProvider | undefined {
-  return config.ai[profile] ?? config.ai.chat ?? config.ai.task;
+  return Boolean(config.ai.provider);
 }
 
 function responsesText(data: unknown): string | null {
@@ -35,7 +29,6 @@ function responsesText(data: unknown): string | null {
 }
 
 interface ChatArgs {
-  profile: ChatProfile;
   /** 仅用于脱敏运维日志区分任务阶段，不包含用户正文。 */
   scope?: string;
   system: string;
@@ -45,7 +38,7 @@ interface ChatArgs {
 }
 
 function logScope(args: ChatArgs): string {
-  return args.scope?.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 60) || args.profile;
+  return args.scope?.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 60) || "ai";
 }
 
 function safeHeaderValue(value: string | null): string {
@@ -125,7 +118,7 @@ async function chatOpenAiResponses(p: AiProvider, args: ChatArgs, signal: AbortS
 }
 
 export async function chat(args: ChatArgs): Promise<string | null> {
-  const provider = providerFor(args.profile);
+  const provider = config.ai.provider;
   if (!provider) return null;
   const controller = new AbortController();
   const cancelFromCaller = () => controller.abort(args.signal?.reason);
