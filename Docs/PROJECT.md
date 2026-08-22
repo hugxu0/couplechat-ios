@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-- **生产运行 release `b5e60ec`、schema v37**（2026-08-22）。源站已从 RackNerd
+- **生产运行 release `ecd0a30`、schema v37**（2026-08-23）。源站已从 RackNerd
   迁移到小米 10（Ubuntu 24.04 ARM64 chroot，自编译 PostgreSQL 16.13，
   mmap + POSIX 信号量适配无 SYSVIPC 内核）；公网入口不变
   （`https://hoo66.top` → RFCHost → Tailnet → 手机）。RackNerd 侧 CoupleChat
